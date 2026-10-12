@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v4.0/business/GPON_2+1/WAN_BridgedIPv4_IPTV_SoftSwitchSIP" name="WAN_BridgedIPv4_IPTV_SoftSwitchSIP" isp="CT" version="v4.0" domain="business" deviceType="GPON_2+1" enabled="true" priority="100">
+  <doc>功能描述：开通上网(IPv4桥接) + IPTV + VOIP(软交换 SIP)业务工单：
+
+    IPv4为INTERNET模式，桥接方式；
+    
+    IPTV为OTHER桥接，绑定LAN2；
+    
+    VOIP为TR069,VOIP模式；
+    
+    
+    参数：
+    | PVC_OR_VLAN1           | 2500 | WAN连接的VLAN,LAN\EPON\VDSL用VLAN格式,默认是EPON的VLAN |
+    | X_CT_COM_LanInterface1 | LAN3,LAN4,WLAN1 | 绑定LAN端口,默认LAN3,LAN4,WLAN1 |
+    | PVC_OR_VLAN2           | 2 | IPTV的VLAN，默认是EPON的VLAN   |
+    | X_CT_COM_MulticastVlan | 166 | 公共组播VLAN(注意:如果此参数值为&quot;null&quot;,则表示不下发组播VLAN节点.) |
+    | PVC_OR_VLAN3           | 46 | VOIP的VLAN，默认是EPON的VLAN   |
+    | ProxyServer                          | 172.24.55.67 | SIP服务器域名或者为IP地址 |
+    | ProxyServerPort                      | 5060 | SIP服务器端口号 |
+    | RegistrarServer                      | 172.24.55.67 | Registrar服务器域名或者为IP地址 |
+    | RegistrarServerPort                  | 5060 | Registrar服务器端口号 |
+    | OutboundProxy                        | 0.0.0.0 | Outbound服务器域名或者为IP地址 |
+    | OutboundProxyPort                    | 5060 | Outbound服务器端口号 |
+    | X_CT_COM_Standby_ProxyServer         | 172.24.55.67 | 备用SIP服务器域名或者为IP地址 |
+    | X_CT_COM_Standby_ProxyServerPort     | 5060 | 备用SIP服务器端口号 |
+    | X_CT_COM_Standby_RegistrarServer     | 172.24.55.67 | 备用Registrar服务器域名或者为IP地址 |
+    | X_CT_COM_Standby_RegistrarServerPort | 5060 | 备用Registrar服务器端口号 |
+    | X_CT_COM_Standby_OutboundProxy       | 0.0.0.0 | 备用Outbound服务器域名或者为IP地址 |
+    | X_CT_COM_Standby_OutboundProxyPort   | 5060 | 备用Outbound服务器端口号 |
+    | AuthUserName1                        | 55511021 | S1口认证用户名 |
+    | AuthPassword1                        | 55511021 | S1口认证密码 |
+    | AuthUserName2                        | 55511022 | S2口认证用户名 |
+    | AuthPassword2                        | 55511022 | S2口认证密码 |</doc>
+  <args>
+    <arg name="PVC_OR_VLAN1" defaultValue="2500" order="1" type="string" required="false" description="WAN连接的VLAN,LAN\EPON\VDSL用VLAN格式,默认是EPON的VLAN"/>
+    <arg name="X_CT_COM_LanInterface1" defaultValue="LAN3,LAN4,WLAN1" order="2" type="string" required="false" description="绑定LAN端口,默认LAN3,LAN4,WLAN1"/>
+    <arg name="PVC_OR_VLAN2" defaultValue="2" order="3" type="string" required="false" description="IPTV的VLAN，默认是EPON的VLAN"/>
+    <arg name="X_CT_COM_MulticastVlan" defaultValue="166" order="4" type="string" required="false" description="公共组播VLAN(注意:如果此参数值为&quot;null&quot;,则表示不下发组播VLAN节点.)"/>
+    <arg name="PVC_OR_VLAN3" defaultValue="46" order="5" type="string" required="false" description="VOIP的VLAN，默认是EPON的VLAN"/>
+    <arg name="ProxyServer" defaultValue="172.24.55.67" order="6" type="string" required="false" description="SIP服务器域名或者为IP地址"/>
+    <arg name="ProxyServerPort" defaultValue="5060" order="7" type="string" required="false" description="SIP服务器端口号"/>
+    <arg name="RegistrarServer" defaultValue="172.24.55.67" order="8" type="string" required="false" description="Registrar服务器域名或者为IP地址"/>
+    <arg name="RegistrarServerPort" defaultValue="5060" order="9" type="string" required="false" description="Registrar服务器端口号"/>
+    <arg name="OutboundProxy" defaultValue="0.0.0.0" order="10" type="string" required="false" description="Outbound服务器域名或者为IP地址"/>
+    <arg name="OutboundProxyPort" defaultValue="5060" order="11" type="string" required="false" description="Outbound服务器端口号"/>
+    <arg name="X_CT_COM_Standby_ProxyServer" defaultValue="172.24.55.67" order="12" type="string" required="false" description="备用SIP服务器域名或者为IP地址"/>
+    <arg name="X_CT_COM_Standby_ProxyServerPort" defaultValue="5060" order="13" type="string" required="false" description="备用SIP服务器端口号"/>
+    <arg name="X_CT_COM_Standby_RegistrarServer" defaultValue="172.24.55.67" order="14" type="string" required="false" description="备用Registrar服务器域名或者为IP地址"/>
+    <arg name="X_CT_COM_Standby_RegistrarServerPort" defaultValue="5060" order="15" type="string" required="false" description="备用Registrar服务器端口号"/>
+    <arg name="X_CT_COM_Standby_OutboundProxy" defaultValue="0.0.0.0" order="16" type="string" required="false" description="备用Outbound服务器域名或者为IP地址"/>
+    <arg name="X_CT_COM_Standby_OutboundProxyPort" defaultValue="5060" order="17" type="string" required="false" description="备用Outbound服务器端口号"/>
+    <arg name="AuthUserName1" defaultValue="55511021" order="18" type="string" required="false" description="S1口认证用户名"/>
+    <arg name="AuthPassword1" defaultValue="55511021" order="19" type="string" required="false" description="S1口认证密码"/>
+    <arg name="AuthUserName2" defaultValue="55511022" order="20" type="string" required="false" description="S2口认证用户名"/>
+    <arg name="AuthPassword2" defaultValue="55511022" order="21" type="string" required="false" description="S2口认证密码"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CT/v4.0/business/GPON_2+1/WAN_BridgedIPv4_IPTV_SoftSwitchSIP/script.py" status="pending"/>
+</worklist>

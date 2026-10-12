@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v3.0/business/EPON_2+1/IPTV_Enable" name="IPTV_Enable" isp="CT" version="v3.0" domain="business" deviceType="EPON_2+1" enabled="true" priority="100">
+  <doc>功能描述：生成一个IPTV开通工单
+
+    参数：
+    | PVC_OR_VLAN             | PVC:0/65 | ADSL上行用PVC格式,LAN\EPON\VDSL则用VLAN格式,默认是ADSL的PVC |
+    | X_CT_COM_MulticastVlan  | 165 | 公共组播VLAN(注意:如果此参数值为&quot;null&quot;,则表示不下发组播VLAN节点.) |
+    | WANEnable_Switch        | True | WAN连接使能与WAN连接参数是否一起下发,True表示一起下发.默认为True |
+    
+            
+    
+    注意：此工单脚本中默认了绑定到LAN2
+    
+    对于公共组播VLAN,严格来说ADSL上行的CPE均不需支持,但发现部分CPE可以支持.
+    所以,当CPE不支持时,可通过将此参数设置为&quot;null&quot;达到不下发的目的.</doc>
+  <args>
+    <arg name="PVC_OR_VLAN" defaultValue="PVC:0/65" order="1" type="string" required="false" description="ADSL上行用PVC格式,LAN\EPON\VDSL则用VLAN格式,默认是ADSL的PVC"/>
+    <arg name="X_CT_COM_MulticastVlan" defaultValue="165" order="2" type="string" required="false" description="公共组播VLAN(注意:如果此参数值为&quot;null&quot;,则表示不下发组播VLAN节点.)"/>
+    <arg name="WANEnable_Switch" defaultValue="True" order="3" type="boolean" required="false" description="WAN连接使能与WAN连接参数是否一起下发,True表示一起下发.默认为True"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CT/v3.0/business/EPON_2+1/IPTV_Enable/script.py" status="pending"/>
+</worklist>

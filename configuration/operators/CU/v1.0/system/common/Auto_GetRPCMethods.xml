@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CU/v1.0/system/common/Auto_GetRPCMethods" name="Auto_GetRPCMethods" isp="CU" version="v1.0" domain="system" deviceType="common" enabled="true" priority="100">
+  <args/>
+  <steps/>
+  <migration sourceScript="CU/v1.0/system/Auto_GetRPCMethods/script.py" status="pending"/>
+</worklist>

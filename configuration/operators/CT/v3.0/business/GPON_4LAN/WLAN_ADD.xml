@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v3.0/business/GPON_4LAN/WLAN_ADD" name="WLAN_ADD" isp="CT" version="v3.0" domain="business" deviceType="GPON_4LAN" enabled="true" priority="100">
+  <doc>功能描述：生成一个创建3条不加密的SSID工单.
+
+    参数：
+    | Num | 4 | 总的无线SSID数(即包含了默认开启的一条),默认为4 |
+    
+            
+    
+    注意:不对Num的合法性做检查,交由CPE去处理.</doc>
+  <args>
+    <arg name="Num" defaultValue="4" order="1" type="string" required="false" description="总的无线SSID数(即包含了默认开启的一条),默认为4"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CT/v3.0/business/GPON_4LAN/WLAN_ADD/script.py" status="pending"/>
+</worklist>

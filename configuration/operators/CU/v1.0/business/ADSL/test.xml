@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CU/v1.0/business/ADSL/test" name="test" isp="CU" version="v1.0" domain="business" deviceType="ADSL" enabled="true" priority="100">
+  <args>
+    <arg name="ConnectionType" defaultValue="IP_Routed" order="1" type="string" required="false"/>
+    <arg name="ServiceList" defaultValue="INTERNET" order="2" type="string" required="false"/>
+    <arg name="Username" defaultValue="admin" order="3" type="string" required="false"/>
+    <arg name="Password" defaultValue="admin" order="4" type="string" required="false"/>
+    <arg name="Enable" defaultValue="true" order="5" type="boolean" required="false"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CU/v1.0/business/ADSL/test/script.py" status="pending"/>
+</worklist>

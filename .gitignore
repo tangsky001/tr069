@@ -1,0 +1,49 @@
+# javaacs（Java 版 TR069 ACS）专用忽略规则。
+# 仓库根目录 .gitignore 是 Python 老项目的通用模板，这里只管 Java 工程，互不影响。
+
+#############
+## Maven 构建产物
+#############
+target/
+*.class
+*.war
+*.ear
+.mvn/timing.properties
+
+#############
+## 前端（server/web，vue-admin-template）
+#############
+node_modules/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+#############
+## 运行期产物
+#############
+logs/
+nohup.out
+*.pid
+*.log
+hs_err_pid*
+
+#############
+## 外置配置：含数据库密码与现场地址，禁止入库
+## 只提交 deploy/config/application.yml.example 这类模板
+#############
+config/application.yml
+application-local.yml
+application-*.local.yml
+deploy/config/application.yml
+src/main/resources/application-dev.yml
+.env.local
+.env.*.local
+
+#############
+## 例外：建表脚本是部署必需资产，必须入库。
+## 仓库根目录 .gitignore 里的 sql/ 会连带忽略本目录下的 sql/，
+## 本文件优先级更高，这里显式放行（需先放行目录，目录内的文件才不会被连带忽略）。
+#############
+

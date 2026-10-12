@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v4.0/system/common/BOOTSTRAP" name="BOOTSTRAP" isp="CT" version="v4.0" domain="system" deviceType="common" enabled="true" priority="100">
+  <args/>
+  <steps/>
+  <migration sourceScript="CT/v4.0/system/BOOTSTRAP/script.py" status="pending"/>
+</worklist>

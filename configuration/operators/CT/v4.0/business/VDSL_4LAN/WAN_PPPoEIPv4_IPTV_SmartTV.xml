@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v4.0/business/VDSL_4LAN/WAN_PPPoEIPv4_IPTV_SmartTV" name="WAN_PPPoEIPv4_IPTV_SmartTV" isp="CT" version="v4.0" domain="business" deviceType="VDSL_4LAN" enabled="true" priority="100">
+  <doc>功能描述：开通上网(IPv4路由) + IPTV + 智能电视 业务工单
+
+    参数：
+    | PVC_OR_VLAN1           | 2500 | ADSL上行用PVC格式,LAN\EPON\VDSL则用VLAN格式,默认是ADSL的PVC |
+    | Username               | tw1 | 拨号上网的帐号,默认tw1 |
+    | Password               | tw1 | 拨号上网的密码,默认tw1 |
+    | X_CT_COM_LanInterface1 | LAN3,LAN4,WLAN1 | 绑定LAN端口,默认LAN3,LAN4,WLAN1 |
+    | PVC_OR_VLAN2           |  | IPTV的VLAN，默认是EPON的VLAN   |
+    | X_CT_COM_MulticastVlan  | 166 | 公共组播VLAN(注意:如果此参数值为&quot;null&quot;,则表示不下发组播VLAN节点.) |</doc>
+  <args>
+    <arg name="PVC_OR_VLAN1" defaultValue="2500" order="1" type="string" required="false" description="ADSL上行用PVC格式,LAN\EPON\VDSL则用VLAN格式,默认是ADSL的PVC"/>
+    <arg name="Username" defaultValue="tw1" order="2" type="string" required="false" description="拨号上网的帐号,默认tw1"/>
+    <arg name="Password" defaultValue="tw1" order="3" type="string" required="false" description="拨号上网的密码,默认tw1"/>
+    <arg name="X_CT_COM_LanInterface1" defaultValue="LAN3,LAN4,WLAN1" order="4" type="string" required="false" description="绑定LAN端口,默认LAN3,LAN4,WLAN1"/>
+    <arg name="PVC_OR_VLAN2" defaultValue="" order="5" type="string" required="false" description="IPTV的VLAN，默认是EPON的VLAN"/>
+    <arg name="X_CT_COM_MulticastVlan" defaultValue="166" order="6" type="string" required="false" description="公共组播VLAN(注意:如果此参数值为&quot;null&quot;,则表示不下发组播VLAN节点.)"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CT/v4.0/business/VDSL_4LAN/WAN_PPPoEIPv4_IPTV_SmartTV/script.py" status="pending"/>
+</worklist>

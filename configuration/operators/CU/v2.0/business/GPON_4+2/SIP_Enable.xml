@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CU/v2.0/business/GPON_4+2/SIP_Enable" name="SIP_Enable" isp="CU" version="v2.0" domain="business" deviceType="GPON_4+2" enabled="true" priority="100">
+  <doc>功能描述：生成一个SIP开通工单
+
+    参数：
+    | ProxyServer                          | 172.24.55.67 | SIP服务器域名或者为IP地址 |
+    | ProxyServerPort                      | 5060 | SIP服务器端口号 |
+    | RegistrarServer                      | 172.24.55.67 | Registrar服务器域名或者为IP地址 |
+    | RegistrarServerPort                  | 5060 | Registrar服务器端口号 |
+    | OutboundProxy                        | 0.0.0.0 | Outbound服务器域名或者为IP地址 |
+    | OutboundProxyPort                    | 5060| Outbound服务器端口号  |
+    | X_CU_SecondaryProxyServer            | 172.24.55.67 | 备用SIP服务器域名或者为IP地址 |
+    | X_CU_SecondaryProxyServerPort        | 5060 | 备用SIP服务器端口号 |
+    | X_CU_SecondaryRegistrarServer        | 172.24.55.67 | 备用Registrar服务器域名或者为IP地址 |
+    | X_CU_SecondaryRegistrarServerPort    | 5060 | 备用Registrar服务器端口号 |
+    | X_CU_SecondaryOutboundProxyServer    | 0.0.0.0  | 备用Outbound服务器域名或者为IP地址  |
+    | X_CU_SecondaryOutboundProxyServerPort| 5060 | 备用Outbound服务器端口号 |   
+    | AuthUserName1                        | 55511021 | S1口认证用户名 |
+    | AuthPassword1                        | 55511021 | S1口认证密码 |
+    | URI1                                 | 55511021 | S1口用戶号码 |
+    | AuthUserName2                        | 55511022 | S2口认证用户名 |
+    | AuthPassword2                        | 55511022 | S2口认证密码 |
+    | URI2                                 | 55511022 | S2口用戶号码 |
+    | PVC_OR_VLAN                          | PVC:0/63 | ADSL上行用PVC格式,LAN\GPON\VDSL则用VLAN格式,默认是ADSL的PVC |
+    | X_CU_ServiceList                 | VOIP | WAN连接的服务模式,即X_CU_ServiceList节点值,默认VOIP |
+    | WANEnable_Switch                     | True | WAN连接使能与WAN连接参数是否一起下发,True表示一起下发.默认为True |</doc>
+  <args>
+    <arg name="ProxyServer" defaultValue="172.24.55.67" order="1" type="string" required="false" description="SIP服务器域名或者为IP地址"/>
+    <arg name="ProxyServerPort" defaultValue="5060" order="2" type="string" required="false" description="SIP服务器端口号"/>
+    <arg name="RegistrarServer" defaultValue="172.24.55.67" order="3" type="string" required="false" description="Registrar服务器域名或者为IP地址"/>
+    <arg name="RegistrarServerPort" defaultValue="5060" order="4" type="string" required="false" description="Registrar服务器端口号"/>
+    <arg name="OutboundProxy" defaultValue="0.0.0.0" order="5" type="string" required="false" description="Outbound服务器域名或者为IP地址"/>
+    <arg name="OutboundProxyPort" defaultValue="5060" order="6" type="string" required="false" description="Outbound服务器端口号"/>
+    <arg name="X_CU_SecondaryProxyServer" defaultValue="172.24.55.67" order="7" type="string" required="false" description="备用SIP服务器域名或者为IP地址"/>
+    <arg name="X_CU_SecondaryProxyServerPort" defaultValue="5060" order="8" type="string" required="false" description="备用SIP服务器端口号"/>
+    <arg name="X_CU_SecondaryRegistrarServer" defaultValue="172.24.55.67" order="9" type="string" required="false" description="备用Registrar服务器域名或者为IP地址"/>
+    <arg name="X_CU_SecondaryRegistrarServerPort" defaultValue="5060" order="10" type="string" required="false" description="备用Registrar服务器端口号"/>
+    <arg name="X_CU_SecondaryOutboundProxyServer" defaultValue="0.0.0.0" order="11" type="string" required="false" description="备用Outbound服务器域名或者为IP地址"/>
+    <arg name="X_CU_SecondaryOutboundProxyServerPort" defaultValue="5060" order="12" type="string" required="false" description="备用Outbound服务器端口号"/>
+    <arg name="AuthUserName1" defaultValue="55511021" order="13" type="string" required="false" description="S1口认证用户名"/>
+    <arg name="AuthPassword1" defaultValue="55511021" order="14" type="string" required="false" description="S1口认证密码"/>
+    <arg name="URI1" defaultValue="55511021" order="15" type="string" required="false" description="S1口用戶号码"/>
+    <arg name="AuthUserName2" defaultValue="55511022" order="16" type="string" required="false" description="S2口认证用户名"/>
+    <arg name="AuthPassword2" defaultValue="55511022" order="17" type="string" required="false" description="S2口认证密码"/>
+    <arg name="URI2" defaultValue="55511022" order="18" type="string" required="false" description="S2口用戶号码"/>
+    <arg name="PVC_OR_VLAN" defaultValue="PVC:0/63" order="19" type="string" required="false" description="ADSL上行用PVC格式,LAN\GPON\VDSL则用VLAN格式,默认是ADSL的PVC"/>
+    <arg name="X_CU_ServiceList" defaultValue="VOIP" order="20" type="string" required="false" description="WAN连接的服务模式,即X_CU_ServiceList节点值,默认VOIP"/>
+    <arg name="WANEnable_Switch" defaultValue="True" order="21" type="boolean" required="false" description="WAN连接使能与WAN连接参数是否一起下发,True表示一起下发.默认为True"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CU/v2.0/business/GPON_4+2/SIP_Enable/script.py" status="pending"/>
+</worklist>

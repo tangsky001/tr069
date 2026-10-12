@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v3.0/business/ADSL_2LAN/Eagleeyes_Disable" name="Eagleeyes_Disable" isp="CT" version="v3.0" domain="business" deviceType="ADSL_2LAN" enabled="true" priority="100">
+  <doc>功能描述：生成一个全球眼取消工单
+    
+    参数：
+    | ExternalPort        | 8006 | 外部端口,默认8006 |    
+    | InternalPort        | 80 | 内部端口,默认80 |   
+    | PortMappingProtocol | TCP | 端口映射的协议,默认TCP |  
+    | InternalClient      | 192.168.1.100 | 设备在网关下的地址,默认192.168.1.100 |
+      
+       
+    
+    注意:此工单依赖于有一条PPPoE的INTERNET连接,否则会失败</doc>
+  <args>
+    <arg name="ExternalPort" defaultValue="8006" order="1" type="string" required="false" description="外部端口,默认8006"/>
+    <arg name="InternalPort" defaultValue="80" order="2" type="string" required="false" description="内部端口,默认80"/>
+    <arg name="PortMappingProtocol" defaultValue="TCP" order="3" type="string" required="false" description="端口映射的协议,默认TCP"/>
+    <arg name="InternalClient" defaultValue="192.168.1.100" order="4" type="string" required="false" description="设备在网关下的地址,默认192.168.1.100"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CT/v3.0/business/ADSL_2LAN/Eagleeyes_Disable/script.py" status="pending"/>
+</worklist>

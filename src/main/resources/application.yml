@@ -1,0 +1,203 @@
+# ==================== 配置说明 ====================
+# 本文件打进 jar，值直接写在这里。
+#
+# 现场要改时有两种方式，都不需要重新打包：
+#   1. 在 jar 同级放 config/application.yml，只写要覆盖的键即可，
+#      Spring Boot 原生优先级高于 jar 内（模板见 deploy/config/application.yml.example）
+#   2. 用环境变量或命令行参数覆盖，框架自动做名称映射，例如
+#        acs.cwmp.listen-ports      -> ACS_CWMP_LISTEN_PORTS
+#        spring.datasource.url      -> SPRING_DATASOURCE_URL
+#        spring.datasource.password -> SPRING_DATASOURCE_PASSWORD
+server:
+  port: 8888
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+  tomcat:
+    uri-encoding: UTF-8
+    threads:
+      max: 400
+      min-spare: 40
+
+spring:
+  application:
+    name: javaacs-server
+  # Redis：设备上报队列与下发指令队列的存储
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      # 无密码时留空
+      password:
+      database: 0
+      connect-timeout: 5s
+      timeout: 5s
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3s
+  # 数据库为现成环境，启动不做任何建表 / 数据初始化
+  sql:
+    init:
+      mode: never
+  datasource:
+    # 不写死 driver-class-name，由 Spring Boot 依据 JDBC URL 推断，
+    # 后续换用兼容 MySQL 协议的其它数据库时，改连接串即可
+    # characterEncoding 要写 Java 认得的字符集名（UTF-8），写 utf8mb4 会抛
+    # Unsupported character encoding；Connector/J 8 会把 UTF-8 映射成 MySQL 的 utf8mb4
+    url: jdbc:mysql://127.0.0.1:3306/tr_acs?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true&nullCatalogMeansCurrent=true
+    username: root
+    password: Qq123456
+    hikari:
+      pool-name: javaacs-hikari
+      # 设备并发上报量大，空闲连接不宜过低
+      minimum-idle: 10
+      maximum-pool-size: 50
+      connection-timeout: 30000
+      # 连接最长存活 25 分钟，必须小于 MySQL 的 wait_timeout(默认 28800s)，
+      # 否则会取到已被服务端单向关闭的连接
+      max-lifetime: 1500000
+      idle-timeout: 600000
+      validation-timeout: 5000
+      # 工单执行链路较长，开启泄漏检测便于定位未归还的连接
+      leak-detection-threshold: 60000
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  mapper-locations: classpath*:/mapper/**/*.xml
+
+# ==================== TR069 ACS 配置 ====================
+acs:
+  # ACS 对外通告地址，用于下发给 CPE 的连接请求地址
+  public-host: 127.0.0.1
+
+  cwmp:
+    # CPE 上报监听端口，可填多个（逗号 / 空格分隔）。
+    # 不同厂商光猫出厂固化的 ACS URL 端口并不一致（例如 9090、8082），
+    # 这里列出的端口都会额外开启监听，与主 server.port 重复的会自动跳过。
+    listen-ports: 9090,8082
+    # CPE 上报的路径
+    cpe-path: /ACS-server/ACS
+    # 额外兼容的上报路径（逗号分隔）。各厂商出厂固化的 URL 路径不一致，
+    # 未在清单内的 POST 会被判成 405，设备只会周期性重试，日志里会打印未匹配路径。
+    # 默认值已覆盖常见写法，现场遇到新写法直接在这里追加即可。
+    extra-cpe-paths: /acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/
+    # PortalAgent / 内部节点回调路径
+    user-path: /user
+    # SOAP 命名空间版本
+    cwmp-version: urn:dslforum-org:cwmp-1-0
+
+  session:
+    # 收到 Inform 后等待 CPE 空 POST 的超时(秒)
+    wait-post-null-timeout: 60
+    # 下发 RPC 后等待响应的超时(秒)
+    wait-rpc-response-timeout: 60
+    # Inform 处理整体超时(秒)
+    soap-inform-timeout: 60
+
+  auth:
+    # CPE -> ACS 认证的默认账号，设备级配置优先
+    cpe-to-acs-username: hgw
+    cpe-to-acs-password: hgw
+    # ACS -> CPE 反向连接的默认账号
+    acs-to-cpe-username: itms
+    acs-to-cpe-password: itms
+
+  device:
+    # 设备离线判定周期(秒)
+    online-check-interval: 120
+    # 超时未完成工单的清理周期(秒)
+    worklist-status-check-interval: 604800
+
+  agent:
+    # 单个 RPC 等待设备回应的超时(秒)
+    rpc-timeout: 510
+    # 工单整体执行超时(秒)
+    worklist-timeout: 3600
+    # 指令在队列中等待被设备取走的最长时间(秒)。
+    # 设备离线时靠它把指令收尾，否则挂在结果凭据上的工单步骤会永远等下去
+    pending-timeout-seconds: 600
+    # 超时指令的清扫间隔(毫秒)
+    pending-sweep-interval: 30000
+
+  database:
+    # 启动时的「只读」表存在性校验，不会执行任何 DDL，默认关闭。
+    # 仅当怀疑表没建全时改成 true 排查。
+    schema-check-enabled: false
+    # 表缺失时是否终止启动
+    fail-on-missing-table: false
+
+  queue:
+    # 上报与下发都走 Redis 队列做削峰；关掉则退回进程内同步处理
+    enabled: true
+    # Redis key 前缀，多套环境共用同一个 Redis 时用来隔离
+    key-prefix: acs
+    report:
+      # 上报队列分片数，同一设备固定落在同一分片，保证按序处理
+      shards: 8
+      # 消费者阻塞取数的超时(秒)
+      pop-timeout-seconds: 2
+    rpc:
+      # 指令在队列中最长存活时间(秒)
+      queue-ttl-seconds: 3600
+      # 执行结果保留时间(秒)，供调用方按任务号查询
+      result-ttl-seconds: 3600
+      # 单个设备队列堆积上限，防止慢设备无限堆积
+      max-pending-per-device: 200
+      # 等待设备响应的最长时间(秒)
+      timeout-seconds: 510
+
+  worklist:
+    # 工单模板根目录，相对进程工作目录解析，刻意放在 jar 外部：现场改文件热加载即时生效。
+    #   从 server 目录启动  → server/configuration
+    #   从 target 目录起 jar → server/target/configuration
+    # 目录约定：
+    #   profiles/                    光猫适配档案 *.yaml
+    #   operators/{isp}/{version}/{domain}/{deviceType}/{name}.xml   工单模板（存量，由 data.py 转换）
+    # 该目录为空时，依次回退到 jar 同级的 configuration/、target/configuration/
+    root-path: ./configuration
+    # 根目录为空时释放示例配置，方便现场照着新增加的光猫改
+    init-sample-if-empty: true
+    hot-reload:
+      # 文件监听 + 增量重载开关
+      enabled: true
+      # 变化去抖时间(毫秒)
+      debounce-millis: 800
+      # 周期全量扫描兜底间隔(秒)，0 表示关闭
+      rescan-interval-seconds: 60
+
+# ==================== 管理端 ====================
+admin:
+  jwt:
+    # 生产环境务必改成随机值
+    secret: tr069acs-java-secret-key-change-me-in-production
+    expire-hours: 12
+  # 管理端账号以数据库 sys_user 为准，登录一律查库。
+  # 下面两项仅在 sys_user 表为空时作为「初始管理员」写入一次（口令散列存储），
+  # 库中已有账号后即失效，改这里不会影响已有账号。
+  default-user: admin
+  default-password: admin
+
+logging:
+  level:
+    root: INFO
+    com.tr069.acs: INFO
+    com.tr069.acs.cwmp: DEBUG

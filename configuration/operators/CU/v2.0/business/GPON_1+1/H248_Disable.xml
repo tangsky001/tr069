@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CU/v2.0/business/GPON_1+1/H248_Disable" name="H248_Disable" isp="CU" version="v2.0" domain="business" deviceType="GPON_1+1" enabled="true" priority="100">
+  <doc>功能描述：生成一个H248取消工单
+
+    参数：
+    | X_CU_ServiceList | VOIP | WAN连接的服务模式,即X_CT-COM_ServiceList节点值,默认VOIP |</doc>
+  <args>
+    <arg name="X_CU_ServiceList" defaultValue="VOIP" order="1" type="string" required="false" description="WAN连接的服务模式,即X_CT-COM_ServiceList节点值,默认VOIP"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CU/v2.0/business/GPON_1+1/H248_Disable/script.py" status="pending"/>
+</worklist>

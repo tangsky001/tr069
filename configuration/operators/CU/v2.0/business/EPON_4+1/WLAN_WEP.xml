@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CU/v2.0/business/EPON_4+1/WLAN_WEP" name="WLAN_WEP" isp="CU" version="v2.0" domain="business" deviceType="EPON_4+1" enabled="true" priority="100">
+  <doc>功能描述：生成一个4SSID均修改为WEP加密测试的工单.
+
+    参数：
+    | WEPKeyIndex | 1 | WEP密钥索引号,默认为1 |
+    | WEPEncryptionLevel | 40-bit | WEP加密标准,默认40-bit |
+    | WEPKey | 0123456789 | WEP密钥,默认0123456789 |
+    
+            
+    
+    注意:此工单中的脚本,固定会帮忙开通4个SSID(如果已开通,则不会再新建).</doc>
+  <args>
+    <arg name="WEPKeyIndex" defaultValue="1" order="1" type="string" required="false" description="WEP密钥索引号,默认为1"/>
+    <arg name="WEPEncryptionLevel" defaultValue="40-bit" order="2" type="string" required="false" description="WEP加密标准,默认40-bit"/>
+    <arg name="WEPKey" defaultValue="0123456789" order="3" type="string" required="false" description="WEP密钥,默认0123456789"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CU/v2.0/business/EPON_4+1/WLAN_WEP/script.py" status="pending"/>
+</worklist>

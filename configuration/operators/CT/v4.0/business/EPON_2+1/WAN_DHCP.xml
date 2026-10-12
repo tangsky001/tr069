@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v4.0/business/EPON_2+1/WAN_DHCP" name="WAN_DHCP" isp="CT" version="v4.0" domain="business" deviceType="EPON_2+1" enabled="true" priority="100">
+  <doc>功能描述：生成一个开通DHCP上网工单.
+
+    参数：
+    | PVC_OR_VLAN           | PVC:0/63 | ADSL上行用PVC格式,LAN\EPON\VDSL则用VLAN格式,默认是ADSL的PVC |
+    | X_CT_COM_LanInterface | LAN1 | 绑定LAN端口,默认LAN1 |
+    | X_CT_COM_ServiceList  | INTERNET | WAN连接的服务模式,即X_CT-COM_ServiceList节点值,默认INTERNET |
+    | WANEnable_Switch      | True | WAN连接使能与WAN连接参数是否一起下发,True表示一起下发.默认为True |</doc>
+  <args>
+    <arg name="PVC_OR_VLAN" defaultValue="PVC:0/63" order="1" type="string" required="false" description="ADSL上行用PVC格式,LAN\EPON\VDSL则用VLAN格式,默认是ADSL的PVC"/>
+    <arg name="X_CT_COM_LanInterface" defaultValue="LAN1" order="2" type="string" required="false" description="绑定LAN端口,默认LAN1"/>
+    <arg name="X_CT_COM_ServiceList" defaultValue="INTERNET" order="3" type="string" required="false" description="WAN连接的服务模式,即X_CT-COM_ServiceList节点值,默认INTERNET"/>
+    <arg name="WANEnable_Switch" defaultValue="True" order="4" type="boolean" required="false" description="WAN连接使能与WAN连接参数是否一起下发,True表示一起下发.默认为True"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CT/v4.0/business/EPON_2+1/WAN_DHCP/script.py" status="pending"/>
+</worklist>

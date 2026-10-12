@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v4.0/business/LAN_4+2/WAN_PPPoEIPv4v6_IPTVIPv4v6_VOIPIMSSIP_SmartTV" name="WAN_PPPoEIPv4v6_IPTVIPv4v6_VOIPIMSSIP_SmartTV" isp="CT" version="v4.0" domain="business" deviceType="LAN_4+2" enabled="true" priority="100">
+  <doc>功能描述：开通上网(IPv4/v6路由) + IPTV(IPv4/v6) + VOIP(IMS SIP) + 智能电视 业务工单：
+
+    IPv4/v6为INTERNET服务模式，采用PPPoE认证；
+    
+    IPTV为OTHER桥接，绑定LAN2；
+    
+    VOIP为VOIP服务模式；
+    
+    
+    参数：
+    | PVC_OR_VLAN1           | 2500 | WAN连接的VLAN,LAN\EPON\VDSL用VLAN格式,默认是EPON的VLAN |
+    | Username               | tw6@pon.com | 拨号上网的帐号,默认tw6@pon.com |
+    | Password               | admin6 | 拨号上网的密码,默认admin6 |
+    | X_CT_COM_LanInterface1 | LAN3,LAN4,WLAN1 | 绑定LAN端口,默认LAN3,LAN4,WLAN1 |
+    | IPv6IPAddressOrigin    | AutoConfigured | IPv6地址分配机制,取值范围有：AutoConfigured、DHCPv6、Static、None，默认AutoConfigured |
+    | IPv6PrefixOrigin       | PrefixDelegation | IPv6前缀地址分配机制,默认是PrefixDelegation |
+    | IPv6PrefixMode         | WANDelegated | 公告前缀的类型，支持两种WANDelegated、Static，默认WANDelegated |
+    | IPv6Prefix             | 2001:1:2:3::/64 | IPv6前缀地址，默认为2001:1:2:3::/64 |
+    | IPv6DNSConfigType      | WANConnection | IPv6 LAN侧DNSServer来源，可选WANConnection、Static、HGWProxy，默认为WANConnection   |
+    | IPv6DNSServers         | fe80::1 | IPv6 DNSServer地址，多个地址以逗号隔开，默认为fe80::1     |
+    | DHCPv6ServerEnable     | 1 | 是否使能DHCPv6服务器，默认为1   |
+    | DHCPv6ServerMinAddress | 0:0:0:1 | 地址分配起始地址(IP地址的后64位)，默认为 0:0:0:1  |
+    | DHCPv6ServerMaxAddress | ffff:ffff:ffff:fffe | 地址分配结束地址(IP地址的后64位)，默认为 ffff:ffff:ffff:fffe  |
+    | RouterAdvEnable        | 1 | 是否使能SLAAC，默认为1   |
+    | AdvManagedFlag         | 1 | 地址是否通过自动配置机制分配，默认为1         |
+    | AdvOtherConfigFlag     | 1 | 地址之外的其他信息是否通过自动配置机制分配，默认为1   |
+    | PVC_OR_VLAN2           | 2 | IPTV的VLAN，默认是EPON的VLAN   |
+    | X_CT_COM_MulticastVlan | 166 | 公共组播VLAN(注意:如果此参数值为&quot;null&quot;,则表示不下发组播VLAN节点.) |
+    | PVC_OR_VLAN3           | 46 | VOIP的VLAN，默认是EPON的VLAN   |
+    | ProxyServer                          | 172.24.55.67 | SIP服务器域名或者为IP地址 |
+    | ProxyServerPort                      | 5060 | SIP服务器端口号 |
+    | RegistrarServer                      | 172.24.55.67 | Registrar服务器域名或者为IP地址 |
+    | RegistrarServerPort                  | 5060 | Registrar服务器端口号 |
+    | OutboundProxy                        | 0.0.0.0 | Outbound服务器域名或者为IP地址 |
+    | OutboundProxyPort                    | 5060 | Outbound服务器端口号 |
+    | X_CT_COM_Standby_ProxyServer         | 172.24.55.67 | 备用SIP服务器域名或者为IP地址 |
+    | X_CT_COM_Standby_ProxyServerPort     | 5060 | 备用SIP服务器端口号 |
+    | X_CT_COM_Standby_RegistrarServer     | 172.24.55.67 | 备用Registrar服务器域名或者为IP地址 |
+    | X_CT_COM_Standby_RegistrarServerPort | 5060 | 备用Registrar服务器端口号 |
+    | X_CT_COM_Standby_OutboundProxy       | 0.0.0.0 | 备用Outbound服务器域名或者为IP地址 |
+    | X_CT_COM_Standby_OutboundProxyPort   | 5060 | 备用Outbound服务器端口号 |
+    | AuthUserName1                        | 55511021 | S1口认证用户名 |
+    | AuthPassword1                        | 55511021 | S1口认证密码 |
+    | AuthUserName2                        | 55511022 | S2口认证用户名 |
+    | AuthPassword2                        | 55511022 | S2口认证密码 |</doc>
+  <args>
+    <arg name="PVC_OR_VLAN1" defaultValue="2500" order="1" type="string" required="false" description="WAN连接的VLAN,LAN\EPON\VDSL用VLAN格式,默认是EPON的VLAN"/>
+    <arg name="Username" defaultValue="tw6@pon.com" order="2" type="string" required="false" description="拨号上网的帐号,默认tw6@pon.com"/>
+    <arg name="Password" defaultValue="admin6" order="3" type="string" required="false" description="拨号上网的密码,默认admin6"/>
+    <arg name="X_CT_COM_LanInterface1" defaultValue="LAN3,LAN4,WLAN1" order="4" type="string" required="false" description="绑定LAN端口,默认LAN3,LAN4,WLAN1"/>
+    <arg name="IPv6IPAddressOrigin" defaultValue="AutoConfigured" order="5" type="string" required="false" description="IPv6地址分配机制,取值范围有：AutoConfigured、DHCPv6、Static、None，默认AutoConfigured"/>
+    <arg name="IPv6PrefixOrigin" defaultValue="PrefixDelegation" order="6" type="string" required="false" description="IPv6前缀地址分配机制,默认是PrefixDelegation"/>
+    <arg name="IPv6PrefixMode" defaultValue="WANDelegated" order="7" type="string" required="false" description="公告前缀的类型，支持两种WANDelegated、Static，默认WANDelegated"/>
+    <arg name="IPv6Prefix" defaultValue="2001:1:2:3::/64" order="8" type="string" required="false" description="IPv6前缀地址，默认为2001:1:2:3::/64"/>
+    <arg name="IPv6DNSConfigType" defaultValue="WANConnection" order="9" type="string" required="false" description="IPv6 LAN侧DNSServer来源，可选WANConnection、Static、HGWProxy，默认为WANConnection"/>
+    <arg name="IPv6DNSServers" defaultValue="fe80::1" order="10" type="string" required="false" description="IPv6 DNSServer地址，多个地址以逗号隔开，默认为fe80::1"/>
+    <arg name="DHCPv6ServerEnable" defaultValue="1" order="11" type="string" required="false" description="是否使能DHCPv6服务器，默认为1"/>
+    <arg name="DHCPv6ServerMinAddress" defaultValue="0:0:0:1" order="12" type="string" required="false" description="地址分配起始地址(IP地址的后64位)，默认为 0:0:0:1"/>
+    <arg name="DHCPv6ServerMaxAddress" defaultValue="ffff:ffff:ffff:fffe" order="13" type="string" required="false" description="地址分配结束地址(IP地址的后64位)，默认为 ffff:ffff:ffff:fffe"/>
+    <arg name="RouterAdvEnable" defaultValue="1" order="14" type="string" required="false" description="是否使能SLAAC，默认为1"/>
+    <arg name="AdvManagedFlag" defaultValue="1" order="15" type="string" required="false" description="地址是否通过自动配置机制分配，默认为1"/>
+    <arg name="AdvOtherConfigFlag" defaultValue="1" order="16" type="string" required="false" description="地址之外的其他信息是否通过自动配置机制分配，默认为1"/>
+    <arg name="PVC_OR_VLAN2" defaultValue="2" order="17" type="string" required="false" description="IPTV的VLAN，默认是EPON的VLAN"/>
+    <arg name="X_CT_COM_MulticastVlan" defaultValue="166" order="18" type="string" required="false" description="公共组播VLAN(注意:如果此参数值为&quot;null&quot;,则表示不下发组播VLAN节点.)"/>
+    <arg name="PVC_OR_VLAN3" defaultValue="46" order="19" type="string" required="false" description="VOIP的VLAN，默认是EPON的VLAN"/>
+    <arg name="ProxyServer" defaultValue="172.24.55.67" order="20" type="string" required="false" description="SIP服务器域名或者为IP地址"/>
+    <arg name="ProxyServerPort" defaultValue="5060" order="21" type="string" required="false" description="SIP服务器端口号"/>
+    <arg name="RegistrarServer" defaultValue="172.24.55.67" order="22" type="string" required="false" description="Registrar服务器域名或者为IP地址"/>
+    <arg name="RegistrarServerPort" defaultValue="5060" order="23" type="string" required="false" description="Registrar服务器端口号"/>
+    <arg name="OutboundProxy" defaultValue="0.0.0.0" order="24" type="string" required="false" description="Outbound服务器域名或者为IP地址"/>
+    <arg name="OutboundProxyPort" defaultValue="5060" order="25" type="string" required="false" description="Outbound服务器端口号"/>
+    <arg name="X_CT_COM_Standby_ProxyServer" defaultValue="172.24.55.67" order="26" type="string" required="false" description="备用SIP服务器域名或者为IP地址"/>
+    <arg name="X_CT_COM_Standby_ProxyServerPort" defaultValue="5060" order="27" type="string" required="false" description="备用SIP服务器端口号"/>
+    <arg name="X_CT_COM_Standby_RegistrarServer" defaultValue="172.24.55.67" order="28" type="string" required="false" description="备用Registrar服务器域名或者为IP地址"/>
+    <arg name="X_CT_COM_Standby_RegistrarServerPort" defaultValue="5060" order="29" type="string" required="false" description="备用Registrar服务器端口号"/>
+    <arg name="X_CT_COM_Standby_OutboundProxy" defaultValue="0.0.0.0" order="30" type="string" required="false" description="备用Outbound服务器域名或者为IP地址"/>
+    <arg name="X_CT_COM_Standby_OutboundProxyPort" defaultValue="5060" order="31" type="string" required="false" description="备用Outbound服务器端口号"/>
+    <arg name="AuthUserName1" defaultValue="55511021" order="32" type="string" required="false" description="S1口认证用户名"/>
+    <arg name="AuthPassword1" defaultValue="55511021" order="33" type="string" required="false" description="S1口认证密码"/>
+    <arg name="AuthUserName2" defaultValue="55511022" order="34" type="string" required="false" description="S2口认证用户名"/>
+    <arg name="AuthPassword2" defaultValue="55511022" order="35" type="string" required="false" description="S2口认证密码"/>
+  </args>
+  <steps/>
+  <migration sourceScript="CT/v4.0/business/LAN_4+2/WAN_PPPoEIPv4v6_IPTVIPv4v6_VOIPIMSSIP_SmartTV/script.py" status="pending"/>
+</worklist>

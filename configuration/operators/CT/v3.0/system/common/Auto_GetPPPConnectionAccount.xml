@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<worklist key="CT/v3.0/system/common/Auto_GetPPPConnectionAccount" name="Auto_GetPPPConnectionAccount" isp="CT" version="v3.0" domain="system" deviceType="common" enabled="true" priority="100">
+  <args/>
+  <steps/>
+  <migration sourceScript="CT/v3.0/system/Auto_GetPPPConnectionAccount/script.py" status="pending"/>
+</worklist>
