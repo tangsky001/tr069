@@ -3,6 +3,7 @@ package com.tr069.acs.api.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.tr069.acs.acs.service.DeviceBusinessService;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.agent.RpcDispatchService;
@@ -43,6 +44,7 @@ public class DeviceController {
     private final SessionManager sessionManager;
     private final RpcDispatchService rpcDispatchService;
     private final RpcTaskQueue rpcTaskQueue;
+    private final DeviceBusinessService businessService;
 
     /**
      * 设备分页查询，支持按序列号模糊匹配与运营商筛选。
@@ -62,6 +64,21 @@ public class DeviceController {
 
         IPage<CpeDevice> result = cpeDeviceMapper.selectPage(new Page<>(page, size), wrapper);
         return Result.success(PageResult.of(result.getRecords(), result.getTotal(), page, size));
+    }
+
+    /**
+     * 批量业务信息：设备列表页整页一次拉取 WAN/WLAN/SIP 概要，避免逐行发请求。
+     *
+     * <p>sns 为逗号分隔的序列号，单台失败不影响其余。</p>
+     */
+    @GetMapping("/business/batch")
+    public Result<Map<String, Map<String, Object>>> businessBatch(@RequestParam String sns) {
+        List<String> snList = java.util.Arrays.stream(sns.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .limit(200)
+                .toList();
+        return Result.success(businessService.summaryBatch(snList));
     }
 
     /**

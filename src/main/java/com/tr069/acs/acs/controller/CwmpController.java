@@ -2,6 +2,7 @@ package com.tr069.acs.acs.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tr069.acs.acs.auth.CpeAuthenticator;
+import com.tr069.acs.acs.service.DeviceCapabilityService;
 import com.tr069.acs.acs.service.InformService;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.PendingRpc;
@@ -43,6 +44,10 @@ import java.util.concurrent.TimeUnit;
  *   <li>RPC 响应：完成对应等待，回复 204</li>
  * </ul>
  *
+ * <p>设备能力采集 ({@link DeviceCapabilityService}) 正是搭在这条链路上：Inform 阶段就把
+ * {@code GetParameterNames} 排进下发队列，CPE 紧跟的空 POST 把它捎带下去，
+ * 拿到路径后再用 {@code GetParameterValues} 分批读值。</p>
+ *
  * <p>两条链路都接了 Redis 队列做削峰：</p>
  * <ul>
  *   <li>上报：只做解析、认证、建会话与回响应，参数处理交给 {@link ReportQueueService} 的消费者</li>
@@ -60,13 +65,18 @@ public class CwmpController {
     private final ReportQueueService reportQueue;
     private final RpcTaskQueue rpcTaskQueue;
     private final RpcDispatchService rpcDispatchService;
+    private final DeviceCapabilityService deviceCapabilityService;
     private final QueueProperties queueProperties;
     private final ObjectMapper objectMapper;
 
-    @Value("${acs.auth.cpe-to-acs-username:hgw}")
+    /**
+     * 默认值刻意留空：配置里不写或写 auto 即免认证，任何设备凭据都放行。
+     * 需要认证时填真实账号密码即可，见 {@link CpeAuthenticator#isOpenAccess}。
+     */
+    @Value("${acs.auth.cpe-to-acs-username:}")
     private String defaultCpeUser;
 
-    @Value("${acs.auth.cpe-to-acs-password:hgw}")
+    @Value("${acs.auth.cpe-to-acs-password:}")
     private String defaultCpePassword;
 
     @Value("${acs.session.wait-post-null-timeout:60}")
@@ -247,6 +257,11 @@ public class CwmpController {
 
         CpeSession session = sessionManager.getOrCreate(oui, sn, connId);
 
+        // 抢窗口：Inform 的响应体只能是 InformResponse，下发要等 CPE 紧接着的那次空 POST，
+        // 而那次空 POST 就走在本条 TCP 连接上。采集指令必须在回复之前排进下发队列，
+        // 空 POST 到达时才能被立刻取走，否则只能等设备下一次周期上报。
+        deviceCapabilityService.onInform(session, inform);
+
         // 上报处理入队；队列不可用时就地处理，保证功能不中断
         boolean queued = false;
         if (queueProperties.isEnabled()) {
@@ -277,12 +292,33 @@ public class CwmpController {
 
     // ==================== 超时控制 ====================
 
+    /**
+     * 等待 CPE 空 POST 的定时器。
+     *
+     * <p>超时只意味着<strong>这一轮的下发窗口结束了</strong>，不等于设备离线：
+     * 相当一部分光猫 Inform 之后根本不发空 POST（ACS 没有待发请求时它们就直接挂起连接），
+     * 等到下一个周期再从新连接上报。以前这里直接关会话，于是设备每分钟被判一次离线，
+     * 刚排进队列的指令也跟着被作废。</p>
+     *
+     * <p>现在只结束窗口、作废这一轮没等到回应的指令，会话继续留着，
+     * 设备是否离线交给 {@code SessionManager#sweepExpiredSessions} 按无通信时长判定。</p>
+     */
     private void armWaitPostNullTimer(CpeSession session) {
         session.setWaitPostNullTimer(timeoutScheduler.schedule(() -> {
-            if (session.getState() == SessionState.WAIT_POST_NULL) {
-                log.info("等待空 POST 超时, 关闭会话: sn={}", session.getSn());
-                sessionManager.closeSession(session.getSn(), "wait post null timeout");
+            if (session.getState() != SessionState.WAIT_POST_NULL) {
+                return;
             }
+            PendingRpc pending = session.failAwaiting("wait empty post timeout");
+            if (pending != null) {
+                log.warn("下发窗口结束，指令未收到回应: sn={}, rpc={}",
+                        session.getSn(), pending.getRpcName());
+                // 队列关闭时指令走内存 outbox，用的是负数序号，没有对应的任务记录
+                if (pending.getRpcId() > 0) {
+                    rpcDispatchService.failTask(pending.getRpcId(), "8002", "等待空 POST 超时，指令未送达");
+                }
+            }
+            session.setState(SessionState.READY);
+            log.info("下发窗口结束, 等待设备下一次上报: sn={}", session.getSn());
         }, waitPostNullTimeout, TimeUnit.SECONDS));
     }
 

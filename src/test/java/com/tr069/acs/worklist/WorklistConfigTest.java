@@ -9,6 +9,7 @@ import com.tr069.acs.worklist.loader.WorklistLoader;
 import com.tr069.acs.worklist.model.DeviceProfile;
 import com.tr069.acs.worklist.model.WorklistTemplate;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -118,14 +119,21 @@ class WorklistConfigTest {
         assertEquals("boolean", list.get(4).getValueType());
     }
 
+    /**
+     * 坏文件必须降级跳过，不能让一份写错的档案拖垮整批热加载。
+     *
+     * <p>注意：这个用例会打一条 {@code 光猫适配档案解析失败 ... profile-broken*.yaml}
+     * 的 WARN，是预期内的，不是故障。</p>
+     */
     @Test
-    void shouldReportErrorOnBadYaml() throws Exception {
-        Path bad = Files.createTempFile("profile-broken", ".yaml");
+    void shouldReportErrorOnBadYaml(@TempDir Path dir) throws Exception {
+        Path bad = dir.resolve("profile-broken.yaml");
         Files.write(bad, List.of("key: [unclosed", "  bad: : value"));
 
         LoadedItem<DeviceProfile> item = profileLoader.load(bad, bad.getFileName().toString());
         assertFalse(item.isValid(),
                 "畸形 YAML 应被标记为解析失败而不是抛异常终止整个加载过程");
-        Files.deleteIfExists(bad);
+        assertTrue(item.getError() != null && !item.getError().isBlank(),
+                "失败原因要带出来，运维据此知道该改哪个文件");
     }
 }

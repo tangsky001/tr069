@@ -216,8 +216,8 @@ WantedBy=multi-user.target
 | `acs.cwmp.listen-ports` | `9090,8082` | CPE 上报端口，逗号分隔，与主端口重复会自动跳过 |
 | `acs.cwmp.cpe-path` | `/ACS-server/ACS` | CPE 上报主路径 |
 | `acs.cwmp.extra-cpe-paths` | `/acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/` | 兼容的上报路径，现场遇到新写法在此追加 |
-| `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | 光猫连 ACS 的 digest 账号 |
-| `acs.auth.acs-to-cpe-username/password` | `itms/itms` | ACS 反向连光猫的账号 |
+| `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | 光猫连 ACS 的 digest 账号；写 `auto` 或留空即免认证，任何账号密码都放行 |
+| `acs.auth.acs-to-cpe-username/password` | `itms/itms` | ACS 反向连光猫的账号，同样支持 `auto` / 留空 |
 | `acs.worklist.root-path` | `./configuration` | 工单模板根目录，按进程工作目录解析；目录为空时回退到 jar 同级 `configuration/` |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内同步处理，无 Redis 环境下的降级选项 |
 | `acs.biz.auto-create-table` | `true` | 业务模板表自动补建 |

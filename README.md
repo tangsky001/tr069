@@ -110,7 +110,7 @@ npm run dev
 | `acs.cwmp.listen-ports` | `9090,8082` | 光猫上报端口，逗号分隔 |
 | `acs.cwmp.cpe-path` | `/ACS-server/ACS` | 上报主路径 |
 | `acs.cwmp.extra-cpe-paths` | `/acs,/cwmp,/tr069,/` 等 | 兼容的上报路径，遇到 405 时在此追加 |
-| `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | 光猫连 ACS 的账号 |
+| `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | 光猫连 ACS 的账号；写 `auto` 或留空即免认证，任何账号密码都放行 |
 | `acs.worklist.root-path` | `./configuration` | 工单模板根目录，按进程工作目录解析，改文件热加载 |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内处理 |
 

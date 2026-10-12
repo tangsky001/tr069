@@ -33,6 +33,38 @@ export function fetchOnlineDevices() {
 }
 
 /**
+ * 设备业务信息（WAN / WLAN / SIP），只读库里最近一次采集的快照。
+ */
+export function fetchDeviceBusiness(sn) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/business',
+    method: 'get'
+  })
+}
+
+/**
+ * 批量业务信息：设备列表页整页一次拉取，sns 为序列号数组。
+ */
+export function fetchDeviceBusinessBatch(sns) {
+  return request({
+    url: '/device/business/batch',
+    method: 'get',
+    params: { sns: sns.join(',') }
+  })
+}
+
+/**
+ * 重新采集：向在线设备下发 GetParameterValues 刷新业务参数后再回库读。
+ * 后端 collectStatus：success / timeout / fail / empty。
+ */
+export function collectDeviceBusiness(sn) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/business/collect',
+    method: 'post'
+  })
+}
+
+/**
  * 手动下发一条 CWMP RPC。
  * args 为 JSON 对象，由后端透传给设备。
  */

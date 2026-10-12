@@ -196,11 +196,19 @@ public class CpeSession {
         }
     }
 
+    /**
+     * 替换等待空 POST 的定时器。
+     *
+     * <p>必须先取消上一个：设备周期上报会不断重新布防，只覆盖字段而不取消，
+     * 旧的定时器就会在下一个周期到点时把刚建好的会话关掉。</p>
+     */
     public void setWaitPostNullTimer(ScheduledFuture<?> timer) {
+        cancel(waitPostNullTimer);
         this.waitPostNullTimer = timer;
     }
 
     public void setWaitRpcResponseTimer(ScheduledFuture<?> timer) {
+        cancel(waitRpcResponseTimer);
         this.waitRpcResponseTimer = timer;
     }
 

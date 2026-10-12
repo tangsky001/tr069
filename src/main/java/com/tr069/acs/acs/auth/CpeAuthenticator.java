@@ -9,6 +9,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * CPE -> ACS 的 HTTP 认证。
@@ -63,6 +64,13 @@ public class CpeAuthenticator {
     public static final String AUTH_TYPE_NONE = "None";
 
     /**
+     * 免认证标记：账号或密码填 auto，即不校验凭据，任何设备都放行。
+     */
+    public static final String AUTO_CREDENTIAL = "auto";
+
+    private final AtomicBoolean openAccessWarned = new AtomicBoolean(false);
+
+    /**
      * 校验 CPE 请求。
      *
      * @param authorization      HTTP Authorization 头，可能为 null
@@ -82,12 +90,43 @@ public class CpeAuthenticator {
         if (AUTH_TYPE_NONE.equalsIgnoreCase(authType)) {
             return AuthResult.PASS;
         }
+        // 免认证：账号或密码写成 auto 或留空时，不比对凭据，任何设备都放行。
+        // 联调阶段现场设备账号密码写法五花八门，先放开把链路跑通，上线前再换成真实账号。
+        if (isOpenAccess(expectedUser, expectedPassword)
+                || isOpenAccess(fallbackUser, fallbackPassword)) {
+            warnOpenAccessOnce();
+            return AuthResult.PASS;
+        }
         if (AUTH_TYPE_BASIC.equalsIgnoreCase(authType)) {
             return authenticateBasic(authorization, expectedUser, expectedPassword,
                     fallbackUser, fallbackPassword);
         }
         return authenticateDigest(authorization, method, uri, expectedUser, expectedPassword,
                 fallbackUser, fallbackPassword);
+    }
+
+    /**
+     * 是否为免认证配置：账号或密码其一为 {@code auto} 或留空。
+     *
+     * <p>账号留空在语义上等于「没有指定账号」，此时无从比对，按免认证处理；
+     * 这与配置项注释里「不填写也可以自由账号密码认证」一致。</p>
+     */
+    public static boolean isOpenAccess(String user, String password) {
+        return isAuto(user) || isAuto(password);
+    }
+
+    private static boolean isAuto(String value) {
+        return value == null || value.isBlank() || AUTO_CREDENTIAL.equalsIgnoreCase(value.trim());
+    }
+
+    /**
+     * 免认证只在首次命中时告警一次，避免每台设备每次上报都刷一行日志。
+     */
+    private void warnOpenAccessOnce() {
+        if (openAccessWarned.compareAndSet(false, true)) {
+            log.warn("CPE -> ACS 认证已关闭：账号或密码配置为 auto 或留空，任何设备凭据都会被放行，"
+                    + "上线前请改回真实账号");
+        }
     }
 
     /**

@@ -106,26 +106,61 @@ acs:
     cwmp-version: urn:dslforum-org:cwmp-1-0
 
   session:
-    # 收到 Inform 后等待 CPE 空 POST 的超时(秒)
+    # 收到 Inform 后等待 CPE 空 POST 的超时(秒)。超时只结束本轮下发窗口，不判设备离线
     wait-post-null-timeout: 60
     # 下发 RPC 后等待响应的超时(秒)
     wait-rpc-response-timeout: 60
     # Inform 处理整体超时(秒)
     soap-inform-timeout: 60
+    # 双会话判定的活动宽限(秒)：旧会话在该窗口内仍有通信才算设备真有两条并发连接。
+    # 必须小于设备的周期上报间隔，否则每次周期上报都会被误判成重复会话
+    duplicate-grace-seconds: 30
 
   auth:
     # CPE -> ACS 认证的默认账号，设备级配置优先
-    cpe-to-acs-username: hgw
-    cpe-to-acs-password: hgw
-    # ACS -> CPE 反向连接的默认账号
-    acs-to-cpe-username: itms
-    acs-to-cpe-password: itms
+    # 免认证：写成 auto 或留空（含删除该配置项），任何账号密码都放行，
+    # 联调阶段设备侧账号密码写法不一时用它先跑通链路，上线前改回真实账号
+    cpe-to-acs-username: auto
+    cpe-to-acs-password: auto
+    # ACS -> CPE 反向连接的默认账号，同样支持 auto / 留空
+    acs-to-cpe-username: auto
+    acs-to-cpe-password: auto
 
   device:
-    # 设备离线判定周期(秒)
+    # 设备离线判定周期(秒)：超过该时长没有任何通信才判离线
     online-check-interval: 120
+    # 会话巡检周期(毫秒)，按无通信时长判离线
+    session-sweep-interval: 60000
     # 超时未完成工单的清理周期(秒)
     worklist-status-check-interval: 604800
+    # 业务信息（WAN/WLAN/SIP）采集：向在线设备下发 GetParameterValues 后回库解析，
+    # 数据源是能力树快照，能力树没采过就只能先做能力采集
+    business:
+      # 单次业务采集等待设备的超时(秒)，超时返回已刷到的部分结果
+      collect-timeout-seconds: 45
+    # 设备能力树采集：GetParameterNames 拉全量路径 + GetParameterValues 分批读值
+    capability:
+      # 总开关
+      enabled: true
+      # 收到 Inform 后自动采集。指令在回复 InformResponse 之前入队，
+      # CPE 紧随其后的空 POST 会把 GetParameterNames 捎带下去
+      collect-on-inform: true
+      # BOOTSTRAP 事件强制重新采集（设备可能换了能力）
+      force-on-bootstrap: true
+      # 距上次采集超过该小时数才重采，0 表示每次 Inform 都采
+      refresh-interval-hours: 24
+      # 单条 GetParameterValues 携带的参数个数，太大设备会拒绝
+      value-batch-size: 64
+      # 单次采集读取的参数个数上限，超出部分不读值
+      max-parameters: 20000
+      # 递归 GetParameterNames 失败时，改用 NextLevel=true 逐层展开兜底
+      fallback-next-level: true
+      # 逐层展开的对象个数上限，防止异常设备无限展开
+      max-object-rounds: 500
+      # 采集与回调线程数
+      worker-threads: 8
+      # 启动时自动补建 cpe_parameter 表，存量库升级时不用手工执行 DDL
+      auto-create-table: true
 
   agent:
     # 单个 RPC 等待设备回应的超时(秒)

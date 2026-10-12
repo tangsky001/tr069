@@ -46,6 +46,11 @@
     </el-card>
 
     <el-card shadow="never" class="section">
+      <div slot="header">业务信息（WAN / WLAN / SIP）</div>
+      <device-business-panel :sn="sn" />
+    </el-card>
+
+    <el-card shadow="never" class="section">
       <div slot="header">下发 RPC</div>
       <el-form :inline="true" size="small">
         <el-form-item label="方法">
@@ -78,9 +83,11 @@
 <script>
 import { fetchDeviceDetail, fetchDeviceStatus, dispatchRpc, RPC_METHODS } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
+import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 
 export default {
   name: 'DeviceDetail',
+  components: { DeviceBusinessPanel },
   data() {
     return {
       loading: false,

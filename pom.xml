@@ -33,6 +33,61 @@
         <npm.executable>npm.cmd</npm.executable>
     </properties>
 
+    <!--
+        国内网络下 central 拉包慢且容易超时，改用阿里云公共仓库。
+        注意：这里只是「追加」仓库，Maven 从超级 POM 继承的 central 依然在，
+        阿里云缺失的构件会自动回落到 central，不会把构建锁死在单一源。
+    -->
+    <repositories>
+        <repository>
+            <id>aliyun-public</id>
+            <name>aliyun public</name>
+            <url>https://maven.aliyun.com/repository/public</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+        <repository>
+            <id>aliyun-spring</id>
+            <name>aliyun spring</name>
+            <url>https://maven.aliyun.com/repository/spring</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>aliyun-public</id>
+            <name>aliyun public</name>
+            <url>https://maven.aliyun.com/repository/public</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </pluginRepository>
+        <pluginRepository>
+            <id>aliyun-spring-plugin</id>
+            <name>aliyun spring plugin</name>
+            <url>https://maven.aliyun.com/repository/spring-plugin</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </pluginRepository>
+    </pluginRepositories>
+
     <dependencies>
         <!-- ==================== Web ==================== -->
         <dependency>
