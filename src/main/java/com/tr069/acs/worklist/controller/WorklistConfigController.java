@@ -3,9 +3,7 @@ package com.tr069.acs.worklist.controller;
 import com.tr069.acs.common.Result;
 import com.tr069.acs.worklist.model.DeviceProfile;
 import com.tr069.acs.worklist.model.ReloadReport;
-import com.tr069.acs.worklist.model.WorklistTemplate;
 import com.tr069.acs.worklist.registry.ProfileRegistry;
-import com.tr069.acs.worklist.registry.WorklistRegistry;
 import com.tr069.acs.worklist.service.DeviceProfileMatcher;
 import com.tr069.acs.worklist.service.WorklistConfigService;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 光猫适配档案与工单模板的管理接口。
+ * 光猫适配档案的管理接口。
  *
  * <p>核心能力是 {@code POST /api/worklist/reload}：现场放入新的光猫 yaml 后，
  * 调用一次即可生效，无需重启服务。</p>
@@ -35,7 +33,6 @@ public class WorklistConfigController {
 
     private final WorklistConfigService configService;
     private final ProfileRegistry profileRegistry;
-    private final WorklistRegistry worklistRegistry;
     private final DeviceProfileMatcher profileMatcher;
 
     /**
@@ -68,8 +65,6 @@ public class WorklistConfigController {
         data.put("rootPath", String.valueOf(configService.getRoot()));
         data.put("profileCount", profileRegistry.size());
         data.put("profileInvalidCount", profileRegistry.invalidItems().size());
-        data.put("worklistCount", worklistRegistry.size());
-        data.put("worklistInvalidCount", worklistRegistry.invalidItems().size());
         data.put("version", profileRegistry.getVersion().get());
         data.put("lastLoadTime", String.valueOf(profileRegistry.getLastLoadTime()));
         return Result.success(data);
@@ -117,17 +112,5 @@ public class WorklistConfigController {
                             data.put("profile", null);
                         });
         return Result.success(data);
-    }
-
-    /**
-     * 工单模板列表，支持按运营商 / 版本 / 业务域 / 设备类型过滤。
-     */
-    @GetMapping("/templates")
-    public Result<List<WorklistTemplate>> templates(
-            @RequestParam(required = false) String isp,
-            @RequestParam(required = false) String version,
-            @RequestParam(required = false) String domain,
-            @RequestParam(required = false) String deviceType) {
-        return Result.success(worklistRegistry.find(isp, version, domain, deviceType));
     }
 }

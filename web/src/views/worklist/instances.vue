@@ -13,7 +13,6 @@
         <el-form-item>
           <el-button type="primary" icon="el-icon-search" @click="handleSearch">查询</el-button>
           <el-button icon="el-icon-refresh" @click="resetQuery">重置</el-button>
-          <el-button type="success" icon="el-icon-s-promotion" @click="openExecute">下发工单</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -94,44 +93,11 @@
         <el-button @click="stepDetailVisible = false">关闭</el-button>
       </span>
     </el-dialog>
-
-    <el-dialog title="下发工单" :visible.sync="executeVisible" width="600px">
-      <el-form :model="executeForm" label-width="110px" size="small">
-        <el-form-item label="设备序列号" required>
-          <el-input v-model="executeForm.sn" placeholder="必填" />
-        </el-form-item>
-        <el-form-item label="工单模板" required>
-          <el-select v-model="executeForm.templateKey" filterable placeholder="选择模板" style="width:100%">
-            <el-option
-              v-for="t in templates"
-              :key="t.key"
-              :label="(t.name || t.key) + '（' + t.key + '）'"
-              :value="t.key"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="操作人">
-          <el-input v-model="executeForm.username" placeholder="可留空" />
-        </el-form-item>
-        <el-form-item label="入参">
-          <el-input
-            v-model="executeForm.paramsText"
-            type="textarea"
-            :rows="4"
-            placeholder='JSON 格式，例如 {"username":"user1"}'
-          />
-        </el-form-item>
-      </el-form>
-      <span slot="footer">
-        <el-button @click="executeVisible = false">取消</el-button>
-        <el-button type="primary" :loading="executeLoading" @click="submitExecute">下发</el-button>
-      </span>
-    </el-dialog>
   </div>
 </template>
 
 <script>
-import { fetchInstances, fetchInstance, fetchSteps, fetchTemplates, executeWorklist } from '@/api/worklist'
+import { fetchInstances, fetchInstance, fetchSteps } from '@/api/worklist'
 
 const STATUS_OPTIONS = ['build', 'bind', 'reserve', 'standby', 'running', 'success', 'fail', 'abnormal', 'expire']
 
@@ -148,10 +114,6 @@ export default {
       stepsVisible: false,
       stepDetail: {},
       stepDetailVisible: false,
-      templates: [],
-      executeVisible: false,
-      executeLoading: false,
-      executeForm: { sn: '', templateKey: '', username: '', paramsText: '' },
       // 已提交、正在跟踪执行进度的工单号
       tracking: []
     }
@@ -194,54 +156,6 @@ export default {
     showStepDetail(row) {
       this.stepDetail = row
       this.stepDetailVisible = true
-    },
-    async openExecute() {
-      this.executeVisible = true
-      if (this.templates.length === 0) {
-        try {
-          const res = await fetchTemplates()
-          this.templates = res.data || []
-        } catch (e) {
-          this.templates = []
-        }
-      }
-    },
-    async submitExecute() {
-      if (!this.executeForm.sn || !this.executeForm.templateKey) {
-        this.$message.warning('设备序列号与工单模板必填')
-        return
-      }
-      let params = {}
-      if (this.executeForm.paramsText && this.executeForm.paramsText.trim()) {
-        try {
-          params = JSON.parse(this.executeForm.paramsText)
-        } catch (e) {
-          this.$message.error('入参不是合法 JSON：' + e.message)
-          return
-        }
-      }
-      this.executeLoading = true
-      try {
-        const res = await executeWorklist({
-          sn: this.executeForm.sn,
-          templateKey: this.executeForm.templateKey,
-          username: this.executeForm.username,
-          params
-        })
-        const data = res.data || {}
-        const wlId = data.worklistId
-        // 工单是异步执行的，这里只表示受理，进度靠后面轮询
-        this.$message.success('工单已受理，工单号 ' + wlId)
-        this.executeVisible = false
-        this.load()
-        if (wlId) {
-          this.trackWorklist(wlId)
-        }
-      } catch (e) {
-        /* 拦截器已提示失败原因 */
-      } finally {
-        this.executeLoading = false
-      }
     },
     /** 跟踪一张工单直到它结束，期间定期刷新列表让进度可见 */
     async trackWorklist(id) {

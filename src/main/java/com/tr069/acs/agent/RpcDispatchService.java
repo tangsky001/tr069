@@ -1,6 +1,7 @@
 package com.tr069.acs.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.cwmp.model.FaultStruct;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.domain.entity.RpcRecord;
@@ -53,6 +54,11 @@ public class RpcDispatchService {
      */
     private final AtomicLong rpcSequence = new AtomicLong(1);
 
+    /**
+     * 方法名非法时的故障码：不是设备返回的 CWMP 故障，属 ACS 内部错误。
+     */
+    private static final String FAULT_BAD_METHOD = "8005";
+
     @Value("${acs.agent.rpc-timeout:510}")
     private long rpcTimeout;
 
@@ -78,6 +84,17 @@ public class RpcDispatchService {
                                       Map<String, Object> args, String worklistId) {
         long taskId = insertRecord(sn, rpcName, args, worklistId);
         CompletableFuture<SoapMessage> future = rpcTaskRegistry.create(taskId);
+
+        // 方法名非法必须在入队前拦掉：一旦进了队列，空 POST 取到它时构造不出 SOAP，
+        // 只能回 500，还会把这条坏指令一直卡在 running 状态
+        if (RpcMethod.of(rpcName) == null) {
+            String reason = rpcName == null || rpcName.isBlank()
+                    ? "CWMP 方法名为空" : "未知 CWMP 方法: " + rpcName;
+            log.error("指令方法名非法，拒绝入队: sn={}, rpc={}, taskId={}", sn, rpcName, taskId);
+            rpcTaskRegistry.fail(taskId, FAULT_BAD_METHOD, reason);
+            finishRecord(taskId, null);
+            return new DispatchHandle(taskId, future, false);
+        }
 
         RpcTaskQueue.RpcTask task = new RpcTaskQueue.RpcTask();
         task.setTaskId(taskId);

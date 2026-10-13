@@ -19,12 +19,6 @@ public class ReloadReport {
     /** 解析失败的光猫档案数。 */
     private int profileFailed;
 
-    /** 工单模板总数。 */
-    private int worklistTotal;
-
-    /** 解析失败的工单模板数。 */
-    private int worklistFailed;
-
     /** 重载耗时(毫秒)。 */
     private long durationMs;
 
@@ -38,6 +32,6 @@ public class ReloadReport {
      * 是否全部成功。
      */
     public boolean isSuccess() {
-        return profileFailed == 0 && worklistFailed == 0;
+        return profileFailed == 0;
     }
 }

@@ -116,6 +116,18 @@ export const constantRoutes = [
     ]
   },
 
+  {
+    path: '/olt',
+    component: Layout,
+    redirect: '/olt/management',
+    children: [{
+      path: 'management',
+      name: 'OltManagement',
+      component: () => import('@/views/olt/management'),
+      meta: { title: 'OLT管理', icon: 'el-icon-s-platform' }
+    }]
+  },
+
   // 404 page must be placed at the end !!!
   { path: '*', redirect: '/404', hidden: true }
 ]

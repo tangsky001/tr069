@@ -1,7 +1,6 @@
 package com.tr069.acs.api.service;
 
-import com.tr069.acs.worklist.model.WorklistTemplate;
-import com.tr069.acs.worklist.registry.WorklistRegistry;
+import com.tr069.acs.template.service.ConfigTemplateService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,7 +29,7 @@ public class DashboardService {
     private static final int NOT_DELETED = 0;
 
     private final JdbcTemplate jdbcTemplate;
-    private final WorklistRegistry worklistRegistry;
+    private final ConfigTemplateService configTemplateService;
 
     /** 判定在线的「最近上报」时间窗口(秒)。 */
     @Value("${acs.dashboard.online-window-seconds:900}")
@@ -98,21 +97,18 @@ public class DashboardService {
     }
 
     /**
-     * 配置模板统计：总数、已迁移（可下发）数量。
+     * 配置模板统计：意图模板总数与启用数。
      */
     private Map<String, Object> templateStats() {
-        int total = 0;
-        int migrated = 0;
-        for (WorklistTemplate template : worklistRegistry.validValues()) {
-            total++;
-            if (template.isStepsMigrated()) {
-                migrated++;
+        int enabled = 0;
+        for (Map<String, Object> template : configTemplateService.list(null, null)) {
+            if (Boolean.TRUE.equals(template.get("enabled"))) {
+                enabled++;
             }
         }
         Map<String, Object> stats = new LinkedHashMap<>();
-        stats.put("total", total);
-        stats.put("migrated", migrated);
-        stats.put("unmigrated", total - migrated);
+        stats.put("total", configTemplateService.count());
+        stats.put("enabled", enabled);
         return stats;
     }
 

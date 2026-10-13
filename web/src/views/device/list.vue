@@ -28,7 +28,16 @@
       </div>
     </el-card>
 
-    <el-table v-loading="loading" :data="displayList" border fit highlight-current-row style="width:100%">
+    <el-table
+      v-loading="loading"
+      :data="displayList"
+      border
+      fit
+      highlight-current-row
+      style="width:100%"
+      @selection-change="handleSelectionChange"
+    >
+      <el-table-column type="selection" width="42" align="center" />
       <!-- 设备标识：只放 SN 与在线状态，其余字段归「终端信息」列 -->
       <el-table-column label="设备标识" min-width="190">
         <template slot-scope="{ row }">
@@ -65,7 +74,10 @@
               v-if="wanList(row.sn).length"
               type="primary"
               @click="openWanParams(row.sn)"
-            >{{ wanList(row.sn).length }}WAN连接参数</el-link>
+            >
+              <el-tag type="primary" size="mini" class="wan-count">{{ wanList(row.sn).length }}</el-tag>
+              <span>条 WAN 连接</span>
+            </el-link>
             <span v-else class="cell-empty">-</span>
           </template>
         </el-table-column>
@@ -123,7 +135,6 @@
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template slot-scope="{ row }">
-          <el-button type="text" size="mini" @click="openBiz(row.sn)">下发业务</el-button>
           <el-dropdown trigger="click" size="mini" @command="cmd => handleDeviceCommand(cmd, row)">
             <el-button type="text" size="mini">
               业务/操作<i class="el-icon-arrow-down el-icon--right" />
@@ -150,6 +161,141 @@
       @current-change="load"
     />
 
+    <!-- 右下角批量操作工具条 -->
+    <div class="batch-bar">
+      <span class="batch-label">模版关键字</span>
+      <el-select
+        v-model="selectedTemplate"
+        filterable
+        clearable
+        placeholder="== 业务模版 =="
+        size="small"
+        style="width:160px"
+      >
+        <el-option-group label="== 配置模板 ==">
+          <el-option
+            v-for="t in templates"
+            :key="t.id"
+            :label="t.name"
+            :value="t.id"
+          >
+            <span>{{ t.name }}</span>
+            <span class="member-hint">{{ t.categoryLabel || t.category }}</span>
+          </el-option>
+        </el-option-group>
+      </el-select>
+      <el-button size="small" type="primary" plain @click="batchDispatchTemplate">批量下发模版</el-button>
+
+      <el-dropdown trigger="click" @command="cmd => handleBatchCommand(cmd)">
+        <el-button size="small">一键工单<i class="el-icon-caret-top el-icon--right" /></el-button>
+        <el-dropdown-menu slot="dropdown">
+          <el-dropdown-item command="worklist-record" icon="el-icon-tickets">工单记录</el-dropdown-item>
+          <el-dropdown-item command="worklist-batch" icon="el-icon-s-order" divided>批量开通工单</el-dropdown-item>
+          <el-dropdown-item command="worklist-repair" icon="el-icon-s-tools">批量检修工单</el-dropdown-item>
+        </el-dropdown-menu>
+      </el-dropdown>
+
+      <el-dropdown trigger="click" @command="cmd => handleBatchCommand(cmd)">
+        <el-button size="small">更多...<i class="el-icon-caret-top el-icon--right" /></el-button>
+        <el-dropdown-menu slot="dropdown">
+          <el-dropdown-item command="query-admin-pwd">查询超管密码</el-dropdown-item>
+          <el-dropdown-item command="set-admin-pwd">设置超管密码</el-dropdown-item>
+          <el-dropdown-item command="query-telnet" divided>开启/查询 Telnet</el-dropdown-item>
+          <el-dropdown-item command="close-telnet">关闭 Telnet</el-dropdown-item>
+          <el-dropdown-item command="open-wan-access" divided>开启 WAN 侧访问</el-dropdown-item>
+          <el-dropdown-item command="close-wan-access">关闭 WAN 侧访问</el-dropdown-item>
+          <el-dropdown-item command="toggle-wifi">一键开启/关闭 WiFi</el-dropdown-item>
+          <el-dropdown-item command="disable-sip">禁用 SIP 电话</el-dropdown-item>
+          <el-dropdown-item command="del-wans">删除所有WAN连接(TR069除外)</el-dropdown-item>
+          <el-dropdown-item command="unlock-net">解除上网限制(将重启光猫)</el-dropdown-item>
+          <el-dropdown-item command="diagnose">诊断测试</el-dropdown-item>
+          <el-dropdown-item command="clear-cache">删除设备缓存</el-dropdown-item>
+          <el-dropdown-item command="mark-swap">标记并置换光猫</el-dropdown-item>
+          <el-dropdown-item command="factory-clear" divided>恢复出厂并清零（不再接受汇报）</el-dropdown-item>
+          <el-dropdown-item command="factory-reset">恢复出厂配置</el-dropdown-item>
+          <el-dropdown-item command="deep-factory-reset">深度恢复出厂</el-dropdown-item>
+          <el-dropdown-item command="deep-factory-clear">深度恢复出厂并清零（不再接受汇报）</el-dropdown-item>
+        </el-dropdown-menu>
+      </el-dropdown>
+
+      <el-dropdown trigger="click" @command="cmd => handleAdvancedCommand(cmd)">
+        <el-button size="small">高级...<i class="el-icon-caret-top el-icon--right" /></el-button>
+        <el-dropdown-menu slot="dropdown">
+          <el-dropdown-item command="export">导出设备</el-dropdown-item>
+          <el-dropdown-item command="custom-param">下发自定义 TR069 参数值</el-dropdown-item>
+          <el-dropdown-item command="debug">调试指令</el-dropdown-item>
+          <el-dropdown-item command="telnet">执行 Telnet 命令</el-dropdown-item>
+          <el-dropdown-item command="strip-ssid">去除 WiFi SSID 前缀</el-dropdown-item>
+          <el-dropdown-item command="fix-sip">修复 SIP 注册错误</el-dropdown-item>
+          <el-dropdown-item command="fix-bridge">修复 Internet 桥接/DHCP 透传</el-dropdown-item>
+          <el-dropdown-item command="export-config">导出配置文件</el-dropdown-item>
+          <el-dropdown-item command="clone-config">克隆配置文件</el-dropdown-item>
+          <el-dropdown-item command="force-report">强制上报/上线</el-dropdown-item>
+          <el-dropdown-item command="refresh">刷新状态</el-dropdown-item>
+        </el-dropdown-menu>
+      </el-dropdown>
+
+      <el-dropdown trigger="click" @command="cmd => handleOltCommand(cmd)">
+        <el-button size="small">OLT融合管理<i class="el-icon-caret-top el-icon--right" /></el-button>
+        <el-dropdown-menu slot="dropdown">
+          <el-dropdown-item command="olt-mgr" icon="el-icon-s-platform">OLT/ONU 管理</el-dropdown-item>
+          <el-dropdown-item command="olt-topo" icon="el-icon-share" divided>OLT 拓扑（开发中）</el-dropdown-item>
+        </el-dropdown-menu>
+      </el-dropdown>
+
+      <el-button size="small" type="warning" plain @click="batchReboot">重启</el-button>
+    </div>
+
+    <!-- 下发自定义 TR069 参数弹窗 -->
+    <el-dialog title="下发自定义 TR069 参数值" :visible.sync="customParamVisible" width="640px">
+      <el-form label-width="100px" size="small">
+        <el-form-item label="目标设备">
+          <span>{{ customParamScope }}</span>
+        </el-form-item>
+        <el-form-item v-for="(row, idx) in customParamRows" :key="idx">
+          <div class="custom-param-row">
+            <el-input v-model="row.name" placeholder="参数路径，如 InternetGatewayDevice.DeviceInfo.X_..." style="width:56%" />
+            <el-input v-model="row.value" placeholder="值" style="width:22%" />
+            <el-select v-model="row.type" style="width:20%">
+              <el-option label="xsd:string" value="xsd:string" />
+              <el-option label="xsd:boolean" value="xsd:boolean" />
+              <el-option label="xsd:int" value="xsd:int" />
+              <el-option label="xsd:unsignedInt" value="xsd:unsignedInt" />
+            </el-select>
+            <el-button type="text" icon="el-icon-delete" @click="customParamRows.splice(idx, 1)" />
+          </div>
+        </el-form-item>
+        <el-form-item>
+          <el-button size="mini" icon="el-icon-plus" @click="customParamRows.push({ name: '', value: '', type: 'xsd:string' })">加一行</el-button>
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button type="primary" @click="submitCustomParam">下发</el-button>
+        <el-button @click="customParamVisible = false">取消</el-button>
+      </span>
+    </el-dialog>
+
+    <!-- 调试指令弹窗 -->
+    <el-dialog title="调试指令" :visible.sync="debugVisible" width="620px">
+      <el-form label-width="100px" size="small">
+        <el-form-item label="目标设备">
+          <span>{{ customParamScope }}</span>
+        </el-form-item>
+        <el-form-item label="RPC 方法">
+          <el-select v-model="debugForm.rpc" filterable allow-create style="width:100%">
+            <el-option v-for="m in rpcMethods" :key="m" :label="m" :value="m" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="参数 JSON">
+          <el-input v-model="debugForm.args" type="textarea" :rows="5" placeholder="{&quot;parameterNames&quot;:[&quot;InternetGatewayDevice.&quot;]}" />
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button type="primary" @click="submitDebug">下发</el-button>
+        <el-button @click="debugVisible = false">取消</el-button>
+      </span>
+    </el-dialog>
+
     <el-dialog title="在线会话明细" :visible.sync="onlineVisible" width="900px">
       <el-table :data="onlineList" border size="small" max-height="460">
         <el-table-column label="序列号" prop="sn" min-width="180" show-overflow-tooltip />
@@ -174,66 +320,6 @@
       width="960px"
     >
       <device-business-panel v-if="businessVisible" :sn="businessSn" />
-    </el-dialog>
-
-    <el-dialog title="一键下发" :visible.sync="bizVisible" width="620px">
-      <el-form label-width="110px" size="small">
-        <el-form-item label="设备序列号">
-          <span class="sn-text">{{ bizForm.sn }}</span>
-        </el-form-item>
-        <el-form-item label="模板" required>
-          <el-select
-            v-model="bizForm.templateSel"
-            filterable
-            placeholder="业务模板整包下发，配置模板单条下发"
-            style="width:100%"
-          >
-            <el-option-group label="== 业务模板 ==">
-              <el-option
-                v-for="t in bizTemplates"
-                :key="'biz' + t.template.id"
-                :label="t.template.name"
-                :value="'biz:' + t.template.id"
-              >
-                <span>{{ t.template.name }}</span>
-                <span class="member-hint">{{ (t.items || []).length }} 个配置模板</span>
-              </el-option>
-            </el-option-group>
-            <el-option-group label="== 配置模板 ==">
-              <el-option
-                v-for="t in cfgTemplates"
-                :key="'cfg' + t.key"
-                :label="t.name"
-                :value="'cfg:' + t.key"
-              >
-                <span>{{ t.name }}</span>
-                <span class="member-hint">{{ t.group || t.deviceType || '' }}</span>
-              </el-option>
-            </el-option-group>
-          </el-select>
-        </el-form-item>
-      </el-form>
-
-      <div v-if="bizProgress.id" class="biz-progress">
-        <div>
-          状态：<el-tag size="mini" :type="bizStatusType(bizProgress.status)">{{ bizStatusText(bizProgress.status) }}</el-tag>
-          进度：{{ bizProgress.finishedCount || 0 }} / {{ bizProgress.totalCount || 0 }}
-        </div>
-        <el-table :data="bizItems" border size="small" max-height="240" style="margin-top:8px">
-          <el-table-column label="配置模板" prop="templateKey" min-width="260" show-overflow-tooltip />
-          <el-table-column label="结果" width="90">
-            <template slot-scope="{ row }">
-              <el-tag size="mini" :type="row.success ? 'success' : 'danger'">{{ row.success ? '成功' : '失败' }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="说明" prop="error" min-width="150" show-overflow-tooltip />
-        </el-table>
-      </div>
-
-      <span slot="footer">
-        <el-button @click="closeBiz">关闭</el-button>
-        <el-button type="primary" :loading="bizExecuting" @click="doBizExecute">一键下发</el-button>
-      </span>
     </el-dialog>
 
     <el-dialog
@@ -323,9 +409,9 @@
 
 <script>
 import { fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch } from '@/api/device'
-import { fetchTemplates, executeWorklist } from '@/api/worklist'
 import { fetchRpcResult } from '@/api/rpc'
-import { fetchBizTemplates, executeBizTemplate, fetchBizExecution } from '@/api/bizTemplate'
+import { fetchConfigTemplates } from '@/api/configTemplate'
+import { RPC_METHODS } from '@/api/device'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
 import { ponTypeOf, opticStateOf } from '@/utils/deviceOptic'
@@ -351,13 +437,15 @@ export default {
       onlineVisible: false,
       businessVisible: false,
       businessSn: '',
-      bizVisible: false,
-      bizExecuting: false,
-      bizTemplates: [],
-      cfgTemplates: [],
-      bizForm: { sn: '', templateSel: null },
-      bizProgress: {},
-      bizTimer: null,
+      // 批量操作工具条
+      selection: [],
+      templates: [],
+      selectedTemplate: '',
+      customParamVisible: false,
+      customParamRows: [{ name: '', value: '', type: 'xsd:string' }],
+      debugVisible: false,
+      debugForm: { rpc: 'GetParameterValues', args: '{}' },
+      rpcMethods: RPC_METHODS,
       query: {
         page: 1,
         size: 20,
@@ -368,6 +456,12 @@ export default {
     }
   },
   computed: {
+    // 自定义参数/调试指令弹窗里的目标设备描述
+    customParamScope() {
+      const sns = this.selectedSns()
+      if (!sns.length) return '（未勾选设备，请先在列表勾选）'
+      return sns.length === 1 ? sns[0] : '已勾选 ' + sns.length + ' 台设备'
+    },
     detailTitle() {
       const row = this.detailRow
       if (!row) return '设备详情'
@@ -386,23 +480,12 @@ export default {
           this.sortVal(a, key).localeCompare(this.sortVal(b, key), 'zh') * dir)
       }
       return rows
-    },
-    bizItems() {
-      const raw = this.bizProgress.result
-      if (!raw) return []
-      try {
-        return JSON.parse(raw)
-      } catch (e) {
-        return []
-      }
     }
   },
   created() {
     this.load()
     this.loadOnline()
-  },
-  beforeDestroy() {
-    this.stopBizPolling()
+    this.loadTemplates()
   },
   methods: {
     async load() {
@@ -671,104 +754,146 @@ export default {
       }, 3000)
     },
 
-    // ---------------- 一键下发（业务模板整包 / 配置模板单条） ----------------
-    async openBiz(sn) {
-      this.bizForm = { sn, templateSel: null }
-      this.bizProgress = {}
-      this.bizVisible = true
-      if (this.bizTemplates.length === 0) {
-        try {
-          const res = await fetchBizTemplates()
-          this.bizTemplates = res.data || []
-        } catch (e) {
-          this.bizTemplates = []
-        }
-      }
-      if (this.cfgTemplates.length === 0) {
-        try {
-          const res = await fetchTemplates()
-          this.cfgTemplates = res.data || []
-        } catch (e) {
-          this.cfgTemplates = []
-        }
-      }
-    },
-    async doBizExecute() {
-      const sel = this.bizForm.templateSel
-      if (!sel) {
-        this.$message.warning('请选择模板')
-        return
-      }
-      this.bizExecuting = true
-      try {
-        if (sel.startsWith('biz:')) {
-          const res = await executeBizTemplate({
-            templateId: Number(sel.slice(4)),
-            sn: this.bizForm.sn
-          })
-          this.$message.success('业务模板已提交下发')
-          this.startBizPolling(res.data.executionId)
-        } else {
-          // 配置模板走工单通道：提交即返回工单号，进度在工作单页看
-          const key = sel.slice(4)
-          const res = await executeWorklist({
-            sn: this.bizForm.sn,
-            templateKey: key,
-            username: ''
-          })
-          const wlId = res.data && res.data.worklistId
-          this.$message.success('工单已提交' + (wlId != null ? '（工单号 ' + wlId + '）' : ''))
-          this.bizProgress = {
-            status: 'running',
-            templateName: key,
-            sn: this.bizForm.sn,
-            totalCount: 1,
-            finishedCount: 0
-          }
-        }
-      } catch (e) {
-        this.$message.error((e && e.message) || '下发失败')
-      } finally {
-        this.bizExecuting = false
-      }
-    },
-    startBizPolling(id) {
-      this.stopBizPolling()
-      const tick = async() => {
-        try {
-          const res = await fetchBizExecution(id)
-          this.bizProgress = res.data || {}
-          if (this.bizProgress.status !== 'running') {
-            this.stopBizPolling()
-          }
-        } catch (e) {
-          this.stopBizPolling()
-        }
-      }
-      tick()
-      this.bizTimer = setInterval(tick, 3000)
-    },
-    stopBizPolling() {
-      if (this.bizTimer) {
-        clearInterval(this.bizTimer)
-        this.bizTimer = null
-      }
-    },
-    closeBiz() {
-      this.stopBizPolling()
-      this.bizVisible = false
-    },
-    bizStatusText(status) {
-      const map = { running: '执行中', success: '全部成功', partial: '部分成功', fail: '失败' }
-      return map[status] || status || '-'
-    },
-    bizStatusType(status) {
-      const map = { running: '', success: 'success', partial: 'warning', fail: 'danger' }
-      return map[status] || 'info'
-    },
     formatTime(value) {
       if (!value) return '-'
       return String(value).replace('T', ' ')
+    },
+
+    // ---------------- 右下角批量操作工具条 ----------------
+    handleSelectionChange(rows) {
+      this.selection = rows
+    },
+    selectedSns() {
+      return this.selection.map(r => r.sn)
+    },
+    // 批量操作前校验勾选，返回 SN 列表；未勾选提示并返回 null
+    requireSelection() {
+      const sns = this.selectedSns()
+      if (!sns.length) {
+        this.$message.warning('请先勾选要操作的设备')
+        return null
+      }
+      return sns
+    },
+    loadTemplates() {
+      fetchConfigTemplates({}).then(res => {
+        this.templates = res.data || []
+      }).catch(() => {
+        this.templates = []
+      })
+    },
+    batchDispatchTemplate() {
+      const sns = this.requireSelection()
+      if (!sns) return
+      if (!this.selectedTemplate) {
+        this.$message.warning('请先选择模版关键字')
+        return
+      }
+      // 下发逻辑：按模板意图 + 型号映射生成真实参数，待后端实现后接入
+      this.todoPending('批量下发模版（下发逻辑待接入）')
+    },
+    handleBatchCommand(cmd) {
+      if (cmd === 'worklist-record') {
+        this.$router.push({ name: 'WorklistInstances' })
+        return
+      }
+      // 恢复出厂类命令走现有 FactoryReset RPC，其余待后端接入
+      if (['factory-clear', 'factory-reset', 'deep-factory-reset', 'deep-factory-clear'].includes(cmd)) {
+        const sns = this.requireSelection()
+        if (!sns) return
+        this.$confirm('恢复出厂会清空设备全部配置，对已勾选 ' + sns.length + ' 台设备执行？', '恢复出厂', { type: 'warning' })
+          .then(() => sns.forEach(sn => this.quickRpc(sn, 'FactoryReset', {}, true)))
+          .catch(() => {})
+        return
+      }
+      this.todoPending('批量操作：' + cmd)
+    },
+    handleOltCommand(cmd) {
+      if (cmd === 'olt-mgr') {
+        this.$router.push({ name: 'OltManagement' })
+        return
+      }
+      this.todoPending('OLT 融合管理')
+    },
+    handleAdvancedCommand(cmd) {
+      const sns = this.requireSelection()
+      if (!sns) return
+      switch (cmd) {
+        case 'export':
+          this.exportDevices(sns)
+          break
+        case 'custom-param':
+          this.customParamVisible = true
+          break
+        case 'debug':
+          this.debugVisible = true
+          break
+        case 'refresh':
+          this.refreshStatus()
+          break
+        default:
+          this.todoPending('高级操作：' + cmd)
+      }
+    },
+    submitCustomParam() {
+      const rows = this.customParamRows.filter(r => r.name)
+      if (!rows.length) {
+        this.$message.warning('请至少填写一条参数')
+        return
+      }
+      const sns = this.requireSelection()
+      if (!sns) return
+      const values = rows.map(r => [r.name, r.value, r.type])
+      sns.forEach(sn => {
+        dispatchRpc(sn, 'SetParameterValues', { parameterValues: values })
+          .catch(() => {})
+      })
+      this.$message.success('已向 ' + sns.length + ' 台设备下发 SetParameterValues')
+    },
+    submitDebug() {
+      const sns = this.requireSelection()
+      if (!sns) return
+      let args = {}
+      try {
+        args = JSON.parse(this.debugForm.args || '{}')
+      } catch (e) {
+        this.$message.error('参数 JSON 格式不正确')
+        return
+      }
+      sns.forEach(sn => this.quickRpc(sn, this.debugForm.rpc, args, true))
+      this.debugVisible = false
+    },
+    exportDevices(sns) {
+      const rows = sns.length ? this.list.filter(r => sns.includes(r.sn)) : this.displayList
+      const header = ['SN', 'OUI', '运营商', '型号', '硬件版本', '固件版本', '状态', '注册时间', '最近上报']
+      const lines = rows.map(r => [
+        r.sn, r.oui, r.isp, r.productClass || r.deviceType, r.hardwareVersion,
+        r.softwareVersion, this.isOnline(r) ? '在线' : '离线',
+        this.formatTime(r.createdAt), this.formatTime(r.lastContactTime)
+      ])
+      const csv = [header].concat(lines).map(l => l.join(',')).join('\n')
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = 'devices.csv'
+      link.click()
+      URL.revokeObjectURL(link.href)
+    },
+    refreshStatus() {
+      this.load()
+      this.loadOnline()
+      this.$message.success('已刷新列表与在线状态')
+    },
+    // 批量重启：勾选设备逐台下发 Reboot
+    batchReboot() {
+      const sns = this.requireSelection()
+      if (!sns) return
+      this.$confirm('确认重启已勾选的 ' + sns.length + ' 台设备？', '批量重启', { type: 'warning' })
+        .then(() => sns.forEach(sn => this.quickRpc(sn, 'Reboot', {}, true)))
+        .catch(() => {})
+    },
+    todoPending(text) {
+      this.$message.info(text + '：功能开发中，后端接口接入后启用')
     }
   }
 }
@@ -785,6 +910,28 @@ export default {
 .pager {
   margin-top: 16px;
   text-align: right;
+}
+/* 右下角批量操作工具条 */
+.batch-bar {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.batch-bar .batch-label {
+  color: #909399;
+  font-size: 12px;
+  margin-right: 2px;
+}
+.batch-bar .el-button + .el-button {
+  margin-left: 0;
+}
+.custom-param-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .sn-text {
   color: #303133;
@@ -813,6 +960,15 @@ export default {
 }
 .cell-empty {
   color: #c0c4cc;
+}
+.mode-tip {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+.wan-count {
+  margin-right: 4px;
 }
 .biz-row {
   display: flex;

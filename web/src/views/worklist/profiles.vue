@@ -15,11 +15,6 @@
           <el-tag v-if="status.profileInvalidCount" type="danger" size="small">{{ status.profileInvalidCount }}</el-tag>
           <span v-else>0</span>
         </span></el-col>
-        <el-col :span="6"><span class="k">工单模板</span><span class="v">{{ status.worklistCount == null ? '-' : status.worklistCount }}</span></el-col>
-        <el-col :span="6"><span class="k">模板异常</span><span class="v">
-          <el-tag v-if="status.worklistInvalidCount" type="danger" size="small">{{ status.worklistInvalidCount }}</el-tag>
-          <span v-else>0</span>
-        </span></el-col>
         <el-col :span="12"><span class="k">配置版本</span><span class="v">{{ status.version == null ? '-' : status.version }}</span></el-col>
         <el-col :span="12"><span class="k">最近加载</span><span class="v">{{ status.lastLoadTime || '-' }}</span></el-col>
       </el-row>

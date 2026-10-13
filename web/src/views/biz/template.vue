@@ -54,7 +54,6 @@
       <el-table-column label="编辑" width="230" fixed="right">
         <template slot-scope="{ row }">
           <el-button type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
-          <el-button type="text" size="mini" icon="el-icon-s-promotion" @click="openExecute(row)">下发</el-button>
           <el-button type="text" size="mini" icon="el-icon-copy-document" @click="openCopy(row)">复制</el-button>
           <el-button type="text" size="mini" icon="el-icon-delete" class="danger-text" @click="handleDelete(row)">删除</el-button>
         </template>
@@ -168,90 +167,6 @@
         <el-button type="primary" @click="confirmParams">确定</el-button>
       </span>
     </el-dialog>
-
-    <!-- 下发 -->
-    <el-dialog :title="'下发业务模板 - ' + execTitle" :visible.sync="execVisible" width="560px">
-      <el-form label-width="110px" size="small">
-        <el-form-item label="设备序列号" required>
-          <el-input v-model="execForm.sn" placeholder="光猫序列号" />
-          <el-button type="text" size="mini" @click="openDevicePicker">从设备列表选择</el-button>
-        </el-form-item>
-        <el-form-item label="操作人">
-          <el-input v-model="execForm.username" placeholder="可空" />
-        </el-form-item>
-      </el-form>
-      <el-alert
-        v-if="execIssues.length > 0"
-        type="warning"
-        :closable="false"
-        :title="'下发前检查未通过'"
-        :description="execIssues.join('；')"
-        class="issue-alert"
-      />
-      <span slot="footer">
-        <el-button @click="execVisible = false">取消</el-button>
-        <el-button type="primary" :loading="executing" :disabled="execIssues.length > 0" @click="doExecute">开始下发</el-button>
-      </span>
-    </el-dialog>
-
-    <!-- 设备选择 -->
-    <el-dialog title="选择设备" :visible.sync="deviceVisible" width="800px" append-to-body>
-      <el-input v-model="deviceKeyword" size="small" placeholder="序列号模糊匹配" clearable style="width:240px;margin-bottom:8px" @keyup.enter.native="loadDevices" />
-      <el-button size="small" icon="el-icon-search" @click="loadDevices">查询</el-button>
-      <el-table :data="devices" border size="small" max-height="380">
-        <el-table-column label="序列号" prop="sn" min-width="180" show-overflow-tooltip />
-        <el-table-column label="厂商" prop="manufacturer" width="120" show-overflow-tooltip />
-        <el-table-column label="设备类型" prop="deviceType" width="120" />
-        <el-table-column label="最近上报" min-width="160">
-          <template slot-scope="{ row }">
-            <span>{{ formatTime(row.lastContactTime) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90">
-          <template slot-scope="{ row }">
-            <el-button type="text" size="mini" @click="pickDevice(row)">选择</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-dialog>
-
-    <!-- 下发进度 -->
-    <el-dialog title="下发进度" :visible.sync="progressVisible" width="760px">
-      <el-descriptions :column="2" size="small" border>
-        <el-descriptions-item label="业务模板">{{ progress.templateName }}</el-descriptions-item>
-        <el-descriptions-item label="设备">{{ progress.sn }}</el-descriptions-item>
-        <el-descriptions-item label="状态">
-          <el-tag size="mini" :type="statusType(progress.status)">{{ statusText(progress.status) }}</el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="进度">
-          {{ progress.finishedCount || 0 }} / {{ progress.totalCount || 0 }}
-          （成功 {{ progress.successCount || 0 }}，失败 {{ progress.failCount || 0 }}）
-        </el-descriptions-item>
-      </el-descriptions>
-      <el-alert
-        v-if="progress.errorMessage"
-        type="error"
-        :closable="false"
-        :title="progress.errorMessage"
-        style="margin-top:10px"
-      />
-      <el-table :data="progressItems" border size="small" style="margin-top:10px" max-height="300">
-        <el-table-column label="顺序" prop="order" width="70" />
-        <el-table-column label="配置模板" prop="templateKey" min-width="280" show-overflow-tooltip />
-        <el-table-column label="工单号" prop="worklistId" width="110" />
-        <el-table-column label="结果" width="100">
-          <template slot-scope="{ row }">
-            <el-tag size="mini" :type="row.success ? 'success' : 'danger'">
-              {{ row.success ? '成功' : '失败' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="说明" prop="error" min-width="160" show-overflow-tooltip />
-      </el-table>
-      <span slot="footer">
-        <el-button @click="progressVisible = false">关闭</el-button>
-      </span>
-    </el-dialog>
   </div>
 </template>
 
@@ -259,13 +174,9 @@
 import {
   fetchBizTemplates,
   saveBizTemplate,
-  deleteBizTemplate,
-  validateBizTemplate,
-  executeBizTemplate,
-  fetchBizExecution
+  deleteBizTemplate
 } from '@/api/bizTemplate'
-import { fetchTemplates } from '@/api/worklist'
-import { fetchDevicePage } from '@/api/device'
+import { fetchConfigTemplates } from '@/api/configTemplate'
 
 export default {
   name: 'BizTemplateList',
@@ -273,7 +184,6 @@ export default {
     return {
       loading: false,
       saving: false,
-      executing: false,
       keyword: '',
       list: [],
       templateOptions: [],
@@ -282,36 +192,12 @@ export default {
       editForm: { id: null, name: '', groupName: '', remark: '', enabled: true, continueOnError: false, items: [] },
       paramsVisible: false,
       paramRows: [],
-      paramIndex: -1,
-      execVisible: false,
-      execTitle: '',
-      execForm: { templateId: null, sn: '', username: '' },
-      execIssues: [],
-      deviceVisible: false,
-      deviceKeyword: '',
-      devices: [],
-      progressVisible: false,
-      progress: {},
-      progressTimer: null
-    }
-  },
-  computed: {
-    progressItems() {
-      const raw = this.progress.result
-      if (!raw) return []
-      try {
-        return JSON.parse(raw)
-      } catch (e) {
-        return []
-      }
+      paramIndex: -1
     }
   },
   created() {
     this.load()
     this.loadTemplates()
-  },
-  beforeDestroy() {
-    if (this.progressTimer) clearInterval(this.progressTimer)
   },
   methods: {
     async load() {
@@ -327,10 +213,11 @@ export default {
     },
     async loadTemplates() {
       try {
-        const res = await fetchTemplates()
+        // 成员引用的是配置意图模板，存它的 id
+        const res = await fetchConfigTemplates()
         this.templateOptions = (res.data || []).map(t => ({
-          key: t.key,
-          label: `[${t.category}] ${t.name} · ${t.deviceType}`
+          key: String(t.id),
+          label: `[${t.categoryLabel || t.category}] ${t.name}`
         }))
       } catch (e) {
         this.templateOptions = []
@@ -378,7 +265,7 @@ export default {
       this.editVisible = true
     },
     addMember() {
-      this.editForm.items.push({ templateKey: '', remark: '', params: {} })
+      this.editForm.items.push({ templateKey: '', remark: '', params: {}})
     },
     removeMember(index) {
       this.editForm.items.splice(index, 1)
@@ -463,87 +350,6 @@ export default {
       this.load()
     },
 
-    // ---------------- 下发 ----------------
-    async openExecute(row) {
-      this.execTitle = row.template.name
-      this.execForm = { templateId: row.template.id, sn: '', username: '' }
-      this.execIssues = []
-      this.execVisible = true
-      try {
-        const res = await validateBizTemplate(row.template.id)
-        this.execIssues = (res.data && res.data.issues) || []
-      } catch (e) {
-        this.execIssues = []
-      }
-    },
-    async doExecute() {
-      if (!this.execForm.sn) {
-        this.$message.warning('请填写设备序列号')
-        return
-      }
-      this.executing = true
-      try {
-        const res = await executeBizTemplate({
-          templateId: this.execForm.templateId,
-          sn: this.execForm.sn,
-          username: this.execForm.username || null
-        })
-        this.execVisible = false
-        this.progress = { id: res.data.executionId, status: 'running' }
-        this.progressVisible = true
-        this.startPolling(res.data.executionId)
-      } catch (e) {
-        this.$message.error((e && e.message) || '下发失败')
-      } finally {
-        this.executing = false
-      }
-    },
-    startPolling(id) {
-      if (this.progressTimer) clearInterval(this.progressTimer)
-      const tick = async() => {
-        try {
-          const res = await fetchBizExecution(id)
-          this.progress = res.data || {}
-          if (this.progress.status !== 'running') {
-            clearInterval(this.progressTimer)
-            this.progressTimer = null
-            this.load()
-          }
-        } catch (e) {
-          clearInterval(this.progressTimer)
-          this.progressTimer = null
-        }
-      }
-      tick()
-      this.progressTimer = setInterval(tick, 3000)
-    },
-    statusText(status) {
-      const map = { running: '执行中', success: '全部成功', partial: '部分成功', fail: '失败' }
-      return map[status] || status || '-'
-    },
-    statusType(status) {
-      const map = { running: '', success: 'success', partial: 'warning', fail: 'danger' }
-      return map[status] || 'info'
-    },
-
-    // ---------------- 设备选择 ----------------
-    openDevicePicker() {
-      this.deviceVisible = true
-      this.deviceKeyword = ''
-      this.loadDevices()
-    },
-    async loadDevices() {
-      try {
-        const res = await fetchDevicePage({ page: 1, size: 50, sn: this.deviceKeyword })
-        this.devices = (res.data && res.data.items) || []
-      } catch (e) {
-        this.devices = []
-      }
-    },
-    pickDevice(row) {
-      this.execForm.sn = row.sn
-      this.deviceVisible = false
-    },
     formatTime(value) {
       if (!value) return '-'
       return String(value).replace('T', ' ')

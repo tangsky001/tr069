@@ -19,7 +19,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * </ul>
  */
 @EnableScheduling
-@MapperScan({"com.tr069.acs.mapper", "com.tr069.acs.biz.mapper"})
+@MapperScan({"com.tr069.acs.mapper", "com.tr069.acs.biz.mapper", "com.tr069.acs.template.mapper"})
 @ConfigurationPropertiesScan("com.tr069.acs")
 @SpringBootApplication
 public class JavaAcsApplication {

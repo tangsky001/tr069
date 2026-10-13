@@ -40,7 +40,7 @@ javaacs/
     ├── sql/schema.sql                 # 主库建表脚本（部署必需，已入库）
     ├── deploy/config/application.yml.example   # 外置配置模板
     ├── configuration/                 # 工单模板与光猫适配（jar 外，热加载）
-    │   ├── operators/                 # 工单模板 {isp}/{version}/{domain}/{deviceType}/*.xml
+    │   ├── operators/                 # 工单模板 {isp}/{version}/{domain}/{name}.yaml|.xml
     │   └── profiles/                  # 光猫适配档案 *.yaml
     ├── src/main/resources/db/biz-template-schema.sql  # 业务模板表，启动时自动建立
     └── web/                           # 前端（vue-admin-template），构建产物 dist/ 不入库

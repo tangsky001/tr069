@@ -35,6 +35,7 @@ public class DeviceCapabilityController {
 
     private final CpeParameterMapper parameterMapper;
     private final DeviceCapabilityService capabilityService;
+    private final com.tr069.acs.worklist.service.ModelTreeStore modelTreeStore;
 
     /**
      * 能力汇总：支持多少路径、对象数、参数数、可写数、最近采集时间与当前采集进度。
@@ -117,6 +118,48 @@ public class DeviceCapabilityController {
         data.put("value", node.getParamValue());
         data.put("valueType", node.getValueType());
         return Result.success(data);
+    }
+
+    /**
+     * 把该设备的参数树导出为型号 XML 文件，路径回写 cpe_model.config_path。
+     *
+     * @param force true 时覆盖已由其它样机导出的同名型号文件
+     */
+    @PostMapping("/export-tree")
+    public Result<com.tr069.acs.worklist.service.ModelTreeStore.ExportResult> exportTree(
+            @PathVariable String sn,
+            @RequestParam(defaultValue = "false") boolean force) {
+        try {
+            return Result.success(modelTreeStore.export(sn, force));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        }
+    }
+
+    /**
+     * 该设备型号的能力树文件位置，即下发前「去库里查路径」这一步。
+     */
+    @GetMapping("/model-file")
+    public Result<Map<String, Object>> modelFile(@PathVariable String sn) {
+        return Result.success(modelTreeStore.locate(sn));
+    }
+
+    /**
+     * 从型号 XML 查某个业务项对应的参数节点，如 item=wan_sip_vlan。
+     *
+     * @param parent 可选，限定在该对象路径下查找
+     */
+    @GetMapping("/biz-params")
+    public Result<List<Map<String, Object>>> bizParams(
+            @PathVariable String sn,
+            @RequestParam String item,
+            @RequestParam(required = false) String parent,
+            @RequestParam(defaultValue = "200") int limit) {
+        try {
+            return Result.success(modelTreeStore.lookup(sn, item, parent, limit));
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        }
     }
 
     private static boolean notBlank(String value) {

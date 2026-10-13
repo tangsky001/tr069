@@ -162,6 +162,11 @@ acs:
       # 启动时自动补建 cpe_parameter 表，存量库升级时不用手工执行 DDL
       auto-create-table: true
 
+  # 配置意图模板（只描述开通意图，入库，不直接下发）
+  config-template:
+    # 启动时自动补建 config_template 表
+    auto-create-table: true
+
   agent:
     # 单个 RPC 等待设备回应的超时(秒)
     rpc-timeout: 510
@@ -206,11 +211,12 @@ acs:
     #   从 target 目录起 jar → server/target/configuration
     # 目录约定：
     #   profiles/                    光猫适配档案 *.yaml
-    #   operators/{isp}/{version}/{domain}/{deviceType}/{name}.xml   工单模板（存量，由 data.py 转换）
+    #   operators/{isp}/{version}/{domain}/{name}.xml   工单模板
     # 该目录为空时，依次回退到 jar 同级的 configuration/、target/configuration/
     root-path: ./configuration
     # 根目录为空时释放示例配置，方便现场照着新增加的光猫改
-    init-sample-if-empty: true
+    # 不再解包任何内置示例：模板与设备档案全部来自现场适配产出
+    init-sample-if-empty: false
     hot-reload:
       # 文件监听 + 增量重载开关
       enabled: true

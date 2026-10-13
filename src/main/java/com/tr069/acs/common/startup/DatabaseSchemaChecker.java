@@ -30,7 +30,7 @@ public class DatabaseSchemaChecker implements ApplicationRunner {
     /** 要求存在的核心表，需与 sql/schema.sql 保持一致。 */
     private static final String[] REQUIRED_TABLES = {
             "sys_user", "operator_config", "cpe_device", "rpc_record",
-            "soap_message", "worklist_template", "worklist", "worklist_step",
+            "soap_message", "worklist", "worklist_step",
             "monitor_rule", "monitor_result", "sys_log"
     };
 

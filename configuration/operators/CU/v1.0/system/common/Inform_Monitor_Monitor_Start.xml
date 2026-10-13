@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<worklist key="CU/v1.0/system/common/Inform_Monitor_Monitor_Start" name="Inform_Monitor_Monitor_Start" isp="CU" version="v1.0" domain="system" deviceType="common" enabled="true" priority="100">
-  <args/>
-  <steps/>
-  <migration sourceScript="CU/v1.0/system/Inform_Monitor_Monitor_Start/script.py" status="pending"/>
-</worklist>

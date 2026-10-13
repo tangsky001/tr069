@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<worklist key="CT/v4.0/system/common/Auto_SetParameterValue" name="Auto_SetParameterValue" isp="CT" version="v4.0" domain="system" deviceType="common" enabled="true" priority="100">
-  <args/>
-  <steps/>
-  <migration sourceScript="CT/v4.0/system/Auto_SetParameterValue/script.py" status="pending"/>
-</worklist>

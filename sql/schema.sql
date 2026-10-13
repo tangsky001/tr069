@@ -128,21 +128,23 @@ CREATE TABLE IF NOT EXISTS `cpe_parameter` (
     KEY `idx_cpe_parameter_collect` (`sn`, `collect_time`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '设备参数能力树，GetParameterNames + GetParameterValues 的采集结果';
 
--- ---------------------------- 工单模板 ----------------------------
-CREATE TABLE IF NOT EXISTS `worklist_template` (
-    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键，对应原 WL_TEMPLATE.TEMPLATE_ID',
-    `isp`         VARCHAR(16)  NOT NULL COMMENT '运营商',
-    `version`     VARCHAR(16)  NOT NULL COMMENT '运营商版本',
-    `domain`      VARCHAR(64)  NOT NULL COMMENT '设备类型，如 GPON_4+1',
-    `method`      VARCHAR(100) NOT NULL COMMENT '工单名，如 WLAN_ADD',
-    `parameters`  TEXT         COMMENT '工单参数模板，JSON',
-    `doc`         TEXT         COMMENT '工单说明',
-    `deleted`     TINYINT      NOT NULL DEFAULT 0,
-    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+-- ---------------------------- 配置意图模板 ----------------------------
+-- 只描述开通意图（IP 协议、是否带 VLAN、是否绑定端口等），不含参数定义与执行步骤；
+-- 下发时由执行器按型号语义映射（model_param_mapping）生成该机型真实 CWMP 参数
+CREATE TABLE IF NOT EXISTS `config_template` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `name`        VARCHAR(128) NOT NULL COMMENT '模板名称',
+    `category`    VARCHAR(32)  NOT NULL COMMENT '类型：WAN_DHCP / WAN_PPPOE / WAN_STATIC / WAN_BRIDGE / WIFI_24G / WIFI_58G / SIP',
+    `group_name`  VARCHAR(64)  COMMENT '业务分组，可空',
+    `enabled`     TINYINT      NOT NULL DEFAULT 1 COMMENT '是否启用',
+    `remark`      VARCHAR(255) COMMENT '备注',
+    `fields`      TEXT         COMMENT '意图字段 JSON，键值与型号语义映射的 biz_field 对齐',
+    `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_worklist_template` (`isp`, `version`, `domain`, `method`, `deleted`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '工单模板，对应原 WL_TEMPLATE';
+    UNIQUE KEY `uk_config_template` (`category`, `name`),
+    KEY `idx_config_template_cat` (`category`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '配置意图模板（只做开通意图描述，不直接下发）';
 
 -- ---------------------------- 工单 ----------------------------
 CREATE TABLE IF NOT EXISTS `worklist` (

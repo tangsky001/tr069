@@ -82,24 +82,6 @@ public class BizTemplateController {
     }
 
     /**
-     * 对指定设备整包下发业务模板。
-     *
-     * <p>立即返回执行记录 id，页面用 {@code GET /api/biz-template/executions/{id}} 轮询进度。</p>
-     */
-    @PostMapping("/execute")
-    public Result<Map<String, Object>> execute(@RequestBody ExecuteRequest request) {
-        if (request == null || request.getTemplateId() == null) {
-            return Result.failure("业务模板不能为空");
-        }
-        Long executionId = executionService.execute(
-                request.getTemplateId(), request.getSn(), request.getParams(), request.getUsername());
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("executionId", executionId);
-        data.put("status", "running");
-        return Result.success(data);
-    }
-
-    /**
      * 下发记录列表。
      */
     @GetMapping("/executions")
@@ -126,18 +108,4 @@ public class BizTemplateController {
         private Long id;
     }
 
-    /**
-     * 整包下发请求体。
-     */
-    @Data
-    public static class ExecuteRequest {
-        /** 业务模板 id。 */
-        private Long templateId;
-        /** 设备序列号。 */
-        private String sn;
-        /** 下发入参，覆盖成员上配置的默认值。 */
-        private Map<String, String> params;
-        /** 操作人。 */
-        private String username;
-    }
 }

@@ -5,6 +5,9 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
+import com.tr069.acs.worklist.model.DeviceProfile;
+import com.tr069.acs.worklist.service.DeviceProfileMatcher;
+import com.tr069.acs.worklist.service.ModelMappingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -31,6 +34,8 @@ public class DeviceRegistryService implements ApplicationRunner {
     private static final String STATUS_OFFLINE = "offline";
 
     private final CpeDeviceMapper cpeDeviceMapper;
+    private final ModelMappingService modelMappingService;
+    private final DeviceProfileMatcher profileMatcher;
 
     /**
      * 启动后把残留的在线标记清掉：会话是内存态，重启后没有设备是在线的。
@@ -65,6 +70,7 @@ public class DeviceRegistryService implements ApplicationRunner {
                 device.setLastContactTime(now);
                 cpeDeviceMapper.insert(device);
                 log.info("设备入库: sn={}, oui={}", session.getSn(), session.getOui());
+                registerModel(session, device);
                 return;
             }
             CpeDevice update = new CpeDevice();
@@ -95,6 +101,29 @@ public class DeviceRegistryService implements ApplicationRunner {
             log.info("设备离线: sn={}", sn);
         } catch (Exception e) {
             log.error("标记设备离线失败: sn={}", sn, e);
+        }
+    }
+
+    /**
+     * 新设备首次上线：按「运营商 + 型号 + 固件」登记型号档案。
+     *
+     * <p>同型号同固件只在库里存在一条记录：已登记的直接复用其映射（免人工适配），
+     * 没登记的建一条待适配记录，等人工在型号映射页补齐一次映射。</p>
+     */
+    private void registerModel(CpeSession session, CpeDevice device) {
+        try {
+            String isp = device.getIsp();
+            if (isp == null || isp.isBlank()) {
+                // 设备自己没带运营商时，用已配置的适配档案反推（CT / CU / CMCC）
+                isp = profileMatcher.match(session.getManufacturer(), session.getOui(),
+                                session.getProductClass(), session.getSoftwareVersion(), session.getSn())
+                        .map(DeviceProfile::getIsp)
+                        .orElse("standard");
+            }
+            modelMappingService.resolveOrRegister(isp, session.getManufacturer(), session.getProductClass(),
+                    session.getSoftwareVersion(), session.getHardwareVersion(), session.getSn());
+        } catch (Exception e) {
+            log.warn("型号登记失败，不影响设备上线: sn={}, err={}", session.getSn(), e.getMessage());
         }
     }
 

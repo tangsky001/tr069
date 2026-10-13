@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<worklist key="CT/v4.0/system/common/Inform_Monitor_Alarm_Stop" name="Inform_Monitor_Alarm_Stop" isp="CT" version="v4.0" domain="system" deviceType="common" enabled="true" priority="100">
-  <args/>
-  <steps/>
-  <migration sourceScript="CT/v4.0/system/Inform_Monitor_Alarm_Stop/script.py" status="pending"/>
-</worklist>

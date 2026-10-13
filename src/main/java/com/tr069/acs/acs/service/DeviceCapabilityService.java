@@ -100,6 +100,7 @@ public class DeviceCapabilityService {
     private final RpcDispatchService rpcDispatchService;
     private final CpeParameterMapper parameterMapper;
     private final QueueProperties queueProperties;
+    private final com.tr069.acs.worklist.service.ModelTreeStore modelTreeStore;
 
     /** 采集总开关。 */
     @Value("${acs.device.capability.enabled:true}")
@@ -136,6 +137,14 @@ public class DeviceCapabilityService {
     /** 采集与回调使用的线程数。 */
     @Value("${acs.device.capability.worker-threads:8}")
     private int workerThreads;
+
+    /** 采集成功后是否把参数树导出为型号 XML 文件（models/{isp}/{型号}.xml）。 */
+    @Value("${acs.device.capability.export-model-tree:true}")
+    private boolean exportModelTree;
+
+    /** 下发前补采时最多等这么久，超时就按现有参数拼路径。 */
+    @Value("${acs.device.capability.auto-collect-timeout-millis:120000}")
+    private long autoCollectTimeoutMillis;
 
     /** 每台设备最近一次采集状态。 */
     private final Map<String, CollectStatus> statuses = new ConcurrentHashMap<>();
@@ -208,6 +217,59 @@ public class DeviceCapabilityService {
     }
 
     /**
+     * 下发前确保这台设备的配置已上报过：没上报就现采一次，等它采完再拼路径。
+     *
+     * <p>模板只说明要下发哪些业务属性，真正能写什么节点得看设备自己上报的树。设备从没上报过
+     * 时这里补一次采集，业务方不用先手工采集再下发。</p>
+     *
+     * @return 结束时这台设备是否已经有了可用参数树
+     */
+    public boolean ensureCollected(String sn) {
+        if (sn == null || sn.isEmpty()) {
+            return false;
+        }
+        if (paramCount(sn) > 0) {
+            return true;
+        }
+        CpeSession session = sessionManager.find(sn);
+        if (session == null) {
+            log.warn("设备不在线，无法补采能力树: sn={}", sn);
+            return false;
+        }
+        String root = session.getRootNode() != null ? session.getRootNode() : DEFAULT_ROOT;
+        CollectStatus status = start(sn, root, "auto");
+        long deadline = System.currentTimeMillis() + autoCollectTimeoutMillis;
+        while (status != null && "running".equals(status.getStatus())
+                && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(200L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        long count = paramCount(sn);
+        if (count > 0) {
+            log.info("下发前补采设备能力完成: sn={}, 参数={}", sn, count);
+        } else {
+            log.warn("下发前补采设备能力未取到参数: sn={}, status={}",
+                    sn, status == null ? "无" : status.getStatus());
+        }
+        return count > 0;
+    }
+
+    private long paramCount(String sn) {
+        try {
+            return parameterMapper.selectCount(new LambdaQueryWrapper<CpeParameter>()
+                    .eq(CpeParameter::getSn, sn)
+                    .eq(CpeParameter::getNodeType, CpeParameter.TYPE_PARAM));
+        } catch (Exception e) {
+            log.warn("查询设备参数数量失败: sn={}, err={}", sn, e.getMessage());
+            return 0L;
+        }
+    }
+
+    /**
      * 设备能力汇总：支持多少路径、其中多少对象/参数、多少可写、最近采集时间。
      */
     public Map<String, Object> summary(String sn) {
@@ -272,8 +334,30 @@ public class DeviceCapabilityService {
                     log.info("设备能力采集结束: sn={}, status={}, 路径={}, 读值={}, 耗时={}ms",
                             sn, status.getStatus(), status.getNameCount(), status.getValueCount(),
                             status.getFinishTime() - status.getStartTime());
+                    if (exportModelTree && "success".equals(status.getStatus())) {
+                        exportModelTreeAsync(sn);
+                    }
                 });
         return status;
+    }
+
+    /**
+     * 采集成功后把能力树导出成型号 XML，供同型号设备复用与下发取路径。
+     *
+     * <p>导出是旁路动作：失败只记日志，不影响采集结果本身。</p>
+     */
+    private void exportModelTreeAsync(String sn) {
+        try {
+            executor().execute(() -> {
+                try {
+                    modelTreeStore.export(sn, false);
+                } catch (Exception e) {
+                    log.warn("导出型号能力树失败: sn={}, err={}", sn, e.getMessage());
+                }
+            });
+        } catch (Exception e) {
+            log.warn("提交型号能力树导出失败: sn={}, err={}", sn, e.getMessage());
+        }
     }
 
     /**

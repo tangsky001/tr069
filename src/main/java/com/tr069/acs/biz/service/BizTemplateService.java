@@ -11,10 +11,7 @@ import com.tr069.acs.biz.model.BizTemplateItemInput;
 import com.tr069.acs.biz.model.BizTemplateItemView;
 import com.tr069.acs.biz.model.BizTemplateSaveRequest;
 import com.tr069.acs.common.exception.BizException;
-import com.tr069.acs.worklist.loader.LoadedItem;
-import com.tr069.acs.worklist.model.TemplateCategory;
-import com.tr069.acs.worklist.model.WorklistTemplate;
-import com.tr069.acs.worklist.registry.WorklistRegistry;
+import com.tr069.acs.template.service.ConfigTemplateService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,7 +36,7 @@ public class BizTemplateService {
 
     private final BizTemplateMapper templateMapper;
     private final BizTemplateItemMapper itemMapper;
-    private final WorklistRegistry worklistRegistry;
+    private final ConfigTemplateService configTemplateService;
     private final ObjectMapper objectMapper;
 
     /**
@@ -83,6 +80,12 @@ public class BizTemplateService {
         BizTemplate template = request.getTemplate();
         if (template.getName() == null || template.getName().isBlank()) {
             throw new BizException("业务模板名称不能为空");
+        }
+        if (template.getGroupName() == null || template.getGroupName().isBlank()) {
+            throw new BizException("分组不能为空");
+        }
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw new BizException("至少选择一个配置模板成员");
         }
         if (template.getEnabled() == null) {
             template.setEnabled(Boolean.TRUE);
@@ -207,26 +210,39 @@ public class BizTemplateService {
         view.setRemark(item.getRemark());
         view.setParams(parseParams(item.getParams()));
 
-        LoadedItem<WorklistTemplate> loaded = worklistRegistry.get(item.getTemplateKey()).orElse(null);
-        if (loaded == null || !loaded.isValid() || loaded.getValue() == null) {
+        // 成员 templateKey 存的是配置意图模板 id
+        Map<String, Object> tpl = configTemplateService.findView(parseId(item.getTemplateKey()));
+        if (tpl == null) {
             view.setAvailable(false);
             view.setExecutable(false);
             view.setTemplateName(lastSegment(item.getTemplateKey()));
-            view.setIssue(loaded == null ? "配置模板不存在" : "配置模板解析失败: " + loaded.getError());
+            view.setIssue("配置模板不存在");
             return view;
         }
-        WorklistTemplate tpl = loaded.getValue();
-        TemplateCategory category = tpl.resolveCategory();
         view.setAvailable(true);
-        view.setTemplateName(tpl.getName());
-        view.setCategory(category.getCode());
-        view.setCategoryLabel(category.getLabel());
-        view.setDoc(tpl.getDoc());
-        view.setExecutable(tpl.isStepsMigrated());
-        if (!tpl.isStepsMigrated()) {
-            view.setIssue("执行步骤尚未迁移，不可下发");
+        view.setTemplateName(String.valueOf(tpl.get("name")));
+        view.setCategory(String.valueOf(tpl.get("category")));
+        view.setCategoryLabel(String.valueOf(tpl.get("categoryLabel")));
+        view.setDoc(String.valueOf(tpl.get("remark")));
+        view.setExecutable(Boolean.TRUE.equals(tpl.get("enabled")));
+        if (!view.isExecutable()) {
+            view.setIssue("配置模板已停用");
         }
         return view;
+    }
+
+    /**
+     * 成员引用的配置模板 id；存量数据存的是旧的文件 key，解析不出数字即视为失效。
+     */
+    private static Long parseId(String templateKey) {
+        if (templateKey == null || templateKey.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(templateKey.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private String writeParams(Map<String, String> params) {

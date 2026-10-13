@@ -3,12 +3,9 @@ package com.tr069.acs.worklist.service;
 import com.tr069.acs.worklist.config.WorklistProperties;
 import com.tr069.acs.worklist.loader.LoadedItem;
 import com.tr069.acs.worklist.loader.ProfileLoader;
-import com.tr069.acs.worklist.loader.WorklistLoader;
 import com.tr069.acs.worklist.model.DeviceProfile;
 import com.tr069.acs.worklist.model.ReloadReport;
-import com.tr069.acs.worklist.model.WorklistTemplate;
 import com.tr069.acs.worklist.registry.ProfileRegistry;
-import com.tr069.acs.worklist.registry.WorklistRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
@@ -42,7 +39,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /**
- * 光猫适配档案与工单模板的配置中心。
+ * 光猫适配档案的配置中心。
  *
  * <p>职责：
  * <ol>
@@ -59,11 +56,12 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
 
     private static final String SAMPLE_CLASSPATH = "config-sample/";
 
+    /** 光猫适配档案目录。 */
+    public static final String PROFILES_DIR = "profiles";
+
     private final WorklistProperties properties;
     private final ProfileRegistry profileRegistry;
-    private final WorklistRegistry worklistRegistry;
     private final ProfileLoader profileLoader;
-    private final WorklistLoader worklistLoader;
 
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final AtomicReference<ScheduledFuture<?>> pendingReload = new AtomicReference<>();
@@ -79,20 +77,15 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
 
     private Path root;
     private Path profilesDir;
-    private Path operatorsDir;
     private WatchService watchService;
     private Thread watchThread;
 
     public WorklistConfigService(WorklistProperties properties,
                                  ProfileRegistry profileRegistry,
-                                 WorklistRegistry worklistRegistry,
-                                 ProfileLoader profileLoader,
-                                 WorklistLoader worklistLoader) {
+                                 ProfileLoader profileLoader) {
         this.properties = properties;
         this.profileRegistry = profileRegistry;
-        this.worklistRegistry = worklistRegistry;
         this.profileLoader = profileLoader;
-        this.worklistLoader = worklistLoader;
     }
 
     // ==================== 生命周期 ====================
@@ -104,11 +97,9 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
             return;
         }
         root = resolveRoot();
-        profilesDir = root.resolve(WorklistLoader.getProfilesDir());
-        operatorsDir = root.resolve(WorklistLoader.OPERATORS_DIR);
+        profilesDir = root.resolve(PROFILES_DIR);
         try {
             Files.createDirectories(profilesDir);
-            Files.createDirectories(operatorsDir);
             if (properties.isInitSampleIfEmpty()) {
                 unpackSamples();
             }
@@ -118,9 +109,8 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
         log.info("光猫配置根目录: {}", root);
 
         ReloadReport report = reloadAll();
-        log.info("光猫适配配置加载完成: profiles={}/{}  worklists={}/{}",
-                report.getProfileTotal() - report.getProfileFailed(), report.getProfileTotal(),
-                report.getWorklistTotal() - report.getWorklistFailed(), report.getWorklistTotal());
+        log.info("光猫适配配置加载完成: profiles={}/{}",
+                report.getProfileTotal() - report.getProfileFailed(), report.getProfileTotal());
 
         startHotReload();
     }
@@ -207,23 +197,17 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
     public synchronized ReloadReport reloadAll() {
         long begin = System.currentTimeMillis();
         Map<String, LoadedItem<DeviceProfile>> profiles = loadAllProfiles();
-        Map<String, LoadedItem<WorklistTemplate>> worklists = loadAllWorklists();
 
         profileRegistry.replaceAll(profiles);
-        worklistRegistry.replaceAll(worklists);
 
         List<String> errors = new ArrayList<>();
         profiles.values().stream().filter(i -> !i.isValid())
-                .forEach(i -> errors.add(i.getRelativePath() + " : " + i.getError()));
-        worklists.values().stream().filter(i -> !i.isValid())
                 .forEach(i -> errors.add(i.getRelativePath() + " : " + i.getError()));
 
         return ReloadReport.builder()
                 .fullReload(true)
                 .profileTotal(profiles.size())
                 .profileFailed((int) profiles.values().stream().filter(i -> !i.isValid()).count())
-                .worklistTotal(worklists.size())
-                .worklistFailed((int) worklists.values().stream().filter(i -> !i.isValid()).count())
                 .durationMs(System.currentTimeMillis() - begin)
                 .version(profileRegistry.getVersion().get())
                 .errors(errors)
@@ -244,15 +228,6 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
             }
             return item.isValid();
         }
-        if (file.toAbsolutePath().normalize().startsWith(operatorsDir)) {
-            LoadedItem<WorklistTemplate> item = worklistLoader.load(file, root);
-            if (item.isValid()) {
-                worklistRegistry.put(item.getValue().getKey(), item);
-            } else {
-                worklistRegistry.put(rel, item);
-            }
-            return item.isValid();
-        }
         return false;
     }
 
@@ -262,16 +237,9 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
     public synchronized void removeFile(Path file) {
         String rel = relativize(file);
         profileRegistry.remove(rel);
-        worklistRegistry.remove(rel);
         for (LoadedItem<DeviceProfile> item : profileRegistry.all()) {
             if (file.equals(item.getFile())) {
                 profileRegistry.remove(item.getRelativePath());
-            }
-        }
-        for (LoadedItem<WorklistTemplate> item : worklistRegistry.all()) {
-            if (file.equals(item.getFile())) {
-                worklistRegistry.remove(item.getValue() == null
-                        ? item.getRelativePath() : item.getValue().getKey());
             }
         }
     }
@@ -345,21 +313,8 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
         result.put(key, item);
     }
 
-    private Map<String, LoadedItem<WorklistTemplate>> loadAllWorklists() {
-        Map<String, LoadedItem<WorklistTemplate>> result = new LinkedHashMap<>();
-        for (Path file : listTemplateFiles(operatorsDir)) {
-            LoadedItem<WorklistTemplate> item = worklistLoader.load(file, root);
-            if (!item.isValid()) {
-                result.put(item.getRelativePath(), item);
-            } else {
-                result.put(item.getValue().getKey(), item);
-            }
-        }
-        return result;
-    }
-
     /**
-     * 递归列出目录下的工单模板文件。
+     * 递归列出目录下的配置文件。
      */
     private List<Path> listTemplateFiles(Path dir) {
         if (dir == null || !Files.isDirectory(dir)) {
@@ -519,12 +474,6 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
                 changed++;
             }
         }
-        for (LoadedItem<WorklistTemplate> item : worklistRegistry.all()) {
-            if (stale(item.getFile(), item.getLastModified())) {
-                reloadFile(item.getFile());
-                changed++;
-            }
-        }
         changed += loadNewFiles();
         if (changed > 0) {
             log.info("热加载完成，本次变更 {} 个配置文件", changed);
@@ -542,22 +491,11 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
                 added++;
             }
         }
-        for (Path file : listTemplateFiles(operatorsDir)) {
-            if (!isTracked(file)) {
-                reloadFile(file);
-                added++;
-            }
-        }
         return added;
     }
 
     private boolean isTracked(Path file) {
         for (LoadedItem<DeviceProfile> item : profileRegistry.all()) {
-            if (file.equals(item.getFile())) {
-                return true;
-            }
-        }
-        for (LoadedItem<WorklistTemplate> item : worklistRegistry.all()) {
             if (file.equals(item.getFile())) {
                 return true;
             }

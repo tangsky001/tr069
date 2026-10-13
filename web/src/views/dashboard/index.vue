@@ -97,10 +97,7 @@
             <span>配置模板</span><b>{{ templates.total }}</b>
           </div>
           <div class="kv-row">
-            <span>可下发（步骤已迁移）</span><b class="ok">{{ templates.migrated }}</b>
-          </div>
-          <div class="kv-row">
-            <span>待迁移（不可下发）</span><b class="bad">{{ templates.unmigrated }}</b>
+            <span>已启用</span><b class="ok">{{ templates.enabled }}</b>
           </div>
         </el-card>
       </el-col>

@@ -21,14 +21,17 @@ public class WorklistProperties {
      * 目录下约定：
      * <pre>
      *   profiles/    光猫适配档案 *.yaml
-     *   operators/   工单模板 {isp}/{version}/{domain}/{deviceType}/{name}.xml
+     *   models/      型号能力树 {isp}/{型号标识}.xml，设备上报的参数树按型号导出的归档
      * </pre>
-     * 存量工单是 xml（由原 Python 版 data.py 批量转换而来），手工新增可用 yaml，两种后缀都会扫描。
+     * 配置模板已改为入库的意图模板（config_template），不再以文件形式存放。
      */
     private String rootPath = "./target/configuration";
 
     /** 根目录下缺失子目录时，是否自动创建并写出示例，方便现场快速适配新光猫。 */
-    private boolean initSampleIfEmpty = true;
+    /**
+     * 目录为空时是否解包内置示例。默认关闭：模板与档案全部来自现场适配产出，不留任何默认值。
+     */
+    private boolean initSampleIfEmpty = false;
 
     /** 热加载相关配置。 */
     private HotReload hotReload = new HotReload();

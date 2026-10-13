@@ -9,9 +9,6 @@ import com.tr069.acs.domain.entity.Worklist;
 import com.tr069.acs.domain.entity.WorklistStepRecord;
 import com.tr069.acs.mapper.WorklistMapper;
 import com.tr069.acs.mapper.WorklistStepMapper;
-import com.tr069.acs.worklist.engine.WorklistEngine;
-import com.tr069.acs.worklist.model.WorklistOutcome;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,40 +32,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class WorklistExecuteController {
 
-    private final WorklistEngine worklistEngine;
     private final WorklistMapper worklistMapper;
     private final WorklistStepMapper worklistStepMapper;
-
-    /**
-     * 向设备下发一张工单。
-     */
-    /**
-     * 向设备下发一张工单。
-     *
-     * <p>提交后立即返回工单号，执行在后台线程池推进：
-     * 一张工单要等多次设备空 POST 往返，同步等待会把请求线程挂住几分钟。</p>
-     *
-     * <p>进度查询：{@code GET /api/worklist/instances/{id}} 与
-     * {@code GET /api/worklist/instances/{id}/steps}。</p>
-     */
-    @PostMapping("/execute")
-    public Result<Map<String, Object>> execute(@RequestBody ExecuteRequest request) {
-        if (request == null || request.getSn() == null || request.getSn().isBlank()) {
-            return Result.failure("设备序列号不能为空");
-        }
-        if (request.getTemplateKey() == null || request.getTemplateKey().isBlank()) {
-            return Result.failure("工单模板不能为空");
-        }
-        WorklistEngine.WorklistSubmission submission = worklistEngine.submit(
-                request.getSn(), request.getTemplateKey(), request.getParams(), request.getUsername());
-        if (!submission.isAccepted()) {
-            return Result.failure(submission.getError());
-        }
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("worklistId", submission.getWorklistId());
-        data.put("status", "running");
-        return Result.success(data);
-    }
 
     /**
      * 工单执行记录，按设备或状态查询。
@@ -130,18 +95,4 @@ public class WorklistExecuteController {
                         .orderByAsc(WorklistStepRecord::getStepIndex)));
     }
 
-    /**
-     * 工单下发请求体。
-     */
-    @Data
-    public static class ExecuteRequest {
-        /** 设备序列号。 */
-        private String sn;
-        /** 工单模板 key。 */
-        private String templateKey;
-        /** 工单入参。 */
-        private Map<String, String> params;
-        /** 操作人。 */
-        private String username;
-    }
 }

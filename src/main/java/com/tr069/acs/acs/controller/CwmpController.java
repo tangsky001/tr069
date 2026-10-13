@@ -162,7 +162,21 @@ public class CwmpController {
             return;
         }
 
-        String soap = SoapEnvelopeBuilder.build(RpcMethod.of(rpc.getRpcName()), rpc.getArgs(),
+        RpcMethod method = RpcMethod.of(rpc.getRpcName());
+        if (method == null) {
+            // 队列里可能残留方法名不合法的旧指令（如写成枚举名 GET_PARAMETER_NAMES），
+            // 不能让它把这次空 POST 打成 500：判失败并回 204，设备下次照常来取后面的指令
+            log.error("待下发指令的 CWMP 方法无法识别，丢弃该指令: sn={}, taskId={}, rpc={}",
+                    sn, rpc.getRpcId(), rpc.getRpcName());
+            if (rpc.getRpcId() > 0) {
+                rpcDispatchService.failTask(rpc.getRpcId(), "8005", "未知 CWMP 方法: " + rpc.getRpcName());
+            } else {
+                rpc.getResponse().complete(null);
+            }
+            sendStatus(response, 204);
+            return;
+        }
+        String soap = SoapEnvelopeBuilder.build(method, rpc.getArgs(),
                 null, session.getCwmpVersion());
         session.markAwaiting(rpc);
         session.setState(SessionState.WAIT_RPC_RESPONSE);
@@ -201,6 +215,12 @@ public class CwmpController {
         if (completed != null) {
             log.info("收到 RPC 响应: sn={}, rpc={}, fault={}",
                     sn, completed.getRpcName(), message.isFault());
+            if (message.isFault() && message.getStrResult() != null) {
+                // 设备给的故障明细（含逐参数失败）只在这一刻拿得到，打出来便于定位是哪一个参数不对
+                log.warn("设备故障明细: sn={}, rpc={}, {}",
+                        sn, completed.getRpcName(),
+                        message.getStrResult().replace("\n", " | "));
+            }
             // 回填结果并唤醒排在该指令后面的工单步骤
             rpcDispatchService.completeTask(completed.getRpcId(), message);
         } else {

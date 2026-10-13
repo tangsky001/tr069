@@ -331,13 +331,13 @@ public final class SoapEnvelopeBuilder {
         for (Map<String, Object> item : items) {
             Element s = XmlUtils.element(doc, cwmpNs, SoapNamespace.PREFIX_CWMP,
                     "SetParameterAttributesStruct");
-            XmlUtils.appendText(doc, s, cwmpNs, SoapNamespace.PREFIX_CWMP, "Name", str(item, "Name"));
+            XmlUtils.appendText(doc, s, cwmpNs, SoapNamespace.PREFIX_CWMP, "Name", strAny(item, "Name", "name"));
             XmlUtils.appendText(doc, s, cwmpNs, SoapNamespace.PREFIX_CWMP, "NotificationChange",
-                    str(item, "NotificationChange"));
+                    strAny(item, "NotificationChange", "notificationChange"));
             XmlUtils.appendText(doc, s, cwmpNs, SoapNamespace.PREFIX_CWMP, "Notification",
-                    str(item, "Notification"));
+                    strAny(item, "Notification", "notification"));
             XmlUtils.appendText(doc, s, cwmpNs, SoapNamespace.PREFIX_CWMP, "AccessListChange",
-                    str(item, "AccessListChange"));
+                    strAny(item, "AccessListChange", "accessListChange"));
 
             List<String> accessList = strList(item.get("AccessList"));
             if (accessList.isEmpty()) {
@@ -627,6 +627,33 @@ public final class SoapEnvelopeBuilder {
         return v == null ? "" : String.valueOf(v);
     }
 
+    /**
+     * 按多个候选键名取值，先精确后忽略大小写。
+     *
+     * <p>同一份参数在内存里是 JavaBean（Name / Value），经队列 JSON 往返后是 Map 且键名变为
+     * 字段名（name / value），两侧写法必须都能取到，否则下发的报文里参数会全空。</p>
+     */
+    private static String strAny(Map<String, Object> args, String... keys) {
+        for (String key : keys) {
+            Object v = args.get(key);
+            if (v != null) {
+                return String.valueOf(v);
+            }
+        }
+        for (Map.Entry<String, Object> entry : args.entrySet()) {
+            String actual = entry.getKey();
+            if (actual == null) {
+                continue;
+            }
+            for (String key : keys) {
+                if (actual.equalsIgnoreCase(key) && entry.getValue() != null) {
+                    return String.valueOf(entry.getValue());
+                }
+            }
+        }
+        return "";
+    }
+
     private static List<String> strList(Object raw) {
         if (raw == null) {
             return new ArrayList<>();
@@ -661,11 +688,14 @@ public final class SoapEnvelopeBuilder {
                 if (o instanceof ParameterValueStruct pvs) {
                     list.add(pvs);
                 } else if (o instanceof Map<?, ?> m) {
+                    // 指令经 Redis 队列往返后，ParameterValueStruct 会变成普通 Map，
+                    // 键名是 Jackson 序列化的字段名（name / value / valueType），
+                    // 与 SOAP 里的 Name / Value 大小写不同，必须按忽略大小写取值
                     Map<String, Object> map = (Map<String, Object>) m;
                     list.add(ParameterValueStruct.builder()
-                            .name(str(map, "Name"))
-                            .value(str(map, "Value"))
-                            .valueType(str(map, "Value_type"))
+                            .name(strAny(map, "Name", "name"))
+                            .value(strAny(map, "Value", "value"))
+                            .valueType(strAny(map, "Value_type", "valueType", "value_type"))
                             .build());
                 }
             }
