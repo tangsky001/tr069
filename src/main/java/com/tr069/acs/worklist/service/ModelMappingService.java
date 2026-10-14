@@ -139,6 +139,11 @@ public class ModelMappingService {
         if (patch.getConfigPath() != null) current.setConfigPath(patch.getConfigPath());
         if (patch.getStatus() != null && !patch.getStatus().isBlank()) current.setStatus(patch.getStatus());
         if (patch.getSampleSn() != null) current.setSampleSn(patch.getSampleSn());
+        if (patch.getAdaptPath() != null) current.setAdaptPath(patch.getAdaptPath());
+        if (patch.getCapLanPorts() != null) current.setCapLanPorts(patch.getCapLanPorts());
+        if (patch.getCapLanSpeed() != null) current.setCapLanSpeed(patch.getCapLanSpeed());
+        if (patch.getCapSipCount() != null) current.setCapSipCount(patch.getCapSipCount());
+        if (patch.getCapWifiSpec() != null) current.setCapWifiSpec(patch.getCapWifiSpec());
         if (patch.getRemark() != null) current.setRemark(patch.getRemark());
         modelMapper.updateById(current);
         return current;
@@ -366,11 +371,44 @@ public class ModelMappingService {
     }
 
     /**
-     * 配置文件默认相对路径：{运营商小写}/{型号标识}.xml，如 ct/hs8145v5_v5r19.xml。
+     * 型号文件存放的子目录：按运营商分目录，移动 CM / 电信 CT / 联通 CU / 其它 standard。
+     *
+     * <p>型号文件一律放在该目录下再进一层 {@code standard/}，即
+     * {@code models/CM/standard/{型号}.xml}、{@code models/CM/standard/{型号}.yml}，
+     * 走的是「运营商 -> 标准档位」两级，后续同一运营商再有别的档位可直接加同级目录。</p>
+     */
+    public static String ispDir(String isp) {
+        String v = isp == null ? "" : isp.trim().toUpperCase();
+        return switch (v) {
+            case "CMCC", "CM" -> "CM";
+            case "CT", "TELECOM" -> "CT";
+            case "CU", "UNICOM" -> "CU";
+            default -> "standard";
+        };
+    }
+
+    /**
+     * 型号能力树 XML 的默认相对路径：{运营商}/standard/{型号标识}.xml。
+     *
+     * <p>例：{@code CM/standard/p22g-ciac_v1.0.00.488.xml}（相对 models/ 目录）。</p>
      */
     public static String defaultConfigPath(String isp, String modelKey) {
-        String owner = (isp == null || isp.isBlank()) ? "standard" : isp.trim().toLowerCase();
-        String file = String.valueOf(modelKey).toLowerCase().replaceAll("[^a-z0-9._-]", "_");
-        return owner + "/" + file + ".xml";
+        return ispDir(isp) + "/standard/" + modelFileName(modelKey) + ".xml";
+    }
+
+    /**
+     * 适配状态文件 YML 的默认相对路径：与能力树 XML 同名同目录，后缀 .yml。
+     *
+     * <p>XML 只是型号的能力档案（支持哪些节点、路径怎么写），
+     * 它存在并不代表这个型号适配过了——「是否已适配」由这份 YML 里的
+     * {@code adapted: true} 说了算，测试通过才会写入。</p>
+     */
+    public static String defaultAdaptPath(String isp, String modelKey) {
+        return ispDir(isp) + "/standard/" + modelFileName(modelKey) + ".yml";
+    }
+
+    /** 型号文件名（不含扩展名）：小写 + 非法字符转下划线，xml 与 yml 同名。 */
+    public static String modelFileName(String modelKey) {
+        return String.valueOf(modelKey).toLowerCase().replaceAll("[^a-z0-9._-]", "_");
     }
 }

@@ -1,4 +1,14 @@
 
+-- ============================================================
+-- javaacs-server 全库建表脚本（唯一权威版本）
+--
+-- 全库只有这一份脚本：手工部署执行它，应用启动时自动补表也读它
+-- （构建时复制到 classpath:db/schema.sql，见 pom.xml 的 <resources>）。
+-- 所有语句都是 CREATE TABLE IF NOT EXISTS，反复执行无害。
+--
+-- 各模块的补建组件（xxxSchemaInitializer）在这里按表名挑出自己需要的语句，
+-- 互不越权：关掉某个模块的 acs.<module>.auto-create-table 依然只对该模块生效。
+-- ============================================================
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -237,8 +247,6 @@ CREATE TABLE IF NOT EXISTS `sys_log` (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '系统日志，对应原 LOG 表';
 
 -- ---------------------------- 业务模板（配置模板集合，对设备整包下发） ----------------------------
--- 与 server/src/main/resources/db/biz-template-schema.sql 保持一致：
--- 应用启动时若发现缺表会自动创建，这里保留一份供手工部署使用。
 CREATE TABLE IF NOT EXISTS `biz_template` (
     `id`               BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
     `name`             VARCHAR(128) NOT NULL COMMENT '业务模板名称',
@@ -283,6 +291,131 @@ CREATE TABLE IF NOT EXISTS `biz_template_execution` (
     KEY `idx_biz_exec_sn` (`sn`),
     KEY `idx_biz_exec_template` (`template_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '业务模板整包下发记录';
+
+
+-- ---------------------------- 型号语义映射 ----------------------------
+-- 业务语义模板（固定）与型号 CWMP 节点映射（一次性人工适配），
+-- 下发执行器据此把意图字段翻译成该机型真实参数路径。
+
+-- 型号档案：同型号 + 同固件共用一套映射，只登记一次
+CREATE TABLE IF NOT EXISTS `cpe_model` (
+    `id`                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `isp`               VARCHAR(16)  NOT NULL DEFAULT 'standard' COMMENT '运营商 CT/CU/CMCC/standard',
+    `model_key`         VARCHAR(128) NOT NULL COMMENT '型号标识，建议 型号_固件，如 HS8145V5_V5R19',
+    `manufacturer`      VARCHAR(64)  DEFAULT NULL COMMENT '厂商，来自 DeviceInfo.Manufacturer',
+    `product_class`     VARCHAR(64)  DEFAULT NULL COMMENT '型号，来自 DeviceInfo.ProductClass / ModelName',
+    `software_version`  VARCHAR(64)  DEFAULT NULL COMMENT '固件版本，来自 DeviceInfo.SoftwareVersion',
+    `hardware_version`  VARCHAR(64)  DEFAULT NULL COMMENT '硬件版本',
+    `config_path`       VARCHAR(255) DEFAULT NULL COMMENT '该型号能力树文件相对路径，如 CM/standard/p22g-ciac.xml',
+    `adapt_path`        VARCHAR(255) DEFAULT NULL COMMENT '适配状态文件(yml)相对路径，adapted=true 才算已适配，如 CM/standard/p22g-ciac.yml',
+    `status`            VARCHAR(16)  NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING 待适配 / READY 已映射 / DISABLED 停用',
+    `sample_sn`         VARCHAR(64)  DEFAULT NULL COMMENT '做映射时参考的样机序列号',
+    `root_node`         VARCHAR(64)  NOT NULL DEFAULT 'InternetGatewayDevice.' COMMENT '样机的根数据模型节点：Device.(TR-181) / InternetGatewayDevice.(TR-098)',
+    `cap_lan_ports`     VARCHAR(16)  DEFAULT NULL COMMENT '适配申报网口数量：无/1/2/3/4-8',
+    `cap_lan_speed`     VARCHAR(16)  DEFAULT NULL COMMENT '适配申报网口速率：无/自动/100M/1000M/2500M',
+    `cap_sip_count`     VARCHAR(16)  DEFAULT NULL COMMENT '适配申报SIP数量：无/1/2/3/4-8',
+    `cap_wifi_spec`     VARCHAR(32)  DEFAULT NULL COMMENT '适配申报WIFI规格：无/2.4G/2.4G+5.8G',
+    `remark`            VARCHAR(255) DEFAULT NULL,
+    `created_at`        DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`        DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_cpe_model` (`isp`, `model_key`),
+    KEY `idx_cpe_model_pc` (`product_class`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '光猫型号档案';
+
+-- 语义字段 -> 该型号真实 CWMP 参数节点
+-- 例：Internet_WAN.vlan_id -> InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.{i}.VLANIDMark
+CREATE TABLE IF NOT EXISTS `model_param_mapping` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `model_id`    BIGINT       NOT NULL COMMENT 'cpe_model.id',
+    `biz_object`  VARCHAR(32)  NOT NULL COMMENT '业务对象：Internet_WAN / VOIP_WAN / Bridge_WAN / WiFi_2G / WiFi_5G',
+    `biz_field`   VARCHAR(64)  NOT NULL COMMENT '业务字段：vlan_id / ssid / wpa_key ...',
+    `cwmp_path`   VARCHAR(512) NOT NULL COMMENT '真实参数路径，实例号用 {i} 占位',
+    `value_type`  VARCHAR(32)  DEFAULT NULL COMMENT 'string / unsignedInt / boolean，下发时推断 xsi:type',
+    `writable`    TINYINT      NOT NULL DEFAULT 1 COMMENT '该节点实际可写',
+    `required`    TINYINT      NOT NULL DEFAULT 0 COMMENT '缺失时是否阻断下发',
+    `remark`      VARCHAR(255) DEFAULT NULL,
+    `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_model_field` (`model_id`, `biz_object`, `biz_field`),
+    KEY `idx_mapping_model` (`model_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '型号语义字段到 CWMP 节点映射';
+
+-- 业务对象 -> 该型号 CWMP 父对象路径（AddObject / DeleteObject 用）
+-- 例：Internet_WAN -> InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.
+CREATE TABLE IF NOT EXISTS `model_object_mapping` (
+    `id`            BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `model_id`      BIGINT      NOT NULL COMMENT 'cpe_model.id',
+    `biz_object`    VARCHAR(32) NOT NULL COMMENT '业务对象',
+    `parent_path`   VARCHAR(512) NOT NULL COMMENT '连接设备路径，如 ...WANConnectionDevice.1',
+    `object_name`   VARCHAR(128) NOT NULL COMMENT 'AddObject 的对象名，如 ...WANConnectionDevice.1.WANIPConnection.',
+    `instance_mode` VARCHAR(16) NOT NULL DEFAULT 'ADD' COMMENT 'ADD 新建实例 / EXISTING 复用现有实例',
+    `delete_before` TINYINT     NOT NULL DEFAULT 1 COMMENT '创建前是否先删除该对象下的旧实例',
+    `remark`        VARCHAR(255) DEFAULT NULL,
+    `created_at`    DATETIME    DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`    DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_model_object` (`model_id`, `biz_object`),
+    KEY `idx_object_model` (`model_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '业务对象到 CWMP 对象路径映射';
+
+-- ---------------------------- 下发任务 ----------------------------
+-- 意图模板经型号语义映射渲染成 CWMP 参数后的执行记录
+CREATE TABLE IF NOT EXISTS `device_task` (
+    `id`            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `task_no`       VARCHAR(64)  NOT NULL COMMENT '外部业务单号，与 source 一起保证幂等',
+    `sn`            VARCHAR(64)  NOT NULL COMMENT '设备序列号',
+    `category`      VARCHAR(32)  NOT NULL COMMENT '业务类型：WAN_DHCP / WAN_PPPOE / WAN_STATIC / WAN_BRIDGE / WIFI_24G / WIFI_58G / SIP',
+    `template_id`   BIGINT       DEFAULT NULL COMMENT 'config_template.id，可空',
+    `source`        VARCHAR(16)  NOT NULL DEFAULT 'admin' COMMENT '来源：openapi / admin',
+    `created_by`    VARCHAR(64)  DEFAULT NULL COMMENT '发起方账号，北向下发时记录调用者',
+    `intent_fields` TEXT         COMMENT '意图字段快照 JSON',
+    `plan`          TEXT         COMMENT '渲染出的下发计划 JSON：参数名 / 值 / 类型',
+    `status`        VARCHAR(16)  NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / RUNNING / SUCCESS / FAILED / REJECTED',
+    `error_msg`     VARCHAR(1000) DEFAULT NULL COMMENT '失败原因：设备返回的 CWMP 故障或校验拦截原因',
+    `created_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `finished_at`   DATETIME     DEFAULT NULL COMMENT '落地时间，未完成为空',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_device_task_no` (`source`, `task_no`),
+    KEY `idx_device_task_sn` (`sn`, `id`),
+    KEY `idx_device_task_status` (`status`, `id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '下发任务';
+
+-- ---------------------------- 北向 Webhook 订阅 ----------------------------
+-- 哪个 URL 关心哪几类事件
+CREATE TABLE IF NOT EXISTS `openapi_webhook` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `name`        VARCHAR(128) NOT NULL COMMENT '订阅名称，便于识别对接方',
+    `url`         VARCHAR(512) NOT NULL COMMENT '回调地址，ACS 通过 HTTP POST 推送',
+    `secret`      VARCHAR(128) DEFAULT NULL COMMENT '签名密钥，生成 X-ACS-Signature 供接收方校验来源',
+    `event_types` VARCHAR(255) NOT NULL COMMENT '关心的事件类型，逗号分隔；* 表示全部',
+    `enabled`     TINYINT      NOT NULL DEFAULT 1 COMMENT '是否启用',
+    `created_by`  VARCHAR(64)  DEFAULT NULL,
+    `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '北向 Webhook 订阅';
+
+-- 投递记录：每条事件 × 每个订阅一行，失败按退避重试
+CREATE TABLE IF NOT EXISTS `openapi_webhook_delivery` (
+    `id`            BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `webhook_id`    BIGINT      NOT NULL COMMENT 'openapi_webhook.id',
+    `event_id`      VARCHAR(128) NOT NULL COMMENT '事件唯一号，接收方据此去重',
+    `event_type`    VARCHAR(64) NOT NULL,
+    `payload`       TEXT        COMMENT '推送内容 JSON',
+    `status`        VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / SUCCESS / FAILED',
+    `attempts`      INT         NOT NULL DEFAULT 0 COMMENT '已尝试次数',
+    `next_retry_at` DATETIME    DEFAULT NULL COMMENT '下次重试时间，为空表示不再重试',
+    `response_code` INT         DEFAULT NULL COMMENT '最后一次回调的 HTTP 状态码',
+    `response_body` VARCHAR(512) DEFAULT NULL COMMENT '最后一次回调的响应片段',
+    `created_at`    DATETIME    DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`    DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_webhook_event` (`webhook_id`, `event_id`),
+    KEY `idx_delivery_retry` (`status`, `next_retry_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '北向事件投递记录';
 
 SET FOREIGN_KEY_CHECKS = 1;
 

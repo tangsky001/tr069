@@ -193,8 +193,9 @@ acs:
     report:
       # 上报队列分片数，同一设备固定落在同一分片，保证按序处理
       shards: 8
-      # 消费者阻塞取数的超时(秒)
-      pop-timeout-seconds: 2
+      # 队列为空时的轮询间隔(毫秒)。取数是非阻塞的，无需 BRPOP 阻塞等，
+      # 阻塞取数会占住 Redis 共享连接，把入队与下发一起堵死
+      poll-interval-millis: 200
     rpc:
       # 指令在队列中最长存活时间(秒)
       queue-ttl-seconds: 3600
@@ -206,17 +207,14 @@ acs:
       timeout-seconds: 510
 
   worklist:
-    # 工单模板根目录，相对进程工作目录解析，刻意放在 jar 外部：现场改文件热加载即时生效。
+    # 外部配置根目录，相对进程工作目录解析，刻意放在 jar 外部：现场改文件即时生效。
     #   从 server 目录启动  → server/configuration
     #   从 target 目录起 jar → server/target/configuration
-    # 目录约定：
-    #   profiles/                    光猫适配档案 *.yaml
-    #   operators/{isp}/{version}/{domain}/{name}.xml   工单模板
+    # 目录由程序自行读写，约定：
+    #   profiles/                     光猫适配档案 *.yaml，改动由下面的热加载接管
+    #   models/{isp}/{型号标识}.xml    设备能力树按型号导出的归档
     # 该目录为空时，依次回退到 jar 同级的 configuration/、target/configuration/
     root-path: ./configuration
-    # 根目录为空时释放示例配置，方便现场照着新增加的光猫改
-    # 不再解包任何内置示例：模板与设备档案全部来自现场适配产出
-    init-sample-if-empty: false
     hot-reload:
       # 文件监听 + 增量重载开关
       enabled: true
@@ -225,17 +223,45 @@ acs:
       # 周期全量扫描兜底间隔(秒)，0 表示关闭
       rescan-interval-seconds: 60
 
+  # ==================== 意图下发执行器 ====================
+  exec:
+    # 下发任务表(device_task)自动建表
+    auto-create-table: true
+    # 下发指令等待设备回应的超时(秒)。ACS 只能在设备上报后的空 POST 里捎带指令，
+    # 这个时间其实是「等设备开一次心跳」的窗口
+    request-timeout-seconds: 90
+
+  # ==================== 北向接口 ====================
+  openapi:
+    # 独立端口：给上层系统的对接接口单独监听，防火墙只需向合作方放行这一个端口，
+    # 不必把管理端(8888)暴露出去。置 0 则关闭独立端口，接口改挂在管理端口的 path-prefix 下
+    port: 8899
+    # 路径前缀，鉴权拦截器与端口隔离过滤器都按它判定
+    path-prefix: /openapi/v1
+    # 事件推送表(openapi_webhook*)自动建表
+    auto-create-table: true
+    webhook:
+      # 单次回调的超时(秒)
+      timeout-seconds: 10
+      # 最大推送次数，用尽记为 FAILED
+      max-attempts: 5
+      # 重试任务的扫描间隔(毫秒)
+      retry-interval-millis: 30000
+    watch:
+      # 设备上下线侦测：定期比对会话快照，把变化转成事件推给订阅方。
+      # 首次扫描只建基线，不会把启动时的在线设备推一遍
+      enabled: true
+      interval-millis: 15000
+
 # ==================== 管理端 ====================
 admin:
   jwt:
-    # 生产环境务必改成随机值
-    secret: tr069acs-java-secret-key-change-me-in-production
+    # token 有效期(小时)。签名密钥不在这里配置：由 JwtSecretProvider 从进程工作目录下的
+    # target/secret.xml 加载，首次启动自动生成——配置文件会随 jar 分发，写进去等于公开
     expire-hours: 12
-  # 管理端账号以数据库 sys_user 为准，登录一律查库。
-  # 下面两项仅在 sys_user 表为空时作为「初始管理员」写入一次（口令散列存储），
-  # 库中已有账号后即失效，改这里不会影响已有账号。
-  default-user: admin
-  default-password: admin
+  # 管理端账号一律以数据库 sys_user 为准，初始账号由 sql/schema.sql 建库时写入，
+  # 不再通过配置文件指定账号与口令
+
 
 logging:
   level:

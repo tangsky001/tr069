@@ -37,14 +37,16 @@ TR069 ACS（Java 版）的构建、部署与验收说明。目标是让一台干
 javaacs/
 └── server/
     ├── pom.xml
-    ├── sql/schema.sql                 # 主库建表脚本（部署必需，已入库）
+    ├── sql/schema.sql                 # 全库唯一建表脚本（部署必需，已入库）
     ├── deploy/config/application.yml.example   # 外置配置模板
     ├── configuration/                 # 工单模板与光猫适配（jar 外，热加载）
     │   ├── operators/                 # 工单模板 {isp}/{version}/{domain}/{name}.yaml|.xml
     │   └── profiles/                  # 光猫适配档案 *.yaml
-    ├── src/main/resources/db/biz-template-schema.sql  # 业务模板表，启动时自动建立
     └── web/                           # 前端（vue-admin-template），构建产物 dist/ 不入库
 ```
+
+> `sql/schema.sql` 是**全库唯一的建表脚本**：人工部署执行它，应用启动时的缺表自动补建也读它
+> （构建时被复制到 jar 内的 `BOOT-INF/classes/db/schema.sql`，各模块按表名挑自己那份语句执行）。
 
 > `configuration/` 刻意不打进 jar：现场新增光猫只需改这个目录的文件，热加载即时生效（文件变更后 800ms 去抖，另有 60 秒轮询兜底）。
 
@@ -64,7 +66,9 @@ CREATE DATABASE tr_acs DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 mysql -u root -p tr_acs < server/sql/schema.sql
 ```
 
-脚本是 `CREATE TABLE IF NOT EXISTS`，重复执行无害。业务模板的三张表（`biz_template`、`biz_template_item`、`biz_template_execution`）**不用手工执行**，应用启动时会自行补建（开关 `acs.biz.auto-create-table`，默认 true）。
+脚本是 `CREATE TABLE IF NOT EXISTS`，重复执行无害，包含**全部表**（设备、能力树、意图模板、业务模板、型号语义映射、下发任务、北向 Webhook 等）。
+
+各模块另有 `acs.<module>.auto-create-table` 开关（默认 true）：应用场景为「存量库漏了几张表」，启动时自动从这份脚本里挑出缺失的补上，缺失时无需手工执行相应部分。
 
 启动时还有一道表结构自检：核心表缺失会打印明确提示，想让它直接中止启动就设 `acs.database.fail-on-missing-table=true`。
 
@@ -201,7 +205,10 @@ StandardError=append:/opt/javaacs/logs/stdout.log
 WantedBy=multi-user.target
 ```
 
-防火墙放行 `8888`（管理）、`9090`/`8082`（光猫上报）。
+防火墙放行 `8888`（管理）、`9090`/`8082`（光猫上报）、`8899`（北向接口，只对合作方放）。
+
+北向接口单独占一个端口，就是为了这里：给上层系统放行时不必同时暴露管理端。
+不需要北向对接时把 `acs.openapi.port` 置 0 即可，此时 `/openapi/v1/**` 挂在 8888 下（不再做端口隔离）。
 
 ---
 
@@ -218,12 +225,15 @@ WantedBy=multi-user.target
 | `acs.cwmp.extra-cpe-paths` | `/acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/` | 兼容的上报路径，现场遇到新写法在此追加 |
 | `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | 光猫连 ACS 的 digest 账号；写 `auto` 或留空即免认证，任何账号密码都放行 |
 | `acs.auth.acs-to-cpe-username/password` | `itms/itms` | ACS 反向连光猫的账号，同样支持 `auto` / 留空 |
-| `acs.worklist.root-path` | `./configuration` | 工单模板根目录，按进程工作目录解析；目录为空时回退到 jar 同级 `configuration/` |
+| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`profiles/`、`models/`），目录为空时回退到 jar 同级 `configuration/` |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内同步处理，无 Redis 环境下的降级选项 |
 | `acs.biz.auto-create-table` | `true` | 业务模板表自动补建 |
 | `acs.database.fail-on-missing-table` | `false` | 表缺失时是否中止启动 |
-| `admin.jwt.secret` | 内置占位值 | **生产必须换成随机值** |
-| `admin.default-user/password` | `admin/admin` | 仅当 `sys_user` 表为空时创建初始管理员 |
+| `admin.jwt.expire-hours` | `12` | 管理端 token 有效期（小时） |
+
+> 管理端 JWT 签名密钥不在配置文件里：`JwtSecretProvider` 从进程工作目录下的 `target/secret.xml`
+> 加载，首次启动自动生成，**该文件需纳入备份**（丢失后已签发令牌全部失效；多实例部署要把同一份
+> 文件放到各实例的工作目录下）。初始管理员账号由 `sql/schema.sql` 建库时写入，不再经配置文件指定。
 
 ---
 
@@ -248,6 +258,20 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:9090/  # 400 �
 ```
 
 浏览器打开 `http://<ip>:8888`，用 `admin/admin` 登录（首次登录后立即改密码）。
+
+接口级自检（拿不到预期结果就按 [`API.md`](API.md) §7 排查）：
+
+```bash
+TOKEN=$(curl -s -X POST http://127.0.0.1:8888/api/user/login \
+  -H 'Content-Type: application/json' -d '{"username":"admin","password":"<pwd>"}' \
+  | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+
+curl -s http://127.0.0.1:8888/api/dashboard/overview -H "X-Token: $TOKEN"   # code=20000
+curl -s http://127.0.0.1:8899/openapi/v1/devices?size=1 -H "X-Token: $TOKEN" # code=20000
+
+# 端口隔离：8899 上访问管理端路径必须 404
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8899/api/dashboard/overview  # 404
+```
 
 光猫上报验收见下一节。
 
@@ -297,8 +321,8 @@ cp -r /opt/javaacs/configuration /opt/javaacs/configuration.bak
 ```
 
 - 配置文件和模板目录都在 jar 外，替换 jar 不会覆盖它们
-- 业务模板表由应用自动补建，升级无需手工执行 SQL
-- `sql/schema.sql` 新增表时需手工补执行（脚本幂等，可反复跑）
+- 缺表由应用从 `sql/schema.sql` 自动补建，升级一般无需手工执行 SQL
+- `sql/schema.sql` 新增表时，现场可再跑一遍（脚本幂等），也可只靠自动补建
 - 数据库定期备份：`mysqldump -u root -p tr_acs > tr_acs_$(date +%F).sql`
 
 ---
@@ -306,8 +330,11 @@ cp -r /opt/javaacs/configuration /opt/javaacs/configuration.bak
 ## 10. 上线前必改
 
 - [ ] `acs.public-host` 改成真实 IP，否则下发给光猫的连接请求地址是 `127.0.0.1`
-- [ ] `admin.jwt.secret` 换成随机值
+- [ ] 确认 `target/secret.xml` 已生成并纳入备份（JWT 密钥，多实例需共享同一份）
 - [ ] 数据库口令不留在仓库（外置 `config/application.yml` 已被 git 忽略）
 - [ ] 登录后修改初始管理员口令
 - [ ] 启动目录下已放好 `configuration/`（模板与光猫适配）
-- [ ] 防火墙放行 8888 / 9090 / 8082
+- [ ] 防火墙放行 8888 / 9090 / 8082（管理端与上报），北向按需放行 8899
+- [ ] 北向对接：确认调用方拿到的 token 能调 `/openapi/v1/devices`，回调地址可用且 `secret` 已配（推事件要它算签名）
+- [ ] 型号档案的 `root_node` 与设备上报的根节点一致：一个型号同时有 TR-098 / TR-181 固件时，
+      必须各建一份适配（下发前会对账，不一致直接拒绝下发）

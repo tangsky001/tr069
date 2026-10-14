@@ -82,19 +82,19 @@
     <el-dialog
       :title="dialogTitle"
       :visible.sync="dialogVisible"
-      width="720px"
+      width="780px"
       top="6vh"
       :close-on-click-modal="false"
     >
       <el-form :model="form" label-width="150px" size="small">
         <el-form-item label="模版类型">
-          <el-select v-model="form.category" style="width:240px" :disabled="!!form.id" @change="onCategoryChange">
+          <el-select v-model="form.category" style="width:240px" disabled>
             <el-option v-for="c in categories" :key="c.code" :label="c.label" :value="c.code" />
           </el-select>
-          <div v-if="form.id" class="mode-tip">类型不可修改，需要其它类型请新建</div>
+          <span class="mode-tip">　类型不可修改，需要其它类型请新建</span>
         </el-form-item>
         <el-form-item label="模版名称" required>
-          <el-input v-model="form.name" placeholder="模板名称" style="width:320px" maxlength="64" />
+          <el-input v-model="form.name" placeholder="汉字、字母、数字、下划线组成" style="width:320px" maxlength="64" />
         </el-form-item>
         <el-form-item label="业务分组">
           <el-input v-model="form.groupName" placeholder="可空" style="width:320px" />
@@ -105,14 +105,67 @@
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="2" style="width:420px" />
         </el-form-item>
-        <el-divider content-position="left">开通意图</el-divider>
-        <div class="mode-tip intent-tip">
-          只描述意图，真实参数路径在下发时按设备型号映射决定
-        </div>
         <el-form-item v-for="f in fieldDefs" :key="f.key" :label="f.label">
-          <el-select v-model="form.fields[f.key]" style="width:240px">
+          <!-- 枚举单选 -->
+          <el-select v-if="f.type === 'enum'" v-model="form.fields[f.key]" style="width:240px">
             <el-option v-for="o in f.options" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
+          <!-- 多选枚举（如业务模式） -->
+          <el-select
+            v-else-if="f.type === 'multienum'"
+            v-model="form.fields[f.key]"
+            multiple
+            collapse-tags
+            style="width:320px"
+            placeholder="选择业务"
+          >
+            <el-option v-for="o in f.options" :key="o.value" :label="o.label" :value="o.value" />
+          </el-select>
+          <!-- 数字 -->
+          <el-input-number
+            v-else-if="f.type === 'number'"
+            v-model="form.fields[f.key]"
+            :min="f.min"
+            :max="f.max"
+            controls-position="right"
+            style="width:180px"
+            placeholder="不修改"
+          />
+          <!-- 绑定端口勾选组 -->
+          <div v-else-if="f.type === 'ports'" class="port-bind">
+            <div v-for="g in portGroups" :key="g.label" class="port-group">
+              <span class="port-group-label" :class="'port-group-' + g.code">{{ g.label }}</span>
+              <el-checkbox-group v-model="form.fields[f.key]">
+                <el-checkbox v-for="p in g.ports" :key="p.v" :label="p.v">{{ p.t }}</el-checkbox>
+              </el-checkbox-group>
+            </div>
+          </div>
+          <!-- 多行文本（如 SIP 用户信息） -->
+          <div v-else-if="f.type === 'textarea'" style="width:460px">
+            <el-input
+              v-model="form.fields[f.key]"
+              type="textarea"
+              :rows="4"
+              placeholder="每行一条：账号名 密码，可空"
+            />
+            <el-button
+              v-if="form.fields[f.key]"
+              type="text"
+              icon="el-icon-delete"
+              class="textarea-clear"
+              @click="form.fields[f.key] = ''"
+            >清空</el-button>
+          </div>
+          <!-- 文本 -->
+          <el-input
+            v-else
+            v-model="form.fields[f.key]"
+            :type="f.inputType === 'password' ? 'password' : 'text'"
+            :show-password="f.inputType === 'password'"
+            style="width:320px"
+            :placeholder="f.type === 'string' ? '留空表示不修改' : ''"
+          />
+          <div v-if="f.tip" class="field-tip">{{ f.tip }}</div>
         </el-form-item>
       </el-form>
 
@@ -154,6 +207,32 @@ export default {
       categories: [],
       // 类型 -> 该类型的意图字段定义
       fieldDefMap: {},
+      // 绑定端口勾选组的分组展示，v 为存储值（下发时逗号拼接），t 为显示文字
+      portGroups: [
+        {
+          code: 'lan', label: 'LAN',
+          ports: [
+            { v: 'LAN1', t: 'LAN1' }, { v: 'LAN2', t: 'LAN2' }, { v: 'LAN3', t: 'LAN3' },
+            { v: 'LAN4', t: 'LAN4' }, { v: 'LAN5', t: 'LAN5' }, { v: 'LAN6', t: 'LAN6' },
+            { v: 'LAN7', t: 'LAN7' }, { v: 'LAN8', t: 'LAN8' }
+          ]
+        },
+        {
+          code: 'wifi24', label: '2.4G',
+          ports: [
+            { v: 'SSID1', t: 'SSID1' }, { v: 'SSID2', t: 'SSID2' },
+            { v: 'SSID3', t: 'SSID3' }, { v: 'SSID4', t: 'SSID4' }
+          ]
+        },
+        {
+          code: 'wifi58', label: '5.8G',
+          ports: [
+            { v: 'SSID5', t: 'SSID5' }, { v: 'SSID6', t: 'SSID6' },
+            { v: 'SSID7', t: 'SSID7' }, { v: 'SSID8', t: 'SSID8' }
+          ]
+        },
+        { code: 'pon', label: 'PON', ports: [{ v: 'PON', t: 'PON（FFTR从光猫下行PON口）' }] }
+      ],
       query: { category: '', keyword: '' },
       dialogVisible: false,
       dialogTitle: '新增配置模板',
@@ -198,7 +277,7 @@ export default {
     tagType(code) {
       const map = {
         WAN_DHCP: 'success', WAN_PPPOE: 'success', WAN_STATIC: 'success', WAN_BRIDGE: 'success',
-        WIFI_24G: 'danger', WIFI_58G: 'danger', SIP: 'warning'
+        WIFI_24G: 'danger', WIFI_58G: 'danger', SIP: 'warning', OTHER: 'info'
       }
       return map[code] || 'info'
     },
@@ -209,9 +288,14 @@ export default {
       if (!defs.length) return '-'
       return defs.map(d => {
         const value = fields[d.key]
-        if (value === undefined || value === null || value === '') return null
-        const hit = (d.options || []).find(o => String(o.value) === String(value))
-        return d.label + '：' + (hit ? hit.label : value)
+        if (value === undefined || value === null || value === '' ||
+          (Array.isArray(value) && !value.length)) return null
+        const labelOf = v => {
+          const hit = (d.options || []).find(o => String(o.value) === String(v))
+          return hit ? hit.label : v
+        }
+        const text = Array.isArray(value) ? value.map(labelOf).join('、') : labelOf(value)
+        return d.label + '：' + text
       }).filter(Boolean).join('　')
     },
     // ---------------- 对话框 ----------------
@@ -236,18 +320,17 @@ export default {
       this.dialogTitle = '编辑配置模板 - ' + row.name
       this.dialogVisible = true
     },
-    onCategoryChange() {
-      // 换类型后原意图字段不再适用，按新类型重置为默认值
-      this.form.fields = {}
-      this.applyFieldDefaults()
-    },
-    /** 未设置的意图字段按后端默认值补齐 */
+
+    /** 未设置的意图字段按后端默认值补齐；默认值为 null 的（数字可空项）保持留空 */
     applyFieldDefaults() {
       const defs = this.fieldDefMap[this.form.category] || []
       defs.forEach(d => {
-        if (this.form.fields[d.key] === undefined || this.form.fields[d.key] === null ||
-          this.form.fields[d.key] === '') {
-          this.$set(this.form.fields, d.key, d.defaultValue)
+        const empty = this.form.fields[d.key] === undefined || this.form.fields[d.key] === null ||
+          this.form.fields[d.key] === ''
+        if (empty && d.defaultValue !== null && d.defaultValue !== undefined) {
+          // 数组默认值必须拷贝，避免多个表单共享同一引用
+          const v = Array.isArray(d.defaultValue) ? d.defaultValue.slice() : d.defaultValue
+          this.$set(this.form.fields, d.key, v)
         }
       })
     },
@@ -320,6 +403,7 @@ export default {
 .cat-WIFI_24G { background: #f78989; border-color: #f78989; color: #fff; }
 .cat-WIFI_58G { background: #f56c6c; border-color: #f56c6c; color: #fff; }
 .cat-SIP { background: #e6a23c; border-color: #e6a23c; color: #fff; }
+.cat-OTHER { background: #909399; border-color: #909399; color: #fff; }
 .filter-card {
   margin-bottom: 12px;
 }
@@ -339,7 +423,48 @@ export default {
   color: #909399;
   font-size: 12px;
 }
-.intent-tip {
-  margin: 0 0 10px 0;
+.field-tip {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+.port-bind {
+  width: 480px;
+}
+.port-group {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+.port-group + .port-group {
+  margin-top: 2px;
+}
+.port-group-label {
+  flex: 0 0 44px;
+  margin: 2px 8px 0 0;
+  font-size: 12px;
+  text-align: center;
+  color: #fff;
+  background: #909399;
+  border-radius: 9px;
+  padding: 0 6px;
+  line-height: 18px;
+}
+.port-group-wifi24 {
+  background: #b0b3b8;
+}
+.port-group-wifi58 {
+  background: #606266;
+}
+.port-group-pon {
+  background: #409eff;
+}
+.port-group .el-checkbox {
+  margin-right: 14px;
+}
+.textarea-clear {
+  color: #909399;
+  padding: 4px 0;
 }
 </style>

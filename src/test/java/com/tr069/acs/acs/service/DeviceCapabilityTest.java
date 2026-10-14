@@ -5,7 +5,9 @@ import com.tr069.acs.cwmp.SoapEnvelopeBuilder;
 import com.tr069.acs.cwmp.SoapParser;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -145,5 +147,72 @@ class DeviceCapabilityTest {
         assertThat(DeviceCapabilityService.depthOf("InternetGatewayDevice.DeviceInfo.")).isEqualTo(1);
         assertThat(DeviceCapabilityService.depthOf(
                 "InternetGatewayDevice.DeviceInfo.SoftwareVersion")).isEqualTo(2);
+    }
+
+    /**
+     * 子树清单按设备的数据模型根节点展开，两种模型都不能漏：
+     * TR-098 走 IGD 的 WANDevice./LANDevice.，TR-181 走 Device. 的 WAN./Ethernet.Interface./WiFi.。
+     */
+    @Test
+    void resolvesSubtreesUnderRootNode() {
+        DeviceCapabilityService service = newDeviceCapabilityService();
+
+        List<String> tr098 = ReflectionTestUtils.invokeMethod(
+                service, "resolveSubtrees", "InternetGatewayDevice.");
+        List<String> tr181 = ReflectionTestUtils.invokeMethod(service, "resolveSubtrees", "Device.");
+
+        assertThat(tr098).isNotEmpty()
+                .allSatisfy(path -> assertThat(path).startsWith("InternetGatewayDevice."));
+        assertThat(tr181).isNotEmpty()
+                .allSatisfy(path -> assertThat(path).startsWith("Device."));
+        assertThat(tr098).contains("InternetGatewayDevice.WANDevice.", "InternetGatewayDevice.LANDevice.",
+                "InternetGatewayDevice.Services.VoiceService.");
+        assertThat(tr181).contains("Device.WAN.", "Device.Ethernet.Interface.",
+                "Device.WiFi.", "Device.Services.VoiceService.");
+        // 子树名与数据模型绑定：TR-098 设备不能收到 InternetGatewayDevice.LAN./WiFi. 这类
+        // TR-181 写法，否则每次采集都回一串 9005 Invalid parameter name
+        assertThat(tr098).doesNotContain("InternetGatewayDevice.LAN.", "InternetGatewayDevice.WAN.",
+                "InternetGatewayDevice.WiFi.", "InternetGatewayDevice.Ethernet.Interface.");
+        assertThat(tr181).doesNotContain("Device.WANDevice.", "Device.LANDevice.");
+    }
+
+    /**
+     * 只拉子树时要补上根节点与中间层对象：型号 XML 与能力树浏览都按 parent_path 逐级渲染，
+     * 少了 {@code Services.} 这一层，整棵 SIP 子树都渲染不出来。
+     */
+    @Test
+    void completesRootAndIntermediateObjects() {
+        DeviceCapabilityService service = newDeviceCapabilityService();
+        List<DeviceCapabilityService.Node> nodes = List.of(
+                new DeviceCapabilityService.Node(
+                        "InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.", true, false),
+                new DeviceCapabilityService.Node("InternetGatewayDevice.WANDevice.1.", true, false));
+
+        List<?> tree = ReflectionTestUtils.invokeMethod(service, "completeTree",
+                nodes, "InternetGatewayDevice.");
+
+        assertThat(paths(tree)).containsExactlyInAnyOrder(
+                "InternetGatewayDevice.",
+                "InternetGatewayDevice.WANDevice.",
+                "InternetGatewayDevice.Services.",
+                "InternetGatewayDevice.Services.VoiceService.",
+                "InternetGatewayDevice.Services.VoiceService.1.",
+                "InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.",
+                "InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.",
+                "InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.",
+                "InternetGatewayDevice.WANDevice.1.");
+        assertThat(paths(tree).get(0)).isEqualTo("InternetGatewayDevice.");
+    }
+
+    private static DeviceCapabilityService newDeviceCapabilityService() {
+        return new DeviceCapabilityService(null, null, null, null, null);
+    }
+
+    private static List<String> paths(List<?> nodes) {
+        List<String> result = new ArrayList<>();
+        for (Object node : nodes) {
+            result.add(((DeviceCapabilityService.Node) node).getPath());
+        }
+        return result;
     }
 }

@@ -1,6 +1,7 @@
 package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.PendingRpc;
 import com.tr069.acs.acs.session.SessionManager;
@@ -40,8 +41,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>一次采集分两步，全程跑在「Inform -> InformResponse -> 空 POST 捎带下发」这条链路上：</p>
  * <ol>
- *   <li>{@code GetParameterNames(root, NextLevel=false)}：一次性递归拿到设备支持的全部路径，
- *       路径以句点结尾的是对象，其余是普通参数，同时带回读写权限</li>
+ *   <li>{@code GetParameterNames(子树, NextLevel=false)}：逐个子树递归拿到设备支持的路径，
+ *       路径以句点结尾的是对象，其余是普通参数，同时带回读写权限。子树固定只取
+ *       WAN / WiFi / LAN 网口 / SIP 电话四类，见 {@link #SUBTREES}</li>
  *   <li>{@code GetParameterValues}：把上一步得到的参数路径分批读值，回填进同一张表</li>
  * </ol>
  *
@@ -64,9 +66,51 @@ public class DeviceCapabilityService {
     private static final String EVENT_BOOTSTRAP = "0 BOOTSTRAP";
 
     /**
-     * 默认根数据模型节点。
+     * 兜底的根数据模型节点：设备台账与会话都还没认出来时按 TR-098 处理。
+     * 真正生效的根节点来自 {@link DataModel#detect}，别在不确定的地方写死字符串。
      */
-    private static final String DEFAULT_ROOT = "InternetGatewayDevice.";
+    private static final String DEFAULT_ROOT = DataModel.TR098.getRoot();
+
+    /**
+     * 只采集这些子树，相对数据模型根节点书写。
+     *
+     * <p>整机参数树动辄上万节点，而平台真正用到的只有 WAN、WiFi、LAN 网口、SIP 电话四类业务，
+     * 全量拉一遍既慢又占库，所以只在子树上发 GetParameterNames，拼成一棵够用的树。</p>
+     *
+     * <p>前缀同时覆盖 TR-098（{@code InternetGatewayDevice.}）与 TR-181（{@code Device.}）两种
+     * 数据模型：前者用 {@code WANDevice./LANDevice.}，后者用 {@code WAN./Ethernet.Interface./WiFi.}；
+     * TR-098 的 WiFi（{@code WLANConfiguration}）挂在 {@code LANDevice.} 下面，一并随 LAN 子树取回。
+     * 某块子树取不到由 {@link #collectSubtree} 兜底处理，不影响其它子树。</p>
+     */
+    /**
+     * TR-098（{@code InternetGatewayDevice.}）下的业务子树。
+     *
+     * <p>子树名和根节点是绑定的：TR-098 的网口叫 {@code LANDevice.}、语音挂在
+     * {@code Services.VoiceService.} 下面；TR-181 则是 {@code Ethernet.Interface.} / {@code WiFi.}。
+     * 早先两类名字混在一个列表里无差别往根节点上拼，TR-098 设备就会收到
+     * {@code InternetGatewayDevice.LAN.} 这种根本不存在的路径，每次采集必定回一串
+     * 9005 Invalid parameter name，还白白多跑一轮逐层展开兜底。</p>
+     */
+    private static final List<String> SUBTREES_TR098 = List.of(
+            // WAN
+            "WANDevice.",
+            // LAN 网口（TR-098 的 WiFi 挂在 LANDevice 下面，随 LAN 子树一并取回）
+            "LANDevice.",
+            // SIP 电话
+            "Services.VoiceService.");
+
+    /** TR-181（{@code Device.}）下的业务子树。 */
+    private static final List<String> SUBTREES_TR181 = List.of(
+            // WAN
+            "WAN.",
+            // LAN 网口
+            "Ethernet.Interface.",
+            "LAN.",
+            // WiFi
+            "WiFi.",
+            // SIP 电话
+            "Services.VoiceService.",
+            "VoiceService.");
 
     /**
      * 会话级故障码：下发超时、连接断开、指令未入队，由会话层与本服务生成，
@@ -369,15 +413,16 @@ public class DeviceCapabilityService {
         status.setPhase("names");
         status.setStartTime(System.currentTimeMillis());
 
-        CompletableFuture<List<Node>> names = getParameterNames(sn, root, false)
-                .thenComposeAsync(resp -> onNamesResponse(sn, root, resp, status), executor());
+        CompletableFuture<List<Node>> names = collectNames(sn, root, status);
 
         return names.thenComposeAsync(nodes -> {
             if (nodes.isEmpty()) {
-                status.fail("未能获取参数路径: " + String.join("; ", status.getErrors()));
+                status.fail("未能获取参数路径: " + (status.getErrors().isEmpty()
+                        ? "子树均未返回节点: " + String.join(", ", resolveSubtrees(root))
+                        : String.join("; ", status.getErrors())));
                 return CompletableFuture.completedFuture(null);
             }
-            List<Node> tree = withRoot(nodes, root);
+            List<Node> tree = completeTree(nodes, root);
             saveTree(sn, batch, tree);
             status.setNameCount(tree.size());
             status.setObjectCount(countNodes(tree, true));
@@ -398,32 +443,83 @@ public class DeviceCapabilityService {
     }
 
     /**
-     * 处理 GetParameterNames 的响应。递归方式不成时退化为逐层展开。
+     * 按 {@link #SUBTREES} 逐个拉取参数路径。
+     *
+     * <p>不再从根一次性递归整棵树：光猫全树动辄上万节点，平台实际只用得上
+     * WAN、WiFi、LAN 网口、SIP 电话这几块。子树逐个下发，某块设备没有就跳过去。</p>
+     *
+     * <p>一个会话同时只允许一条未回应的下发，所以子树之间必须串行。</p>
      */
-    private CompletableFuture<List<Node>> onNamesResponse(String sn, String root,
-                                                          SoapMessage resp, CollectStatus status) {
-        if (resp != null && !resp.isFault()) {
-            List<Node> nodes = parseNodes(resp);
-            if (!nodes.isEmpty()) {
-                return CompletableFuture.completedFuture(nodes);
-            }
-            status.addError("GetParameterNames 返回空列表");
-        } else {
-            status.addError("GetParameterNames(" + root + ") 失败: " + faultText(resp));
-            if (isSessionFault(resp)) {
-                // 设备已经不在了，再逐层问下去只会拖出一串超时
-                status.abort();
-                return CompletableFuture.completedFuture(List.<Node>of());
-            }
-        }
-        if (!fallbackNextLevel) {
-            return CompletableFuture.completedFuture(List.<Node>of());
-        }
-        // 部分光猫不接受根节点上的 NextLevel=false，只能一层层往下问
-        status.setPhase("names-by-level");
-        log.info("递归 GetParameterNames 未成功，改用逐层展开: sn={}, root={}", sn, root);
+    private CompletableFuture<List<Node>> collectNames(String sn, String root, CollectStatus status) {
+        List<String> paths = resolveSubtrees(root);
+        log.info("按子树采集设备能力: sn={}, 子树={}", sn, paths);
         List<Node> sink = Collections.synchronizedList(new ArrayList<>());
-        return expandLevel(sn, root, sink, new AtomicInteger(), status);
+        AtomicInteger rounds = new AtomicInteger();
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (String path : paths) {
+            chain = chain.thenComposeAsync(v -> {
+                if (status.isAborted()) {
+                    return CompletableFuture.<Void>completedFuture(null);
+                }
+                status.setPhase("names:" + path);
+                return collectSubtree(sn, path, sink, rounds, status);
+            }, executor());
+        }
+        return chain.thenApply(v -> sink);
+    }
+
+    /**
+     * 拉取单个子树：先递归 GPN，递归没拿到东西时退化为逐层展开。
+     *
+     * <p>子树取不到有两种原因：设备压根没有这条路径（另一种数据模型、或者该功能是选配），
+     * 以及设备不吃 NextLevel=false。两者都往 {@link #expandLevel} 兜一次，宁可多一轮来回，
+     * 也不误判成设备没有这块业务；会话级故障（离线、超时）才直接中止。</p>
+     */
+    private CompletableFuture<Void> collectSubtree(String sn, String path, List<Node> sink,
+                                                   AtomicInteger rounds, CollectStatus status) {
+        return getParameterNames(sn, path, false).thenComposeAsync(resp -> {
+            if (resp != null && !resp.isFault()) {
+                List<Node> nodes = parseNodes(resp);
+                if (!nodes.isEmpty()) {
+                    sink.addAll(nodes);
+                    return CompletableFuture.<Void>completedFuture(null);
+                }
+                log.info("子树递归拉取为空，改用逐层展开: sn={}, subtree={}", sn, path);
+            } else {
+                if (isSessionFault(resp)) {
+                    status.addError("GetParameterNames(" + path + ") 失败: " + faultText(resp));
+                    // 单纯的指令超时≠会话没了：设备忙、单条响应慢时其它子树照样能采，
+                    // 一刀切 abort 会把「WAN 子树超时」放大成「整棵树采不到」；
+                    // 只有连接断开/会话关闭（设备真的不在了）才中止全部子树
+                    if (!isTimeoutFault(resp)) {
+                        status.abort();
+                        return CompletableFuture.<Void>completedFuture(null);
+                    }
+                } else {
+                    status.addError("GetParameterNames(" + path + ") 失败: " + faultText(resp));
+                }
+            }
+            if (!fallbackNextLevel) {
+                return CompletableFuture.<Void>completedFuture(null);
+            }
+            List<Node> branch = Collections.synchronizedList(new ArrayList<>());
+            return expandLevel(sn, path, branch, rounds, status)
+                    .thenAccept(ignored -> sink.addAll(branch));
+        }, executor());
+    }
+
+    /**
+     * 待采集的子树绝对路径：把固定子树拼到设备的数据模型根节点下。
+     */
+    private static List<String> resolveSubtrees(String root) {
+        String base = root == null || root.isEmpty() ? DEFAULT_ROOT : root;
+        List<String> subtrees = DataModel.TR181.getRoot().equals(base)
+                ? SUBTREES_TR181 : SUBTREES_TR098;
+        List<String> paths = new ArrayList<>(subtrees.size());
+        for (String subtree : subtrees) {
+            paths.add(base + subtree);
+        }
+        return paths;
     }
 
     /**
@@ -444,7 +540,10 @@ public class DeviceCapabilityService {
             if (resp == null || resp.isFault()) {
                 status.addError("GetParameterNames(" + path + ") 失败: " + faultText(resp));
                 if (isSessionFault(resp)) {
-                    status.abort();
+                    // 与 collectSubtree 同理：单纯超时只放弃这条分支，会话真没了才中止全部
+                    if (!isTimeoutFault(resp)) {
+                        status.abort();
+                    }
                 }
                 return CompletableFuture.completedFuture(sink);
             }
@@ -553,6 +652,20 @@ public class DeviceCapabilityService {
         return FAULT_SESSION.equals(code) || FAULT_ENQUEUE.equals(code);
     }
 
+    /**
+     * 会话级故障里的「超时」类：设备忙、单条响应慢，设备本体还在。
+     *
+     * <p>这类故障换个子树/换个时机就能成，不该中止整次采集；
+     * 连接断开、会话关闭（"connection lost"、"device reconnected" 等）才是真不在了。</p>
+     */
+    private static boolean isTimeoutFault(SoapMessage resp) {
+        if (resp == null || resp.getFault() == null) {
+            return false;
+        }
+        String msg = String.valueOf(resp.getFault().getFaultString());
+        return msg.contains("超时");
+    }
+
     private static SoapMessage sessionFault(String reason) {
         return SoapMessage.builder()
                 .fault(com.tr069.acs.cwmp.model.FaultStruct.builder()
@@ -635,17 +748,34 @@ public class DeviceCapabilityService {
     }
 
     /**
-     * 补上根节点：GetParameterNames 从根发起时不会把根自己带回来。
+     * 补全树：根节点与各子树之上的中间层对象节点都由这里补上。
+     *
+     * <p>GetParameterNames 从子树发起时不会把子树自己的祖先带回来——比如
+     * {@code InternetGatewayDevice.Services.VoiceService.} 上面的 {@code Services.}、
+     * 以及根节点自己。少了这几层，型号 XML 导出与能力树浏览按 parent_path 逐级渲染，
+     * 整棵子树会渲染不出来（参数都在表里，但读不到）。</p>
      */
-    private List<Node> withRoot(List<Node> nodes, String root) {
+    private List<Node> completeTree(List<Node> nodes, String root) {
+        String base = root == null || root.isEmpty() ? DEFAULT_ROOT : root;
+        Set<String> seen = new LinkedHashSet<>();
+        List<Node> tree = new ArrayList<>(nodes.size() + 8);
+        seen.add(base);
+        tree.add(new Node(base, true, false));
         for (Node node : nodes) {
-            if (node.path.equals(root)) {
-                return nodes;
+            if (seen.add(node.path)) {
+                tree.add(node);
             }
         }
-        List<Node> tree = new ArrayList<>(nodes.size() + 1);
-        tree.add(new Node(root, true, false));
-        tree.addAll(nodes);
+        List<Node> ancestors = new ArrayList<>();
+        for (Node node : nodes) {
+            for (String parent = parentOf(node.path);
+                 !parent.isEmpty() && !seen.contains(parent);
+                 parent = parentOf(parent)) {
+                seen.add(parent);
+                ancestors.add(new Node(parent, true, false));
+            }
+        }
+        tree.addAll(1, ancestors);
         return tree;
     }
 
@@ -775,13 +905,14 @@ public class DeviceCapabilityService {
                 inform == null || inform.getParameterList() == null
                         ? List.of() : inform.getParameterList();
         if (!parameters.isEmpty()) {
-            String first = parameters.get(0).getName();
-            if (first != null && first.startsWith("Device.")) {
-                return "Device.";
+            List<String> paths = new ArrayList<>(parameters.size());
+            for (ParameterValueStruct p : parameters) {
+                if (p.getName() != null) {
+                    paths.add(p.getName());
+                }
             }
-            if (first != null && first.startsWith("InternetGatewayDevice.")) {
-                return DEFAULT_ROOT;
-            }
+            // 只看第一条会被设备私有扩展参数带偏，这里按全部参数取多数
+            return DataModel.detect(paths).getRoot();
         }
         return session.getRootNode() == null ? DEFAULT_ROOT : session.getRootNode();
     }
@@ -886,7 +1017,7 @@ public class DeviceCapabilityService {
     /**
      * 能力树上的一个节点，采集过程中的内存形态。
      */
-    private static class Node {
+    static class Node {
 
         private String path;
 
@@ -898,6 +1029,13 @@ public class DeviceCapabilityService {
             this.path = path;
             this.object = object;
             this.writable = writable;
+        }
+
+        /**
+         * 当前路径。落库时可能被截断为列宽上限。
+         */
+        String getPath() {
+            return path;
         }
     }
 

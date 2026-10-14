@@ -3,6 +3,7 @@ package com.tr069.acs.agent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.cwmp.model.FaultStruct;
+import com.tr069.acs.common.log.AcsCoreLog;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.domain.entity.RpcRecord;
 import com.tr069.acs.mapper.RpcRecordMapper;
@@ -47,6 +48,7 @@ public class RpcDispatchService {
     private final RpcRecordMapper rpcRecordMapper;
     private final RpcTaskQueue rpcTaskQueue;
     private final RpcTaskRegistry rpcTaskRegistry;
+    private final AcsCoreLog coreLog;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -166,6 +168,13 @@ public class RpcDispatchService {
         }
         rpcTaskQueue.saveResult(result2);
 
+        // 核心日志：下发成功/失败单独记一行到 log/ACS_LOG.LOG
+        coreLog.rpcResult(result2.getSn(), result2.getRpcName(), taskId, !failed,
+                failed && result != null && result.getFault() != null
+                        ? result.getFault().getFaultCode() : "-",
+                failed && result != null && result.getFault() != null
+                        ? result.getFault().getFaultString() : "-");
+
         // 凭据完成后，挂在上面的工单下一步会被回调驱动继续执行
         rpcTaskRegistry.complete(taskId, result);
         finishRecord(taskId, result);
@@ -188,6 +197,9 @@ public class RpcDispatchService {
         result.setFaultString(faultString);
         result.setFinishTime(System.currentTimeMillis());
         rpcTaskQueue.saveResult(result);
+
+        // 核心日志：超时、会话关闭等失败同样记一行
+        coreLog.rpcResult(result.getSn(), result.getRpcName(), taskId, false, faultCode, faultString);
 
         rpcTaskRegistry.fail(taskId, faultCode, faultString);
         finishRecord(taskId, null);

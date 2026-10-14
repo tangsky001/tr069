@@ -60,6 +60,7 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
     public static final String PROFILES_DIR = "profiles";
 
     private final WorklistProperties properties;
+    private final WorklistRootResolver rootResolver;
     private final ProfileRegistry profileRegistry;
     private final ProfileLoader profileLoader;
 
@@ -81,9 +82,11 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
     private Thread watchThread;
 
     public WorklistConfigService(WorklistProperties properties,
+                                 WorklistRootResolver rootResolver,
                                  ProfileRegistry profileRegistry,
                                  ProfileLoader profileLoader) {
         this.properties = properties;
+        this.rootResolver = rootResolver;
         this.profileRegistry = profileRegistry;
         this.profileLoader = profileLoader;
     }
@@ -96,7 +99,7 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
             log.info("acs.worklist.enabled=false，已跳过光猫适配配置加载");
             return;
         }
-        root = resolveRoot();
+        root = rootResolver.root();
         profilesDir = root.resolve(PROFILES_DIR);
         try {
             Files.createDirectories(profilesDir);
@@ -113,64 +116,6 @@ public class WorklistConfigService implements InitializingBean, DisposableBean {
                 report.getProfileTotal() - report.getProfileFailed(), report.getProfileTotal());
 
         startHotReload();
-    }
-
-    /**
-     * 解析配置根目录。
-     *
-     * <p>配置值优先；若它指向的目录不存在或为空，则依次回退到 jar 同级的
-     * {@code configuration/} 与 {@code target/configuration/}。这样现场无论以哪个
-     * 工作目录启动（直接在 target 目录里起 jar 会拼成 target/target/configuration），
-     * 都能拿到真实配置，而不是落进空目录重新释放示例。</p>
-     */
-    private Path resolveRoot() {
-        Path configured = Path.of(properties.getRootPath()).toAbsolutePath().normalize();
-        if (isUsableDirectory(configured)) {
-            return configured;
-        }
-        Path base = jarDirectory();
-        if (base != null) {
-            List<Path> candidates = List.of(
-                    base.resolve("configuration"),
-                    base.resolve("target").resolve("configuration"));
-            for (Path candidate : candidates) {
-                if (isUsableDirectory(candidate)) {
-                    log.warn("配置目录 {} 为空，回退使用 {}", configured, candidate.normalize());
-                    return candidate.normalize();
-                }
-            }
-        }
-        return configured;
-    }
-
-    /**
-     * 目录存在且非空。
-     */
-    private static boolean isUsableDirectory(Path dir) {
-        if (!Files.isDirectory(dir)) {
-            return false;
-        }
-        try (Stream<Path> children = Files.list(dir)) {
-            return children.findAny().isPresent();
-        } catch (IOException e) {
-            return false;
-        }
-    }
-
-    /**
-     * 取 jar 所在目录；开发期（classes 目录）同样返回其父目录。
-     */
-    private static Path jarDirectory() {
-        try {
-            java.security.CodeSource source = WorklistConfigService.class.getProtectionDomain().getCodeSource();
-            if (source == null || source.getLocation() == null) {
-                return null;
-            }
-            return Path.of(source.getLocation().toURI()).getParent();
-        } catch (Exception e) {
-            log.debug("无法确定 jar 所在目录: {}", e.getMessage());
-            return null;
-        }
     }
 
     @Override

@@ -1,6 +1,8 @@
 package com.tr069.acs.acs.service;
 
+import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.session.CpeSession;
+import com.tr069.acs.common.log.AcsCoreLog;
 import com.tr069.acs.cwmp.model.EventStruct;
 import com.tr069.acs.cwmp.model.InformRequest;
 import com.tr069.acs.cwmp.model.ParameterValueStruct;
@@ -39,6 +41,8 @@ public class InformService {
 
     private final DeviceRegistryService deviceRegistry;
 
+    private final AcsCoreLog coreLog;
+
     /**
      * 处理一次 Inform：更新会话属性并返回排序后的事件码列表。
      *
@@ -65,15 +69,14 @@ public class InformService {
             }
         }
 
-        // 判定根数据模型节点
-        if (!parameters.isEmpty()) {
-            String first = parameters.get(0).getName();
-            if (first != null && first.startsWith("Device.")) {
-                session.setRootNode("Device.");
-            } else if (first != null && first.startsWith("InternetGatewayDevice.")) {
-                session.setRootNode("InternetGatewayDevice.");
+        // 判定根数据模型节点：遍历全部上报参数取多数，只看第一条会被扩展节点带偏
+        List<String> paramPaths = new ArrayList<>(parameters.size());
+        for (ParameterValueStruct p : parameters) {
+            if (p.getName() != null) {
+                paramPaths.add(p.getName());
             }
         }
+        session.setRootNode(DataModel.detect(paramPaths).getRoot());
 
         if (inform.getDeviceId() != null) {
             session.setProductClass(inform.getDeviceId().getProductClass());
@@ -89,6 +92,8 @@ public class InformService {
 
         log.info("收到 Inform: sn={}, events={}, sw={}, hw={}",
                 session.getSn(), eventCodes, session.getSoftwareVersion(), session.getHardwareVersion());
+        // 核心日志：设备上报单独记一行到 log/ACS_LOG.LOG
+        coreLog.inform(session.getSn(), eventCodes, session.getConnectionId());
         return eventCodes;
     }
 

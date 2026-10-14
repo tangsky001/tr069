@@ -73,14 +73,19 @@ public class ReportConsumer {
     }
 
     private void consumeLoop(String queueKey) {
-        long timeout = Math.max(1, properties.getReport().getPopTimeoutSeconds());
+        long idleMillis = Math.max(50, properties.getReport().getPollIntervalMillis());
         int consecutiveFailures = 0;
         while (running.get()) {
             try {
-                ReportQueueService.ReportMessage msg = queue.poll(queueKey, timeout);
-                // 取到消息或正常超时都算成功，重置退避
+                ReportQueueService.ReportMessage msg = queue.poll(queueKey);
+                if (consecutiveFailures > 0) {
+                    log.warn("上报队列已恢复: key={}，此前连续失败 {} 次", queueKey, consecutiveFailures);
+                }
                 consecutiveFailures = 0;
-                if (msg != null) {
+                if (msg == null) {
+                    // 队列空，按配置的间隔再问一次，不用阻塞式取数
+                    sleepQuietly(idleMillis);
+                } else {
                     handle(msg);
                 }
             } catch (Throwable e) {
@@ -88,8 +93,11 @@ public class ReportConsumer {
                 consecutiveFailures++;
                 long backoff = Math.min(30_000L, 500L * (1L << Math.min(consecutiveFailures, 6)));
                 if (consecutiveFailures == 1 || consecutiveFailures % 20 == 0) {
-                    log.error("上报消费异常({} 次连续失败)，退避 {}ms: {}",
-                            consecutiveFailures, backoff, e.getMessage());
+                    // 带上根因，否则只看到包装文案，看不出是连接断了还是命令超时
+                    Throwable root = e.getCause() != null ? e.getCause() : e;
+                    log.error("上报消费异常({} 次连续失败)，退避 {}ms: {} | 根因 {}: {}",
+                            consecutiveFailures, backoff, e.getMessage(),
+                            root.getClass().getSimpleName(), root.getMessage());
                 }
                 sleepQuietly(backoff);
             }

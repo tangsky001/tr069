@@ -169,6 +169,19 @@
                 <directory>src/main/resources</directory>
                 <filtering>false</filtering>
             </resource>
+            <!--
+                全库只有一份建表脚本：根目录 sql/schema.sql。
+                这里复制到 classpath:db/schema.sql，供各模块的自动补表组件读取，
+                避免仓库里出现两份同名表的定义（副本必然漂移）。
+            -->
+            <resource>
+                <directory>${project.basedir}/sql</directory>
+                <targetPath>db</targetPath>
+                <includes>
+                    <include>schema.sql</include>
+                </includes>
+                <filtering>false</filtering>
+            </resource>
         </resources>
 
         <plugins>

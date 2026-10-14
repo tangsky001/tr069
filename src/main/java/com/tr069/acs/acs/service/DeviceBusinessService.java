@@ -1,6 +1,7 @@
 package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.domain.entity.CpeParameter;
 import com.tr069.acs.mapper.CpeDeviceMapper;
@@ -51,7 +52,13 @@ public class DeviceBusinessService {
     private record Section(String key, String name, Pattern instance) {
     }
 
-    private static final String DEFAULT_ROOT = "InternetGatewayDevice.";
+    /**
+     * 兜底根节点：设备台账里没有记录时按 TR-098 处理。
+     *
+     * <p>业务参数的前缀不由它决定——那部分走 {@link DataModel#businessPrefixes(String)}，
+     * 同时覆盖两种模型，台账里的根节点错了也不会查空。</p>
+     */
+    private static final String DEFAULT_ROOT = DataModel.TR098.getRoot();
 
     private static final List<Section> SECTIONS = List.of(
             new Section("device", "设备信息",
@@ -78,7 +85,7 @@ public class DeviceBusinessService {
      */
     public Map<String, Object> summary(String sn) {
         String root = resolveRoot(sn);
-        List<CpeParameter> params = selectBusinessParams(sn, root);
+        List<CpeParameter> params = selectBusinessParams(sn);
         Map<String, Object> data = baseInfo(sn, root);
         for (Section section : SECTIONS) {
             data.put(section.key(), groupInstances(params, section));
@@ -120,7 +127,7 @@ public class DeviceBusinessService {
      */
     public Map<String, Object> collect(String sn) {
         String root = resolveRoot(sn);
-        List<CpeParameter> params = selectBusinessParams(sn, root);
+        List<CpeParameter> params = selectBusinessParams(sn);
         List<String> paths = collectiblePaths(params);
         if (paths.isEmpty()) {
             Map<String, Object> data = baseInfo(sn, root);
@@ -185,8 +192,10 @@ public class DeviceBusinessService {
             if (parent.isEmpty() || !section.instance().matcher(parent).find()) {
                 continue;
             }
-            grouped.computeIfAbsent(parent, k -> new LinkedHashMap<>())
-                    .put(DeviceCapabilityService.nameOf(row.getParamPath()), row.getParamValue());
+            Map<String, String> fields =
+                    grouped.computeIfAbsent(parent, k -> new LinkedHashMap<>());
+            String name = normalizeLeaf(DeviceCapabilityService.nameOf(row.getParamPath()));
+            fields.putIfAbsent(name, row.getParamValue());
         }
         List<Map<String, Object>> result = new ArrayList<>(grouped.size());
         for (Map.Entry<String, Map<String, String>> entry : grouped.entrySet()) {
@@ -198,10 +207,31 @@ public class DeviceBusinessService {
         return result;
     }
 
+    /** 厂商私有叶子前缀，形如 X_CMCC_、X_CT-COM_（中间可带连字符）。 */
+    private static final Pattern VENDOR_LEAF_PREFIX = Pattern.compile("(?i)^x_[a-z0-9-]+_");
+
+    /**
+     * 业务卡片用的参数名：剥掉厂商私有前缀，归一到标准名。
+     *
+     * <p>移动定制机的 VLAN ID 叫 {@code X_CMCC_VLANIDMark}，电信叫 {@code X_CT-COM_VLANIDMark}，
+     * 而前端按标准名 {@code VLANIDMark} 取值——不剥前缀的话页面上永远是 "-"。
+     * 同一实例里若设备同时报了标准节点与私有节点（按路径升序标准节点先到），
+     * {@code putIfAbsent} 保证标准值优先，不被私有值覆盖。</p>
+     */
+    static String normalizeLeaf(String leaf) {
+        if (leaf == null) {
+            return "";
+        }
+        java.util.regex.Matcher m = VENDOR_LEAF_PREFIX.matcher(leaf);
+        return m.find() ? leaf.substring(m.end()) : leaf;
+    }
+
     private Map<String, Object> baseInfo(String sn, String root) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("sn", sn);
         data.put("rootNode", root);
+        // 对外说明按哪种数据模型解读的这套数据，排查「某些型号业务查不到」时先看这里
+        data.put("dataModel", DataModel.ofRoot(root).getLabel());
         try {
             data.put("lastCollectTime", parameterMapper.lastCollectTime(sn));
         } catch (Exception e) {
@@ -239,23 +269,15 @@ public class DeviceBusinessService {
 
     /**
      * 只取业务相关前缀下的参数行，避免把整棵能力树（上万行）拉进内存。
+     *
+     * <p>前缀由 {@link DataModel#businessPrefixes(String)} 给出，天然包含两种根数据模型的写法：
+     * 这里若只按 {@code root} 拼一种，TR-181 设备（路径是 {@code Device.WAN.}）的 WAN 分区
+     * 就一条都查不到，页面只会显示「暂无数据」而没有任何报错。</p>
      */
-    private List<CpeParameter> selectBusinessParams(String sn, String root) {
+    private List<CpeParameter> selectBusinessParams(String sn) {
         List<String> prefixes = new ArrayList<>();
         for (Section section : SECTIONS) {
-            switch (section.key()) {
-                case "device" -> prefixes.add(root + "DeviceInfo.");
-                case "wan" -> prefixes.add(root + "WANDevice.");
-                case "wifi" -> {
-                    prefixes.add(root + "LANDevice.");
-                    prefixes.add(root + "WiFi.");
-                }
-                case "sip" -> {
-                    prefixes.add(root + "Services.VoiceService.");
-                    prefixes.add(root + "VoiceService.");
-                }
-                default -> { /* 不存在的分区，忽略 */ }
-            }
+            prefixes.addAll(DataModel.businessPrefixes(section.key()));
         }
         try {
             return parameterMapper.selectList(new LambdaQueryWrapper<CpeParameter>()

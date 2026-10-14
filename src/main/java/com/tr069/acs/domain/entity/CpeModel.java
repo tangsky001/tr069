@@ -54,11 +54,41 @@ public class CpeModel {
      */
     private String configPath;
 
+    /**
+     * 该型号适配状态文件相对路径，如 CM/standard/p22g-ciac_v1.0.00.488.yml。
+     *
+     * <p>{@link #configPath} 里的 XML 只是型号能力树（支持哪些节点），它存在不代表适配过；
+     * 是否已适配看这份 YML 里的 {@code adapted}——只有能力测试通过、真正入库时才写入 true。
+     * 同型号设备上线时读这份 YML 判定「已适配 / 待适配」。</p>
+     */
+    private String adaptPath;
+
     /** {@link #STATUS_PENDING} / {@link #STATUS_READY} / {@link #STATUS_DISABLED} */
     private String status;
 
     /** 做映射时参考的样机序列号 */
     private String sampleSn;
+
+    /**
+     * 该型号适用的根数据模型节点：{@code Device.}（TR-181）或 {@code InternetGatewayDevice.}（TR-098）。
+     *
+     * <p>同一型号（产品型号 + 固件）在出货中可能同时有 TR-098 与 TR-181 两种固件，
+     * 两者 CWMP 路径完全不同，归档的能力树不能混用。这里记录样机上报时认定的根节点，
+     * 归档与下发前用它与设备自身的 {@code cpe_device.root_node} 对账，不一致时拒绝套用。</p>
+     */
+    private String rootNode;
+
+    /** 适配申报的网口数量：无/1/2/3/4-8，由机型适配测试通过后写入。 */
+    private String capLanPorts;
+
+    /** 适配申报的网口速率：无/自动/100M/1000M/2500M。 */
+    private String capLanSpeed;
+
+    /** 适配申报的 SIP 数量：无/1/2/3/4-8。 */
+    private String capSipCount;
+
+    /** 适配申报的 WIFI 规格：无/2.4G/2.4G+5.8G。 */
+    private String capWifiSpec;
 
     private String remark;
 

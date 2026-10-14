@@ -63,7 +63,7 @@ class ModelTreeStoreTest {
         Files.writeString(file, xml, StandardCharsets.UTF_8);
 
         List<ModelTreeStore.ParamNode> params =
-                new ModelTreeStore(null, null, null, null).readParams(file);
+                new ModelTreeStore(null, null, null, null, null).readParams(file);
         assertEquals(1, params.size());
         assertEquals(WAN_SIP, params.get(0).getPath());
         assertTrue(params.get(0).isWritable(), "下发前要能看出该节点可写");

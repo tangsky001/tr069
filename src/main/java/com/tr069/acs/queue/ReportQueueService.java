@@ -8,8 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.concurrent.TimeUnit;
-
 /**
  * 设备上报队列。
  *
@@ -46,12 +44,17 @@ public class ReportQueueService {
     }
 
     /**
-     * 阻塞取出一条上报，供消费者线程循环调用。
+     * 取出一条上报，队列为空立即返回 null，供消费者线程轮询调用。
+     *
+     * <p>刻意<b>不用</b> {@code BRPOP} 这类阻塞取数：阻塞命令会把 Lettuce 的共享连接
+     * 占住不放，8 个分片消费者一起阻塞时，入队、下发、查询全部被堵在这条连接上，
+     * 一旦卡住往往再也恢复不了（表现为所有 Redis 操作一起超时）。
+     * 改成非阻塞 RPOP + 短间隔轮询，连接随用随还，也不会把故障放大。</p>
      */
-    public ReportMessage poll(String queueKey, long timeoutSeconds) {
+    public ReportMessage poll(String queueKey) {
         String json;
         try {
-            json = redis.opsForList().rightPop(queueKey, timeoutSeconds, TimeUnit.SECONDS);
+            json = redis.opsForList().rightPop(queueKey);
         } catch (Exception e) {
             // Redis 不可用时抛给消费者线程，由它做退避，避免空转打满日志
             throw new IllegalStateException("读取上报队列失败，Redis 可能不可用", e);

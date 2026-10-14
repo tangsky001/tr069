@@ -99,6 +99,39 @@ class DeviceBusinessServiceTest {
     }
 
     @Test
+    void summaryStripsVendorLeafPrefix() {
+        String root = "InternetGatewayDevice.";
+        // 库按 param_path 升序返回，标准节点排在 X_CMCC_ 私有节点之前
+        when(parameterMapper.selectList(any())).thenReturn(List.of(
+                param(root + "WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.ConnectionStatus",
+                        "Connected"),
+                param(root + "WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_VLANIDMark",
+                        "41"),
+                param(root + "WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_VLANMode",
+                        "2")
+        ));
+        DeviceBusinessService service = serviceWithRoot(root);
+
+        Map<String, Object> data = service.summary("TEST");
+
+        Map<?, ?> wan = (Map<?, ?>) ((List<?>) data.get("wan")).get(0);
+        Map<?, ?> wanParams = (Map<?, ?>) wan.get("params");
+        // 前端按标准名取值，厂商前缀必须剥掉
+        assertThat(wanParams.get("VLANIDMark")).isEqualTo("41");
+        assertThat(wanParams.get("VLANMode")).isEqualTo("2");
+        // 前缀剥离不应误伤普通叶子
+        assertThat(wanParams.get("ConnectionStatus")).isEqualTo("Connected");
+    }
+
+    @Test
+    void normalizeLeafPrefersStandardNameWhenBothReported() {
+        assertThat(DeviceBusinessService.normalizeLeaf("X_CMCC_VLANIDMark")).isEqualTo("VLANIDMark");
+        assertThat(DeviceBusinessService.normalizeLeaf("X_CT-COM_VLANIDMark")).isEqualTo("VLANIDMark");
+        assertThat(DeviceBusinessService.normalizeLeaf("VLANIDMark")).isEqualTo("VLANIDMark");
+        assertThat(DeviceBusinessService.normalizeLeaf("MACAddress")).isEqualTo("MACAddress");
+    }
+
+    @Test
     void collectWithoutTreeReportsEmpty() {
         when(parameterMapper.selectList(any())).thenReturn(List.of());
         DeviceBusinessService service = serviceWithRoot("InternetGatewayDevice.");

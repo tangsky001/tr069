@@ -2,33 +2,28 @@ package com.tr069.acs.common.startup;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.io.ClassPathResource;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.util.FileCopyUtils;
 
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 配置意图模板表的自动建表。
  *
  * <p>与型号映射表同一套路：启动阶段按脚本幂等补建，建表失败不阻断启动。</p>
+ *
+ * <p>跑在 Bean 初始化阶段（InitializingBean）而非 ApplicationRunner：后者要等容器刷新结束
+ * 才轮到，届时定时任务已在并发运行，表若晚于任务建出来就会被查成「不存在」。</p>
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class ConfigTemplateSchemaInitializer implements ApplicationRunner {
+public class ConfigTemplateSchemaInitializer implements InitializingBean {
 
-    private static final String SCRIPT = "db/config-template-schema.sql";
-
-    private static final String TABLE = "config_template";
+    private static final List<String> TABLES = List.of("config_template");
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -36,49 +31,36 @@ public class ConfigTemplateSchemaInitializer implements ApplicationRunner {
     private boolean enabled;
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void afterPropertiesSet() {
         if (!enabled) {
             log.info("配置意图模板表自动建表已关闭");
             return;
         }
         try {
-            Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM information_schema.tables "
-                            + "WHERE table_schema = DATABASE() AND table_name = ?",
-                    Integer.class, TABLE);
-            if (count != null && count > 0) {
+            if (allTablesExist()) {
                 log.info("配置意图模板表已存在，跳过建表");
                 return;
             }
-            for (String sql : loadStatements()) {
+            for (String sql : SchemaScript.createStatements(TABLES)) {
                 jdbcTemplate.execute(sql);
             }
-            log.info("配置意图模板表已补齐: config_template");
+            log.info("配置意图模板表已补齐: {}", String.join(", ", TABLES));
         } catch (Exception e) {
-            log.error("配置意图模板表自动建表失败，请手工执行 classpath:{} : {}", SCRIPT, e.getMessage());
+            log.error("配置意图模板表自动建表失败，请手工执行 classpath:{}（对应仓库 sql/schema.sql）: {}",
+                    SchemaScript.RESOURCE, e.getMessage());
         }
     }
 
-    private List<String> loadStatements() throws Exception {
-        ClassPathResource resource = new ClassPathResource(SCRIPT);
-        String script;
-        try (InputStream in = resource.getInputStream()) {
-            script = FileCopyUtils.copyToString(new InputStreamReader(in, StandardCharsets.UTF_8));
-        }
-        List<String> statements = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        for (String line : script.split("\n")) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty() || trimmed.startsWith("--")) {
-                continue;
-            }
-            current.append(line).append('\n');
-            if (trimmed.endsWith(";")) {
-                String sql = current.toString().trim();
-                statements.add(sql.substring(0, sql.length() - 1));
-                current.setLength(0);
+    private boolean allTablesExist() {
+        for (String table : TABLES) {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                            + "WHERE table_schema = DATABASE() AND table_name = ?",
+                    Integer.class, table);
+            if (count == null || count == 0) {
+                return false;
             }
         }
-        return statements;
+        return true;
     }
 }

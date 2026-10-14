@@ -39,8 +39,14 @@ public class QueueProperties {
         /** 队列分片数，同一 SN 固定落在同一分片。 */
         private int shards = 8;
 
-        /** 单次阻塞取数的超时(秒)，用于让线程响应停机。 */
-        private long popTimeoutSeconds = 2;
+        /**
+         * 队列为空时消费者线程的下一次轮询间隔(毫秒)。
+         *
+         * <p>取数用非阻塞的 RPOP + 间隔轮询，不用 BRPOP：BRPOP 会长时间占住
+         * Lettuce 的共享连接，分片一多（默认 8 个消费者）就把这条连接堵死，
+         * 入队、下发、查询全部跟着超时，且往往再也恢复不回来。</p>
+         */
+        private long pollIntervalMillis = 200;
 
         /** 单条上报的处理超时(秒)，超时仅告警不阻断后续。 */
         private long handleTimeoutSeconds = 30;

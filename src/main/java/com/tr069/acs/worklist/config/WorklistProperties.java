@@ -27,9 +27,9 @@ public class WorklistProperties {
      */
     private String rootPath = "./target/configuration";
 
-    /** 根目录下缺失子目录时，是否自动创建并写出示例，方便现场快速适配新光猫。 */
     /**
-     * 目录为空时是否解包内置示例。默认关闭：模板与档案全部来自现场适配产出，不留任何默认值。
+     * 目录为空时是否解包内置示例。已无内置示例可解包：示例资源不进 jar，
+     * 光猫档案与能力树全部来自现场适配产出，置 true 也不会写出任何文件。
      */
     private boolean initSampleIfEmpty = false;
 

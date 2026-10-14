@@ -21,7 +21,7 @@ public class ConfigTemplate {
     /** 模板名称。 */
     private String name;
 
-    /** 类型：WAN_DHCP / WAN_PPPOE / WAN_STATIC / WAN_BRIDGE / WIFI_24G / WIFI_58G / SIP。 */
+    /** 类型：WAN_DHCP / WAN_PPPOE / WAN_STATIC / WAN_BRIDGE / WIFI_24G / WIFI_58G / SIP / OTHER。 */
     private String category;
 
     /** 业务分组。 */

@@ -2,33 +2,28 @@ package com.tr069.acs.common.startup;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.io.ClassPathResource;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.util.FileCopyUtils;
 
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 业务模板相关表的自动建表。
  *
- * <p>业务模板是后加的功能，存量部署的库里没有这三张表。走「改一次 schema.sql 再手工执行」
- * 的路子，现场升级时漏执行就会在保存业务模板时才报「表不存在」。这里在启动阶段补建，
- * 与 sql/schema.sql 内容一致，重复执行无害（CREATE TABLE IF NOT EXISTS）。</p>
+ * <p>业务模板是后加的功能，存量部署的库里没有这三张表。启动阶段从唯一的
+ * {@code sql/schema.sql} 里挑出这三张表的定义补建，缺一张就重跑，
+ * 重复执行无害（CREATE TABLE IF NOT EXISTS）。</p>
+ *
+ * <p>跑在 Bean 初始化阶段（InitializingBean）而非 ApplicationRunner：后者要等容器刷新结束
+ * 才轮到，届时定时任务已在并发运行，表若晚于任务建出来就会被查成「不存在」。</p>
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class BizSchemaInitializer implements ApplicationRunner {
-
-    private static final String SCRIPT = "db/biz-template-schema.sql";
+public class BizSchemaInitializer implements InitializingBean {
 
     private static final List<String> TABLES =
             List.of("biz_template", "biz_template_item", "biz_template_execution");
@@ -39,7 +34,7 @@ public class BizSchemaInitializer implements ApplicationRunner {
     private boolean enabled;
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void afterPropertiesSet() {
         if (!enabled) {
             log.info("业务模板表自动建表已关闭");
             return;
@@ -49,14 +44,14 @@ public class BizSchemaInitializer implements ApplicationRunner {
                 log.info("业务模板表已存在，跳过建表");
                 return;
             }
-            for (String sql : loadStatements()) {
+            for (String sql : SchemaScript.createStatements(TABLES)) {
                 jdbcTemplate.execute(sql);
             }
             log.info("业务模板表已补齐: {}", String.join(", ", TABLES));
         } catch (Exception e) {
             // 建表失败不阻断启动：设备侧 ACS 与工单下发不依赖业务模板
-            log.error("业务模板表自动建表失败，请手工执行 sql/schema.sql 或 classpath:{} : {}",
-                    SCRIPT, e.getMessage());
+            log.error("业务模板表自动建表失败，请手工执行 classpath:{}（对应仓库 sql/schema.sql）: {}",
+                    SchemaScript.RESOURCE, e.getMessage());
         }
     }
 
@@ -73,29 +68,4 @@ public class BizSchemaInitializer implements ApplicationRunner {
         return true;
     }
 
-    /**
-     * 读取建表脚本并按分号拆成单条语句，跳过注释行。
-     */
-    private List<String> loadStatements() throws Exception {
-        ClassPathResource resource = new ClassPathResource(SCRIPT);
-        String script;
-        try (InputStream in = resource.getInputStream()) {
-            script = FileCopyUtils.copyToString(new InputStreamReader(in, StandardCharsets.UTF_8));
-        }
-        List<String> statements = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        for (String line : script.split("\n")) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty() || trimmed.startsWith("--")) {
-                continue;
-            }
-            current.append(line).append('\n');
-            if (trimmed.endsWith(";")) {
-                String sql = current.toString().trim();
-                statements.add(sql.substring(0, sql.length() - 1));
-                current.setLength(0);
-            }
-        }
-        return statements;
-    }
 }

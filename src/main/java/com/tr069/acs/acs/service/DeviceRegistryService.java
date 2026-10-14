@@ -3,6 +3,7 @@ package com.tr069.acs.acs.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.tr069.acs.acs.session.CpeSession;
+import com.tr069.acs.common.log.AcsCoreLog;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.worklist.model.DeviceProfile;
@@ -37,6 +38,8 @@ public class DeviceRegistryService implements ApplicationRunner {
     private final ModelMappingService modelMappingService;
     private final DeviceProfileMatcher profileMatcher;
 
+    private final AcsCoreLog coreLog;
+
     /**
      * 启动后把残留的在线标记清掉：会话是内存态，重启后没有设备是在线的。
      */
@@ -70,8 +73,13 @@ public class DeviceRegistryService implements ApplicationRunner {
                 device.setLastContactTime(now);
                 cpeDeviceMapper.insert(device);
                 log.info("设备入库: sn={}, oui={}", session.getSn(), session.getOui());
+                coreLog.online(session.getSn(), "首次上报入库");
                 registerModel(session, device);
                 return;
+            }
+            if (!STATUS_ONLINE.equals(exist.getStatus())) {
+                // 从离线恢复：单独记一条，便于和设备掉线时间对上
+                coreLog.online(session.getSn(), "离线后重新上报");
             }
             CpeDevice update = new CpeDevice();
             update.setId(exist.getId());
@@ -99,6 +107,7 @@ public class DeviceRegistryService implements ApplicationRunner {
             update.setStatus(STATUS_OFFLINE);
             cpeDeviceMapper.updateById(update);
             log.info("设备离线: sn={}", sn);
+            coreLog.offline(sn, "会话结束或超时未上报");
         } catch (Exception e) {
             log.error("标记设备离线失败: sn={}", sn, e);
         }

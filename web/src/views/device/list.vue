@@ -79,6 +79,15 @@
               <span>条 WAN 连接</span>
             </el-link>
             <span v-else class="cell-empty">-</span>
+            <!-- 机型适配入口：未适配的给适配入口，已适配的给绿标 -->
+            <div v-if="!adaptOf(row.sn).adapted" class="adapt-line">
+              <el-button type="text" size="mini" class="adapt-btn" @click="openAdapt(row)">
+                <i class="el-icon-cpu" /> 适配
+              </el-button>
+            </div>
+            <div v-else class="adapt-line">
+              <span class="adapt-ok"><i class="el-icon-circle-check" /> 已适配</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="WIFI 信息" min-width="140">
@@ -388,6 +397,97 @@
     </el-dialog>
 
     <el-dialog
+      :title="'机型适配 - ' + (adaptRow ? (adaptRow.productClass || adaptRow.deviceType || '') : '')"
+      :visible.sync="adaptVisible"
+      width="600px"
+      top="6vh"
+    >
+      <div v-if="adaptRow" class="adapt-device-line">
+        <span class="k">样机：</span>
+        <span>{{ adaptRow.sn }}</span>
+        <span class="adapt-meta">
+          {{ adaptRow.manufacturer || '-' }} / {{ adaptRow.productClass || adaptRow.deviceType || '-' }}
+          / {{ adaptRow.softwareVersion || '-' }}
+        </span>
+      </div>
+      <el-form label-width="150px" size="small" class="adapt-form">
+        <el-form-item label="运营商">
+          <el-select v-model="adaptForm.isp" style="width:220px">
+            <el-option v-for="o in ispOptions" :key="o.v" :label="o.t" :value="o.v" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="网口数量">
+          <el-select v-model="adaptForm.lanPorts" style="width:220px">
+            <el-option v-for="o in portOptions" :key="o" :label="o" :value="o" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="网口速率">
+          <el-select v-model="adaptForm.lanSpeed" style="width:220px">
+            <el-option v-for="o in speedOptions" :key="o" :label="o" :value="o" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="SIP 数量">
+          <el-select v-model="adaptForm.sipCount" style="width:220px">
+            <el-option v-for="o in portOptions" :key="o" :label="o" :value="o" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="WIFI 规格">
+          <el-select v-model="adaptForm.wifiSpec" style="width:220px">
+            <el-option v-for="o in wifiOptions" :key="o" :label="o" :value="o" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="adaptResult" label="测试结果">
+          <div class="adapt-result" :class="adaptResult.supported ? 'is-ok' : 'is-bad'">
+            <div class="adapt-result-head">
+              <i :class="adaptResult.supported ? 'el-icon-success' : 'el-icon-error'" />
+              {{ adaptResult.supported ? '能力全部支持，可保存到库' : '存在不满足项' }}
+              <el-tag size="mini" type="info">采集：{{ adaptResult.collectStatus }}</el-tag>
+            </div>
+            <div class="adapt-result-row">
+              实测能力：网口 {{ adaptResult.detected.lanPortCount }} 个
+              <span v-if="adaptResult.detected.lanSpeedMbps">
+                / 最高 {{ adaptResult.detected.lanSpeedMbps }}Mbps
+              </span>
+              / SIP {{ adaptResult.detected.sipCount }} 路
+              / WIFI {{ adaptResult.detected.wifiBands.length ? adaptResult.detected.wifiBands.join('+') : '无' }}
+            </div>
+            <!-- 真下发到光猫的试探记录：写入的是参数当前值，不改变配置 -->
+            <el-table
+              v-if="adaptResult.probes && adaptResult.probes.length"
+              :data="adaptResult.probes"
+              size="mini"
+              border
+              class="adapt-probe-table"
+            >
+              <el-table-column label="能力" prop="capability" width="90" />
+              <el-table-column label="下发参数路径" prop="path" min-width="220" show-overflow-tooltip />
+              <el-table-column label="写入值" prop="value" width="90" show-overflow-tooltip />
+              <el-table-column label="光猫返回" min-width="200" show-overflow-tooltip>
+                <template slot-scope="{ row }">
+                  <el-tag size="mini" :type="row.failed ? 'danger' : 'success'">
+                    {{ row.failed ? '失败' : '通过' }}
+                  </el-tag>
+                  <span class="adapt-probe-status">{{ row.status }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div v-for="(r, i) in adaptResult.reasons" :key="i" class="adapt-reason">{{ r }}</div>
+          </div>
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button type="warning" plain :loading="adaptTesting" @click="runAdaptTest">测试</el-button>
+        <el-button
+          type="primary"
+          :loading="adaptSaving"
+          :disabled="!(adaptResult && adaptResult.supported)"
+          @click="submitAdaptSave"
+        >保存到库</el-button>
+        <el-button @click="adaptVisible = false">关闭</el-button>
+      </span>
+    </el-dialog>
+
+    <el-dialog
       :title="detailTitle"
       :visible.sync="detailVisible"
       width="620px"
@@ -408,7 +508,10 @@
 </template>
 
 <script>
-import { fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch } from '@/api/device'
+import {
+  fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch,
+  fetchAdaptStatus, testAdaptation, saveAdaptation
+} from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
 import { RPC_METHODS } from '@/api/device'
@@ -425,6 +528,21 @@ export default {
       list: [],
       total: 0,
       bizMap: {},
+      // 机型适配状态：sn -> { adapted, configPath, ... }
+      adaptMap: {},
+      adaptVisible: false,
+      adaptRow: null,
+      adaptTesting: false,
+      adaptSaving: false,
+      adaptResult: null,
+      adaptForm: { isp: 'standard', lanPorts: '1', lanSpeed: '自动', sipCount: '无', wifiSpec: '2.4G' },
+      ispOptions: [
+        { v: 'CT', t: '电信' }, { v: 'CU', t: '联通' },
+        { v: 'CMCC', t: '移动' }, { v: 'standard', t: '标准/通用' }
+      ],
+      portOptions: ['无', '1', '2', '3', '4', '8'],
+      speedOptions: ['无', '自动', '100M', '1000M', '2500M'],
+      wifiOptions: ['无', '2.4G', '2.4G+5.8G'],
       wanVisible: false,
       wanDialogSn: '',
       detailVisible: false,
@@ -496,6 +614,7 @@ export default {
         this.list = data.items || []
         this.total = data.total || 0
         this.loadBiz()
+        this.loadAdaptStatus()
       } catch (e) {
         this.list = []
         this.total = 0
@@ -519,6 +638,57 @@ export default {
     },
     bizOf(sn) {
       return this.bizMap[sn] || {}
+    },
+    // 整页设备的机型适配状态一次拉回：有型号能力树 XML = 已适配
+    async loadAdaptStatus() {
+      const sns = this.list.map(d => d.sn)
+      if (!sns.length) {
+        this.adaptMap = {}
+        return
+      }
+      try {
+        const res = await fetchAdaptStatus(sns)
+        this.adaptMap = res.data || {}
+      } catch (e) {
+        this.adaptMap = {}
+      }
+    },
+    adaptOf(sn) {
+      return this.adaptMap[sn] || {}
+    },
+    openAdapt(row) {
+      this.adaptRow = row
+      this.adaptResult = null
+      this.adaptForm.isp = row.isp || 'standard'
+      this.adaptVisible = true
+    },
+    async runAdaptTest() {
+      this.adaptTesting = true
+      this.adaptResult = null
+      try {
+        const res = await testAdaptation(this.adaptRow.sn, this.adaptForm)
+        this.adaptResult = res.data || {}
+        if (!this.adaptResult.detected) this.adaptResult.detected = { wifiBands: [] }
+        if (!this.adaptResult.probes) this.adaptResult.probes = []
+      } catch (e) {
+        this.$message.error('测试失败：' + (e.message || '请确认设备在线'))
+      } finally {
+        this.adaptTesting = false
+      }
+    },
+    async submitAdaptSave() {
+      if (!this.adaptRow) return
+      this.adaptSaving = true
+      try {
+        await saveAdaptation(this.adaptRow.sn, this.adaptForm)
+        this.$message.success('机型适配已入库，同型号设备下次上线直接调库')
+        this.adaptVisible = false
+        this.loadAdaptStatus()
+      } catch (e) {
+        this.$message.error(e.message || '保存失败')
+      } finally {
+        this.adaptSaving = false
+      }
     },
     wanList(sn) {
       return this.bizOf(sn).wan || []
@@ -582,13 +752,30 @@ export default {
     detailRows(row) {
       if (!row) return []
       const biz = this.bizOf(row.sn)
+      const adapt = this.adaptOf(row.sn) || {}
       const mac = this.paramValue(biz.device || [], 'MACAddress')
+      // 目录名与原始申报值都映射：适配档目录用归一化的 CM/CT/CU，
+      // yml profile 里的 isp 是申报时的原始值（如 CMCC）
+      const ispNames = {
+        CMCC: '中国移动', CM: '中国移动',
+        CT: '中国电信', CU: '中国联通',
+        standard: '标准/通用'
+      }
+      // 运营商单独一行：以设备台账登记值为准（适配时选定的运营商会写回台账），
+      // 台账还没写回时退回适配档里的申报值
+      const adaptIsp = row.isp || (adapt.profile && adapt.profile.isp) || adapt.adaptedIsp || adapt.isp || ''
+      const ispText = ispNames[adaptIsp] || adaptIsp
       const rows = [
         { label: 'OUI', value: row.oui },
         { label: '设备 SN', value: row.sn },
         { label: 'MAC 地址', value: mac },
-        { label: '运营商', value: (row.isp || '') + (row.ispVersion ? ' ' + row.ispVersion : '') },
-        { label: '设备能力', value: this.capabilityText(biz) },
+        { label: '运营商', value: (ispText + (row.ispVersion ? ' ' + row.ispVersion : '')).trim() },
+        {
+          label: '设备能力',
+          value: adapt.adapted
+            ? this.adaptedCapabilityText(adapt)
+            : this.capabilityText(biz)
+        },
         { label: '硬件版本', value: row.hardwareVersion },
         { label: '固件版本', value: row.softwareVersion },
         { label: '设备型号', value: row.productClass || row.deviceType },
@@ -610,6 +797,23 @@ export default {
       if (wifi.some(w => this.wifiBand(w.params) === '5.8G')) parts.push('5.8G WiFi')
       if ((biz.sip || []).length) parts.push('1电话')
       return parts.join('、') || null
+    },
+    // 已适配设备用适配档能力展示：网口数量/速率、SIP 数量、WIFI 规格、样机来源。
+    // 运营商不在这里带——详情里它是独立一行，混进能力串会让两处口径打架
+    adaptedCapabilityText(adapt) {
+      const p = adapt.profile || adapt
+      const parts = []
+      if (p.lan_ports && p.lan_ports !== '无') {
+        parts.push('网口 ' + p.lan_ports + (p.lan_speed && p.lan_speed !== '无' && p.lan_speed !== '自动' ? '×' + p.lan_speed : ''))
+      } else if (p.lan_ports === '无') {
+        parts.push('无网口')
+      }
+      if (p.sip_count && p.sip_count !== '无') parts.push('SIP ' + p.sip_count + '路')
+      else if (p.sip_count === '无') parts.push('无SIP')
+      if (p.wifi_spec && p.wifi_spec !== '无') parts.push('WiFi ' + p.wifi_spec)
+      else if (p.wifi_spec === '无') parts.push('无WiFi')
+      const tail = p.sample_sn ? '（ ' + p.sample_sn + '）' : ''
+      return parts.join('、') + tail
     },
     paramValue(list, name) {
       const item = (list || []).find(x => x.params && x.params[name] !== undefined)
@@ -969,6 +1173,72 @@ export default {
 }
 .wan-count {
   margin-right: 4px;
+}
+/* 机型适配标识与弹窗 */
+.adapt-line {
+  margin-top: 4px;
+}
+.adapt-tag {
+  cursor: pointer;
+}
+.adapt-btn {
+  color: #ff0000;
+  font-size: 16px;
+  font-weight: bold;
+  padding: 0;
+}
+.adapt-ok {
+  color: #67c23a;
+  font-size: 13px;
+  font-weight: bold;
+}
+.adapt-device-line {
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.adapt-device-line .k {
+  color: #909399;
+}
+.adapt-meta {
+  margin-left: 8px;
+  color: #909399;
+}
+.adapt-result {
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 20px;
+}
+.adapt-result.is-ok {
+  border-color: #67c23a;
+  background: #f0f9eb;
+}
+.adapt-result.is-bad {
+  border-color: #f56c6c;
+  background: #fef0f0;
+}
+.adapt-result-head i {
+  margin-right: 4px;
+}
+.is-ok .adapt-result-head i {
+  color: #67c23a;
+}
+.is-bad .adapt-result-head i {
+  color: #f56c6c;
+}
+.adapt-result-row {
+  color: #606266;
+}
+.adapt-reason {
+  color: #f56c6c;
+}
+.adapt-probe-table {
+  margin-top: 6px;
+}
+.adapt-probe-status {
+  margin-left: 6px;
+  color: #606266;
 }
 .biz-row {
   display: flex;

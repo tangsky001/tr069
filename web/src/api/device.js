@@ -54,6 +54,44 @@ export function fetchDeviceBusinessBatch(sns) {
 }
 
 /**
+ * 批量机型适配状态：库里有没有该型号的能力树 XML 文件。
+ * 返回 sn -> { adapted, configPath, isp, productClass, ... }
+ */
+export function fetchAdaptStatus(sns) {
+  return request({
+    url: '/models/adapt-status',
+    method: 'get',
+    params: { sns: sns.join(',') }
+  })
+}
+
+/**
+ * 机型适配能力测试：向光猫下发采集 RPC，解析实测能力并与申报比对。
+ * data: { isp, lanPorts, lanSpeed, sipCount, wifiSpec }
+ * 后端要等光猫回参数树（默认最长 120s）+ 逐组试探下发，全局 5s 超时必须放开。
+ */
+export function testAdaptation(sn, data) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/adaptation/test',
+    method: 'post',
+    data,
+    timeout: 300000
+  })
+}
+
+/**
+ * 机型适配入库：测试通过后导出型号能力树 XML 并写 cpe_model。
+ */
+export function saveAdaptation(sn, data) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/adaptation/save',
+    method: 'post',
+    data,
+    timeout: 60000
+  })
+}
+
+/**
  * 重新采集：向在线设备下发 GetParameterValues 刷新业务参数后再回库读。
  * 后端 collectStatus：success / timeout / fail / empty。
  */
