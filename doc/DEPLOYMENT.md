@@ -259,7 +259,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:9090/  # 400 �
 
 浏览器打开 `http://<ip>:8888`，用 `admin/admin` 登录（首次登录后立即改密码）。
 
-接口级自检（拿不到预期结果就按 [`API.md`](API.md) §7 排查）：
+接口级自检（拿不到预期结果就按 [`API.md`](../API.md) §7 排查）：
 
 ```bash
 TOKEN=$(curl -s -X POST http://127.0.0.1:8888/api/user/login \

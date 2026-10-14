@@ -35,8 +35,13 @@ public class SessionManager {
     private long onlineCheckInterval;
 
     /**
-     * 双会话判定的活动宽限(秒)：旧会话在该窗口内仍有通信，才认为设备上真的存在两条并发连接。
-     * 取值要小于设备周期上报间隔，否则正常重连会被误判成重复会话。
+     * 会话对象回收倍率：静默时长超过 onlineCheckInterval 的这个倍数才移除会话。
+     */
+    private static final long SESSION_RECLAIM_FACTOR = 10L;
+
+    /**
+     * 疑似双会话的告警窗口(秒)：旧会话在该窗口内仍有通信，说明设备可能同时存在两条连接。
+     * 取值要小于设备周期上报间隔，否则每次周期上报都会告警。只用于告警，不据此关闭会话。
      */
     @Value("${acs.session.duplicate-grace-seconds:30}")
     private long duplicateGraceSeconds;
@@ -61,10 +66,12 @@ public class SessionManager {
         String previous = session.getConnectionId();
         if (previous != null && !previous.equals(connId)) {
             connectionToSn.remove(previous);
-            // 旧连接上还有没等到回应的指令，设备已经从新连接来了，那条指令不会再有回应
-            PendingRpc pending = session.failAwaiting("device reconnected on a new connection");
-            if (pending != null) {
-                log.info("旧连接未回应的指令作废: sn={}, rpc={}", sn, pending.getRpcName());
+            if (session.hasPendingAwaiting()) {
+                // 指令已下发、设备从新连接回来：CWMP 反向通道下回应很可能就走这条新连接，
+                // 会话对象没变，等待中的指令继续留着，由 RPC 响应定时器兜底超时
+                log.info("设备换新连接，等待中的指令继续保留: sn={}, {} -> {}", sn, previous, connId);
+            } else {
+                session.failAwaiting("device reconnected on a new connection");
             }
         }
         session.setConnectionId(connId);
@@ -109,6 +116,14 @@ public class SessionManager {
         if (exists == null || exists.equals(connId)) {
             return false;
         }
+        // 旧连接上还有已下发未回应的指令：这是 ACS 主动下发后设备从新连接回来
+        // （反向通道、被邀请重连、NAT 换连接），属于正常的会话接管，不是双会话。
+        // 判成重复会把会话关掉、设备打离线、正在等待的探测指令当场作废——
+        // 表现就是适配测试做到一半设备"掉线"。
+        if (session.hasPendingAwaiting()) {
+            log.info("设备换新连接但仍有指令在等待回应，按会话接管处理: sn={}, {} -> {}", sn, exists, connId);
+            return false;
+        }
         return !session.isExpired(duplicateGraceSeconds);
     }
 
@@ -142,8 +157,8 @@ public class SessionManager {
         CpeSession session = snToSession.get(sn);
         if (session != null && connId.equals(session.getConnectionId())) {
             log.debug("连接断开: sn={}, conn={}", sn, connId);
-            session.failAwaiting("connection lost");
-            // 清掉连接标识，否则设备下次从新连接上报时会被误判成重复会话
+            // 周期上报之间这条 TCP 连接本来就会断，设备常常另开一条把指令回应发回来。
+            // 所以只清连接标识，等待中的指令继续保留，真等不到由 RPC 响应定时器兜底
             session.setConnectionId(null);
         }
     }
@@ -162,6 +177,11 @@ public class SessionManager {
             if (session.isExpired(onlineCheckInterval)) {
                 session.setOnline(false);
                 deviceRegistry.markOffline(session.getSn());
+                // 静默足够久才回收会话对象：只标离线不回收的话 snToSession 只增不减，
+                // 长期跑会越攒越多。设备下次上报会重新建会话，不影响业务
+                if (session.isExpired(onlineCheckInterval * SESSION_RECLAIM_FACTOR)) {
+                    closeSession(session.getSn(), "session expired");
+                }
             } else if (now - session.getLastContactTime() > 180_000L) {
                 log.debug("设备长时间未通信: sn={}", session.getSn());
             }

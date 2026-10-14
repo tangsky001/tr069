@@ -112,8 +112,9 @@ acs:
     wait-rpc-response-timeout: 60
     # Inform 处理整体超时(秒)
     soap-inform-timeout: 60
-    # 双会话判定的活动宽限(秒)：旧会话在该窗口内仍有通信才算设备真有两条并发连接。
-    # 必须小于设备的周期上报间隔，否则每次周期上报都会被误判成重复会话
+    # 疑似双会话的告警窗口(秒)：同 SN 在该窗口内从另一条连接上报时记一条 warn 供排查。
+    # 只告警、不关会话：周期上报换 TCP 连接是正常的，关掉会打离线、清空待下发队列、
+    # 作废等待中的指令。设备是否离线只看 online-check-interval（长期无通信）
     duplicate-grace-seconds: 30
 
   auth:

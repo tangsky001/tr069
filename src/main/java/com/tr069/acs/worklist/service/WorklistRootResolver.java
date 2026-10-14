@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -26,6 +27,10 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 @Component
 public class WorklistRootResolver {
+
+    /** 从 fat jar 的嵌套 URL 里取出外层 jar 文件路径：{@code jar:nested:/x/app.jar/!BOOT-INF/classes/!/} */
+    private static final java.util.regex.Pattern NESTED_JAR =
+            java.util.regex.Pattern.compile("^jar:(?:nested|file):(.+?\\.jar)[/!]");
 
     private final WorklistProperties properties;
 
@@ -47,26 +52,41 @@ public class WorklistRootResolver {
     }
 
     private Path resolve() {
-        Path configured = Path.of(properties.getRootPath()).toAbsolutePath().normalize();
-        // 目录存在（哪怕为空）就直接用：型号文件/适配档写入时会自行 createDirectories，
-        // 空目录不代表配置没准备好。只有目录压根不存在时才尝试回退，
-        // 兜住「从 target 目录起 jar 把 rootPath 拼到 target/target/configuration」这类场景
-        if (Files.isDirectory(configured)) {
-            return configured;
+        String value = properties.getRootPath();
+        Path configured = Path.of(value);
+        // 绝对路径是显式指定（现场部署 / 单元测试注入临时目录），原样尊重
+        if (configured.isAbsolute()) {
+            return configured.toAbsolutePath().normalize();
         }
+        // 相对路径不能按进程工作目录拼：同一个 jar 从 e:/tr069 起和从 e:/tr069/target 起
+        // 会落到两个不同的 configuration 目录，适配档案就此分叉（一边写入，另一边读不到）。
+        // 统一以 jar 位置为基准推导，保证无论从哪个目录启动都指向同一处。
         Path base = jarDirectory();
-        if (base != null) {
-            List<Path> candidates = List.of(
-                    base.resolve("configuration"),
-                    base.resolve("target").resolve("configuration"));
-            for (Path candidate : candidates) {
-                if (Files.isDirectory(candidate)) {
-                    log.warn("配置目录 {} 不存在，回退使用 {}", configured, candidate.normalize());
-                    return candidate.normalize();
-                }
-            }
+        if (base == null) {
+            return configured.toAbsolutePath().normalize();
         }
-        return configured;
+        Path anchor = isBuildOutputDir(base) && base.getParent() != null ? base.getParent() : base;
+        Path canonical = anchor.resolve(value).normalize();
+        if (Files.isDirectory(canonical)) {
+            return canonical;
+        }
+        // 推导位置还没准备好（例如 IDE 直接从源码目录启动），退回工作目录那一份
+        Path byWorkDir = configured.toAbsolutePath().normalize();
+        if (Files.isDirectory(byWorkDir)) {
+            log.warn("配置目录 {} 不存在，回退使用 {}", canonical, byWorkDir);
+            return byWorkDir;
+        }
+        return canonical;
+    }
+
+    /** jar 落在构建产物目录里时，配置根目录应取它的上一级（项目根）。 */
+    private static boolean isBuildOutputDir(Path dir) {
+        Path name = dir.getFileName();
+        if (name == null) {
+            return false;
+        }
+        String n = name.toString();
+        return "target".equals(n) || "build".equals(n) || "out".equals(n);
     }
 
     private static Path jarDirectory() {
@@ -76,10 +96,41 @@ public class WorklistRootResolver {
             if (source == null || source.getLocation() == null) {
                 return null;
             }
-            return Path.of(source.getLocation().toURI()).getParent();
+            String location = source.getLocation().toString();
+            // Spring Boot fat jar：Boot 2 是 jar:file:/.../app.jar!/BOOT-INF/classes!/，
+            // Boot 3 改成 jar:nested:/.../app.jar/!BOOT-INF/classes/!/，
+            // 两种都要先剥出外层 jar 文件路径，否则拿到的是 jar 内部的目录
+            java.util.regex.Matcher nested = NESTED_JAR.matcher(location);
+            if (nested.find()) {
+                String jarPath = nested.group(1);
+                // Windows 下形如 /E:/tr069/... 带一个前导斜杠，Linux 下是正常绝对路径
+                if (jarPath.length() > 2 && jarPath.charAt(2) == ':') {
+                    jarPath = jarPath.substring(1);
+                }
+                return asDirectory(Path.of(jarPath));
+            }
+            java.net.URI uri = source.getLocation().toURI();
+            try {
+                return asDirectory(uri);
+            } catch (IllegalArgumentException notAbsoluteFileUri) {
+                // 相对路径启动（cd 到 jar 目录后 java -jar xxx.jar）时是相对 URI
+                return asDirectory(Path.of(uri.toString()));
+            }
         } catch (Exception e) {
             log.debug("无法确定 jar 所在目录: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** 定位到 jar 所在目录：入参可能是 jar 文件，也可能是 classes 目录。 */
+    private static Path asDirectory(java.net.URI uri) {
+        return asDirectory(Path.of(uri));
+    }
+
+    private static Path asDirectory(Path path) {
+        Path absolute = path.isAbsolute() ? path : path.toAbsolutePath();
+        return Files.isRegularFile(absolute.normalize())
+                ? absolute.normalize().getParent()
+                : absolute.normalize();
     }
 }

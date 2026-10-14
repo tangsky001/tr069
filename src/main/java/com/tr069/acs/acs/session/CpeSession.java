@@ -140,6 +140,18 @@ public class CpeSession {
     }
 
     /**
+     * 是否还有已下发、尚未收到回应的 RPC。
+     *
+     * <p>ACS 是反向通道：指令只能搭在设备自己发起的连接上发出去。设备被邀请重连、
+     * 或中间 NAT 换了连接时，回应常常从另一条 TCP 连接回来——这时旧连接上那条
+     * 指令还在等，不能当成"设备有两条连接"把会话关掉。</p>
+     */
+    public boolean hasPendingAwaiting() {
+        PendingRpc rpc = this.awaiting;
+        return rpc != null && !rpc.getResponse().isDone();
+    }
+
+    /**
      * 用 CPE 的上报完成等待中的 RPC。
      *
      * @return 被完成的 RPC，无等待中的 RPC 时返回 null

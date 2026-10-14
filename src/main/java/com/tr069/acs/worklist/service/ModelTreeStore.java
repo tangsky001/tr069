@@ -83,6 +83,7 @@ public class ModelTreeStore {
     private final CpeDeviceMapper deviceMapper;
     private final CpeModelMapper modelMapper;
     private final WorklistProperties properties;
+    private final WorklistRootResolver rootResolver;
 
     // ==================== 导出 ====================
 
@@ -97,6 +98,14 @@ public class ModelTreeStore {
      * @return 导出结果，含文件相对路径与绝对路径
      */
     public ExportResult export(String sn, boolean force) {
+        return export(sn, force, null);
+    }
+
+    /**
+     * @param ispOverride 归档到指定运营商目录：适配时以人工申报的运营商为准，
+     *                    可能与设备上报的 isp 不同（同型号卖给多家运营商）。
+     */
+    public ExportResult export(String sn, boolean force, String ispOverride) {
         List<CpeParameter> nodes = parameterMapper.selectList(new LambdaQueryWrapper<CpeParameter>()
                 .eq(CpeParameter::getSn, sn)
                 .orderByAsc(CpeParameter::getParamPath));
@@ -104,7 +113,8 @@ public class ModelTreeStore {
             throw new IllegalArgumentException("设备能力树为空，请先采集: " + sn);
         }
         CpeDevice device = findDevice(sn);
-        String isp = device != null && notBlank(device.getIsp()) ? device.getIsp().trim() : "standard";
+        String isp = notBlank(ispOverride) ? ispOverride.trim()
+                : (device != null && notBlank(device.getIsp()) ? device.getIsp().trim() : "standard");
         String modelKey = ModelMappingService.buildModelKey(
                 device == null ? null : device.getProductClass(),
                 device == null ? null : device.getSoftwareVersion());
@@ -732,7 +742,8 @@ public class ModelTreeStore {
     }
 
     private Path resolveFile(String relative) {
-        return Paths.get(properties.getRootPath()).resolve(relative).normalize();
+        // 统一经根目录解析组件定位：从任何工作目录启动，型号文件都落在同一处
+        return rootResolver.root().resolve(relative).normalize();
     }
 
     /**

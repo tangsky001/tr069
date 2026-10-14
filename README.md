@@ -2,11 +2,66 @@
 
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
-- 部署步骤见 **[DEPLOYMENT.md](./DEPLOYMENT.md)**
+- 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
 - 前端工程见 [web/](./web)
+- 界面截图见 [doc/Display/](./doc/Display)（见下文「效果展示」）
 
 > 当前处于**配置下发链路重构**阶段：模板已从「文件 + 步骤编排」改为**入库的意图模板**，
-> 下发由「意图 + 型号映射」在运行时生成真实 CWMP 参数（详见第 3 节待实现）。
+> 下发由「意图 + 型号映射」在运行时生成真实 CWMP 参数（详见第 2 节待实现）。
+
+---
+
+## 效果展示
+
+全部截图在 [`doc/Display/`](./doc/Display)。
+
+### 登录
+
+左侧品牌区 + 右侧账号卡片，深色科技风：
+
+![登录](doc/Display/170451_518.png)
+
+### 首页概览
+
+设备 / 在线 / 离线 / 下发统计、光猫品牌分布、工单与模板统计、快速入口：
+
+![首页概览](doc/Display/170528_847.png)
+
+### 设备管理与机型适配
+
+设备列表展示厂商、型号、软硬件版本、PON 数量；业务状态列直读 WAN 连接 / WiFi / SIP；
+注册信息含在线状态、探测 IP 与最近上报时间；右下角是批量运维工具条。
+未适配的设备会先引导做机型适配：
+
+![设备管理 - 未适配](doc/Display/171236_574.png)
+
+机型适配：人工申报运营商、网口数、网口速率、SIP 数、WiFi 规格：
+
+![机型适配 - 申报](doc/Display/171244_327.png)
+
+申报后先做试采集，把每个能力项映射到该型号真实的 CWMP 参数路径，结果实时回显：
+
+![机型适配 - 测试中](doc/Display/171437_294.png)
+
+测试通过后逐项给出「能力 ↔ 下发意图数据」对照，一键保存为该型号的适配档案，
+申报的运营商会同时登记到设备台账：
+
+![机型适配 - 测试通过](doc/Display/172759_926.png)
+
+适配完成后，设备转为「已适配」，业务状态按真实数据展示：
+
+![设备管理 - 已适配](doc/Display/170658_702.png)
+
+![设备管理 - 适配完成后](doc/Display/174419_542.png)
+
+### OLT 管理（演示数据）
+
+OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据为前端模拟，
+真实采集见「待实现」#6：
+
+![OLT 管理 - 总览](doc/Display/_170707_144.png)
+
+![OLT 管理 - PON 口明细](doc/Display/170715_182.png)
 
 ---
 
@@ -18,13 +73,14 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 | --- | --- | --- |
 | CWMP 接入 | Inform / 空 POST 探活 / RPC 响应三条链路，digest 认证（可 `auto` 免认证），多端口 + 多路径兼容各厂商上报 | `acs/controller/CwmpController`、`acs/auth/CpeAuthenticator`、`common/web/CwmpMultiPortConfig` |
 | 协议层 | SOAP 解析/封装、RPC 方法枚举、命名空间 | `cwmp/*` |
-| 会话管理 | 会话状态机、待回应 RPC、超时与双会话容错 | `acs/session/*` |
+| 会话管理 | 会话状态机、待回应 RPC、超时兜底；周期上报视为心跳与会话接管（CPE 换 TCP 连接不重建会话、不打离线、不清待下发队列），离线只按长期无通信判定，疑似双会话仅告警 | `acs/session/*` |
 | 设备管理 | 设备自动注册、在线状态、分页详情、在线会话明细 | `acs/service/DeviceRegistryService`、`api/controller/DeviceController` |
 | 能力树采集 | 只采集 WAN / WiFi / LAN 网口 / SIP 四类子树（代码内固定）：GetParameterNames 拉路径 + GetParameterValues 分批读值，Inform 后自动采集、BOOTSTRAP 强制重采、NextLevel 兜底 | `acs/service/DeviceCapabilityService` |
 | 参数树导出 | 按型号导出能力树到 `configuration/models/`，并可按设备定位模型文件 | `worklist/service/ModelTreeStore` |
 | 业务快照 | WAN / WLAN / SIP 采集与解读，支持单台与整页批量读 | `acs/service/DeviceBusinessService` |
 | 型号语义映射 | `cpe_model` + `model_param_mapping` / `model_object_mapping`：业务字段 ↔ 型号真实 CWMP 路径，支持按 SN 推荐候选路径 | `worklist/controller/ModelMappingController`、`ModelMappingService` |
 | 光猫适配档案 | `configuration/profiles/*.yaml` 加载、匹配、WatchService 热加载 + 周期兜底扫描 | `worklist/loader`、`worklist/registry`、`WorklistConfigService` |
+| 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示 | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
 | RPC 下发（异步） | 下发返回任务号，按任务号轮询结果；超时统一收尾 | `agent/RpcDispatchService`、`queue/RpcTaskQueue`、`api/controller/RpcTaskController` |
 | 队列削峰 | 上报与下发走 Redis 队列，Redis 不可用时降级为进程内处理 | `queue/*` |
 | **配置意图模板** | 入库 `config_template`，只描述开通意图（不下发任何数据）：7 类（WAN DHCP / WAN PPPoE / WAN 静态IP / WAN 桥接 / 2.4G WiFi / 5.8G WiFi / SIP），各类自带意图字段；支持 `/meta` 字段定义、列表、详情、保存、删除 | `template/*`（`ConfigTemplateService`、`ConfigTemplateController`） |
@@ -76,7 +132,7 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 | 7 | 存量数据迁移 | 未开始 | 存量 `biz_template_item.template_key` 仍是旧文件 key，`BizTemplateService.parseId` 会判定为“配置模板不存在”，需迁移脚本改为 `config_template.id` |
 | 8 | 意图字段扩展 | 进行中 | 现 WAN 类仅 IP 协议 / VLAN 使用与否 / 是否绑定端口；待补 WAN IP 获取方式、PPPoE 账号、SIP 服务器/账号、WiFi SSID/密码等意图（VLAN ID、具体端口仍不落库，由下发时决定） |
 | 9 | 旧机制彻底清理 | 基本完成 | 旧文件模板 / 向导编译 / 工单执行引擎已删；`worklist` 包中仅保留档案、型号映射、能力树导出与工单查询，收尾时可再审视命名 |
-| 10 | 其它 | 未开始 | 下发操作审计日志细化、权限角色细化、设备告警（光功率劣化、离线批量提醒）等 |
+| 10 | 其它 | 未开始 | 下发操作审计日志细化、权限角色细化、设备告警（光功率劣化、离线批量提醒）、离线判定阈值按设备实际周期上报间隔（`PeriodicInformInterval`）动态计算（当前固定 120 秒，周期不是 60 秒的型号需手调）等 |
 
 ---
 
@@ -103,7 +159,9 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 javaacs/
 ├── README.md                 本文档
 ├── API.md                    接口文档（管理端 /api 与北向 /openapi/v1）
-├── DEPLOYMENT.md             部署文档
+├── doc/
+│   ├── DEPLOYMENT.md         部署文档
+│   └── Display/              界面截图（见「效果展示」）
 ├── pom.xml                   后端（Maven）
 ├── sql/schema.sql            全库唯一建表脚本（所有表）
 ├── deploy/
@@ -114,7 +172,8 @@ javaacs/
 └── web/                      前端工程（构建产物 dist/ 不入库）
 ```
 
-外部配置目录（默认 `./configuration`，相对进程工作目录，见 `acs.worklist.root-path`）：
+外部配置目录（默认 `./configuration`；相对路径按 **jar 所在目录**解析，与进程工作目录无关，
+见 `acs.worklist.root-path`）：
 
 ```
 configuration/
@@ -186,7 +245,7 @@ mvn -q compile                 # 后端
 cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 ```
 
-光猫接入、打包上线、故障排查见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+光猫接入、打包上线、故障排查见 [doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)。
 
 ## 9. 关键配置速查
 
@@ -198,7 +257,7 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.auth.cpe-to-acs-username/password` | `auto` | 光猫连 ACS 的账号；`auto`/留空即免认证，上线前改回真实账号 |
 | `acs.capability.enabled` / `collect-on-inform` | `true` | 能力树采集总开关与 Inform 后自动采集 |
 | `acs.config-template.auto-create-table` | `true` | 启动时补建 `config_template` |
-| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`profiles/`、`models/`），改文件热加载 |
+| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`profiles/`、`models/`），改文件热加载；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内处理 |
 | `acs.agent.rpc-timeout` | `510` | 单条 RPC 等待设备回应的超时（秒） |
 | `acs.exec.request-timeout-seconds` | `90` | 下发等待设备回应的超时（秒） |

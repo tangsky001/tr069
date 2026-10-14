@@ -269,10 +269,15 @@ public class CwmpController {
             return;
         }
 
-        // 双会话检测，对应原版 is_2session1cpe
+        // 疑似双会话检测，对应原版 is_2session1cpe。
+        // CWMP 里 CPE 是反向通道：每 60 秒周期上报一次，每次都可能是新的 TCP 连接
+        // （源端口不同），也可能关掉旧连接、另开一条把指令回应发回来。这些都是正常的
+        // 会话接管，会话还在，设备就还活着，只是"告知 ACS 我在线"。
+        // 这里只记日志供排查，不关闭会话：关掉会连带把设备打离线、清空待下发队列、
+        // 作废正在等待的指令，代价远大于收益。是否离线交给 sweepExpiredSessions
+        // 按无通信时长判定。
         if (sessionManager.detectDuplicateSession(sn, connId)) {
-            log.warn("检测到重复会话, 关闭旧会话: sn={}", sn);
-            sessionManager.closeSession(sn, "duplicate session");
+            log.warn("疑似双会话，按会话接管处理: sn={}, connId={}", sn, connId);
         }
 
         CpeSession session = sessionManager.getOrCreate(oui, sn, connId);
