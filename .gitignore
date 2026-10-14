@@ -9,6 +9,8 @@ target/
 *.war
 *.ear
 .mvn/timing.properties
+configuration/
+deploy/
 
 #############
 ## 前端（server/web，vue-admin-template）

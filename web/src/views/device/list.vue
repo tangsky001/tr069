@@ -123,7 +123,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="当前位置IP" min-width="120">
+        <el-table-column label="上报的IP" min-width="120">
           <template slot-scope="{ row }">
             <span>{{ wanIp(row.sn) }}</span>
           </template>
@@ -708,13 +708,9 @@ export default {
       if (!raw) return '未配置'
       return this.sipRegistered(params) ? '已注册' : '未注册'
     },
-    // WAN 实例的公网地址，取第一个非空的
+    // 管理地址：由后端从 WAN_TR069 通道算出（业务快照的 ip 字段），前端不做判定
     wanIp(sn) {
-      for (const item of this.wanList(sn)) {
-        const ip = item.params.ExternalIPAddress
-        if (ip && ip !== '0.0.0.0') return ip
-      }
-      return '-'
+      return this.bizOf(sn).ip || '-'
     },
     isOnline(row) {
       const status = String(row.status || '').toLowerCase()
@@ -779,7 +775,7 @@ export default {
         { label: '硬件版本', value: row.hardwareVersion },
         { label: '固件版本', value: row.softwareVersion },
         { label: '设备型号', value: row.productClass || row.deviceType },
-        { label: 'LAN IP', value: this.wanIp(row.sn) },
+        { label: '管理 IP（TR069）', value: this.wanIp(row.sn) },
         { label: '远程管理地址', value: row.connectionRequestUrl },
         { label: 'CPE USER', value: row.cpeToAcsName },
         { label: 'CWMP 版本', value: row.cwmpVersion },
@@ -825,16 +821,9 @@ export default {
       const addr = params.AddressingType || (type.toLowerCase().includes('ppp') ? 'PPPoE' : '-')
       return mode + ' / ' + addr
     },
+    // 业务类型由后端判定（键名含 ServiceList，不区分厂商前缀）
     serviceMode(item) {
-      const params = item.params
-      const declared = params.ServiceList || params['X_CT-COM_ServiceList']
-      if (declared) return declared
-      const name = String(params.Name || item.path).toUpperCase()
-      if (name.includes('TR069')) return 'TR069'
-      if (name.includes('VOIP') || name.includes('VOICE')) return 'VOIP'
-      if (name.includes('IPTV')) return 'IPTV'
-      if (name.includes('INTERNET')) return 'INTERNET'
-      return '-'
+      return item.service || '-'
     },
     uptimeText(seconds) {
       const n = parseInt(seconds, 10)

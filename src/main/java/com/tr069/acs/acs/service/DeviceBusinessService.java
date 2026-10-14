@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -91,6 +92,7 @@ public class DeviceBusinessService {
             data.put(section.key(), groupInstances(params, section));
         }
         data.put("pon", ponParams(sn));
+        enrichWan(data);
         return data;
     }
 
@@ -205,6 +207,85 @@ public class DeviceBusinessService {
             result.add(item);
         }
         return result;
+    }
+
+    /** WAN 分区 key，与 SECTIONS 里的定义对应。 */
+    private static final String WAN_KEY = "wan";
+
+    /** 业务类型关键字，按优先级判定：TR069 管理通道优先于上网/语音/IPTV。 */
+    private static final List<String> SERVICE_KEYWORDS = List.of("TR069", "VOIP", "VOICE", "IPTV", "INTERNET");
+
+    /**
+     * 给 WAN 连接补业务语义，并算出设备的管理地址。
+     *
+     * <p>光猫上通常有多条 WAN 连接（INTERNET / TR069 / VOIP / IPTV），设备真正与 ACS
+     * 通信的是 TR069 通道，"当前位置 IP"要的是它的地址，不能拿 INTERNET 通道的上网公网地址顶替。
+     * 判定在后端一次做完，前端只读 {@code ip} 与每条连接的 {@code service}，
+     * 避免同一套厂商适配规则在前端再写一遍。</p>
+     *
+     * <p>设备既然能上报上来，TR069 通道必然存在且带地址，因此不做任何兜底：
+     * 没识别出来就是这次快照没采到，{@code ip} 为 null，由前端显示 "-"，
+     * 而不是退回去取别的通道。</p>
+     */
+    @SuppressWarnings("unchecked")
+    private void enrichWan(Map<String, Object> data) {
+        Object wanObj = data.get(WAN_KEY);
+        if (!(wanObj instanceof List<?> list)) {
+            return;
+        }
+        String ip = null;
+        for (Object row : list) {
+            if (!(row instanceof Map<?, ?> raw)) {
+                continue;
+            }
+            Map<String, Object> item = (Map<String, Object>) raw;
+            Object paramObj = item.get("params");
+            Map<String, String> params = paramObj instanceof Map<?, ?>
+                    ? (Map<String, String>) paramObj : Map.of();
+            String service = serviceOf(params, String.valueOf(item.getOrDefault("path", "")));
+            item.put("service", service);
+            boolean tr069 = "TR069".equalsIgnoreCase(service);
+            item.put("tr069", tr069);
+            if (tr069 && ip == null) {
+                String value = params.get("ExternalIPAddress");
+                if (value != null && !value.isBlank() && !"0.0.0.0".equals(value.trim())) {
+                    ip = value.trim();
+                }
+            }
+        }
+        // 管理地址 = TR069 通道地址；取不到就是没采到，不退回其它通道
+        data.put("ip", ip);
+        data.put("ipSource", ip == null ? null : "WAN_TR069");
+    }
+
+    /**
+     * 一条 WAN 连接的业务类型：TR069 / INTERNET / VOIP / IPTV，认不出返回 "-"。
+     *
+     * <p>ServiceList 的厂商私有前缀各家不同——电信 X_CT-COM_、移动 X_CMCC_、联通 X_CU_，
+     * 写死某一家的 key 在别的运营商机型上就取不到，所以按「键名含 ServiceList」匹配，
+     * 新厂商不用改代码；都没有时再按连接名与路径推断。</p>
+     */
+    private static String serviceOf(Map<String, String> params, String path) {
+        String declared = params.get("ServiceList");
+        if (declared == null || declared.isBlank()) {
+            for (Map.Entry<String, String> entry : params.entrySet()) {
+                String key = entry.getKey();
+                if (key != null && key.toLowerCase(Locale.ROOT).contains("servicelist")
+                        && entry.getValue() != null && !entry.getValue().isBlank()) {
+                    declared = entry.getValue();
+                    break;
+                }
+            }
+        }
+        String text = (declared == null ? "" : declared) + " "
+                + params.getOrDefault("Name", "") + " " + (path == null ? "" : path);
+        String upper = text.toUpperCase(Locale.ROOT);
+        for (String keyword : SERVICE_KEYWORDS) {
+            if (upper.contains(keyword)) {
+                return "VOICE".equals(keyword) ? "VOIP" : keyword;
+            }
+        }
+        return "-";
     }
 
     /** 厂商私有叶子前缀，形如 X_CMCC_、X_CT-COM_（中间可带连字符）。 */
