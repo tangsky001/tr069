@@ -59,7 +59,7 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据为前端模拟，
 真实采集见「待实现」#6：
 
-![OLT 管理 - 总览](doc/Display/_170707_144.png)
+![OLT 管理 - 总览](doc/Display/170707_144.png)
 
 ![OLT 管理 - PON 口明细](doc/Display/170715_182.png)
 
