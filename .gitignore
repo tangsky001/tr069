@@ -9,7 +9,7 @@ target/
 *.war
 *.ear
 .mvn/timing.properties
-configuration/
+#configuration/
 deploy/
 
 #############

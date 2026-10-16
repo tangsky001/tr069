@@ -13,8 +13,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class Tr069TplProperties {
 
     /**
-     * 模板库 SQLite 文件路径，相对进程工作目录解析。
-     * 拷走即用，部署机不必重新适配光猫。
+     * 模板库 SQLite 文件路径。相对路径不按进程工作目录解析，而是与
+     * {@code acs.worklist.root-path} 同源（见 WorklistRootResolver）：
+     * 换目录起 jar 也连到同一个文件，拷走即用，部署机不必重新适配光猫。
      */
     private String dbPath = "./configuration/tr069_tpl.pack";
 

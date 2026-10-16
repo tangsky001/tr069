@@ -226,8 +226,11 @@ acs:
 
   # ==================== 模板库（光猫已适配数据，便携化 SQLite） ====================
   tr069tpl:
-    # 模板库 SQLite 文件路径。相对进程工作目录解析，刻意放在 jar 外部：
-    # 拷走即用，新机器拿到后光猫一上线即识别为已适配，不必重新适配。
+    # 模板库 SQLite 文件路径，刻意放在 jar 外部：拷走即用，新机器拿到后光猫
+    # 一上线即识别为已适配，不必重新适配。
+    # 相对路径与 acs.worklist.root-path 同源（经 WorklistRootResolver 解析），
+    # 不按进程工作目录拼——否则从 target 目录起 jar 会去连 target/configuration
+    # 下那一份，与配置根目录里的适配档案分叉。父目录不存在时会自动创建。
     db-path: ./configuration/tr069_tpl.pack
     # 雪花 ID 节点号：多节点部署时手动分配避免主键撞车
     snowflake-node-id: 1

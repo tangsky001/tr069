@@ -23,6 +23,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>解析规则：配置值优先；若它指向的目录不存在或为空，依次回退到 jar 同级的
  * {@code configuration/} 与 {@code target/configuration/}（与 WorklistConfigService
  * 原有的回退逻辑一致）。结果缓存，进程内只解析一次。</p>
+ *
+ * <p>同目录里的其它落盘文件（模板库 SQLite 等）必须走 {@link #resolve(String)}，
+ * 而不是自己拿相对路径去拼进程工作目录——否则又是一次「库连的是 A 处，档案写在
+ * B 处」的分叉。SQLite 尤其致命：父目录不存在时它不会自己建目录，而是直接抛
+ * {@code path to '...' does not exist}。</p>
  */
 @Slf4j
 @Component
@@ -34,49 +39,76 @@ public class WorklistRootResolver {
 
     private final WorklistProperties properties;
 
-    private final AtomicReference<Path> cached = new AtomicReference<>();
+    private final AtomicReference<Path> cachedBase = new AtomicReference<>();
+
+    private final AtomicReference<Path> cachedRoot = new AtomicReference<>();
 
     public WorklistRootResolver(WorklistProperties properties) {
         this.properties = properties;
     }
 
+    /**
+     * 相对路径的统一基准目录：jar 所在目录，落在 target/build/out 里时取它的上一级
+     * （项目根）。拿不到 jar 位置时退化为进程工作目录。结果缓存，进程内只解析一次。
+     */
+    public Path base() {
+        Path result = cachedBase.get();
+        if (result == null) {
+            result = resolveBase();
+            cachedBase.set(result);
+            log.info("外部配置基准目录: {}", result);
+        }
+        return result;
+    }
+
     /** 配置根目录（绝对路径、已规范化），进程内只解析一次。 */
     public Path root() {
-        Path result = cached.get();
+        Path result = cachedRoot.get();
         if (result == null) {
-            result = resolve();
-            cached.set(result);
+            result = resolveRoot();
+            cachedRoot.set(result);
             log.info("光猫配置根目录: {}", result);
         }
         return result;
     }
 
-    private Path resolve() {
-        String value = properties.getRootPath();
-        Path configured = Path.of(value);
-        // 绝对路径是显式指定（现场部署 / 单元测试注入临时目录），原样尊重
+    /**
+     * 把配置里的相对路径解析到与 {@link #root()} 同源的位置（绝对路径已规范化）。
+     *
+     * <p>绝对路径视为显式指定（现场部署 / 单元测试注入临时目录），原样尊重。</p>
+     */
+    public Path resolve(String path) {
+        Path configured = Path.of(path);
         if (configured.isAbsolute()) {
             return configured.toAbsolutePath().normalize();
         }
         // 相对路径不能按进程工作目录拼：同一个 jar 从 e:/tr069 起和从 e:/tr069/target 起
         // 会落到两个不同的 configuration 目录，适配档案就此分叉（一边写入，另一边读不到）。
         // 统一以 jar 位置为基准推导，保证无论从哪个目录启动都指向同一处。
-        Path base = jarDirectory();
-        if (base == null) {
-            return configured.toAbsolutePath().normalize();
-        }
-        Path anchor = isBuildOutputDir(base) && base.getParent() != null ? base.getParent() : base;
-        Path canonical = anchor.resolve(value).normalize();
+        return base().resolve(configured).normalize();
+    }
+
+    private Path resolveRoot() {
+        String value = properties.getRootPath();
+        Path canonical = resolve(value);
         if (Files.isDirectory(canonical)) {
             return canonical;
         }
         // 推导位置还没准备好（例如 IDE 直接从源码目录启动），退回工作目录那一份
-        Path byWorkDir = configured.toAbsolutePath().normalize();
+        Path byWorkDir = Path.of(value).toAbsolutePath().normalize();
         if (Files.isDirectory(byWorkDir)) {
             log.warn("配置目录 {} 不存在，回退使用 {}", canonical, byWorkDir);
             return byWorkDir;
         }
         return canonical;
+    }
+
+    private Path resolveBase() {
+        Path jarDir = jarDirectory();
+        if (jarDir == null) {
+            return Path.of("").toAbsolutePath().normalize();
+        }
+        return isBuildOutputDir(jarDir) && jarDir.getParent() != null ? jarDir.getParent() : jarDir;
     }
 
     /** jar 落在构建产物目录里时，配置根目录应取它的上一级（项目根）。 */

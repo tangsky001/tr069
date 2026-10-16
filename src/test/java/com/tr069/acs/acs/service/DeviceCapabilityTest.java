@@ -3,14 +3,22 @@ package com.tr069.acs.acs.service;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.cwmp.SoapEnvelopeBuilder;
 import com.tr069.acs.cwmp.SoapParser;
+import com.tr069.acs.acs.session.CpeSession;
+import com.tr069.acs.acs.session.PendingRpc;
+import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.cwmp.model.SoapMessage;
+import com.tr069.acs.mapper.CpeParameterMapper;
+import com.tr069.acs.queue.config.QueueProperties;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -202,6 +210,89 @@ class DeviceCapabilityTest {
                 "InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.",
                 "InternetGatewayDevice.WANDevice.1.");
         assertThat(paths(tree).get(0)).isEqualTo("InternetGatewayDevice.");
+    }
+
+    /**
+     * 整批被设备拒绝时二分拆批重试：只丢掉真正失效的那条路径，同批其余照常落库。
+     *
+     * <p>GetParameterValues 是整批事务：批里混一条设备上没有的路径，整批回 9005，
+     * 这批的值一个也落不了库。采集清单里留着已删实例的僵尸路径时，整段业务快照
+     * 就刷不回来，前端一直显示旧数据。</p>
+     */
+    @Test
+    void 整批被拒时二分拆批只丢失效路径() {
+        String sn = "CIOT185A63C0";
+        String good1 = "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.Enable";
+        String good2 = "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.Name";
+        String bad = "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.Enable";
+
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        // 「僵尸路径」参与的那批回 9005，其余正常返回
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterValues"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> args = inv.getArgument(2);
+                    @SuppressWarnings("unchecked")
+                    List<String> names = (List<String>) args.get("ParameterNames");
+                    return pendingRpc(names.contains(bad)
+                            ? faultXml("9005", "Invalid parameter name")
+                            : valuesXml(names));
+                });
+
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, Mockito.mock(CpeParameterMapper.class),
+                Mockito.mock(QueueProperties.class), null);
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+        ReflectionTestUtils.setField(service, "valueBatchSize", 2);
+
+        DeviceCapabilityService.CollectStatus status =
+                new DeviceCapabilityService.CollectStatus(sn, "auto");
+        CompletableFuture<?> done = ReflectionTestUtils.invokeMethod(
+                service, "readValuesBatch", sn, List.of(good1, bad), status, 0, 1);
+        done.join();
+
+        // 坏的那条被剔掉，好的那条照常读到值
+        assertThat(status.getValueCount()).isEqualTo(1);
+        assertThat(status.getFailBatches()).isEqualTo(1);
+        assertThat(String.join(";", status.getErrors()))
+                .contains(bad).doesNotContain(good1);
+    }
+
+    private static PendingRpc pendingRpc(SoapMessage message) {
+        PendingRpc rpc = Mockito.mock(PendingRpc.class);
+        Mockito.when(rpc.getResponse()).thenReturn(CompletableFuture.completedFuture(message));
+        return rpc;
+    }
+
+    /** 组装一个 GetParameterValuesResponse：回带每个路径的值。 */
+    private static SoapMessage valuesXml(List<String> names) {
+        StringBuilder list = new StringBuilder();
+        for (String name : names) {
+            list.append("<ParameterValueStruct><Name>").append(name)
+                    .append("</Name><Value xsi:type=\"xsd:string\">v</Value></ParameterValueStruct>");
+        }
+        return SoapParser.parse("<SOAP-ENV:Envelope " + NAMESPACES + ">"
+                + "<SOAP-ENV:Header><cwmp:ID SOAP-ENV:mustUnderstand=\"1\">1</cwmp:ID></SOAP-ENV:Header>"
+                + "<SOAP-ENV:Body><cwmp:GetParameterValuesResponse>"
+                + "<ParameterList SOAP-ENC:arrayType=\"cwmp:ParameterValueStruct[" + names.size() + "]\">"
+                + list
+                + "</ParameterList></cwmp:GetParameterValuesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>");
+    }
+
+    /** 组装一个 CWMP 故障响应（9005 无效参数名）。 */
+    private static SoapMessage faultXml(String code, String text) {
+        return SoapParser.parse("<SOAP-ENV:Envelope " + NAMESPACES + ">"
+                + "<SOAP-ENV:Header><cwmp:ID SOAP-ENV:mustUnderstand=\"1\">1</cwmp:ID></SOAP-ENV:Header>"
+                + "<SOAP-ENV:Body><SOAP-ENV:Fault>"
+                + "<faultcode>SOAP-ENV:Client</faultcode>"
+                + "<faultstring>CWMP fault</faultstring>"
+                + "<detail><cwmp:Fault><FaultCode>" + code
+                + "</FaultCode><FaultString>" + text
+                + "</FaultString></cwmp:Fault></detail>"
+                + "</SOAP-ENV:Fault></SOAP-ENV:Body></SOAP-ENV:Envelope>");
     }
 
     private static DeviceCapabilityService newDeviceCapabilityService() {

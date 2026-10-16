@@ -1,5 +1,7 @@
 package com.tr069.acs.worklist.tpl.config;
 
+import com.tr069.acs.worklist.service.WorklistRootResolver;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -11,7 +13,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.sqlite.SQLiteDataSource;
 
-import java.nio.file.Paths;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -36,12 +40,30 @@ public class Tr069TplDataSourceConfig {
 
     /**
      * 单连接 SQLite 数据源。SQLite 不需要连接池，文件锁本身就是协调机制。
+     *
+     * <p><b>路径必须经 {@link WorklistRootResolver#resolve(String)} 解析。</b>配置里写的是
+     * 相对路径，按进程工作目录拼就会随启动目录漂移：从 {@code target/} 起 jar 时会去找
+     * {@code target/configuration/}，而配置根目录实际在项目根的 {@code configuration/}
+     * ——SQLite 不负责建父目录，直接抛 {@code path to '...' does not exist}，
+     * 表现为「保存适配就报拿不到 JDBC 连接」。这里统一锚定到配置根目录的同级，
+     * 并在连接前把父目录建出来，首次启动也不会因为目录不存在而炸。</p>
      */
     @Bean
-    public SQLiteDataSource tr069TplDataSource(Tr069TplProperties props) {
+    public SQLiteDataSource tr069TplDataSource(Tr069TplProperties props,
+                                               WorklistRootResolver rootResolver) {
+        Path dbFile = rootResolver.resolve(props.getDbPath());
+        try {
+            Path parent = dbFile.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("模板库目录无法创建: " + dbFile.getParent()
+                    + " —— 请检查 tr069tpl.db-path 与启动账号的写权限", e);
+        }
         SQLiteDataSource ds = new SQLiteDataSource();
         // 不开只读：模板写入只在点「保存适配」时发生（低频），但要支持 upsert
-        ds.setUrl("jdbc:sqlite:" + props.getDbPath());
+        ds.setUrl("jdbc:sqlite:" + dbFile);
         return ds;
     }
 
@@ -54,11 +76,13 @@ public class Tr069TplDataSourceConfig {
     @Bean
     public JdbcTemplate tr069TplJdbcTemplate(SQLiteDataSource tr069TplDataSource,
                                              Tr069TplProperties props,
+                                             WorklistRootResolver rootResolver,
                                              ResourceLoader resourceLoader) {
         JdbcTemplate t = new JdbcTemplate(tr069TplDataSource);
         String absPath;
         try {
-            absPath = Paths.get(props.getDbPath()).toAbsolutePath().normalize().toString();
+            // 与数据源同一套解析规则，日志里打印的必须是实际连上的那一份
+            absPath = rootResolver.resolve(props.getDbPath()).toString();
         } catch (Exception e) {
             absPath = props.getDbPath();
         }

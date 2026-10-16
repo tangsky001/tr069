@@ -20,6 +20,7 @@ import com.tr069.acs.exec.model.PlanItem;
 import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.template.service.ConfigTemplateService;
 import com.tr069.acs.worklist.service.ModelMappingService;
+import com.tr069.acs.worklist.service.ModelTreeStore;
 import com.tr069.acs.worklist.tpl.dao.DeviceDao;
 import com.tr069.acs.worklist.tpl.entity.Device;
 import com.tr069.acs.worklist.tpl.service.ModelTemplateService;
@@ -110,9 +111,19 @@ public class IntentDeliveryService {
     private final DeviceBusinessService businessService;
     /** 读设备能力快照，下发前靠它确认 WAN 实际的挂载位置 */
     private final CpeParameterMapper parameterMapper;
+    /** 读型号能力树，下发前靠它把模板里的参数名校正成这台设备真实的那套 */
+    private final ModelTreeStore modelTreeStore;
+    /** 下发后补采一次能力树，让新建的实例即时出现在设备列表里 */
+    private final com.tr069.acs.acs.service.DeviceCapabilityService capabilityService;
 
-    /** 路径里的 WAN 挂载位置，形如 {@code WANConnectionDevice.2.}。 */
-    private static final Pattern WAN_DEVICE = Pattern.compile("WANConnectionDevice\\.\\d+\\.");
+    /**
+     * 路径里的 WAN 挂载位置，形如 {@code WANConnectionDevice.2.}。
+     *
+     * <p>实例号是捕获组：{@link #detectWanDevice(String)} 要把它取出来比对，
+     * 写成非捕获的 {@code \d+} 时 {@code group(1)} 会抛
+     * {@code IndexOutOfBoundsException}，判读静默失败、计划原样下发。</p>
+     */
+    private static final Pattern WAN_DEVICE = Pattern.compile("WANConnectionDevice\\.(\\d+)\\.");
 
     /** 下发等待设备回应的超时（秒）。 */
     @Value("${acs.exec.request-timeout-seconds:90}")
@@ -250,6 +261,9 @@ public class IntentDeliveryService {
 
         IntentPlan plan = renderer.render(bizObject, request.category(), model,
                 values, resolveInstance(values));
+        plan = alignParameterNames(request.sn(), plan);
+        plan = ensureServiceBinding(request.sn(), plan, values);
+        plan = ensureVlanMode(request.sn(), plan);
         task.setIntentFields(writeJson(merge(intentFields, values)));
         task.setPlan(writeJson(planView(plan)));
         if (!plan.deliverable()) {
@@ -263,6 +277,235 @@ public class IntentDeliveryService {
         task.setStatus(DeviceTask.STATUS_RUNNING);
         task.setUpdatedAt(LocalDateTime.now());
         taskMapper.updateById(task);
+    }
+
+    /**
+     * 把渲染出的参数名校正为该型号真实存在的那套，并剔掉设备上根本没有的参数。
+     *
+     * <p>模板是跨厂商通用的写法，落到具体型号常常要换名：地址获取方式模板写
+     * {@code IPAddressingType}，这台设备按 TR-098 叫 {@code AddressingType}；VLAN 模板写
+     * {@code X_CMCC_VLANID}，移动定制机上真实存在的是 {@code X_CMCC_VLANIDMark}。
+     * 照模板原样发，设备回 9003 Invalid arguments——SetParameterValues 是按批生效的，
+     * 一条写错整批都废，前面 AddObject 刚建好的连接也就白建了。所以这一步必须落在下发之前。</p>
+     *
+     * <p>校不动的不硬写：宁可跳过并在日志里留痕由人补映射，也不猜一个节点写进去。
+     * 这台设备的参数和型号档案都查不到时，{@link ModelTreeStore#resolvePaths} 返回空结果，
+     * 这里保持模板原路径——信息不足时不能反过来把参数删掉。</p>
+     */
+    private IntentPlan alignParameterNames(String sn, IntentPlan plan) {
+        if (plan.parameters().isEmpty()) {
+            return plan;
+        }
+        List<String> paths = plan.parameters().stream().map(PlanItem::path).toList();
+        ModelTreeStore.PathResolution resolved = modelTreeStore.resolvePaths(sn, paths);
+        if (resolved.getRewritten().isEmpty() && resolved.getUnsupported().isEmpty()
+                && resolved.getTypes().isEmpty()) {
+            return plan;
+        }
+        List<PlanItem> items = new ArrayList<>();
+        for (PlanItem item : plan.parameters()) {
+            if (resolved.getUnsupported().contains(item.path())) {
+                log.warn("该型号能力树上没有这个参数，跳过不下发: {}", item.path());
+                continue;
+            }
+            String path = resolved.getRewritten().getOrDefault(item.path(), item.path());
+            // 下发格式以能力树声明的类型为准：SSID 取值 1111 全是数字，靠值猜会被写成整数
+            String type = resolved.getTypes().getOrDefault(path, item.valueType());
+            String value = item.value();
+            if ("boolean".equalsIgnoreCase(type)) {
+                value = booleanValue(value);
+            }
+            items.add(new PlanItem(item.bizObject(), item.bizField(), path, value, type));
+        }
+        List<String> errors = new ArrayList<>(plan.errors());
+        if (items.isEmpty()) {
+            errors.add("模板里的参数在这台设备上一个都对不上，请重新适配该型号");
+        }
+        return new IntentPlan(plan.bizObject(), plan.instance(), plan.objectsToAdd(), items, errors);
+    }
+
+    /**
+     * WAN 连接补写「业务绑定」参数（这台设备上是 {@code X_CMCC_ServiceList}）。
+     *
+     * <p>实测这条不加，业务就下不去：新建出来的连接在没绑业务之前拒绝启用——
+     * {@code Enable} 单独回 9003 Invalid arguments，同一批里带着它就整批 9003。
+     * 补写 {@code X_CMCC_ServiceList=INTERNET} 之后，同一实例的同一批六条（含 Enable）
+     * 一次成功。设备上原有的连接也印证了这套规则：
+     * {@code Name=2_INTERNET_R_VID_41} 对应 {@code X_CMCC_ServiceList=INTERNET}、
+     * {@code Name=3_VOIP_R_VID_45} 对应 {@code VOIP}。</p>
+     *
+     * <p>参数名由设备的能力树决定（各厂商写法不一，CMCC 是 ServiceList），这里逐个候选名
+     * 去树上试，树上没有就不写——宁缺毋滥，写错名字比不写更糟。模板自己带了业务绑定的
+     * 时候以模板为准，不重复加。</p>
+     */
+    private IntentPlan ensureServiceBinding(String sn, IntentPlan plan, Map<String, Object> values) {
+        if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
+            return plan;
+        }
+        if (plan.parameters().stream().anyMatch(IntentDeliveryService::isServiceBinding)) {
+            return plan;
+        }
+        Object custom = values.get("service_list");
+        String service = custom != null && !custom.toString().isBlank()
+                ? custom.toString().trim()
+                : SERVICE_INTERNET;
+        String first = plan.parameters().get(0).path();
+        int cut = first.lastIndexOf('.');
+        String parent = cut < 0 ? first : first.substring(0, cut + 1);
+        for (String candidate : SERVICE_LIST_NAMES) {
+            String path = parent + candidate;
+            ModelTreeStore.PathResolution resolved = modelTreeStore.resolvePaths(sn, List.of(path));
+            if (resolved.getUnsupported().contains(path)) {
+                continue;
+            }
+            // 树上真有这个节点才写。能力树/型号档案都没有时 resolvePaths 返回空结果
+            //（不是 unsupported），此时这道 ...ServiceList 是猜的，猜错名字会被判 9005
+            boolean exists = resolved.getTypes().containsKey(path)
+                    || resolved.getCurrentValues().containsKey(path)
+                    || resolved.getRewritten().containsKey(path);
+            if (!exists) {
+                continue;
+            }
+            String real = resolved.getRewritten().getOrDefault(path, path);
+            String type = resolved.getTypes().getOrDefault(real, "string");
+            List<PlanItem> items = new ArrayList<>(plan.parameters());
+            items.add(new PlanItem(plan.bizObject(), "service_list", real, service, type));
+            log.info("补写业务绑定: sn={}, 参数={}={}", sn, real, service);
+            return new IntentPlan(plan.bizObject(), plan.instance(),
+                    plan.objectsToAdd(), items, plan.errors());
+        }
+        log.warn("这台设备的 WAN 连接上没有业务绑定参数，按原样下发（可能起不来）: sn={}", sn);
+        return plan;
+    }
+
+    /**
+     * WAN 连接补写「VLAN 模式」（这台设备上是 {@code X_CMCC_VLANMode}）。
+     *
+     * <p>下发 VLAN ID 而不带模式，等于没下发：这台设备在 {@code VLANMode=0}
+     * （透传/不打标签）时，会把写进来的 {@code X_CMCC_VLANIDMark} 原样回成功、
+     * 转头丢掉，读回来还是 0——于是连接以无标签方式拨上去，拿到的是上级
+     * 网关的 192.168.1.x，VLAN 形同没配。实测对比：</p>
+     * <ul>
+     *   <li>实例 8：整批 {@code [VLANIDMark=100, …, Enable=true]} 返回成功，
+     *       回读 {@code VLANIDMark=0}，设备自动命名为 {@code 8_INTERNET_R_VID_}
+     *       （VID 段为空），Connected 拿到 192.168.1.7。</li>
+     *   <li>实例 5：先有 {@code VLANMode=2}，再写 {@code VLANIDMark=100}，
+     *       两项都存活，设备自动命名为 {@code 5_INTERNET_R_VID_100}。</li>
+     * </ul>
+     *
+     * <p>所以 VLAN ID 有值时，模式必须跟着写，且要写在 ID 之前——
+     * {@link #orderByDependency} 同档内保持原序，这里直接插在 ID 那一项前面。</p>
+     *
+     * <p>与业务绑定同样的规矩：参数名由这台设备的能力树决定，逐个候选名去试，
+     * 树上没有就不写；VLAN ID 为空或 0 时不写模式（本来就不打标签）。</p>
+     */
+    IntentPlan ensureVlanMode(String sn, IntentPlan plan) {
+        if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
+            return plan;
+        }
+        int at = -1;
+        for (int i = 0; i < plan.parameters().size(); i++) {
+            PlanItem item = plan.parameters().get(i);
+            if (isVlanMode(item)) {
+                return plan;
+            }
+            if (at < 0 && isVlanId(item) && vlanIdOf(item) > 0) {
+                at = i;
+            }
+        }
+        if (at < 0) {
+            return plan;
+        }
+        PlanItem vid = plan.parameters().get(at);
+        String parent = vid.path().substring(0, vid.path().lastIndexOf('.') + 1);
+        for (String candidate : VLAN_MODE_NAMES) {
+            String path = parent + candidate;
+            ModelTreeStore.PathResolution resolved = modelTreeStore.resolvePaths(sn, List.of(path));
+            if (resolved.getUnsupported().contains(path)) {
+                continue;
+            }
+            // 与业务绑定同理：树上真有这个节点才写，查不到数据时 resolvePaths 返回空结果，
+            // 此时不猜名字
+            String real = resolved.getRewritten().getOrDefault(path, path);
+            if (!resolved.getTypes().containsKey(real)
+                    && !resolved.getCurrentValues().containsKey(real)
+                    && !resolved.getRewritten().containsKey(path)) {
+                continue;
+            }
+            String type = resolved.getTypes().getOrDefault(real, "int");
+            List<PlanItem> items = new ArrayList<>(plan.parameters());
+            items.add(at, new PlanItem(plan.bizObject(), "vlan_mode", real, VLAN_TAG_MODE, type));
+            log.info("补写 VLAN 模式: sn={}, 参数={}={}", sn, real, VLAN_TAG_MODE);
+            return new IntentPlan(plan.bizObject(), plan.instance(),
+                    plan.objectsToAdd(), items, plan.errors());
+        }
+        return plan;
+    }
+
+    /**
+     * 下发完成后补采一次能力树，让新实例出现在设备列表里。
+     *
+     * <p>前端那条「N 条 WAN 连接」读的是 {@code cpe_parameter} 的快照，而快照只在
+     * 全量采集（GetParameterNames 走一遍子树）时才会更新。新建出来的实例不在
+     * 上次采集的路径清单里，于是下发明明成功了，列表上还是旧的那几条。
+     * 这里在建完实例后补一次采集，把新连接补进快照。</p>
+     *
+     * <p>采集是异步的，失败只记日志，不影响本次下发的结论。</p>
+     */
+    private void refreshCapability(String sn) {
+        if (sn == null || sn.isBlank()) {
+            return;
+        }
+        try {
+            capabilityService.collect(sn, true);
+        } catch (Exception e) {
+            log.warn("下发后补采能力树失败: sn={}, err={}", sn, e.getMessage());
+        }
+    }
+
+    /** 业务绑定的取值：这一版只承接上网业务，网桥/路由两种写法的业务都是 INTERNET。 */
+    private static final String SERVICE_INTERNET = "INTERNET";
+
+    /** VLAN 模式的取值：2 = 打 802.1Q 标签，路由/桥接带 VLAN 的业务都要它。 */
+    private static final String VLAN_TAG_MODE = "2";
+
+    /** VLAN 模式参数的候选写法，逐个去能力树上试，谁在树上用谁。 */
+    private static final List<String> VLAN_MODE_NAMES =
+            List.of("X_CMCC_VLANMode", "X_CT-COM_VLANMode", "VLANMode");
+
+    /** 业务绑定参数的候选写法，逐个去能力树上试，谁在树上用谁。 */
+    private static final List<String> SERVICE_LIST_NAMES =
+            List.of("X_CMCC_ServiceList", "ServiceList", "X_CT-COM_ServiceList");
+
+    private static boolean isWanConnection(String bizObject) {
+        return "Internet_WAN".equalsIgnoreCase(bizObject) || "Bridge_WAN".equalsIgnoreCase(bizObject);
+    }
+
+    private static boolean isServiceBinding(PlanItem item) {
+        return "service_list".equalsIgnoreCase(item.bizField())
+                || "X_CMCC_ServiceList".equalsIgnoreCase(leafOfPath(item.path()))
+                || "ServiceList".equalsIgnoreCase(leafOfPath(item.path()));
+    }
+
+    /**
+     * 布尔型参数统一按 xsd:boolean 的标准词法 {@code true/false} 下发。
+     *
+     * <p>{@code xsd:boolean} 的词法值是 {@code true/false/1/0} 四种，但实现照不全的
+     * 设备不少：只接受 {@code true} 的见过，只接受 {@code 1} 的也见过。业务字段填的是
+     * {@code 1/0}，这台设备自己上报用的是 {@code TRUE/FALSE}，平台另一条下发通道历来写
+     * {@code true/false} 且在这台设备上成功过——取三方都认的标准布尔词。</p>
+     *
+     * <p>认不出来的原样返回：这里要是自作主张改了非布尔值，就又多一个踩坑点。</p>
+     */
+    static String booleanValue(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if ("1".equals(value) || "true".equalsIgnoreCase(value)) {
+            return "true";
+        }
+        if ("0".equals(value) || "false".equalsIgnoreCase(value)) {
+            return "false";
+        }
+        return raw;
     }
 
     /**
@@ -389,7 +632,7 @@ public class IntentDeliveryService {
                 log.info("已创建业务对象: sn={}, object={}, instance={}",
                         task.getSn(), objectName, instance);
             }
-            List<List<PlanItem>> chunks = chunks(remapInstances(plan, allocated));
+            List<List<PlanItem>> chunks = chunks(orderByDependency(remapInstances(plan, allocated)));
             for (int i = 0; i < chunks.size(); i++) {
                 List<ParameterValueStruct> values = new ArrayList<>();
                 for (PlanItem item : chunks.get(i)) {
@@ -409,11 +652,113 @@ public class IntentDeliveryService {
             }
             log.info("下发完成: sn={}, taskNo={}, 参数={}", task.getSn(), task.getTaskNo(),
                     plan.parameters().size());
+            // 下发改的是设备现值，库里的快照不会自己跟上，补采一次让列表对得上现场
+            refreshCapability(task.getSn());
             finish(task, DeviceTask.STATUS_SUCCESS, null);
         } catch (Exception e) {
             log.warn("下发异常: sn={}, taskNo={}, err={}", task.getSn(), task.getTaskNo(), e.getMessage());
             finish(task, DeviceTask.STATUS_FAILED, e.getMessage());
         }
+    }
+
+    /**
+     * 重排下发顺序：先写「定身份」的 VLAN 参数，剩下的按原序，{@code Enable} 一律放最后。
+     *
+     * <p>顺序不是讲究，是这台 CMCC 光猫能不能收下的前提，实测如下（均在 AddObject 新建出来的
+     * 实例上逐条单发验证）：</p>
+     * <ul>
+     *   <li>刚建出来的连接上，只有 {@code X_CMCC_VLANIDMark} / {@code X_CMCC_VLANMode}
+     *       写得进去；{@code ConnectionType} / {@code AddressingType} / {@code NATEnabled} /
+     *       {@code Name} / {@code X_CMCC_ServiceList} 一律回 9007 Invalid parameter value。
+     *       把 VLAN 那几个写完，其余参数才开放写——所以要打头。</li>
+     *   <li>{@code Enable} 反过来，必须等连接配齐：VLAN 之前写它是 9007，VLAN 之后写它是 9003。
+     *       它是每批都被判 9003 的那一条。</li>
+     *   <li>两者都满足后，五条按顺序单点全部成功。</li>
+     * </ul>
+     *
+     * <p>{@code X_CMCC_ServiceList} 这类业务绑定紧随 VLAN 之后：先绑业务，后面的连接参数
+     * 才写得进去。只重排、不增删改：原先这批参数的取值一个都没变，改的只是下发次序。</p>
+     */
+    static List<PlanItem> orderByDependency(List<PlanItem> items) {
+        if (items == null || items.size() < 2) {
+            return items;
+        }
+        List<PlanItem> leading = new ArrayList<>();
+        List<PlanItem> binding = new ArrayList<>();
+        List<PlanItem> middle = new ArrayList<>();
+        List<PlanItem> trailing = new ArrayList<>();
+        for (PlanItem item : items) {
+            if (isEnable(item)) {
+                trailing.add(item);
+            } else if (isVlan(item)) {
+                leading.add(item);
+            } else if (isServiceBinding(item)) {
+                binding.add(item);
+            } else {
+                middle.add(item);
+            }
+        }
+        if (leading.isEmpty() && binding.isEmpty() && trailing.size() == items.size()) {
+            // 全是 Enable（不太可能）：照原序返回，不要把一整单都当成要挪到末尾的
+            return items;
+        }
+        List<PlanItem> ordered = new ArrayList<>(items.size());
+        ordered.addAll(leading);
+        ordered.addAll(binding);
+        ordered.addAll(middle);
+        ordered.addAll(trailing);
+        return ordered;
+    }
+
+    /** 业务字段就叫 enable（WiFi / LAN / WAN 各模板一致）；字段名不可靠时退到参数末段名。 */
+    private static boolean isEnable(PlanItem item) {
+        return "enable".equalsIgnoreCase(item.bizField())
+                || "Enable".equalsIgnoreCase(leafOfPath(item.path()));
+    }
+
+    private static boolean isVlan(PlanItem item) {
+        return item.bizField() != null && item.bizField().toLowerCase().contains("vlan");
+    }
+
+    /**
+     * 这是 VLAN ID 那一条，而不是 VLAN 模式。
+     *
+     * <p>两个参数的业务字段名都带 vlan，得靠末段名区分：ID 是 {@code VLANIDMark} /
+     * {@code VLANID} 这类，模式是 {@code VLANMode} 这类。判错了要么漏写模式
+     * （VLAN 不生效），要么把模式当成 ID 跳过了补写。</p>
+     */
+    private static boolean isVlanId(PlanItem item) {
+        if (!isVlan(item)) {
+            return false;
+        }
+        String leaf = leafOfPath(item.path()).toLowerCase();
+        return leaf.contains("vlanid") || leaf.contains("vlan-id") || leaf.contains("vlanidmark");
+    }
+
+    private static boolean isVlanMode(PlanItem item) {
+        if (!isVlan(item)) {
+            return false;
+        }
+        String leaf = leafOfPath(item.path()).toLowerCase();
+        return leaf.contains("mode");
+    }
+
+    /** VLAN ID 的数值，取不出来（空/负数/非数字）返回 0，表示「这次不带 VLAN」。 */
+    private static int vlanIdOf(PlanItem item) {
+        String raw = item.value() == null ? "" : item.value().trim();
+        if (raw.isEmpty() || "-1".equals(raw)) {
+            return 0;
+        }
+        try {
+            int n = Integer.parseInt(raw);
+            return n > 0 ? n : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static String leafOfPath(String path) {
+        return path == null || path.isEmpty() ? "" : path.substring(path.lastIndexOf('.') + 1);
     }
 
     /**
@@ -541,10 +886,9 @@ public class IntentDeliveryService {
                         withWanDevice(item.path(), actual), item.value(), item.valueType()))
                 .toList();
         boolean changed = !objects.equals(plan.objectsToAdd());
-        if (changed) {
-            log.info("按设备实际结构校正 WAN 挂载位置: sn={}, WANConnectionDevice={}",
-                    task.getSn(), actual);
-        }
+        // 常打一行：挂载位置对不对是「下发 9002」最常见的根因，事后要能看到当时取的是几号
+        log.info("WAN 挂载位置: sn={}, 设备实际=WANConnectionDevice.{}, {}",
+                task.getSn(), actual, changed ? "已按设备结构校正模板" : "与模板一致");
         return new IntentPlan(plan.bizObject(), plan.instance(), objects, params, plan.errors());
     }
 
@@ -552,28 +896,44 @@ public class IntentDeliveryService {
      * 这台设备的 WAN 连接挂在 {@code WANConnectionDevice} 的第几个实例下。
      *
      * <p>取设备自己上报的能力快照，不发 RPC；采不到就返回 null，让计划保持原样
-     * （宁可按模板发，也好过凭空猜一个实例号）。</p>
+     * （宁可按模板发，也好过凭空猜一个实例号）。快照记录的是「清理前」的状态，
+     * 业务连接还在，正是判挂载位置该看的那一份。</p>
+     *
+     * <p>一份快照里可能残留多个批次采集出的 {@code WANConnectionDevice} 编号，
+     * 取最小的那个：设备上真正生效的挂载点是唯一的，编号最小即最靠前的一级。
+     * 早先这里是「取第一条匹配行」，行序由数据库决定，同一台设备两次下发可能落到
+     * 不同编号上。</p>
      */
-    private Integer detectWanDevice(String sn) {
+    /** 包内可见：挂载位置判读是要盯住的逻辑，留给单元测试直接验证。 */
+    Integer detectWanDevice(String sn) {
         try {
             List<CpeParameter> rows = parameterMapper.selectList(
                     new LambdaQueryWrapper<CpeParameter>()
                             .eq(CpeParameter::getSn, sn)
                             .like(CpeParameter::getParamPath, "WANConnectionDevice.")
+                            .orderByAsc(CpeParameter::getParamPath)
                             .last("LIMIT 200"));
+            Integer found = null;
             for (CpeParameter row : rows) {
                 Matcher m = WAN_DEVICE.matcher(row.getParamPath());
                 if (m.find()) {
-                    return Integer.valueOf(m.group(1));
+                    int value = Integer.parseInt(m.group(1));
+                    if (found == null || value < found) {
+                        found = value;
+                    }
                 }
             }
+            if (found == null) {
+                log.warn("未能判读 WAN 挂载位置，按模板原样下发: sn={}", sn);
+            }
+            return found;
         } catch (Exception e) {
             log.warn("读取 WAN 挂载位置失败，按模板原样下发: sn={}, err={}", sn, e.getMessage());
         }
         return null;
     }
 
-    private static String withWanDevice(String path, int instance) {
+    static String withWanDevice(String path, int instance) {
         if (path == null) {
             return null;
         }

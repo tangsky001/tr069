@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -520,8 +521,49 @@ public class ModelTreeStore {
 
     /**
      * 命中的节点本身，调用方还要用它身上的类型定下发格式。
+     *
+     * <p>通用写法在这台设备上叫别的名字时（见 {@link #LEAF_ALIASES}），按别名再找一轮。</p>
      */
     static ParamNode matchNode(List<ParamNode> params, String templatePath) {
+        ParamNode hit = matchKnown(params, templatePath);
+        if (hit != null || templatePath == null || templatePath.isEmpty()) {
+            return hit;
+        }
+        for (String alias : LEAF_ALIASES.getOrDefault(leafOf(templatePath), List.of())) {
+            ParamNode aliasHit = matchKnown(params, parentOf(templatePath) + alias);
+            if (aliasHit != null) {
+                log.info("参数名按别名改判: {} -> {}", templatePath, realPath(aliasHit, templatePath));
+                return aliasHit;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 同一语义的参数，各厂商写法差到「剥前缀 + 比后缀」都对不上的那几个。
+     *
+     * <p>只登记能确定就是同一个语义的写法：地址获取方式，有的厂商写成
+     * {@code IPAddressingType}，TR-098 标准名是 {@code AddressingType}；VLAN 号模板写
+     * {@code X_CMCC_VLANID}，移动定制机真实存在于 {@code WANIPConnection} 下的却是
+     * {@code X_CMCC_VLANIDMark}（同父对象里没有第二个 VLANID 节点，不存在选错的风险）。</p>
+     *
+     * <p>这里只是<b>可以试的顺序</b>，采不采用要看树：逐一拿去比对，这台设备的能力树上真有
+     * 才认。一个都认不出来就返回 null——由设备明确报「参数不存在」比凭猜测写错节点好。</p>
+     */
+    private static final Map<String, List<String>> LEAF_ALIASES = aliases();
+
+    private static Map<String, List<String>> aliases() {
+        Map<String, List<String>> map = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        map.put("X_CMCC_VLANID", List.of("X_CMCC_VLANIDMark", "X_CT-COM_VLANIDMark", "VLANIDMark"));
+        map.put("VLANID", List.of("X_CMCC_VLANIDMark", "X_CT-COM_VLANIDMark", "VLANIDMark"));
+        map.put("IPAddressingType", List.of("AddressingType"));
+        return Map.copyOf(map);
+    }
+
+    /**
+     * 按 {@link #leafScore(String, String)} 逐级放宽的匹配本体。
+     */
+    static ParamNode matchKnown(List<ParamNode> params, String templatePath) {
         if (templatePath == null || templatePath.isEmpty()) {
             return null;
         }

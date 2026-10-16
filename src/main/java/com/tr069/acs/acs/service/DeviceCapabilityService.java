@@ -577,24 +577,55 @@ public class DeviceCapabilityService {
                 if (status.isAborted()) {
                     return CompletableFuture.<Void>completedFuture(null);
                 }
-                return getParameterValues(sn, batch).thenAccept(resp -> {
-                    status.setFinishedBatches(index + 1);
-                    if (resp == null || resp.isFault()) {
-                        status.incrementFailBatches();
-                        status.addError("GetParameterValues 第 " + (index + 1) + "/"
-                                + batches.size() + " 批失败: " + faultText(resp));
-                        if (isSessionFault(resp)) {
-                            status.abort();
-                        }
-                        return;
-                    }
-                    List<CpeParameter> rows = parseValues(sn, resp);
-                    status.addValueCount(rows.size());
-                    saveValues(sn, rows);
-                });
+                return readValuesBatch(sn, batch, status, index, batches.size())
+                        .thenAccept(ignored -> status.setFinishedBatches(index + 1));
             }, executor());
         }
         return chain;
+    }
+
+    /**
+     * 读一批参数值，整批被设备拒绝时二分拆开重试，把失效路径单独剔掉。
+     *
+     * <p>GetParameterValues 是整批事务：批里只要有一条路径设备不认（实例删了、
+     * 或另一种数据模型没有这个节点），整批回 9005，这一批的值一个都落不了库。
+     * 快照路径又来自上次采集——设备侧删过连接，清单里就留着一批僵尸路径，
+     * 于是每次采集 WAN 那段都刷不回来，前端一直显示旧的那几条。</p>
+     *
+     * <p>所以失败后二分：拆到单条还失败，才认定这条路径设备确实没有，
+     * 丢掉它并记进 errors，其余照常落库。会话级故障（离线、超时）不拆——
+     * 那时拆也没用，直接中止，跟原来的行为一致。</p>
+     *
+     * @param counted 这次重试是否已计入「已完成批次」，避免拆批时把进度算重
+     */
+    private CompletableFuture<Void> readValuesBatch(String sn, List<String> batch, CollectStatus status,
+                                                    int index, int total) {
+        return getParameterValues(sn, batch).thenComposeAsync(resp -> {
+            if (resp == null || resp.isFault()) {
+                if (isSessionFault(resp)) {
+                    status.incrementFailBatches();
+                    status.addError("GetParameterValues 第 " + (index + 1) + "/" + total
+                            + " 批失败: " + faultText(resp));
+                    status.abort();
+                    return CompletableFuture.<Void>completedFuture(null);
+                }
+                if (batch.size() > 1) {
+                    int mid = batch.size() / 2;
+                    return readValuesBatch(sn, batch.subList(0, mid), status, index, total)
+                            .thenComposeAsync(x -> readValuesBatch(sn, batch.subList(mid, batch.size()),
+                                    status, index, total), executor());
+                }
+                // 单条都过不去：这条路径设备没有，剔掉它，别让它拖垮整批
+                status.incrementFailBatches();
+                status.addError("GetParameterValues 第 " + (index + 1) + "/" + total
+                        + " 批: 路径 " + batch.get(0) + " 设备不接受（" + faultText(resp) + "），已跳过");
+                return CompletableFuture.<Void>completedFuture(null);
+            }
+            List<CpeParameter> rows = parseValues(sn, resp);
+            status.addValueCount(rows.size());
+            saveValues(sn, rows);
+            return CompletableFuture.<Void>completedFuture(null);
+        }, executor());
     }
 
     // ==================== RPC 提交 ====================
