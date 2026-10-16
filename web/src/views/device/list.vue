@@ -38,8 +38,8 @@
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="42" align="center" />
-      <!-- 设备标识：只放 SN 与在线状态，其余字段归「终端信息」列 -->
-      <el-table-column label="设备标识" min-width="190">
+      <!-- 设备标识：SN 与在线状态，房间号 / 备注点「修改」弹窗编辑 -->
+      <el-table-column label="设备标识" min-width="270">
         <template slot-scope="{ row }">
           <div class="cell-main">
             <el-link type="primary" @click="openDetail(row)">{{ row.sn }}</el-link>
@@ -48,6 +48,13 @@
             </el-tag>
           </div>
           <div class="cell-sub">{{ row.oui || '-' }} · {{ row.isp || '-' }} {{ row.ispVersion || '' }}</div>
+          <div class="cell-remark">
+            <span class="remark-label">房间号</span>
+            <span class="remark-value">{{ row.roomNo || '-' }}</span>
+            <span class="remark-label">备注</span>
+            <span class="remark-value remark-value-text">{{ row.remark || '-' }}</span>
+            <el-link type="primary" class="remark-edit" @click="openRemark(row)">修改</el-link>
+          </div>
         </template>
       </el-table-column>
 
@@ -504,13 +511,43 @@
         <el-button @click="detailVisible = false">关闭</el-button>
       </span>
     </el-dialog>
+
+    <!-- 房间号 / 备注：房间号用于下发时替换模板里的 %room% -->
+    <el-dialog title="修改房间号与备注" :visible.sync="remarkVisible" width="460px" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="序列号">
+          <span class="remark-sn">{{ remarkRow ? remarkRow.sn : '-' }}</span>
+        </el-form-item>
+        <el-form-item label="房间号">
+          <el-input
+            v-model="remarkForm.roomNo"
+            placeholder="如 0001，下发时替换 %room%"
+            maxlength="32"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input
+            v-model="remarkForm.remark"
+            type="textarea"
+            :rows="3"
+            placeholder="设备说明，可留空"
+            maxlength="255"
+          />
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button @click="remarkVisible = false">取消</el-button>
+        <el-button type="primary" :loading="remarkSaving" @click="submitRemark">保存</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
 <script>
 import {
   fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch,
-  fetchAdaptStatus, testAdaptation, saveAdaptation
+  fetchAdaptStatus, testAdaptation, saveAdaptation, updateDeviceRemark
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
@@ -570,7 +607,12 @@ export default {
         sn: '',
         isp: '',
         deviceType: ''
-      }
+      },
+      // 房间号 / 备注弹窗
+      remarkVisible: false,
+      remarkRow: null,
+      remarkForm: { roomNo: '', remark: '' },
+      remarkSaving: false
     }
   },
   computed: {
@@ -620,6 +662,34 @@ export default {
         this.total = 0
       } finally {
         this.loading = false
+      }
+    },
+    // 房间号 / 备注：弹窗编辑，保存成功后同步回列表行
+    openRemark(row) {
+      this.remarkRow = row
+      this.remarkForm = { roomNo: row.roomNo || '', remark: row.remark || '' }
+      this.remarkVisible = true
+    },
+    async submitRemark() {
+      const row = this.remarkRow
+      if (!row || !row.sn) {
+        return
+      }
+      const payload = {
+        roomNo: this.remarkForm.roomNo || '',
+        remark: this.remarkForm.remark || ''
+      }
+      this.remarkSaving = true
+      try {
+        await updateDeviceRemark(row.sn, payload)
+        row.roomNo = payload.roomNo
+        row.remark = payload.remark
+        this.$message.success('已保存')
+        this.remarkVisible = false
+      } catch (e) {
+        this.$message.error('保存失败: ' + ((e && e.message) || '未知错误'))
+      } finally {
+        this.remarkSaving = false
       }
     },
     // 整页设备的业务概要一次拉回，列表直接铺开 WAN/WIFI/IP，不再逐行请求
@@ -1150,6 +1220,39 @@ export default {
   color: #909399;
   font-size: 12px;
   margin-top: 2px;
+}
+/* 房间号 / 备注：就地编辑，失焦即保存 */
+.cell-remark {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+.remark-label {
+  color: #909399;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.remark-value {
+  color: #303133;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+/* 备注可能较长，超出省略，完整内容在弹窗里看 */
+.remark-value-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 96px;
+}
+.remark-edit {
+  margin-left: auto;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.remark-sn {
+  color: #606266;
+  word-break: break-all;
 }
 .cell-empty {
   color: #c0c4cc;

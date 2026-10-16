@@ -63,6 +63,16 @@ public class CpeDevice {
      */
     private String deviceType;
 
+    /**
+     * 房间号，下发时用它替换模板里的 {@code %room%} 变量，如 0001
+     */
+    private String roomNo;
+
+    /**
+     * 备注，运维随手记的设备说明
+     */
+    private String remark;
+
     private String status;
 
     private LocalDateTime lastContactTime;

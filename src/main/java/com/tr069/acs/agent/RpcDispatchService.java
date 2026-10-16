@@ -3,7 +3,6 @@ package com.tr069.acs.agent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.cwmp.model.FaultStruct;
-import com.tr069.acs.common.log.AcsCoreLog;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.domain.entity.RpcRecord;
 import com.tr069.acs.mapper.RpcRecordMapper;
@@ -25,6 +24,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import com.tr069.acs.common.log.AcsCoreLog;
 
 /**
  * RPC 下发服务。

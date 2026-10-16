@@ -3,7 +3,6 @@ package com.tr069.acs.acs.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.tr069.acs.acs.session.CpeSession;
-import com.tr069.acs.common.log.AcsCoreLog;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.worklist.model.DeviceProfile;
@@ -16,6 +15,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import com.tr069.acs.common.log.AcsCoreLog;
 
 /**
  * 设备台账落库。

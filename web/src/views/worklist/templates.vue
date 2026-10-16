@@ -91,7 +91,7 @@
           <el-select v-model="form.category" style="width:240px" disabled>
             <el-option v-for="c in categories" :key="c.code" :label="c.label" :value="c.code" />
           </el-select>
-          <span class="mode-tip">　类型不可修改，需要其它类型请新建</span>
+          <span class="mode-tip">类型不可修改，需要其它类型请新建</span>
         </el-form-item>
         <el-form-item label="模版名称" required>
           <el-input v-model="form.name" placeholder="汉字、字母、数字、下划线组成" style="width:320px" maxlength="64" />

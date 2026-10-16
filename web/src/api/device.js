@@ -114,6 +114,20 @@ export function dispatchRpc(sn, rpcName, args) {
   })
 }
 
+/**
+ * 保存设备的房间号与备注。
+ * 房间号是下发时替换模板 %room% 变量的取值来源，例如设为 0001，
+ * 下发 WiFi 名称就会用 0001 替换模板里的 %room%。
+ * data: { roomNo, remark }，两个都允许空串表示清空。
+ */
+export function updateDeviceRemark(sn, data) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/remark',
+    method: 'post',
+    data
+  })
+}
+
 /** 常用 RPC 方法，与后端 RpcMethod 对应，同时允许手工输入。 */
 export const RPC_METHODS = [
   'GetRPCMethods',

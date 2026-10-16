@@ -3,7 +3,6 @@ package com.tr069.acs.worklist.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tr069.acs.acs.service.CwmpRpcService;
 import com.tr069.acs.acs.service.DeviceCapabilityService;
-import com.tr069.acs.common.log.AcsCoreLog;
 import com.tr069.acs.cwmp.model.ParameterValueStruct;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.domain.entity.CpeDevice;
@@ -29,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.tr069.acs.common.log.AcsCoreLog;
 
 /**
  * 机型适配：以「运营商 + 型号」为维度，把一台样机的能力固化成库里的型号档案。

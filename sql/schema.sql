@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS `cpe_device` (
     `isp`                     VARCHAR(16)  DEFAULT NULL COMMENT '所属运营商',
     `isp_version`             VARCHAR(16)  DEFAULT NULL COMMENT '运营商版本',
     `device_type`             VARCHAR(64)  DEFAULT NULL COMMENT '设备类型，如 GPON_4+1，对应原 DOMAIN',
+    `room_no`                 VARCHAR(32)  DEFAULT NULL COMMENT '房间号，下发时替换 %room% 变量',
+    `remark`                  VARCHAR(255) DEFAULT NULL COMMENT '备注',
     `status`                  VARCHAR(16)  NOT NULL DEFAULT 'offline' COMMENT '在线状态',
     `last_contact_time`       DATETIME     DEFAULT NULL COMMENT '最近通信时间',
     `soap_inform_timeout`     INT          NOT NULL DEFAULT 60 COMMENT 'Inform 超时(秒)',

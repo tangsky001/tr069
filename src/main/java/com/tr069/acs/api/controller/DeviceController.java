@@ -149,6 +149,42 @@ public class DeviceController {
     }
 
     /**
+     * 保存设备的房间号与备注。
+     *
+     * <p>房间号是下发时替换模板变量 {@code %room%} 的取值来源，例如把备注设为 0001，
+     * 下发 WiFi 名称时就会用 0001 替换掉模板里的 {@code %room%}。两者都是台账侧的
+     * 运维字段，不参与 CWMP 交互，因此直接改设备表即可，不需要设备在线。</p>
+     */
+    @PostMapping("/{sn}/remark")
+    public Result<Boolean> updateRemark(@PathVariable String sn,
+                                        @RequestBody(required = false) RemarkRequest request) {
+        CpeDevice device = cpeDeviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
+                .eq(CpeDevice::getSn, sn));
+        if (device == null) {
+            return Result.failure("设备不存在: " + sn);
+        }
+        if (request != null) {
+            device.setRoomNo(request.getRoomNo());
+            device.setRemark(request.getRemark());
+        }
+        int rows = cpeDeviceMapper.updateById(device);
+        log.info("更新设备房间号/备注: sn={}, roomNo={}, remark={}",
+                sn, device.getRoomNo(), device.getRemark());
+        return Result.success(rows > 0);
+    }
+
+    /**
+     * 房间号与备注的保存入参。两个字段都允许传空串表示清空。
+     */
+    @Data
+    public static class RemarkRequest {
+
+        private String roomNo;
+
+        private String remark;
+    }
+
+    /**
      * 手动下发一条 CWMP RPC，对应原版 web 端的 19 种 RPC 下发入口。
      */
     @PostMapping("/{sn}/rpc/{rpcName}")
