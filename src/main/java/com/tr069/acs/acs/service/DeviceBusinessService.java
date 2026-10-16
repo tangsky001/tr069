@@ -2,6 +2,7 @@ package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tr069.acs.acs.model.DataModel;
+import com.tr069.acs.cwmp.WanServiceClassifier;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.domain.entity.CpeParameter;
 import com.tr069.acs.mapper.CpeDeviceMapper;
@@ -212,8 +213,6 @@ public class DeviceBusinessService {
     /** WAN 分区 key，与 SECTIONS 里的定义对应。 */
     private static final String WAN_KEY = "wan";
 
-    /** 业务类型关键字，按优先级判定：TR069 管理通道优先于上网/语音/IPTV。 */
-    private static final List<String> SERVICE_KEYWORDS = List.of("TR069", "VOIP", "VOICE", "IPTV", "INTERNET");
 
     /**
      * 给 WAN 连接补业务语义，并算出设备的管理地址。
@@ -259,33 +258,14 @@ public class DeviceBusinessService {
     }
 
     /**
-     * 一条 WAN 连接的业务类型：TR069 / INTERNET / VOIP / IPTV，认不出返回 "-"。
+     * 一条 WAN 连接的业务类型。
      *
-     * <p>ServiceList 的厂商私有前缀各家不同——电信 X_CT-COM_、移动 X_CMCC_、联通 X_CU_，
-     * 写死某一家的 key 在别的运营商机型上就取不到，所以按「键名含 ServiceList」匹配，
-     * 新厂商不用改代码；都没有时再按连接名与路径推断。</p>
+     * <p>判定统一委托 {@link WanServiceClassifier}：下发清理挑 TR069 保护对象时
+     * 调的是同一个类。两套判定一旦分家，「详情页看到的业务类型」和
+     * 「下发决定删哪条」就可能不一致，而那是会直接把设备搞脱管的判断。</p>
      */
     private static String serviceOf(Map<String, String> params, String path) {
-        String declared = params.get("ServiceList");
-        if (declared == null || declared.isBlank()) {
-            for (Map.Entry<String, String> entry : params.entrySet()) {
-                String key = entry.getKey();
-                if (key != null && key.toLowerCase(Locale.ROOT).contains("servicelist")
-                        && entry.getValue() != null && !entry.getValue().isBlank()) {
-                    declared = entry.getValue();
-                    break;
-                }
-            }
-        }
-        String text = (declared == null ? "" : declared) + " "
-                + params.getOrDefault("Name", "") + " " + (path == null ? "" : path);
-        String upper = text.toUpperCase(Locale.ROOT);
-        for (String keyword : SERVICE_KEYWORDS) {
-            if (upper.contains(keyword)) {
-                return "VOICE".equals(keyword) ? "VOIP" : keyword;
-            }
-        }
-        return "-";
+        return WanServiceClassifier.classify(params, path);
     }
 
     /** 厂商私有叶子前缀，形如 X_CMCC_、X_CT-COM_（中间可带连字符）。 */

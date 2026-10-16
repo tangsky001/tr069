@@ -551,6 +551,7 @@ import {
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
+import { createWorklist, newWorklistDesc } from '@/api/worklist'
 import { RPC_METHODS } from '@/api/device'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
@@ -1052,8 +1053,48 @@ export default {
         this.$message.warning('请先选择模版关键字')
         return
       }
-      // 下发逻辑：按模板意图 + 型号映射生成真实参数，待后端实现后接入
-      this.todoPending('批量下发模版（下发逻辑待接入）')
+      const tpl = this.templates.find(t => t.id === this.selectedTemplate) || {}
+      // 模板的 category 即业务类型，落到工单的业务类型上；取不到就留空由下发侧推导
+      this.batchCreateWorklist(sns, (tpl.category || '').toUpperCase(), tpl.name || '模版下发')
+    },
+
+    /**
+     * 给多台设备逐台创建下发工单。
+     *
+     * <p>每台一个独立流水号，互不影响；单台失败记录下来但继续其余设备，
+     * 最后汇总失败清单——不能因为某一台有问题就把整批吞掉。</p>
+     */
+    batchCreateWorklist(sns, category, label) {
+      this.$confirm(
+        `将对已勾选的 ${sns.length} 台设备创建「${label || '下发'}」工单，确认提交？`,
+        '批量下发',
+        { type: 'warning' }
+      ).then(() => {
+        const username = this.$store.getters.name || 'admin'
+        const tasks = sns.map(sn => {
+          return createWorklist({
+            sn,
+            category: category || '',
+            values: {},
+            worklistDesc: newWorklistDesc(category || 'biz'),
+            username
+          }).then(() => null).catch(err => ({ sn, err: (err && err.message) || '创建失败' }))
+        })
+        Promise.all(tasks).then(results => {
+          const failed = results.filter(r => r)
+          if (!failed.length) {
+            this.$message.success(`已为 ${sns.length} 台设备提交工单，可在工单记录查看`)
+            this.$emit('refresh')
+            return
+          }
+          this.$notify.warning({
+            title: `${failed.length}/${sns.length} 台提交失败`,
+            message: failed.map(f => `${f.sn}：${f.err}`).join('<br>'),
+            dangerouslyUseHTMLString: true,
+            duration: 0
+          })
+        })
+      }).catch(() => {})
     },
     handleBatchCommand(cmd) {
       if (cmd === 'worklist-record') {
@@ -1067,6 +1108,19 @@ export default {
         this.$confirm('恢复出厂会清空设备全部配置，对已勾选 ' + sns.length + ' 台设备执行？', '恢复出厂', { type: 'warning' })
           .then(() => sns.forEach(sn => this.quickRpc(sn, 'FactoryReset', {}, true)))
           .catch(() => {})
+        return
+      }
+      // 开通 / 检修：按勾选设备逐台建单，业务类型留空由下发侧推导
+      if (cmd === 'worklist-batch') {
+        const sns = this.requireSelection()
+        if (!sns) return
+        this.batchCreateWorklist(sns, '', '开通工单')
+        return
+      }
+      if (cmd === 'worklist-repair') {
+        const sns = this.requireSelection()
+        if (!sns) return
+        this.batchCreateWorklist(sns, '', '检修工单')
         return
       }
       this.todoPending('批量操作：' + cmd)

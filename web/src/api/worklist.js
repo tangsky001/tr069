@@ -72,6 +72,35 @@ export function reloadConfig() {
   })
 }
 
+/** 某类业务需要填写的变量清单，下发表单据此渲染输入框 */
+export function fetchVariables(category) {
+  return request({
+    url: '/worklist/variables',
+    method: 'get',
+    params: { category }
+  })
+}
+
+/** 提交下发工单。worklistDesc 是幂等键，重复提交只受理一次 */
+export function createWorklist(data) {
+  return request({
+    url: '/worklist/instances',
+    method: 'post',
+    data
+  })
+}
+
+/**
+ * 生成幂等流水号。重复提交网络重试时带上同一个号，避免给设备重复开业务。
+ */
+export function newWorklistDesc(category) {
+  const now = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+    `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  return `ADMIN-${category || 'biz'}-${stamp}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 /** 释放示例配置到配置根目录 */
 export function unpackSamples() {
   return request({

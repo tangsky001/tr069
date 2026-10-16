@@ -219,6 +219,9 @@ public class ModelAdaptationService {
             patch.setSampleSn(sn);
         }
         CpeModel updated = modelMappingService.update(model.getId(), patch);
+        // 申报值必须同步进 SQLite 模板库：上面的 export 发生在申报之前，
+        // 那一刻库里还没有能力字段，生成不出模板；这里回写一次并按申报重新生成
+        modelTreeStore.applyCapability(isp, updated.getModelKey(), updated);
         // 测试通过才写适配档：adapted: true，同型号设备上线读它判定已适配
         String adaptPath = profileStore.writeAdapted(updated, isp, sn, request);
         updated = modelMappingService.update(model.getId(),

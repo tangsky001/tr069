@@ -5,9 +5,11 @@ import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.domain.entity.CpeModel;
 import com.tr069.acs.domain.entity.CpeParameter;
 import com.tr069.acs.mapper.CpeDeviceMapper;
-import com.tr069.acs.mapper.CpeModelMapper;
 import com.tr069.acs.mapper.CpeParameterMapper;
 import com.tr069.acs.worklist.config.WorklistProperties;
+import com.tr069.acs.worklist.tpl.dao.DeviceDao;
+import com.tr069.acs.worklist.tpl.entity.Device;
+import com.tr069.acs.worklist.tpl.service.ModelTemplateService;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +36,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -81,9 +84,12 @@ public class ModelTreeStore {
 
     private final CpeParameterMapper parameterMapper;
     private final CpeDeviceMapper deviceMapper;
-    private final CpeModelMapper modelMapper;
     private final WorklistProperties properties;
     private final WorklistRootResolver rootResolver;
+    /** 型号主表读写：走 SQLite 模板库，不再是 MySQL cpe_model */
+    private final DeviceDao deviceDao;
+    /** 型号档案更新后重生成下发模板，避免库里留着旧路径 */
+    private final ModelTemplateService templateService;
 
     // ==================== 导出 ====================
 
@@ -119,34 +125,94 @@ public class ModelTreeStore {
                 device == null ? null : device.getProductClass(),
                 device == null ? null : device.getSoftwareVersion());
 
-        CpeModel model = resolveModel(isp, modelKey, device, sn);
-        if (model == null) {
+        Device modelRow = resolveModelRow(isp, modelKey, device, sn);
+        if (modelRow == null) {
             throw new IllegalStateException("型号登记失败: " + modelKey);
         }
-        String relative = relativePath(model, isp, modelKey);
+        String relative = relativePath(isp, modelKey);
         Path file = resolveFile(relative);
 
-        if (Files.isRegularFile(file) && !force && notBlank(model.getSampleSn())
-                && !sn.equals(model.getSampleSn())) {
+        if (Files.isRegularFile(file) && !force && notBlank(modelRow.getSampleSn())
+                && !sn.equals(modelRow.getSampleSn())) {
             log.info("型号能力树已存在且来自其它样机，本次不覆盖: model={}, file={}, sample={}",
-                    modelKey, relative, model.getSampleSn());
+                    modelKey, relative, modelRow.getSampleSn());
             return ExportResult.skipped(sn, isp, modelKey, relative, file, count(nodes, true),
-                    count(nodes, false), model.getSampleSn());
+                    count(nodes, false), modelRow.getSampleSn());
         }
 
         String xml = buildXml(sn, isp, modelKey, device, nodes);
         writeAtomic(file, xml);
 
-        model.setConfigPath(relative);
-        if (force || !notBlank(model.getSampleSn())) {
-            model.setSampleSn(sn);
+        if (force || !notBlank(modelRow.getSampleSn())) {
+            modelRow.setSampleSn(sn);
         }
-        modelMapper.updateById(model);
+        deviceDao.upsert(modelRow);
         log.info("导出型号能力树: model={}, 对象={}, 参数={}, file={}",
                 modelKey, count(nodes, true), count(nodes, false), file);
 
+        // 能力申报可能刚变过，模板要跟着重推一遍；模板没生成出来不影响导出本身
+        if (templateService != null) {
+            try {
+                templateService.generateAll(modelRow);
+            } catch (Exception e) {
+                log.warn("生成型号模板失败: model={}, err={}", modelKey, e.getMessage());
+            }
+        }
+
         return ExportResult.written(sn, isp, modelKey, relative, file,
                 count(nodes, true), count(nodes, false));
+    }
+
+    // ==================== 能力申报同步 ====================
+
+    /**
+     * 把适配申报落到 SQLite 模板库，并按申报重新生成模板。
+     *
+     * <p>申报是模板生成的唯一输入——几个网口、几路语音、什么 WiFi 规格。
+     * 它必须写进模板库（{@code device.cap_*}），不能只停在 MySQL 的型号档案上：
+     * 采集导出发生在申报<b>之前</b>，那一刻库里还没有能力字段，一条模板都生成不出来；
+     * 申报之后若不再回写一次，模板库就永远是空的，下发只能报「该型号未适配」。</p>
+     *
+     * <p>型号行不存在时顺带创建（申报也可能先于采集发生）。</p>
+     *
+     * @param isp      归档运营商
+     * @param modelKey 型号 key
+     * @param model    已写入申报值的型号档案
+     */
+    public void applyCapability(String isp, String modelKey, CpeModel model) {
+        Device row = deviceDao.findByIspModelKey(isp, modelKey).orElseGet(() -> {
+            Device d = new Device();
+            d.setIsp(isp);
+            d.setModelKey(modelKey);
+            return d;
+        });
+        row.setManufacturer(model.getManufacturer());
+        row.setProductClass(model.getProductClass());
+        row.setSoftwareVersion(model.getSoftwareVersion());
+        row.setHardwareVersion(model.getHardwareVersion());
+        row.setRootNode(model.getRootNode());
+        row.setCapLanPorts(model.getCapLanPorts());
+        row.setCapLanSpeed(model.getCapLanSpeed());
+        row.setCapSipCount(model.getCapSipCount());
+        row.setCapWifiSpec(model.getCapWifiSpec());
+        if (model.getSampleSn() != null && !model.getSampleSn().isBlank()) {
+            row.setSampleSn(model.getSampleSn());
+        }
+        row.setStatus("ADAPTED");
+        deviceDao.upsert(row);
+
+        log.info("能力申报已同步到模板库: model={}, wifi={}, sip={}, lan={}, root={}",
+                modelKey, row.getCapWifiSpec(), row.getCapSipCount(),
+                row.getCapLanPorts(), row.getRootNode());
+
+        // 回查一次拿到主键：新建行的 id 由 upsert 落库时才产生
+        Device saved = deviceDao.findByIspModelKey(isp, modelKey).orElse(row);
+        try {
+            ModelTemplateService.GenerateResult r = templateService.generateAll(saved);
+            log.info("按申报重新生成模板: model={}, 共 {} 条", modelKey, r.total());
+        } catch (Exception e) {
+            log.warn("按申报生成模板失败: model={}, err={}", modelKey, e.getMessage());
+        }
     }
 
     // ==================== 定位 ====================
@@ -162,10 +228,9 @@ public class ModelTreeStore {
         String modelKey = ModelMappingService.buildModelKey(
                 device == null ? null : device.getProductClass(),
                 device == null ? null : device.getSoftwareVersion());
-        CpeModel model = modelMapper.selectOne(new LambdaQueryWrapper<CpeModel>()
-                .eq(CpeModel::getIsp, isp)
-                .eq(CpeModel::getModelKey, modelKey)
-                .last("LIMIT 1"));
+        // 型号档案改查 SQLite 模板库：下发前取路径这一步必须只看「适配数据」那一侧，
+        // MySQL cpe_model 不再是数据源
+        Device model = deviceDao.findByIspModelKey(isp, modelKey).orElse(null);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("sn", sn);
         data.put("isp", isp);
@@ -179,7 +244,7 @@ public class ModelTreeStore {
             data.put("hint", "该型号尚未登记，请先采集设备能力树");
             return data;
         }
-        String relative = relativePath(model, isp, modelKey);
+        String relative = relativePath(isp, modelKey);
         Path file = resolveFile(relative);
         data.put("registered", true);
         data.put("modelId", model.getId());
@@ -732,12 +797,13 @@ public class ModelTreeStore {
     /**
      * 型号文件相对配置根目录的路径：已有登记就沿用，否则按默认规则生成。
      */
-    private static String relativePath(CpeModel model, String isp, String modelKey) {
-        String current = model.getConfigPath();
-        if (notBlank(current)) {
-            String path = current.replace('\\', '/');
-            return path.startsWith(MODEL_DIR + "/") ? path : MODEL_DIR + "/" + path;
-        }
+    /**
+     * 型号能力树文件的相对路径（相对配置根目录）。
+     *
+     * <p>SQLite 化后不再把路径存进字段：路径完全由「运营商 + 型号标识」按约定推导，
+     * 库里少一份要与实际文件保持一致的状态。</p>
+     */
+    private static String relativePath(String isp, String modelKey) {
         return MODEL_DIR + "/" + ModelMappingService.defaultConfigPath(isp, modelKey);
     }
 
@@ -772,33 +838,31 @@ public class ModelTreeStore {
     /**
      * 按「运营商 + 型号标识」定位型号档案，没有就登记一条待适配。
      */
-    private CpeModel resolveModel(String isp, String modelKey, CpeDevice device, String sn) {
-        CpeModel exist = modelMapper.selectOne(new LambdaQueryWrapper<CpeModel>()
-                .eq(CpeModel::getIsp, isp)
-                .eq(CpeModel::getModelKey, modelKey)
-                .last("LIMIT 1"));
-        if (exist != null) {
-            return exist;
+    /**
+     * 按「运营商 + 型号标识」定位型号档案，没有就登记一条待适配。
+     *
+     * <p>读写走 SQLite 模板库的 {@code device} 表，不再是 MySQL {@code cpe_model}：
+     * 型号适配数据属于「光猫适配数据」，按边界约定只进 SQLite。MySQL 那张表
+     * 留到阶段 5 连同实体与 Mapper 一起删。</p>
+     */
+    private Device resolveModelRow(String isp, String modelKey, CpeDevice device, String sn) {
+        Optional<Device> exist = deviceDao.findByIspModelKey(isp, modelKey);
+        if (exist.isPresent()) {
+            return exist.get();
         }
-        CpeModel model = new CpeModel();
-        model.setIsp(isp);
-        model.setModelKey(modelKey);
-        model.setManufacturer(device == null ? null : device.getManufacturer());
-        model.setProductClass(device == null ? null : device.getProductClass());
-        model.setSoftwareVersion(device == null ? null : device.getSoftwareVersion());
-        model.setHardwareVersion(device == null ? null : device.getHardwareVersion());
-        model.setConfigPath(MODEL_DIR + "/" + ModelMappingService.defaultConfigPath(isp, modelKey));
-        model.setStatus(CpeModel.STATUS_PENDING);
-        model.setSampleSn(sn);
-        try {
-            modelMapper.insert(model);
-            return model;
-        } catch (DuplicateKeyException e) {
-            return modelMapper.selectOne(new LambdaQueryWrapper<CpeModel>()
-                    .eq(CpeModel::getIsp, isp)
-                    .eq(CpeModel::getModelKey, modelKey)
-                    .last("LIMIT 1"));
-        }
+        Device row = new Device();
+        row.setIsp(isp);
+        row.setModelKey(modelKey);
+        row.setManufacturer(device == null ? null : device.getManufacturer());
+        row.setProductClass(device == null ? null : device.getProductClass());
+        row.setSoftwareVersion(device == null ? null : device.getSoftwareVersion());
+        row.setHardwareVersion(device == null ? null : device.getHardwareVersion());
+        // 根节点决定模板路径前缀：TR-181 设备是 Device.，漏了会整批写错前缀
+        row.setRootNode(device == null ? null : device.getRootNode());
+        row.setStatus("PENDING");
+        row.setSampleSn(sn);
+        deviceDao.upsert(row);
+        return row;
     }
 
     private CpeDevice findDevice(String sn) {

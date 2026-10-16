@@ -9,6 +9,9 @@ import com.tr069.acs.domain.entity.Worklist;
 import com.tr069.acs.domain.entity.WorklistStepRecord;
 import com.tr069.acs.mapper.WorklistMapper;
 import com.tr069.acs.mapper.WorklistStepMapper;
+import com.tr069.acs.worklist.service.WorklistDeliveryService;
+import com.tr069.acs.worklist.tpl.TemplateVariables;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +38,52 @@ public class WorklistExecuteController {
 
     private final WorklistMapper worklistMapper;
     private final WorklistStepMapper worklistStepMapper;
+    private final WorklistDeliveryService deliveryService;
+
+    /**
+     * 某类业务需要填写哪些变量，前端据此渲染下发表单。
+     *
+     * <p>变量清单由 {@link TemplateVariables} 统一定义，新增业务只需改那里，页面不用动。</p>
+     */
+    @GetMapping("/variables")
+    public Result<List<TemplateVariables.Var>> variables(@RequestParam String category) {
+        return Result.success(TemplateVariables.forCategory(category));
+    }
+
+    /**
+     * 提交一张下发工单。
+     *
+     * <p>以 {@code worklistDesc} 做幂等键：重复提交只受理一次，返回首次创建的工单，
+     * 用户手抖点两下或网络重试都不会给设备重复开业务。</p>
+     */
+    @PostMapping("/instances")
+    public Result<Worklist> create(@RequestBody CreateRequest body) {
+        Worklist created = deliveryService.create(
+                body.getSn(),
+                body.getCategory(),
+                body.getWorklistDesc(),
+                body.getValues(),
+                body.getUsername(),
+                body.getTemplateId());
+        return Result.success(created);
+    }
+
+    /** 建单入参。 */
+    @Data
+    public static class CreateRequest {
+        /** 设备序列号 */
+        private String sn;
+        /** 业务类型：WIFI_24G / WIFI_58G / SIP / WAN_DHCP / WAN_PPPOE / WAN_STATIC / WAN_BRIDGE */
+        private String category;
+        /** 调用方流水号，幂等键；不传由调用方保证不重复时可省略 */
+        private String worklistDesc;
+        /** 变量值，键为 %room% 这类占位符 */
+        private Map<String, String> values;
+        /** 操作人 */
+        private String username;
+        /** 开通模板 id；不传则按业务类型自动取第一条模板 */
+        private Long templateId;
+    }
 
     /**
      * 工单执行记录，按设备或状态查询。

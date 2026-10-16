@@ -153,6 +153,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- ==================== 模板库：光猫已适配数据，便携化单文件 SQLite ==================== -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>3.46.1.0</version>
+        </dependency>
+
         <!-- ==================== 测试 ==================== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -179,6 +186,7 @@
                 <targetPath>db</targetPath>
                 <includes>
                     <include>schema.sql</include>
+                    <include>schema-tr069tpl.sql</include>
                 </includes>
                 <filtering>false</filtering>
             </resource>
@@ -197,12 +205,7 @@
                     <encoding>UTF-8</encoding>
                 </configuration>
                 <executions>
-                    <!--
-                        工单模板（由 tools/DataPyToXmlMigrator 从原 Python 版 data.py 转换而来）
-                        存放在工程根目录的 configuration/ 下，刻意不放进 src/main/resources，
-                        这样不会被打进 jar。构建时复制到 target/configuration 作为运行期加载目录，
-                        现场新增光猫只需在该目录改文件，热加载即时生效，无需重新打包。
-                    -->
+
                     <execution>
                         <id>copy-configuration-to-target</id>
                         <phase>process-resources</phase>
