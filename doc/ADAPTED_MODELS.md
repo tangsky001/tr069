@@ -5,6 +5,7 @@
 | 运营商 | 厂家型号 |
 | --- | --- |
 | CMCC（移动） | CIOT P22g-CIac |
+| CMCC（移动） | CIOT ZNM802 |
 
 ---
 

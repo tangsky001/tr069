@@ -135,7 +135,8 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 ### 1.3 已适配光猫型号
 
 清单单独维护在 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**（只记运营商 + 厂家型号，
-适配一台加一行）。适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
+适配一台加一行），当前已适配 **2 款**：`CIOT P22g-CIac`、`CIOT ZNM802`（均为 CMCC 移动）。
+适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
 （配置项 `acs.tr069tpl.db-path`），随仓库走，拷到部署机即识别为已适配，不必重新适配。
 
 ---
