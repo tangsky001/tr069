@@ -139,6 +139,18 @@ acs:
     business:
       # 单次业务采集等待设备的超时(秒)，超时返回已刷到的部分结果
       collect-timeout-seconds: 45
+    # LAN 网口状态自动刷新：拔插网线后设备不会主动上报，靠定时任务重读网口状态叶子，
+    # 页面不必手动点「重新采集」。只对在线设备下发，指令要等设备下一次空 POST 才带下去
+    lan:
+      auto-refresh:
+        # 总开关
+        enabled: true
+        # 刷新间隔(毫秒)，默认 5 分钟
+        interval-millis: 300000
+        # 单轮等待设备回值的上限(秒)。超时不判失败，指令仍在队列里，下一轮继续
+        wait-seconds: 120
+        # 单轮最多刷多少台，防止设备规模上来后一轮下发过多
+        max-devices-per-round: 200
     # 设备能力树采集：GetParameterNames 拉全量路径 + GetParameterValues 分批读值
     capability:
       # 总开关
@@ -212,17 +224,21 @@ acs:
     #   从 server 目录启动  → server/configuration
     #   从 target 目录起 jar → server/target/configuration
     # 目录由程序自行读写，约定：
-    #   profiles/                     光猫适配档案 *.yaml，改动由下面的热加载接管
     #   models/{isp}/{型号标识}.xml    设备能力树按型号导出的归档
+    # 光猫适配档案已迁到 SQLite 模板库（acs.tr069tpl.db-path），不再放 YAML 档案
     # 该目录为空时，依次回退到 jar 同级的 configuration/、target/configuration/
     root-path: ./configuration
-    hot-reload:
-      # 文件监听 + 增量重载开关
-      enabled: true
-      # 变化去抖时间(毫秒)
-      debounce-millis: 800
-      # 周期全量扫描兜底间隔(秒)，0 表示关闭
-      rescan-interval-seconds: 60
+
+  # ==================== 模板库（光猫已适配数据，便携化 SQLite） ====================
+  tr069tpl:
+    # 模板库 SQLite 文件路径，刻意放在 jar 外部：拷走即用，新机器拿到后光猫
+    # 一上线即识别为已适配，不必重新适配。
+    # 相对路径与 acs.worklist.root-path 同源（经 WorklistRootResolver 解析），
+    # 不按进程工作目录拼——否则从 target 目录起 jar 会去连 target/configuration
+    # 下那一份，与配置根目录里的适配档案分叉。父目录不存在时会自动创建。
+    db-path: ./configuration/tr069_tpl.pack
+    # 雪花 ID 节点号：多节点部署时手动分配避免主键撞车
+    snowflake-node-id: 1
 
   # ==================== 意图下发执行器 ====================
   exec:

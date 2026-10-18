@@ -98,15 +98,28 @@ public class ModelAdaptationService {
         data.put("capWifiSpec", model.getCapWifiSpec());
         // 已适配看同名 YML 里的 adapted，XML 只是能力档案，存在不算适配过
         boolean adapted = profileStore.isAdapted(model);
+        String adaptedIsp = null;
         if (!adapted) {
             // 设备上报的 isp 可能与适配申报的 isp 不同（上报为空/standard 而适配给了 CMCC），
             // 同型号只要在任意运营商下有 adapted: true 的档案就视为已适配——
             // 不然适配完列表永远还挂着红色的「适配」入口
-            String adaptedIsp = profileStore.findAdaptedIsp(model.getModelKey());
+            adaptedIsp = profileStore.findAdaptedIsp(model.getModelKey());
             if (adaptedIsp != null) {
                 adapted = true;
                 data.put("adaptedIsp", adaptedIsp);
                 data.put("profile", profileStore.readByIsp(model.getModelKey(), adaptedIsp));
+            }
+        }
+        if (!adapted) {
+            // 兜底：适配文件没生成或没找到时，以数据库里的状态为准。
+            // 只要库里有 config_path 且状态 READY，就视为已适配——配置已经落库，
+            // 用户明确说"适配后配置已经在数据库中保存了，可以直接调库"
+            if (model.getConfigPath() != null && !model.getConfigPath().isBlank()
+                    && CpeModel.STATUS_READY.equals(model.getStatus())) {
+                adapted = true;
+                data.put("adaptedFromDb", true);
+                data.put("adaptedIsp", adaptedIsp != null ? adaptedIsp : model.getIsp());
+                data.putIfAbsent("profile", profileStore.read(model));
             }
         }
         data.put("adapted", adapted);
@@ -214,11 +227,24 @@ public class ModelAdaptationService {
         patch.setCapLanPorts(request.getLanPorts());
         patch.setCapLanSpeed(request.getLanSpeed());
         patch.setCapSipCount(request.getSipCount());
-        patch.setCapWifiSpec(request.getWifiSpec());
+        // 实测有 5.8G 但申报只勾了 2.4G 时按实测补齐：申报漏掉 5G 会让模板库里根本
+        // 没有 wlan_b 那张表，后面想改一次 5G 的 SSID 一律报「5G 模板里没有实例」
+        String wifiSpec = request.getWifiSpec();
+        if (detected.wifiBands.contains("5.8G") && wifiSpec != null
+                && wifiSpec.contains("2.4") && !wifiSpec.contains("5")) {
+            wifiSpec = "2.4G+5.8G";
+            log.info("申报 WIFI 规格只到 2.4G，但实测含 5.8G，按实测补齐: sn={}", sn);
+        }
+        patch.setCapWifiSpec(wifiSpec);
+        // 适配通过后状态置为 READY：后续状态判断可以直接以库为准，不必依赖文件系统
+        patch.setStatus(CpeModel.STATUS_READY);
         if (model.getSampleSn() == null || model.getSampleSn().isBlank()) {
             patch.setSampleSn(sn);
         }
         CpeModel updated = modelMappingService.update(model.getId(), patch);
+        // 申报值必须同步进 SQLite 模板库：上面的 export 发生在申报之前，
+        // 那一刻库里还没有能力字段，生成不出模板；这里回写一次并按申报重新生成
+        modelTreeStore.applyCapability(isp, updated.getModelKey(), updated);
         // 测试通过才写适配档：adapted: true，同型号设备上线读它判定已适配
         String adaptPath = profileStore.writeAdapted(updated, isp, sn, request);
         updated = modelMappingService.update(model.getId(),

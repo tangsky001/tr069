@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * 一次业务模板下发记录。
  *
  * <p>整包下发是异步的：接口立即返回本记录 id，页面靠它轮询进度。
- * 每个成员会各自生成一张工单（{@code worklist} 表），明细写在 result 里。</p>
+ * 每个成员会各自生成一条下发任务（{@code device_task} 表），明细写在 result 里。</p>
  */
 @Data
 @TableName("biz_template_execution")

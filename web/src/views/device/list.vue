@@ -75,7 +75,7 @@
       </el-table-column>
 
       <el-table-column label="业务状态" align="center">
-        <el-table-column label="WAN 连接" min-width="130">
+        <el-table-column label="WAN 连接" min-width="165">
           <template slot-scope="{ row }">
             <el-link
               v-if="wanList(row.sn).length"
@@ -86,6 +86,24 @@
               <span>条 WAN 连接</span>
             </el-link>
             <span v-else class="cell-empty">-</span>
+            <!-- LAN 网口：设备申报几个口就列几个，插线绿色、未插灰色，紧跟在 WAN 连接下面 -->
+            <div v-if="lanList(row.sn).length" class="lan-list-bar">
+              <div
+                v-for="item in lanList(row.sn)"
+                :key="item.path"
+                class="lan-list-chip"
+                :class="{ 'lan-list-up': item.connected }"
+                :title="lanPortTip(item)"
+              >
+                <svg class="lan-list-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="3" y="8" width="18" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+                  <line x1="7" y1="8" x2="7" y2="4" stroke="currentColor" stroke-width="1.5" />
+                  <line x1="12" y1="8" x2="12" y2="4" stroke="currentColor" stroke-width="1.5" />
+                  <line x1="17" y1="8" x2="17" y2="4" stroke="currentColor" stroke-width="1.5" />
+                </svg>
+                <span class="lan-list-label">LAN{{ item.instance }}</span>
+              </div>
+            </div>
             <!-- 机型适配入口：未适配的给适配入口，已适配的给绿标 -->
             <div v-if="!adaptOf(row.sn).adapted" class="adapt-line">
               <el-button type="text" size="mini" class="adapt-btn" @click="openAdapt(row)">
@@ -97,15 +115,35 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="WIFI 信息" min-width="140">
+        <el-table-column label="WIFI 信息" min-width="160">
           <template slot-scope="{ row }">
-            <template v-if="wifiList(row.sn).length">
-              <el-tag
-                v-for="item in wifiList(row.sn)"
-                :key="item.path"
-                size="mini"
-                class="wifi-tag"
-              >{{ item.params.SSID || '-' }}</el-tag>
+            <template v-if="enabledWifiList(row.sn).length">
+              <div class="wifi-list-band-row">
+                <span class="wifi-list-band-label">2.4G:</span>
+                <template v-if="enabledWifi24(row.sn).length">
+                  <el-tag
+                    v-for="item in enabledWifi24(row.sn)"
+                    :key="item.path"
+                    size="mini"
+                    class="wifi-tag wifi-tag-editable"
+                    @click.native="openWifiEdit(row, item)"
+                  >{{ item.params.SSID || '-' }}</el-tag>
+                </template>
+                <span v-else class="cell-empty">-</span>
+              </div>
+              <div class="wifi-list-band-row">
+                <span class="wifi-list-band-label">5.8G:</span>
+                <template v-if="enabledWifi58(row.sn).length">
+                  <el-tag
+                    v-for="item in enabledWifi58(row.sn)"
+                    :key="item.path"
+                    size="mini"
+                    class="wifi-tag wifi-tag-editable"
+                    @click.native="openWifiEdit(row, item)"
+                  >{{ item.params.SSID || '-' }}</el-tag>
+                </template>
+                <span v-else class="cell-empty">-</span>
+              </div>
             </template>
             <span v-else class="cell-empty">-</span>
           </template>
@@ -114,10 +152,10 @@
           <template slot-scope="{ row }">
             <template v-if="sipList(row.sn).length">
               <div v-for="item in sipList(row.sn)" :key="item.path" class="biz-row">
-                <el-tag size="mini" :type="sipRegistered(item.params) ? 'success' : 'danger'">
+                <el-tag size="mini" :type="sipTagType(item.params)">
                   {{ sipStatusText(item.params) }}
                 </el-tag>
-                <span class="biz-name">{{ item.params.UserName || '-' }}</span>
+                <span class="biz-name">{{ sipNumber(item.params) }}</span>
               </div>
             </template>
             <span v-else class="cell-empty">-</span>
@@ -130,25 +168,21 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="上报的IP" min-width="120">
+        <!-- 运行信息：运行时长 / 加入时间 / 最后汇报时间 / 汇报IP，取代原先独立的「上报的IP」列 -->
+        <el-table-column label="运行信息" min-width="180">
+          <device-runtime-cell
+            slot="header"
+            mode="header"
+            :sort-key="sortKey"
+            :sort-order="sortOrder"
+            @sort="sortBy"
+          />
           <template slot-scope="{ row }">
-            <span>{{ wanIp(row.sn) }}</span>
+            <device-runtime-cell :row="row" :biz="bizOf(row.sn)" />
           </template>
         </el-table-column>
       </el-table-column>
 
-      <el-table-column label="注册信息" align="center">
-        <el-table-column label="注册时间" width="150">
-          <template slot-scope="{ row }">
-            <span>{{ formatTime(row.createdAt) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="最近上报" width="150">
-          <template slot-scope="{ row }">
-            <span>{{ formatTime(row.lastContactTime) }}</span>
-          </template>
-        </el-table-column>
-      </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template slot-scope="{ row }">
           <el-dropdown trigger="click" size="mini" @command="cmd => handleDeviceCommand(cmd, row)">
@@ -188,12 +222,23 @@
         size="small"
         style="width:160px"
       >
+        <el-option-group v-if="bizTemplates.length" label="== 业务模板 ==">
+          <el-option
+            v-for="b in bizTemplates"
+            :key="'biz-' + b.template.id"
+            :label="b.template.name"
+            :value="'biz-' + b.template.id"
+          >
+            <span>{{ b.template.name }}</span>
+            <span class="member-hint">{{ (b.items || []).length }} 个成员</span>
+          </el-option>
+        </el-option-group>
         <el-option-group label="== 配置模板 ==">
           <el-option
             v-for="t in templates"
-            :key="t.id"
+            :key="'cfg-' + t.id"
             :label="t.name"
-            :value="t.id"
+            :value="'cfg-' + t.id"
           >
             <span>{{ t.name }}</span>
             <span class="member-hint">{{ t.categoryLabel || t.category }}</span>
@@ -312,6 +357,40 @@
       </span>
     </el-dialog>
 
+    <!-- 查询超管账号密码弹窗：每台设备一行，多路账号展开看 -->
+    <el-dialog title="超级管理员账号密码" :visible.sync="adminPwdVisible" width="860px">
+      <el-table v-loading="adminPwdLoading" :data="adminPwdRows" border size="small" max-height="480">
+        <el-table-column type="expand">
+          <template slot-scope="{ row }">
+            <el-table v-if="row.accounts && row.accounts.length" :data="row.accounts" border size="mini" style="width:100%">
+              <el-table-column label="实例" prop="instance" width="70" />
+              <el-table-column label="账号" prop="username" min-width="160" show-overflow-tooltip />
+              <el-table-column label="密码" prop="password" min-width="200" show-overflow-tooltip />
+              <el-table-column label="参数路径" prop="path" min-width="300" show-overflow-tooltip />
+            </el-table>
+            <div v-else class="admin-pwd-empty">{{ row.message || '未查询到账号' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="序列号" prop="sn" min-width="190" show-overflow-tooltip />
+        <el-table-column label="状态" width="100">
+          <template slot-scope="{ row }">
+            <el-tag size="mini" :type="adminPwdTagType(row)">{{ adminPwdStatusText(row) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="账号" min-width="150">
+          <template slot-scope="{ row }">{{ adminFirstAccount(row).username || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="密码" min-width="190">
+          <template slot-scope="{ row }">{{ adminFirstAccount(row).password || '-' }}</template>
+        </el-table-column>
+      </el-table>
+      <div class="admin-pwd-tip">账号与口令是从设备上实时读到的明文，可直接用于登录光猫后台。</div>
+      <span slot="footer">
+        <el-button type="primary" :loading="adminPwdLoading" @click="reloadAdminPwd">重新查询</el-button>
+        <el-button @click="adminPwdVisible = false">关闭</el-button>
+      </span>
+    </el-dialog>
+
     <el-dialog title="在线会话明细" :visible.sync="onlineVisible" width="900px">
       <el-table :data="onlineList" border size="small" max-height="460">
         <el-table-column label="序列号" prop="sn" min-width="180" show-overflow-tooltip />
@@ -400,6 +479,53 @@
       </el-card>
       <span slot="footer">
         <el-button @click="wanVisible = false">关闭</el-button>
+      </span>
+    </el-dialog>
+
+    <el-dialog
+      title="编辑 WLAN"
+      :visible.sync="wifiEditVisible"
+      width="480px"
+      top="8vh"
+    >
+      <div v-if="wifiEditForm.band" class="wifi-edit-head">
+        <el-tag size="mini" type="info">{{ wifiEditForm.band }}</el-tag>
+        <span class="wifi-edit-path">{{ wifiEditForm.path }}</span>
+      </div>
+      <el-form label-width="100px" size="small">
+        <el-form-item label="SSID 名称">
+          <el-input v-model="wifiEditForm.ssid" maxlength="32" show-word-limit />
+        </el-form-item>
+        <el-form-item label="加密方式">
+          <el-select
+            v-model="wifiEditForm.encryption"
+            style="width:100%"
+            allow-create
+            filterable
+            default-first-option
+            placeholder="选一种或输入设备实际值"
+          >
+            <el-option label="不加密" value="None" />
+            <el-option label="WEP" value="WEPEncryption" />
+            <el-option label="TKIP" value="TKIPEncryption" />
+            <el-option label="AES" value="AESEncryption" />
+            <el-option label="TKIP+AES 混合" value="TKIPandAESEncryption" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="wifiEditForm.password" type="password" show-password placeholder="为空表示不修改密码" />
+        </el-form-item>
+        <el-form-item label="启用状态">
+          <el-switch
+            v-model="wifiEditForm.enabled"
+            active-text="启用"
+            inactive-text="禁用"
+          />
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button @click="wifiEditVisible = false">取消</el-button>
+        <el-button type="primary" :loading="wifiSubmitting" @click="submitWifiEdit">提交下发</el-button>
       </span>
     </el-dialog>
 
@@ -547,24 +673,32 @@
 <script>
 import {
   fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch,
-  fetchAdaptStatus, testAdaptation, saveAdaptation, updateDeviceRemark
+  fetchAdaptStatus, testAdaptation, saveAdaptation, updateDeviceRemark,
+  fetchAdminAccounts
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
+import { fetchBizTemplates, executeBizTemplate } from '@/api/bizTemplate'
+import { createWorklist, newWorklistDesc } from '@/api/worklist'
 import { RPC_METHODS } from '@/api/device'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
+import DeviceRuntimeCell from '@/components/DeviceRuntimeCell.vue'
 import { ponTypeOf, opticStateOf } from '@/utils/deviceOptic'
+
+// 业务概要自动回读间隔：与后端 LAN 网口状态自动刷新（5 分钟）同频
+const BIZ_AUTO_REFRESH_MS = 300000
 
 export default {
   name: 'DeviceList',
-  components: { DeviceBusinessPanel, DeviceIdentityCell },
+  components: { DeviceBusinessPanel, DeviceIdentityCell, DeviceRuntimeCell },
   data() {
     return {
       loading: false,
       list: [],
       total: 0,
       bizMap: {},
+      bizTimer: null,
       // 机型适配状态：sn -> { adapted, configPath, ... }
       adaptMap: {},
       adaptVisible: false,
@@ -582,6 +716,18 @@ export default {
       wifiOptions: ['无', '2.4G', '2.4G+5.8G'],
       wanVisible: false,
       wanDialogSn: '',
+      wifiEditVisible: false,
+      wifiSubmitting: false,
+      wifiEditForm: {
+        sn: '',
+        band: '',
+        path: '',
+        instance: 1,
+        ssid: '',
+        encryption: '',
+        password: '',
+        enabled: true
+      },
       detailVisible: false,
       detailRow: null,
       sortKey: '',
@@ -595,11 +741,16 @@ export default {
       // 批量操作工具条
       selection: [],
       templates: [],
+      bizTemplates: [],
       selectedTemplate: '',
       customParamVisible: false,
       customParamRows: [{ name: '', value: '', type: 'xsd:string' }],
       debugVisible: false,
       debugForm: { rpc: 'GetParameterValues', args: '{}' },
+      // 查询超管密码弹窗：每台设备一行，账号列表展开看
+      adminPwdVisible: false,
+      adminPwdLoading: false,
+      adminPwdRows: [],
       rpcMethods: RPC_METHODS,
       query: {
         page: 1,
@@ -646,6 +797,19 @@ export default {
     this.load()
     this.loadOnline()
     this.loadTemplates()
+    // 后端每 5 分钟自动刷新一次 LAN 网口状态，这里同频回读当前页的业务概要，
+    // 网口图标不用手动刷新就能跟上插拔变化
+    this.bizTimer = setInterval(() => {
+      if (!document.hidden) {
+        this.reloadBiz()
+      }
+    }, BIZ_AUTO_REFRESH_MS)
+  },
+  beforeDestroy() {
+    if (this.bizTimer) {
+      clearInterval(this.bizTimer)
+      this.bizTimer = null
+    }
   },
   methods: {
     async load() {
@@ -704,6 +868,21 @@ export default {
         this.bizMap = res.data || {}
       } catch (e) {
         this.bizMap = {}
+      }
+    },
+    // 定时回读业务概要：只在成功时覆盖。整页业务列突然变空比显示旧值更糟
+    async reloadBiz() {
+      const sns = this.list.map(d => d.sn)
+      if (!sns.length) {
+        return
+      }
+      try {
+        const res = await fetchDeviceBusinessBatch(sns)
+        if (res && res.data) {
+          this.bizMap = res.data
+        }
+      } catch (e) {
+        // 静默失败：定时刷新不该打扰正在操作列表的人
       }
     },
     bizOf(sn) {
@@ -766,17 +945,142 @@ export default {
     wifiList(sn) {
       return this.bizOf(sn).wifi || []
     },
+    enabledWifiList(sn) {
+      return this.wifiList(sn).filter(item => this.isWifiEnabled(item.params))
+    },
+    enabledWifi24(sn) {
+      return this.enabledWifiList(sn).filter(item => this.wifiBand(item.params) === '2.4G')
+    },
+    enabledWifi58(sn) {
+      return this.enabledWifiList(sn).filter(item => this.wifiBand(item.params) === '5.8G')
+    },
+    // 判断 WiFi 是否启用：Status=Disabled/Down 或 Enable=false 都算禁用
+    isWifiEnabled(params) {
+      if (!params) return true
+      const status = String(params.Status || '').toLowerCase()
+      if (status === 'disabled' || status === 'down') return false
+      const enableFlag = params.Enable
+      if (enableFlag !== undefined && enableFlag !== null) {
+        return String(enableFlag).toLowerCase() === 'true' || enableFlag === true || enableFlag === 1
+      }
+      return true
+    },
+    lanList(sn) {
+      return this.bizOf(sn).lan || []
+    },
+    // 网口小图标的悬停提示：LAN1 已连接（MAC: xx:xx...）
+    lanPortTip(item) {
+      const state = item.connected ? '已连接' : '未连接'
+      const mac = item.mac ? ' MAC: ' + item.mac : ''
+      return 'LAN' + (item.instance || '') + ' ' + state + mac
+    },
+
+    /**
+     * 从业务快照的 WiFi 参数里识别频段。
+     * 后端只返回 params.Standard，a/ac/ax 归为 5G，其余为 2.4G。
+     */
+    wifiBandOf(params) {
+      const std = String(params && params.Standard || '').toLowerCase()
+      return /a|ac|ax/.test(std) ? '5.8G' : '2.4G'
+    },
+
+    /**
+     * 从 path 里解析 WiFi 实例号，决定下发时写第几个 SSID。
+     * 常见形式：...WLANConfiguration.1. 或 ...SSID.1.
+     */
+    wifiInstanceOf(path) {
+      const m = String(path || '').match(/(?:WLANConfiguration|WLAN|SSID)\.?(\d+)/i)
+      return m ? parseInt(m[1], 10) : 1
+    },
+
+    openWifiEdit(row, item) {
+      const params = item && item.params || {}
+      const band = this.wifiBandOf(params)
+      // 必须读 IEEE11iEncryptionModes：下发写的是这个参数，
+      // 拿 BeaconType 的值（Basic / 11i / WPAand11i）填进去设备会回 9003
+      const encryption = params.IEEE11iEncryptionModes ||
+        params.BasicEncryptionModes || params.WPAEncryptionModes || ''
+      const password = params.KeyPassphrase || params.PreSharedKey || params.WPA_PSK || ''
+      const status = String(params.Status || '').toLowerCase()
+      const enableFlag = params.Enable
+      let enabled = true
+      if (status === 'disabled' || status === 'down') {
+        enabled = false
+      } else if (enableFlag !== undefined && enableFlag !== null) {
+        enabled = String(enableFlag).toLowerCase() === 'true' || enableFlag === true || enableFlag === 1
+      }
+      this.wifiEditForm = {
+        sn: row.sn,
+        band,
+        path: item.path || '',
+        instance: this.wifiInstanceOf(item.path),
+        ssid: params.SSID || '',
+        encryption: String(encryption).replace(/None/i, 'None'),
+        password: String(password),
+        enabled
+      }
+      this.wifiEditVisible = true
+    },
+
+    async submitWifiEdit() {
+      const form = this.wifiEditForm
+      const category = form.band === '5.8G' ? 'WIFI_58G' : 'WIFI_24G'
+      const values = {
+        instance: form.instance,
+        ssid: form.ssid,
+        wpa_mode: form.encryption,
+        wpa_key: form.password,
+        enable: form.enabled ? 'true' : 'false'
+      }
+      if (!form.ssid) {
+        this.$message.warning('SSID 名称不能为空')
+        return
+      }
+      this.wifiSubmitting = true
+      try {
+        await createWorklist({
+          sn: form.sn,
+          category,
+          values,
+          worklistDesc: newWorklistDesc(category),
+          username: this.$store.getters.name || 'admin'
+        })
+        this.$message.success('WLAN 修改工单已提交')
+        this.wifiEditVisible = false
+      } catch (e) {
+        this.$message.error('提交失败：' + ((e && e.message) || ''))
+      } finally {
+        this.wifiSubmitting = false
+      }
+    },
+
     sipList(sn) {
       return this.bizOf(sn).sip || []
     },
     sipRegistered(params) {
-      const s = String(params.SIPRegisterStatus || '').toLowerCase()
+      const s = String(params.SIPRegisterStatus || params.Status || '').toLowerCase()
       return s === 'registered' || s === 'ok' || s === 'up' || s === '成功'
     },
     sipStatusText(params) {
-      const raw = params.SIPRegisterStatus
-      if (!raw) return '未配置'
+      const raw = params.SIPRegisterStatus || params.Status
+      if (!raw) {
+        // 有号码但没注册状态时显示"未注册"，只有号码也没有才显示"未配置"
+        return this.sipNumber(params) !== '-' ? '未注册' : '未配置'
+      }
       return this.sipRegistered(params) ? '已注册' : '未注册'
+    },
+    sipTagType(params) {
+      if (this.sipRegistered(params)) return 'success'
+      if (this.sipStatusText(params) === '未配置') return 'info'
+      return 'warning'
+    },
+    sipNumber(params) {
+      const name = params.AuthUserName || params.UserName || params.DirectoryNumber || params.PhoneNumber
+      if (name) return name
+      const uri = params.URI || ''
+      const m = uri.match(/^([^@]+)@/)
+      // URI 现在只存号码，不带 @服务器；有 @ 就截前面，没有就直接是号码
+      return m ? m[1] : (uri || '-')
     },
     // 管理地址：由后端从 WAN_TR069 通道算出（业务快照的 ip 字段），前端不做判定
     wanIp(sn) {
@@ -913,6 +1217,12 @@ export default {
 
     sortVal(row, key) {
       if (key === 'pon') return ponTypeOf(row, this.bizOf(row.sn))
+      if (key === 'upTime') {
+        const info = this.bizOf(row.sn).device || []
+        const item = info.find(x => x.params && x.params.UpTime !== undefined)
+        return String(item ? item.params.UpTime : '')
+      }
+      if (key === 'ip') return String(this.bizOf(row.sn).ip || '')
       return String(row[key] || '')
     },
     // 表头字段排序，由终端信息列组件抛出
@@ -1044,6 +1354,12 @@ export default {
       }).catch(() => {
         this.templates = []
       })
+      // 业务模板与配置模板是两个库：下拉要都能选到，否则业务模板配好了却无从下发
+      fetchBizTemplates().then(res => {
+        this.bizTemplates = (res.data || []).filter(b => b && b.template)
+      }).catch(() => {
+        this.bizTemplates = []
+      })
     },
     batchDispatchTemplate() {
       const sns = this.requireSelection()
@@ -1052,8 +1368,94 @@ export default {
         this.$message.warning('请先选择模版关键字')
         return
       }
-      // 下发逻辑：按模板意图 + 型号映射生成真实参数，待后端实现后接入
-      this.todoPending('批量下发模版（下发逻辑待接入）')
+      // 下拉里两类模板的 id 会撞，选型值带前缀区分
+      const picked = String(this.selectedTemplate)
+      const id = Number(picked.slice(4))
+      if (picked.startsWith('biz-')) {
+        this.batchCreateBizWorklist(sns, id)
+        return
+      }
+      const tpl = this.templates.find(t => t.id === id) || {}
+      // 模板的 category 即业务类型，落到工单的业务类型上；取不到就留空由下发侧推导
+      this.batchCreateWorklist(sns, (tpl.category || '').toUpperCase(), tpl.name || '模版下发')
+    },
+
+    /**
+     * 业务模板整包下发：交给后端按成员编排顺序串行执行，逐台各起一条执行记录。
+     *
+     * <p>成员依赖是有先后顺序的（先建连接再挂业务），所以不在这里一次性全排进队列，
+     * 而是让执行器等前一个成员结束再发下一个；失败即停由模板的「出错继续」决定。</p>
+     */
+    batchCreateBizWorklist(sns, templateId) {
+      const biz = this.bizTemplates.find(b => b.template && b.template.id === templateId)
+      if (!biz) {
+        this.$message.warning('业务模板不存在，请刷新后重试')
+        return
+      }
+      const items = (biz.items || []).filter(i => i.category)
+      if (!items.length) {
+        this.$message.warning('业务模板「' + biz.template.name + '」没有可下发的成员')
+        return
+      }
+      this.$confirm(
+        `将对已勾选的 ${sns.length} 台设备整包下发业务模板「${biz.template.name}」，` +
+        `${items.length} 个成员按编排顺序串行执行，确认提交？`,
+        '批量下发',
+        { type: 'warning' }
+      ).then(() => {
+        const username = this.$store.getters.name || 'admin'
+        const tasks = sns.map(sn => {
+          return executeBizTemplate({
+            templateId,
+            sn,
+            params: {},
+            username
+          }).then(() => null).catch(err => ({ sn, err: (err && err.message) || '提交失败' }))
+        })
+        Promise.all(tasks).then(results => this.reportBatchResult(results, sns.length))
+      }).catch(() => {})
+    },
+
+    /**
+     * 给多台设备逐台创建下发工单。
+     *
+     * <p>每台一个独立流水号，互不影响；单台失败记录下来但继续其余设备，
+     * 最后汇总失败清单——不能因为某一台有问题就把整批吞掉。</p>
+     */
+    batchCreateWorklist(sns, category, label) {
+      this.$confirm(
+        `将对已勾选的 ${sns.length} 台设备创建「${label || '下发'}」工单，确认提交？`,
+        '批量下发',
+        { type: 'warning' }
+      ).then(() => {
+        const username = this.$store.getters.name || 'admin'
+        const tasks = sns.map(sn => {
+          return createWorklist({
+            sn,
+            category: category || '',
+            values: {},
+            worklistDesc: newWorklistDesc(category || 'biz'),
+            username
+          }).then(() => null).catch(err => ({ sn, err: (err && err.message) || '创建失败' }))
+        })
+        Promise.all(tasks).then(results => this.reportBatchResult(results, sns.length))
+      }).catch(() => {})
+    },
+
+    /** 批量提交的汇总提示：全成功给个轻提示，有失败则列出每台的原因。 */
+    reportBatchResult(results, total) {
+      const failed = results.filter(r => r)
+      if (!failed.length) {
+        this.$message.success(`已提交 ${total} 条下发请求`)
+        this.$emit('refresh')
+        return
+      }
+      this.$notify.warning({
+        title: `${failed.length}/${total} 条提交失败`,
+        message: failed.map(f => `${f.sn}：${f.err}`).join('<br>'),
+        dangerouslyUseHTMLString: true,
+        duration: 0
+      })
     },
     handleBatchCommand(cmd) {
       if (cmd === 'worklist-record') {
@@ -1067,6 +1469,24 @@ export default {
         this.$confirm('恢复出厂会清空设备全部配置，对已勾选 ' + sns.length + ' 台设备执行？', '恢复出厂', { type: 'warning' })
           .then(() => sns.forEach(sn => this.quickRpc(sn, 'FactoryReset', {}, true)))
           .catch(() => {})
+        return
+      }
+      // 开通 / 检修：按勾选设备逐台建单，业务类型留空由下发侧推导
+      if (cmd === 'worklist-batch') {
+        const sns = this.requireSelection()
+        if (!sns) return
+        this.batchCreateWorklist(sns, '', '开通工单')
+        return
+      }
+      if (cmd === 'worklist-repair') {
+        const sns = this.requireSelection()
+        if (!sns) return
+        this.batchCreateWorklist(sns, '', '检修工单')
+        return
+      }
+      // 查询超管密码：对勾选设备逐台实时读，结果在弹窗里明文展示
+      if (cmd === 'query-admin-pwd') {
+        this.openAdminPwd()
         return
       }
       this.todoPending('批量操作：' + cmd)
@@ -1154,6 +1574,59 @@ export default {
       this.$confirm('确认重启已勾选的 ' + sns.length + ' 台设备？', '批量重启', { type: 'warning' })
         .then(() => sns.forEach(sn => this.quickRpc(sn, 'Reboot', {}, true)))
         .catch(() => {})
+    },
+    // ===== 查询超管账号密码 =====
+    /**
+     * 打开弹窗并对勾选设备逐台查询。
+     *
+     * 每台设备独立一行、独立请求：单台超时/离线不影响其它台，
+     * 行内 loading 结束就出结果，不用等全部完成。
+     */
+    openAdminPwd() {
+      const sns = this.requireSelection()
+      if (!sns) return
+      this.adminPwdVisible = true
+      this.adminPwdLoading = true
+      this.adminPwdRows = sns.map(sn => ({
+        sn, loading: true, status: '', message: '', accounts: []
+      }))
+      const settle = () => {
+        this.adminPwdLoading = this.adminPwdRows.some(r => r.loading)
+      }
+      sns.forEach((sn, idx) => {
+        fetchAdminAccounts(sn)
+          .then((res) => {
+            const d = (res && res.data) || {}
+            const row = this.adminPwdRows[idx]
+            row.status = d.status || ''
+            row.message = d.message || ''
+            row.accounts = d.accounts || []
+            row.loading = false
+          })
+          .catch((err) => {
+            const row = this.adminPwdRows[idx]
+            row.status = 'fail'
+            row.message = (err && err.message) || '查询失败'
+            row.loading = false
+          })
+          .finally(settle)
+      })
+    },
+    reloadAdminPwd() {
+      this.openAdminPwd()
+    },
+    adminFirstAccount(row) {
+      return (row.accounts && row.accounts.length) ? row.accounts[0] : {}
+    },
+    adminPwdStatusText(row) {
+      if (row.loading) return '查询中'
+      const map = { success: '已获取', empty: '无账号', timeout: '超时', fail: '失败', offline: '离线' }
+      return map[row.status] || '未知'
+    },
+    adminPwdTagType(row) {
+      if (row.loading) return 'info'
+      const map = { success: 'success', empty: 'info', timeout: 'warning', fail: 'danger', offline: 'info' }
+      return map[row.status] || 'info'
     },
     todoPending(text) {
       this.$message.info(text + '：功能开发中，后端接口接入后启用')
@@ -1345,6 +1818,42 @@ export default {
 .wifi-tag {
   margin: 0 4px 4px 0;
 }
+.wifi-tag-editable {
+  cursor: pointer;
+}
+.wifi-tag-editable:hover {
+  background-color: #ecf5ff;
+  border-color: #409eff;
+  color: #409eff;
+}
+/* ---- 列表页 WiFi 信息按频段上下显示 ---- */
+.wifi-list-band-row {
+  display: flex;
+  align-items: flex-start;
+  line-height: 22px;
+}
+.wifi-list-band-row:not(:last-child) {
+  margin-bottom: 2px;
+}
+.wifi-list-band-label {
+  flex-shrink: 0;
+  width: 36px;
+  color: #67c23a;
+  font-size: 12px;
+  font-weight: 600;
+}
+/* ---- WiFi 编辑弹窗 ---- */
+.wifi-edit-head {
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wifi-edit-path {
+  font-size: 12px;
+  color: #909399;
+  word-break: break-all;
+}
 /* ---- WAN 连接参数弹窗 ---- */
 .wan-param-card {
   margin-bottom: 10px;
@@ -1422,5 +1931,51 @@ export default {
 }
 .detail-row .v-strong {
   font-weight: 600;
+}
+/* ---- 查询超管账号密码弹窗 ---- */
+.admin-pwd-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #909399;
+}
+.admin-pwd-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #e6a23c;
+}
+/* ---- WAN 单元格内的 LAN 网口小图标：4 个口要并排一行，不换行 ---- */
+.lan-list-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+.lan-list-chip {
+  display: inline-flex;
+  flex: 0 0 30px;
+  width: 30px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 0;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #f5f7fa;
+  color: #909399;
+}
+.lan-list-chip.lan-list-up {
+  border-color: #67c23a;
+  background: #f0f9eb;
+  color: #67c23a;
+}
+.lan-list-icon {
+  width: 14px;
+  height: 14px;
+}
+.lan-list-label {
+  font-size: 9px;
+  line-height: 12px;
+  white-space: nowrap;
+  transform: scale(0.8);
 }
 </style>

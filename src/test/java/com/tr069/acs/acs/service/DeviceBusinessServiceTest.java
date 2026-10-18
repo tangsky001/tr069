@@ -83,7 +83,7 @@ class DeviceBusinessServiceTest {
                 param(root + "Services.VoiceService.1.VoiceProfile.1.SIP.1.UserName", "057188887788"),
                 param(root + "Services.VoiceService.1.VoiceProfile.1.SIP.1.RegistrarServer",
                         "sip.ctcims.cn"),
-                // 不带实例号的 SIP 对象也应归入 SIP 分区
+                // 不带实例号的 SIP 对象是汇总对象，不是真正的线路，应被过滤掉
                 param(root + "Services.VoiceService.2.VoiceProfile.1.SIP.UserName", "01012345678")
         ));
         DeviceBusinessService service = serviceWithRoot(root);
@@ -91,7 +91,7 @@ class DeviceBusinessServiceTest {
         Map<String, Object> data = service.summary("TEST");
 
         List<?> sip = (List<?>) data.get("sip");
-        assertThat(sip).hasSize(2);
+        assertThat(sip).hasSize(1);
         Map<?, ?> first = (Map<?, ?>) sip.get(0);
         assertThat(((Map<?, ?>) first.get("params")).get("UserName")).isEqualTo("057188887788");
         // TR-181 的 WLAN 在 Device.WiFi.SSID.{i} 下，前缀过滤要覆盖到
@@ -129,6 +129,68 @@ class DeviceBusinessServiceTest {
         assertThat(DeviceBusinessService.normalizeLeaf("X_CT-COM_VLANIDMark")).isEqualTo("VLANIDMark");
         assertThat(DeviceBusinessService.normalizeLeaf("VLANIDMark")).isEqualTo("VLANIDMark");
         assertThat(DeviceBusinessService.normalizeLeaf("MACAddress")).isEqualTo("MACAddress");
+    }
+
+    @Test
+    void summaryGroupsLanPortsAndMarksConnected() {
+        String root = "InternetGatewayDevice.";
+        when(parameterMapper.selectList(any())).thenReturn(List.of(
+                param(root + "LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress",
+                        "AA:BB:CC:DD:EE:01"),
+                param(root + "LANDevice.1.LANEthernetInterfaceConfig.1.X_CT-COM_UpLineStatus", "Up"),
+                param(root + "LANDevice.1.LANEthernetInterfaceConfig.2.MACAddress",
+                        "AA:BB:CC:DD:EE:02"),
+                param(root + "LANDevice.1.LANEthernetInterfaceConfig.2.Status", "Disabled")
+        ));
+        DeviceBusinessService service = serviceWithRoot(root);
+
+        Map<String, Object> data = service.summary("TEST");
+
+        List<?> lan = (List<?>) data.get("lan");
+        assertThat(lan).hasSize(2);
+        Map<?, ?> lan1 = (Map<?, ?>) lan.get(0);
+        assertThat(lan1.get("instance")).isEqualTo("1");
+        assertThat(lan1.get("connected")).isEqualTo(true);
+        assertThat(lan1.get("mac")).isEqualTo("AA:BB:CC:DD:EE:01");
+
+        Map<?, ?> lan2 = (Map<?, ?>) lan.get(1);
+        assertThat(lan2.get("instance")).isEqualTo("2");
+        assertThat(lan2.get("connected")).isEqualTo(false);
+        assertThat(lan2.get("mac")).isEqualTo("AA:BB:CC:DD:EE:02");
+    }
+
+    @Test
+    void lanStatusPathsCoversEveryPortStatusLeaves() {
+        String root = "InternetGatewayDevice.";
+        when(parameterMapper.selectList(any())).thenReturn(List.of(
+                param(root + "LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress",
+                        "AA:BB:CC:DD:EE:01"),
+                param(root + "LANDevice.1.LANEthernetInterfaceConfig.2.MACAddress",
+                        "AA:BB:CC:DD:EE:02"),
+                // 网口之外的参数不应混进刷新清单
+                param(root + "LANDevice.1.WLANConfiguration.1.SSID", "ChinaNet-abc")
+        ));
+        DeviceBusinessService service = serviceWithRoot(root);
+
+        List<String> paths = service.lanStatusPaths("TEST");
+
+        assertThat(paths).contains(
+                root + "LANDevice.1.LANEthernetInterfaceConfig.1.Status",
+                root + "LANDevice.1.LANEthernetInterfaceConfig.1.X_CT-COM-UpLineStatus",
+                root + "LANDevice.1.LANEthernetInterfaceConfig.2.Status");
+        // 2 个网口 × 9 个状态叶子
+        assertThat(paths).hasSize(18);
+        assertThat(paths).noneMatch(p -> p.contains("WLANConfiguration"));
+    }
+
+    @Test
+    void lanStatusPathsEmptyWhenNoLanParams() {
+        when(parameterMapper.selectList(any())).thenReturn(List.of(
+                param("InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID", "ChinaNet-abc")
+        ));
+        DeviceBusinessService service = serviceWithRoot("InternetGatewayDevice.");
+
+        assertThat(service.lanStatusPaths("TEST")).isEmpty();
     }
 
     @Test

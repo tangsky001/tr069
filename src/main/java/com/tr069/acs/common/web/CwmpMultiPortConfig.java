@@ -1,20 +1,14 @@
 package com.tr069.acs.common.web;
 
-import com.tr069.acs.worklist.model.DeviceProfile;
-import com.tr069.acs.worklist.registry.ProfileRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.catalina.connector.Connector;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -59,33 +53,6 @@ public class CwmpMultiPortConfig {
             } else {
                 log.info("CPE 上报监听端口：{}（主端口 {}，额外 {}）",
                         new TreeSet<>(listenedPorts(extraPorts)), serverPort, extraPorts);
-            }
-        };
-    }
-
-    /**
-     * 启动后核对光猫适配档案声明的上报端口是否都已监听，
-     * 便于现场新增一款光猫时立即发现「端口没开」。
-     */
-    @Bean
-    public ApplicationRunner cwmpPortAuditRunner(ObjectProvider<ProfileRegistry> registryProvider) {
-        return args -> {
-            ProfileRegistry registry = registryProvider.getIfAvailable();
-            if (registry == null) {
-                return;
-            }
-            Collection<DeviceProfile> profiles = registry.orderedProfiles();
-            if (profiles == null || profiles.isEmpty()) {
-                return;
-            }
-            Set<Integer> listened = listenedPorts(resolveExtraPorts());
-            for (DeviceProfile profile : profiles) {
-                Integer port = profile.getAcsPort();
-                if (port != null && !listened.contains(port)) {
-                    log.warn("光猫档案 [{}] 声明上报端口 {}，但 ACS 未监听该端口，"
-                                    + "请将其加入 acs.cwmp.listen-ports，否则该型号无法上报",
-                            profile.getKey(), port);
-                }
             }
         };
     }

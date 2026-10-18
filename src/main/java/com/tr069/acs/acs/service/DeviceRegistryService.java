@@ -5,8 +5,6 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
-import com.tr069.acs.worklist.model.DeviceProfile;
-import com.tr069.acs.worklist.service.DeviceProfileMatcher;
 import com.tr069.acs.worklist.service.ModelMappingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,7 +34,6 @@ public class DeviceRegistryService implements ApplicationRunner {
 
     private final CpeDeviceMapper cpeDeviceMapper;
     private final ModelMappingService modelMappingService;
-    private final DeviceProfileMatcher profileMatcher;
 
     private final AcsCoreLog coreLog;
 
@@ -116,19 +113,17 @@ public class DeviceRegistryService implements ApplicationRunner {
     /**
      * 新设备首次上线：按「运营商 + 型号 + 固件」登记型号档案。
      *
-     * <p>同型号同固件只在库里存在一条记录：已登记的直接复用其映射（免人工适配），
+     * <p>同型号同固件只在库里存在一条记录：已登记的直接复用其适配结果（免人工适配），
      * 没登记的建一条待适配记录，等人工在型号映射页补齐一次映射。</p>
+     *
+     * <p>运营商只认设备自己上报的：光猫适配档案已迁到 SQLite 模板库，
+     * 不再有 YAML 档案可供反推，没带就记 standard，后续可在型号档案上改。</p>
      */
     private void registerModel(CpeSession session, CpeDevice device) {
         try {
-            String isp = device.getIsp();
-            if (isp == null || isp.isBlank()) {
-                // 设备自己没带运营商时，用已配置的适配档案反推（CT / CU / CMCC）
-                isp = profileMatcher.match(session.getManufacturer(), session.getOui(),
-                                session.getProductClass(), session.getSoftwareVersion(), session.getSn())
-                        .map(DeviceProfile::getIsp)
-                        .orElse("standard");
-            }
+            String isp = (device.getIsp() == null || device.getIsp().isBlank())
+                    ? "standard"
+                    : device.getIsp().trim();
             modelMappingService.resolveOrRegister(isp, session.getManufacturer(), session.getProductClass(),
                     session.getSoftwareVersion(), session.getHardwareVersion(), session.getSn());
         } catch (Exception e) {

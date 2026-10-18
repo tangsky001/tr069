@@ -63,7 +63,7 @@ class ModelTreeStoreTest {
         Files.writeString(file, xml, StandardCharsets.UTF_8);
 
         List<ModelTreeStore.ParamNode> params =
-                new ModelTreeStore(null, null, null, null, null).readParams(file);
+                new ModelTreeStore(null, null, null, null, null, null).readParams(file);
         assertEquals(1, params.size());
         assertEquals(WAN_SIP, params.get(0).getPath());
         assertTrue(params.get(0).isWritable(), "下发前要能看出该节点可写");
@@ -102,6 +102,25 @@ class ModelTreeStoreTest {
         assertEquals(WAN_NEW + "Name",
                 ModelTreeStore.matchPath(params, WAN_NEW + "Name"),
                 "路径本身存在于型号档案时保持原样");
+    }
+
+    @Test
+    void rewritesVendorSpecificNameThroughAlias() {
+        List<ModelTreeStore.ParamNode> params = List.of(
+                node(WAN_NEW + "X_CMCC_VLANIDMark", true),
+                node(WAN_NEW + "AddressingType", true));
+
+        assertEquals(WAN_NEW + "X_CMCC_VLANIDMark",
+                ModelTreeStore.matchPath(params, WAN_NEW + "X_CMCC_VLANID"),
+                "移动定制机的 VLAN 号写在 VLANIDMark 上，模板写的通用名要能改判过去");
+
+        assertEquals(WAN_NEW + "AddressingType",
+                ModelTreeStore.matchPath(params, WAN_NEW + "IPAddressingType"),
+                "地址获取方式的厂商写法要落到这台设备上的标准名");
+
+        assertEquals(null, ModelTreeStore.matchPath(List.of(node(WAN_NEW + "Name", true)),
+                        WAN_NEW + "X_CMCC_VLANID"),
+                "树上没有 VLAN 相关节点时不该照别名硬凑一个");
     }
 
     @Test

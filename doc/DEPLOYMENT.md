@@ -39,9 +39,8 @@ javaacs/
     ├── pom.xml
     ├── sql/schema.sql                 # 全库唯一建表脚本（部署必需，已入库）
     ├── deploy/config/application.yml.example   # 外置配置模板
-    ├── configuration/                 # 工单模板与光猫适配（jar 外，热加载）
-    │   ├── operators/                 # 工单模板 {isp}/{version}/{domain}/{name}.yaml|.xml
-    │   └── profiles/                  # 光猫适配档案 *.yaml
+    ├── configuration/                 # 外部配置根目录（jar 外）
+    │   └── models/                    # 型号能力树 {isp}/{型号标识}.xml（由能力树导出生成）
     └── web/                           # 前端（vue-admin-template），构建产物 dist/ 不入库
 ```
 
@@ -225,7 +224,7 @@ WantedBy=multi-user.target
 | `acs.cwmp.extra-cpe-paths` | `/acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/` | 兼容的上报路径，现场遇到新写法在此追加 |
 | `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | 光猫连 ACS 的 digest 账号；写 `auto` 或留空即免认证，任何账号密码都放行 |
 | `acs.auth.acs-to-cpe-username/password` | `itms/itms` | ACS 反向连光猫的账号，同样支持 `auto` / 留空 |
-| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`profiles/`、`models/`），目录为空时回退到 jar 同级 `configuration/` |
+| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`models/`），目录为空时回退到 jar 同级 `configuration/` |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内同步处理，无 Redis 环境下的降级选项 |
 | `acs.biz.auto-create-table` | `true` | 业务模板表自动补建 |
 | `acs.database.fail-on-missing-table` | `false` | 表缺失时是否中止启动 |

@@ -101,11 +101,38 @@ public class BizTemplateController {
     }
 
     /**
+     * 对设备整包下发：按成员顺序串行执行，返回执行记录 id 供页面轮询进度。
+     */
+    @PostMapping("/execute")
+    public Result<BizTemplateExecution> execute(@RequestBody ExecuteRequest request) {
+        if (request == null || request.getTemplateId() == null) {
+            return Result.failure("业务模板 id 不能为空");
+        }
+        return Result.success(executionService.execute(
+                request.getTemplateId(), request.getSn(), request.getParams(), request.getUsername()));
+    }
+
+    /**
      * 仅含 id 的请求体。
      */
     @Data
     public static class IdRequest {
         private Long id;
+    }
+
+    /**
+     * 整包下发入参。
+     */
+    @Data
+    public static class ExecuteRequest {
+        /** 业务模板 id */
+        private Long templateId;
+        /** 设备序列号 */
+        private String sn;
+        /** 整包级入参覆盖，成员上配的同名参数优先 */
+        private Map<String, String> params;
+        /** 操作人 */
+        private String username;
     }
 
 }

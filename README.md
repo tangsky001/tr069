@@ -3,11 +3,13 @@
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
+- 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
 - 界面截图见 [doc/Display/](./doc/Display)（见下文「效果展示」）
 
-> 当前处于**配置下发链路重构**阶段：模板已从「文件 + 步骤编排」改为**入库的意图模板**，
-> 下发由「意图 + 型号映射」在运行时生成真实 CWMP 参数（详见第 2 节待实现）。
+> 配置下发链路重构已**基本落地**：模板从「文件 + 步骤编排」改为**入库的意图模板**，
+> 下发由「意图 + 型号映射」在运行时生成真实 CWMP 参数（`exec/IntentDeliveryService`），
+> 工单与业务模板整包下发都跑在这条链路上。剩余待办见第 2 节（批量进度、意图字段扩展、OLT 真实数据等）。
 
 ---
 
@@ -54,6 +56,19 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 
 ![设备管理 - 适配完成后](doc/Display/174419_542.png)
 
+### 设备列表与业务详情（最新）
+
+设备列表（列从左到右）：SN/备注、终端信息（厂家 / 型号 / 硬件固件版本 / PON 类型 + 光功率，表头可排序）、
+业务状态（WAN 连接 + **LAN 网口图标**、**WIFI 按 2.4G / 5.8G 上下分行**、SIP 信息、设备状态）、
+**运行信息**（运行时长 / 加入时间 / 最后汇报时间 / 汇报 IP，表头可排序）、操作：
+
+![设备列表](doc/Display/162046_560.png)
+
+设备详情业务面板：信息卡（运行时长 / 注册时间 / 最近上报 / 上报 IP）、WAN 连接、LAN 网口（插线绿色、
+未插灰色，悬停看 MAC）、WLAN 按 2.4G / 5.8G 分行、SIP 语音（只列真实线路实例）：
+
+![设备详情 - 业务面板](doc/Display/162116_423.png)
+
 ### OLT 管理（演示数据）
 
 OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据为前端模拟，
@@ -77,15 +92,16 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 设备管理 | 设备自动注册、在线状态、分页详情、在线会话明细 | `acs/service/DeviceRegistryService`、`api/controller/DeviceController` |
 | 能力树采集 | 只采集 WAN / WiFi / LAN 网口 / SIP 四类子树（代码内固定）：GetParameterNames 拉路径 + GetParameterValues 分批读值，Inform 后自动采集、BOOTSTRAP 强制重采、NextLevel 兜底 | `acs/service/DeviceCapabilityService` |
 | 参数树导出 | 按型号导出能力树到 `configuration/models/`，并可按设备定位模型文件 | `worklist/service/ModelTreeStore` |
-| 业务快照 | WAN / WLAN / SIP 采集与解读，支持单台与整页批量读 | `acs/service/DeviceBusinessService` |
+| 业务快照 | `device` / `wan` / `wifi` / `lan` / `sip` / `pon` 分区，支持单台与整页批量读；LAN 区补插线状态（`connected`）与 MAC、SIP 区只保留真实线路实例（剔除 `VoiceProfile.{n}.SIP.` 汇总对象）、台账的注册时间与最近上报时间一并返回 | `acs/service/DeviceBusinessService` |
+| **LAN 网口状态自动刷新** | 定时（默认 5 分钟）对在线设备重读网口状态叶子（`Enable/Status/X_CT-COM_*LineStatus/MAC/速率`），拔插网线后页面不必手动点「重新采集」；只刷在线设备、只读网口那几个叶子，等回值超时不判失败（指令仍在队列里） | `acs/service/LanStatusRefreshService`、`DeviceBusinessService#lanStatusPaths` |
+| **超管账号查询** | `GET /api/device/{sn}/admin-account`：对在线设备实时读 `User.{i}.Username/Password` 并明文返回；离线直接返回 `offline`；能力树没采到时按 TR-098 / TR-181 标准路径兜底；整批被拒时逐条重发，共用 30s 总预算；只认 `.User.{i}.` 下的账号，WAN 拨号账号不会被误收 | `acs/service/DeviceAccountService`、`api/controller/DeviceController` |
 | 型号语义映射 | `cpe_model` + `model_param_mapping` / `model_object_mapping`：业务字段 ↔ 型号真实 CWMP 路径，支持按 SN 推荐候选路径 | `worklist/controller/ModelMappingController`、`ModelMappingService` |
-| 光猫适配档案 | `configuration/profiles/*.yaml` 加载、匹配、WatchService 热加载 + 周期兜底扫描 | `worklist/loader`、`worklist/registry`、`WorklistConfigService` |
 | 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示 | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
 | RPC 下发（异步） | 下发返回任务号，按任务号轮询结果；超时统一收尾 | `agent/RpcDispatchService`、`queue/RpcTaskQueue`、`api/controller/RpcTaskController` |
 | 队列削峰 | 上报与下发走 Redis 队列，Redis 不可用时降级为进程内处理 | `queue/*` |
 | **配置意图模板** | 入库 `config_template`，只描述开通意图（不下发任何数据）：7 类（WAN DHCP / WAN PPPoE / WAN 静态IP / WAN 桥接 / 2.4G WiFi / 5.8G WiFi / SIP），各类自带意图字段；支持 `/meta` 字段定义、列表、详情、保存、删除 | `template/*`（`ConfigTemplateService`、`ConfigTemplateController`） |
 | 业务模板 | 多张意图模板编排成一个业务包：列表、详情、保存、删除、下发前自检 `/validate`、下发记录查询 | `biz/*`（`BizTemplateService`、`BizTemplateExecutionService`） |
-| 工单记录 | 工单与步骤记录的查询（**只读**，执行引擎已移除，等新下发链路重建） | `worklist/controller/WorklistExecuteController` |
+| **工单下发（管理端）** | `POST /api/worklist/instances` 建单即以 `worklistDesc` 做幂等键，落库后立刻转下发任务（`IntentDeliveryService`，`source=worklist`），任务结束按 `TaskFinishedEvent` 回写终态与失败原因；工单与步骤记录可查 | `worklist/service/WorklistDeliveryService`、`worklist/controller/WorklistExecuteController` |
 | 首页概览 | 在线/离线、品牌分布、模板统计（模板数改为统计意图模板） | `api/service/DashboardService` |
 | 数据模型适配 | TR-098（`InternetGatewayDevice.`）与 TR-181（`Device.`）双模型：Inform 参数多数判定根节点、业务前缀按双模型展开、型号档案与能力树 XML 记录数据模型并对账 | `acs/model/DataModel`、`InformService`、`DeviceBusinessService` |
 | **意图下发执行器** | 意图字段 + 型号语义映射 → CWMP 路径与值 → 按需 `AddObject` 再分批 `SetParameterValues`，全程写进 `device_task`；同 `taskNo` 幂等 | `exec/*`（`IntentDeliveryService`、`IntentPlanRenderer`） |
@@ -99,23 +115,28 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | --- | --- | --- |
 | 首页概览 | `/dashboard` | 已实现 |
 | 配置模板 | `/template/list` | 已实现（意图模板，按类型渲染意图字段；**高级模式/文件模板已彻底删除**） |
-| 业务模板 | `/biz/list` | 已实现（编排 + 成员视图 + 自检，整包下发等待新执行器） |
-| 设备管理 | `/device/list` | 已实现（列表/详情/业务信息/WAN 参数弹窗/在线明细 + **右下角批量工具条**） |
-| 设备详情 | `/device-detail/:sn` | 已实现（能力树、参数树、RPC 调试） |
-| 工单记录 | `/worklist/instances` | 已实现（只读记录查询） |
-| 光猫适配 | `/worklist/profiles` | 已实现（档案列表、匹配、重载） |
+| 业务模板 | `/biz/list` | 已实现（编排 + 成员视图 + 自检 + 整包串行下发，支持出错继续） |
+| 设备管理 | `/device/list` | 已实现（列表/详情/业务信息/WAN 参数弹窗/在线明细 + **右下角批量工具条** + **LAN 网口图标** + **WIFI 按 2.4G/5.8G 上下分行** + **运行信息列**（运行时长/加入时间/最后汇报时间/汇报IP，可排序）+ **查询超管密码弹窗**） |
+| 设备详情 | `/device-detail/:sn` | 已实现（能力树、参数树、RPC 调试 + 业务面板：信息卡改为运行时长/注册时间/最近上报/上报IP、LAN 网口区块、WLAN 按频段分行、SIP 只列真实线路） |
+| 工单记录 | `/worklist/instances` | 已实现（工单与步骤查询；批量建单入口在设备列表工具条「一键工单 ▲」） |
 | OLT 管理 | `/olt/management` | **界面已实现，全量为前端模拟数据** |
 
 设备列表右下角工具条（`web/src/views/device/list.vue`，需先勾选设备）：
 
 | 分组 | 已接通 | 占位（待后端） |
 | --- | --- | --- |
-| 模版关键字 + 批量下发模版 | 模板下拉已接意图模板 | 批量下发待新执行器 |
-| 一键工单 ▲ | 工单记录跳转 | 批量开通/检修工单 |
-| 更多… ▲ | 恢复出厂 / 深度恢复出厂 / 清零类 → `FactoryReset` | 超管密码、Telnet 开关、WAN 侧访问、一键 WiFi、禁用 SIP、删除 WAN 连接、解除上网限制、删除缓存、标记置换 |
+| 模版关键字 + 批量下发模版 | 模板下拉已接意图模板与业务模板；按选中模板对勾选设备逐台建单 / 建执行记录 | 整批进度看板、失败一键重试 |
+| 一键工单 ▲ | 工单记录跳转 + 批量开通 / 检修工单（逐台建单，每台独立流水号，最后汇总失败清单） | — |
+| 更多… ▲ | 恢复出厂 / 深度恢复出厂 / 清零类 → `FactoryReset`；**查询超管密码**（对勾选设备逐台实时读 `User.{i}.Username/Password`，弹窗明文展示，单台超时/离线不影响其它台） | Telnet 开关、WAN 侧访问、一键 WiFi、禁用 SIP、删除 WAN 连接、解除上网限制、删除缓存、标记置换 |
 | 高级… ▲ | 导出设备（CSV）、下发自定义 TR069 参数（弹窗 → `SetParameterValues`）、调试指令（弹窗 → 任意 RPC）、刷新状态 | Telnet 命令、去除 SSID 前缀、修复 SIP/桥接、导出/克隆配置文件、强制上报 |
 | OLT融合管理 ▲ | OLT/ONU 管理（跳转 OLT 页） | OLT 拓扑 |
 | 重启 | 批量 `Reboot`（带二次确认） | — |
+
+### 1.3 已适配光猫型号
+
+清单单独维护在 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**（只记运营商 + 厂家型号，
+适配一台加一行）。适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
+（配置项 `acs.tr069tpl.db-path`），随仓库走，拷到部署机即识别为已适配，不必重新适配。
 
 ---
 
@@ -124,15 +145,16 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | # | 事项 | 当前状态 | 说明 |
 | --- | --- | --- | --- |
 | 1 | ~~**意图模板下发执行器**（核心）~~ | **已实现** | `exec/IntentDeliveryService`：意图字段 + `model_param_mapping` / `model_object_mapping` → 渲染下发计划（`{i}` 实例号替换、只读与必填校验）→ `AddObject` + 分批 `SetParameterValues`，状态落 `device_task`。下一步是补 WiFi / SIP 之外的更多意图字段（见 #8） |
-| 2 | 批量下发模版 | 前端占位 | 依赖 #1；需补：按型号逐个设备生成、批量任务、进度与结果回写、失败重试 |
-| 3 | 业务模板整包下发 | 已删待重建 | 原文件模板整包执行入口已移除，待 #1 落地后按同样机制重建，并恢复 `biz_template_execution` 写入 |
-| 4 | 一键工单（开通 / 检修） | 前端占位 | 需要新的批量工单模型与执行记录，当前仅有历史工单查询 |
-| 5 | 设备批量运维指令后端 | 部分接通 | 见上表：超管密码、Telnet 开关与命令执行、WAN 侧访问、WiFi 开关、禁用 SIP、删除 WAN 连接、解除上网限制、SSID 前缀清理、配置文件导出/克隆、强制上报等需逐个按厂商/型号补齐参数路径（统一走型号映射，不写死路径） |
+| 2 | 批量下发模版 | **部分实现** | 业务模板整包批量下发已接通（逐台一条执行记录，汇总成功/失败清单）；配置意图模版批量下发走「批量下发模版」入口建工单。待补：整批进度看板、失败一键重试 |
+| 3 | ~~业务模板整包下发~~ | **已实现** | `POST /api/biz-template/execute`：按成员顺序串行执行，执行记录写 `biz_template_execution`；成员失败按模板 `continueOnError` 决定停下还是继续，继续跑完且有失败记 `partial` |
+| 4 | ~~一键工单（开通 / 检修）~~ | **已实现** | 设备列表勾选后按台建单，每台一个独立流水号（`worklistDesc` 幂等），单台失败记录但继续其余设备，最后汇总失败清单 |
+| 5 | 设备批量运维指令后端 | 部分接通（**超管密码已接通**） | Telnet 开关与命令执行、WAN 侧访问、WiFi 开关、禁用 SIP、删除 WAN 连接、解除上网限制、SSID 前缀清理、配置文件导出/克隆、强制上报等需逐个按厂商/型号补齐参数路径（统一走型号映射，不写死路径）。超管账号查询已可用，但依赖设备在线且该型号把 `User.{i}.Username/Password` 暴露给 TR-069 |
 | 6 | OLT 融合管理真实数据 | 模拟数据 | `web/src/views/olt/management.vue` 全为前端 mock；需接 SNMP/Telnet 采集：OLT 资源、板卡、槽位、PON 口（Tx/Rx 光功率、MAC、VLAN、ONU 数），数据替换集中在页面顶部 `resources` / `olt` 两个对象 |
 | 7 | 存量数据迁移 | 未开始 | 存量 `biz_template_item.template_key` 仍是旧文件 key，`BizTemplateService.parseId` 会判定为“配置模板不存在”，需迁移脚本改为 `config_template.id` |
 | 8 | 意图字段扩展 | 进行中 | 现 WAN 类仅 IP 协议 / VLAN 使用与否 / 是否绑定端口；待补 WAN IP 获取方式、PPPoE 账号、SIP 服务器/账号、WiFi SSID/密码等意图（VLAN ID、具体端口仍不落库，由下发时决定） |
-| 9 | 旧机制彻底清理 | 基本完成 | 旧文件模板 / 向导编译 / 工单执行引擎已删；`worklist` 包中仅保留档案、型号映射、能力树导出与工单查询，收尾时可再审视命名 |
+| 9 | 旧机制彻底清理 | 基本完成 | 旧文件模板 / 向导编译 / 旧工单编排引擎已删，工单改走 `IntentDeliveryService`；`worklist` 包中保留档案、型号映射、能力树导出与工单建单/查询，收尾时可再审视命名 |
 | 10 | 其它 | 未开始 | 下发操作审计日志细化、权限角色细化、设备告警（光功率劣化、离线批量提醒）、离线判定阈值按设备实际周期上报间隔（`PeriodicInformInterval`）动态计算（当前固定 120 秒，周期不是 60 秒的型号需手调）等 |
+| 11 | 界面展示收尾 | 未开始 | ① 设备列表 LAN 网口超过 4 个时的折叠（`+N`）或横向滚动，当前会横向溢出；② 业务**采集**阶段跳过未启用的 SSID（现在只是展示层过滤，采集仍全量读）；③ 详情页未启用 SSID 的视觉区分，当前只靠状态列文案「已禁用」；④ 运行信息列的排序只作用于当前页（后端分页排序暂未打通） |
 
 ---
 
@@ -161,6 +183,7 @@ javaacs/
 ├── API.md                    接口文档（管理端 /api 与北向 /openapi/v1）
 ├── doc/
 │   ├── DEPLOYMENT.md         部署文档
+│   ├── ADAPTED_MODELS.md     已适配光猫型号清单（运营商 + 厂家型号）
 │   └── Display/              界面截图（见「效果展示」）
 ├── pom.xml                   后端（Maven）
 ├── sql/schema.sql            全库唯一建表脚本（所有表）
@@ -177,11 +200,11 @@ javaacs/
 
 ```
 configuration/
-├── profiles/    光猫适配档案 *.yaml（改文件热加载生效）
 └── models/      型号能力树 {isp}/{型号标识}.xml（由能力树导出生成）
 ```
 
-> 旧版的 `operators/` 工单模板目录已废弃，模板改为入库。
+> 旧版的 `operators/` 工单模板目录已废弃，模板改为入库；
+> 光猫适配档案也迁到了 SQLite 模板库（`acs.tr069tpl.db-path`），不再放 YAML 档案。
 
 ## 6. 后端包结构
 
@@ -195,7 +218,7 @@ configuration/
 | `agent` | RPC 下发与结果回填调度（异步任务号） |
 | `template` | **配置意图模板**：实体、Mapper、Service、Controller（意图字段定义集中在 `ConfigTemplateService#FIELD_DEFS`） |
 | `biz` | 业务模板：编排实体、成员视图、执行记录、下发前自检 |
-| `worklist` | 光猫档案（`loader`/`registry`/`model`）、型号语义映射（`ModelMappingService`）、能力树导出（`ModelTreeStore`）、工单记录查询（`controller/WorklistExecuteController`） |
+| `worklist` | 光猫档案（`loader`/`registry`/`model`）、型号语义映射（`ModelMappingService`）、能力树导出（`ModelTreeStore`）、机型适配（`ModelAdaptationService`）、工单建单与查询（`WorklistDeliveryService`、`controller/WorklistExecuteController`） |
 | `api` | 管理端接口：设备、能力、业务、RPC 任务、统计、登录及其 Service |
 | `exec` | **意图下发执行器**：下发计划渲染（`IntentPlanRenderer`）、执行与任务表（`IntentDeliveryService`、`DeviceTask`）、任务结束事件 |
 | `openapi` | **北向接口**：端口与路径隔离（`config`）、查询/下发/事件订阅三个 Controller、Webhook 推送与事件投递、设备上下线侦测（`watch`） |
@@ -215,7 +238,7 @@ web/src/
 │   ├── biz/        业务模板 template.vue
 │   ├── olt/        OLT/ONU 管理 management.vue（模拟数据）
 │   └── login/ 404.vue
-├── components/     DeviceBusinessPanel、DeviceIdentityCell 等
+├── components/     DeviceBusinessPanel（业务面板）、DeviceIdentityCell（终端信息列）、DeviceRuntimeCell（运行信息列）等
 └── router/         菜单与路由
 ```
 
@@ -257,8 +280,13 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.auth.cpe-to-acs-username/password` | `auto` | 光猫连 ACS 的账号；`auto`/留空即免认证，上线前改回真实账号 |
 | `acs.capability.enabled` / `collect-on-inform` | `true` | 能力树采集总开关与 Inform 后自动采集 |
 | `acs.config-template.auto-create-table` | `true` | 启动时补建 `config_template` |
-| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`profiles/`、`models/`），改文件热加载；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
+| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`models/`）；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内处理 |
+| `acs.device.account.read-timeout-seconds` | `30` | 查询设备本地账号（超管密码）时等设备回值的最长时间（秒） |
+| `acs.device.lan.auto-refresh.enabled` | `true` | LAN 网口状态定时自动刷新总开关 |
+| `acs.device.lan.auto-refresh.interval-millis` | `300000` | 自动刷新间隔（毫秒），默认 5 分钟 |
+| `acs.device.lan.auto-refresh.wait-seconds` | `120` | 单轮等待设备回值的上限（秒），超时不判失败 |
+| `acs.device.lan.auto-refresh.max-devices-per-round` | `200` | 单轮最多刷新多少台 |
 | `acs.agent.rpc-timeout` | `510` | 单条 RPC 等待设备回应的超时（秒） |
 | `acs.exec.request-timeout-seconds` | `90` | 下发等待设备回应的超时（秒） |
 | `acs.openapi.port` | `8899` | 北向独立端口，置 0 则挂到管理端口下 |

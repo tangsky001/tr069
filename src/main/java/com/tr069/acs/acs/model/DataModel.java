@@ -34,6 +34,7 @@ public enum DataModel {
                     "device", List.of("DeviceInfo."),
                     "wan", List.of("WANDevice.", "WAN."),
                     "wifi", List.of("LANDevice.", "LAN.", "WiFi."),
+                    "lan", List.of("LANDevice.", "Ethernet.Interface."),
                     "sip", List.of("Services.VoiceService.", "VoiceService."));
 
     private final String root;

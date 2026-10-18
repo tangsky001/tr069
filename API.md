@@ -127,6 +127,7 @@
 | GET | `/{sn}` | 详情：`{device, session}`，`session` 含 `online`/`state`/`lastContactTime`/`pendingCount`（设备离线时没有 `session` 字段） |
 | GET | `/{sn}/status` | 在线状态：`{sn, online, state}` |
 | GET | `/online` | 全部在线会话明细列表 |
+| GET | `/{sn}/admin-account` | 实时查询设备本地账号（超管）：`{accounts:[{instance, path, username, password}], status}`；`status` 为 `success` / `empty` / `timeout` / `fail` / `offline`。设备需在线，且型号需把 `User.{i}.Username/Password` 暴露给 TR-069 |
 | GET | `/business/batch?sns=` | 批量业务概要，`sns` 逗号分隔，单次上限 200 台；单台解析失败不影响其余。返回 `{sn: {...}}` |
 | POST | `/{sn}/rpc/{rpcName}` | 手动下发 RPC，见 §4.4 |
 
@@ -155,7 +156,7 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `` | 汇总：`{sn, rootNode, dataModel, lastCollectTime, device, wan, wifi, sip, pon}` |
+| GET | `` | 汇总：`{sn, rootNode, dataModel, lastCollectTime, registerTime, lastContactTime, device, wan, wifi, lan, sip, pon, ip}` |
 | POST | `/collect` | 向在线设备读一遍业务参数后回库解析 |
 
 关键字段：
@@ -163,8 +164,10 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 - `rootNode` / `dataModel`：`InternetGatewayDevice.`(TR-098) 或 `Device.`(TR-181)。
   业务前缀由 `DataModel.businessPrefixes` 同时覆盖两种模型，**即便台账里的根节点是脏值也能查出数据**；
   排查「某些型号业务分区一片空白」时先看这两个字段。
-- `wan` / `wifi` / `sip`：按实例对象分组，TR-098 识别 `WANPPPConnection|WANIPConnection`、
-  `WLANConfiguration`，TR-181 额外识别 `WiFi.SSID.n`。
+- `wan` / `wifi` / `lan` / `sip`：按实例对象分组。`lan` 额外带 `connected`（是否插线）、`instance`（网口号）、`mac`；
+  `sip` 只保留真实线路实例（`VoiceProfile.{n}.SIP.{i}.` / `Line.{i}.SIP.`），汇总对象 `VoiceProfile.{n}.SIP.` 会被剔除
+  ——只存在汇总对象时才会保留它，避免误删数据。
+- `registerTime` / `lastContactTime`：设备台账的注册时间与最近上报时间（来自 `cpe_device`），不依赖能力树采集。
 - `pon`：PON / 光模块参数（路径含 `PON` 的能力快照），不挂在业务实例下，单独成区。
 - `collectStatus`（仅 `/collect` 返回）：`success` / `timeout`（设备未在时限内回应，返回已刷到的部分）/
   `fail` / `empty`（能力树为空，需先做能力树采集）。
@@ -212,10 +215,13 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 | POST | `/save` | 新增或更新 |
 | POST | `/delete` | 删除，body `{id}` |
 | GET | `/{id}/validate` | 下发前自检：`{pass, issues:[...]}` |
+| POST | `/execute` | 对设备整包下发：按成员顺序串行执行，返回执行记录（含 `id` 供轮询） |
 | GET | `/executions` | 执行记录列表，可按 `sn`、`templateId`、`limit` 过滤 |
 | GET | `/executions/{id}` | 单条执行记录 |
 
-> 整包下发的执行入口已随旧工单引擎移除，待 §5 的新执行器补齐后按同样机制重建。
+执行记录状态：`running → success / partial / fail`。整包按成员顺序串行推进，前一个结束才发下一个；
+成员失败时按模板的 `continueOnError` 决定是停下还是继续，继续跑完且有失败即 `partial`。
+`result` 是每个成员的明细（序号、模板、业务类型、结果、错误原因）。
 
 ### 4.7 型号语义映射
 
@@ -238,33 +244,23 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 `cpe_model.root_node` 与设备 `cpe_device.root_node` 的数据模型**——不一致直接拒绝下发，
 避免把 TR-098 的路径写进 TR-181 设备（设备只会回 9005）。
 
-### 4.8 光猫适配档案
+### 4.8 工单（建单 + 查询）
 
-基础路径 `/api/worklist`（配置侧）。
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| POST | `/reload` | 重载外部配置目录，返回 `ReloadReport` |
-| POST | `/samples` | 解包内置样例档案，返回写入数量 |
-| GET | `/status` | 外部配置根目录、档案数、模型数等状态 |
-| GET | `/profiles` | 档案列表 |
-| GET | `/profiles/{key}` | 单个档案详情 |
-| GET | `/profiles/match` | 按 `manufacturer`、`oui`、`productClass` 匹配档案 |
-
-### 4.9 工单记录（只读）
-
-基础路径 `/api/worklist`（执行侧）。执行引擎已移除，仅保留历史查询。
+基础路径 `/api/worklist`。建单即转下发任务，执行由 `IntentDeliveryService` 异步推进。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| POST | `/instances` | 建单：body `{sn, category, worklistDesc, values, templateId?}`；以 `worklistDesc` 做幂等键，重复提交只受理一次 |
 | GET | `/instances` | 分页：`sn`、`status`、`page`、`size` |
 | GET | `/instances/{id}` | 单条工单 |
 | GET | `/instances/device/{sn}` | 某设备的工单列表 |
 | GET | `/instances/{id}/steps` | 工单步骤记录 |
 
+建单后立刻转下发任务（`source=worklist`），任务结束按结果回写工单终态与失败原因（`remark`）。
+
 工单状态：`build → bind → reserve → standby → running → success / fail / abnormal → expire`。
 
-### 4.10 首页概览
+### 4.9 首页概览
 
 `GET /api/dashboard/overview`
 
@@ -491,7 +487,8 @@ X-ACS-Signature: 8Z3k...（Base64）
 **鉴权**：`POST /api/user/login`、`GET /api/user/info`、`POST /api/user/logout`
 
 **设备**：`GET /api/device/page`、`GET /api/device/{sn}`、`GET /api/device/{sn}/status`、
-`GET /api/device/online`、`GET /api/device/business/batch`、`POST /api/device/{sn}/rpc/{rpcName}`
+`GET /api/device/online`、`GET /api/device/{sn}/admin-account`、`GET /api/device/business/batch`、
+`POST /api/device/{sn}/rpc/{rpcName}`
 
 **能力树**：`GET|POST /api/device/{sn}/capability[/collect]`、`GET /params`、`GET /tree`、
 `GET /param`、`POST /export-tree`、`GET /model-file`、`GET /biz-params`
@@ -510,9 +507,7 @@ X-ACS-Signature: 8Z3k...（Base64）
 `GET /api/models/{id}`、`POST /api/models/{id}/update`、`POST /api/models/{id}/mappings`、
 `GET /api/models/candidates`
 
-**档案与工单**：`POST /api/worklist/reload`、`POST /api/worklist/samples`、`GET /api/worklist/status`、
-`GET /api/worklist/profiles`、`GET /api/worklist/profiles/{key}`、`GET /api/worklist/profiles/match`、
-`GET /api/worklist/instances`、`GET /api/worklist/instances/{id}`、
+**工单**：`POST /api/worklist/instances`、`GET /api/worklist/instances`、`GET /api/worklist/instances/{id}`、
 `GET /api/worklist/instances/device/{sn}`、`GET /api/worklist/instances/{id}/steps`
 
 **概览**：`GET /api/dashboard/overview`

@@ -4,13 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.domain.entity.CpeModel;
 import com.tr069.acs.domain.entity.CpeParameter;
-import com.tr069.acs.domain.entity.ModelObjectMapping;
-import com.tr069.acs.domain.entity.ModelParamMapping;
+
 import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.mapper.CpeModelMapper;
 import com.tr069.acs.mapper.CpeParameterMapper;
-import com.tr069.acs.mapper.ModelObjectMappingMapper;
-import com.tr069.acs.mapper.ModelParamMappingMapper;
+
 import com.tr069.acs.worklist.model.SemanticSchema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,8 +36,7 @@ public class ModelMappingService {
     private static final int CANDIDATE_LIMIT = 500;
 
     private final CpeModelMapper modelMapper;
-    private final ModelParamMappingMapper paramMappingMapper;
-    private final ModelObjectMappingMapper objectMappingMapper;
+
     private final CpeParameterMapper parameterMapper;
     private final CpeDeviceMapper deviceMapper;
 
@@ -62,28 +59,19 @@ public class ModelMappingService {
     }
 
     /**
-     * 型号详情：档案 + 参数映射 + 对象映射 + 该型号在网设备数 + 未映射的必填字段。
+     * 型号详情：档案 + 该型号在网设备数。
+     *
+     * <p>参数/对象映射已随适配结果迁到 SQLite 适配库，不再由 MySQL 维护，
+     * 这里不再回带映射列表——适配结果以 SQLite 为准。</p>
      */
     public Map<String, Object> detail(Long id) {
         CpeModel model = modelMapper.selectById(id);
         if (model == null) {
             return null;
         }
-        List<ModelParamMapping> params = paramMappingMapper.selectList(
-                new LambdaQueryWrapper<ModelParamMapping>()
-                        .eq(ModelParamMapping::getModelId, id)
-                        .orderByAsc(ModelParamMapping::getBizObject)
-                        .orderByAsc(ModelParamMapping::getId));
-        List<ModelObjectMapping> objects = objectMappingMapper.selectList(
-                new LambdaQueryWrapper<ModelObjectMapping>()
-                        .eq(ModelObjectMapping::getModelId, id)
-                        .orderByAsc(ModelObjectMapping::getId));
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("model", model);
-        data.put("paramMappings", params);
-        data.put("objectMappings", objects);
         data.put("deviceCount", countDevices(model));
-        data.put("missingRequiredFields", missingRequiredFields(params));
         return data;
     }
 
@@ -150,54 +138,10 @@ public class ModelMappingService {
     }
 
     /**
-     * 批量保存映射：参数映射与对象映射整组替换，保存后按必填字段是否齐备更新型号状态。
-     *
-     * @return 保存后的型号
+     * 语义映射已整体迁到 SQLite 适配库：型号采集适配后由
+     * {@code ModelTemplateService} 生成「业务字段 → 参数路径」的适配结果，
+     * 不再由人工在 MySQL 里逐条登记，因此这里不再提供保存入口。
      */
-    @Transactional(rollbackFor = Exception.class)
-    public CpeModel saveMappings(Long id, List<ModelParamMapping> params, List<ModelObjectMapping> objects) {
-        CpeModel model = modelMapper.selectById(id);
-        if (model == null) {
-            throw new IllegalArgumentException("型号不存在: " + id);
-        }
-        paramMappingMapper.delete(new LambdaQueryWrapper<ModelParamMapping>()
-                .eq(ModelParamMapping::getModelId, id));
-        objectMappingMapper.delete(new LambdaQueryWrapper<ModelObjectMapping>()
-                .eq(ModelObjectMapping::getModelId, id));
-
-        List<ModelParamMapping> saved = new ArrayList<>();
-        if (params != null) {
-            for (ModelParamMapping item : params) {
-                if (item == null || item.getBizObject() == null || item.getBizField() == null
-                        || item.getCwmpPath() == null || item.getCwmpPath().isBlank()) {
-                    continue;
-                }
-                item.setId(null);
-                item.setModelId(id);
-                paramMappingMapper.insert(item);
-                saved.add(item);
-            }
-        }
-        if (objects != null) {
-            for (ModelObjectMapping item : objects) {
-                if (item == null || item.getBizObject() == null || item.getObjectName() == null
-                        || item.getObjectName().isBlank()) {
-                    continue;
-                }
-                item.setId(null);
-                item.setModelId(id);
-                if (item.getInstanceMode() == null || item.getInstanceMode().isBlank()) {
-                    item.setInstanceMode(ModelObjectMapping.MODE_ADD);
-                }
-                objectMappingMapper.insert(item);
-            }
-        }
-        // 必填字段齐备即视为可自动下发
-        boolean ready = missingRequiredFields(saved).isEmpty();
-        model.setStatus(ready ? CpeModel.STATUS_READY : CpeModel.STATUS_PENDING);
-        modelMapper.updateById(model);
-        return model;
-    }
 
     // ==================== 设备上线登记 ====================
 
@@ -314,24 +258,9 @@ public class ModelMappingService {
     // ==================== 内部方法 ====================
 
     /**
-     * 必填但未映射的字段，形如 {@code Internet_WAN.vlan_id}。
+     * 必填字段是否齐备，改由 SQLite 适配结果判断：型号有没有生成出对应业务的模板。
+     * 这里不再按 MySQL 映射逐条比对。
      */
-    private List<String> missingRequiredFields(List<ModelParamMapping> params) {
-        List<String> missing = new ArrayList<>();
-        for (SemanticSchema.BizObject object : SemanticSchema.OBJECTS) {
-            for (SemanticSchema.BizField field : object.fields()) {
-                if (!field.required()) {
-                    continue;
-                }
-                boolean hit = params.stream().anyMatch(p ->
-                        object.code().equals(p.getBizObject()) && field.code().equals(p.getBizField()));
-                if (!hit) {
-                    missing.add(object.code() + "." + field.code());
-                }
-            }
-        }
-        return missing;
-    }
 
     private List<String> hintsOf(String bizObject) {
         SemanticSchema.BizObject object = SemanticSchema.objectOf(bizObject);

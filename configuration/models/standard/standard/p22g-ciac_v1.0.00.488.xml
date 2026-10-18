@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ModelTree sn="CIOT29AC1489" isp="standard" modelKey="P22g-CIac_V1.0.00.488" productClass="P22g-CIac" softwareVersion="V1.0.00.488" manufacturer="CIOT" objectCount="327" paramCount="1662" exportTime="2026-10-16 14:42:08">
+<ModelTree sn="CIOT29AC1489" isp="standard" modelKey="P22g-CIac_V1.0.00.488" productClass="P22g-CIac" softwareVersion="V1.0.00.488" manufacturer="CIOT" objectCount="374" paramCount="1938" exportTime="2026-10-18 15:26:18">
   <Object name="InternetGatewayDevice" path="InternetGatewayDevice.">
     <Object name="LANDevice" path="InternetGatewayDevice.LANDevice.">
       <Object name="1" path="InternetGatewayDevice.LANDevice.1.">
@@ -12,46 +12,18 @@
         </Object>
         <Object name="Hosts" path="InternetGatewayDevice.LANDevice.1.Hosts.">
           <Object name="Host" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.">
-            <Object name="12" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.">
-              <Param name="Active" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.Active" writable="false" type="boolean" value="TRUE"/>
-              <Param name="AddressSource" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.AddressSource" writable="false" type="string" value="Static"/>
-              <Param name="HostName" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.HostName" writable="false" type="string" value="anonymous"/>
-              <Param name="InterfaceType" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.InterfaceType" writable="false" type="string" value="Ethernet"/>
-              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.IPAddress" writable="false" type="string" value="192.168.110.179"/>
-              <Param name="Layer2Interface" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.Layer2Interface" writable="false" type="string" value="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4"/>
-              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.LeaseTimeRemaining" writable="false" type="int" value="0"/>
-              <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.MACAddress" writable="false" type="string" value="DE:B0:1B:BC:74:18"/>
-              <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.X_CMCC_Stats.">
-                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="146427"/>
-                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.12.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="1860140"/>
-              </Object>
-            </Object>
-            <Object name="16" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.">
-              <Param name="Active" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.Active" writable="false" type="boolean" value="TRUE"/>
-              <Param name="AddressSource" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.AddressSource" writable="false" type="string" value="Static"/>
-              <Param name="HostName" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.HostName" writable="false" type="string" value="anonymous"/>
-              <Param name="InterfaceType" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.InterfaceType" writable="false" type="string" value="Ethernet"/>
-              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.IPAddress" writable="false" type="string" value="192.168.110.185"/>
-              <Param name="Layer2Interface" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.Layer2Interface" writable="false" type="string" value="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4"/>
-              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.LeaseTimeRemaining" writable="false" type="int" value="0"/>
-              <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.MACAddress" writable="false" type="string" value="92:DB:6D:FD:73:81"/>
-              <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.X_CMCC_Stats.">
-                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="146427"/>
-                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.16.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="1860140"/>
-              </Object>
-            </Object>
-            <Object name="17" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.">
-              <Param name="Active" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.Active" writable="false" type="boolean" value="TRUE"/>
-              <Param name="AddressSource" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.AddressSource" writable="false" type="string" value="Static"/>
-              <Param name="HostName" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.HostName" writable="false" type="string" value="anonymous"/>
-              <Param name="InterfaceType" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.InterfaceType" writable="false" type="string" value="Ethernet"/>
-              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.IPAddress" writable="false" type="string" value="192.168.110.54"/>
-              <Param name="Layer2Interface" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.Layer2Interface" writable="false" type="string" value="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4"/>
-              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.LeaseTimeRemaining" writable="false" type="int" value="0"/>
-              <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.MACAddress" writable="false" type="string" value="B4:86:55:8A:AB:44"/>
-              <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.X_CMCC_Stats.">
-                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="146427"/>
-                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.17.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="1860140"/>
+            <Object name="1" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.">
+              <Param name="Active" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.Active" writable="false" type="boolean" value="TRUE"/>
+              <Param name="AddressSource" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.AddressSource" writable="false" type="string" value="Static"/>
+              <Param name="HostName" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.HostName" writable="false" type="string" value="CH-202609061535"/>
+              <Param name="InterfaceType" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.InterfaceType" writable="false" type="string" value="Ethernet"/>
+              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.IPAddress" writable="false" type="string" value="192.168.110.115"/>
+              <Param name="Layer2Interface" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.Layer2Interface" writable="false" type="string" value="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4"/>
+              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.LeaseTimeRemaining" writable="false" type="int" value="0"/>
+              <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.MACAddress" writable="false" type="string" value="A8:A1:59:42:EF:4C"/>
+              <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.X_CMCC_Stats.">
+                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="32816780"/>
+                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.1.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="10043359"/>
               </Object>
             </Object>
             <Object name="2" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.">
@@ -59,27 +31,41 @@
               <Param name="AddressSource" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.AddressSource" writable="false" type="string" value="DHCP"/>
               <Param name="HostName" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.HostName" writable="false" type="string" value="anonymous"/>
               <Param name="InterfaceType" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.InterfaceType" writable="false" type="string" value="Ethernet"/>
-              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.IPAddress" writable="false" type="string" value="192.168.1.2"/>
+              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.IPAddress" writable="false" type="string" value="192.168.1.4"/>
               <Param name="Layer2Interface" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.Layer2Interface" writable="false" type="string" value="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4"/>
-              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.LeaseTimeRemaining" writable="false" type="int" value="85839"/>
+              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.LeaseTimeRemaining" writable="false" type="int" value="85533"/>
               <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.MACAddress" writable="false" type="string" value="58:B4:BB:3C:D6:87"/>
               <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.X_CMCC_Stats.">
-                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="146427"/>
-                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="1860140"/>
+                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="32816780"/>
+                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.2.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="10043359"/>
               </Object>
             </Object>
-            <Object name="5" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.">
-              <Param name="Active" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.Active" writable="false" type="boolean" value="TRUE"/>
-              <Param name="AddressSource" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.AddressSource" writable="false" type="string" value="Static"/>
-              <Param name="HostName" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.HostName" writable="false" type="string" value="anonymous"/>
-              <Param name="InterfaceType" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.InterfaceType" writable="false" type="string" value="Ethernet"/>
-              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.IPAddress" writable="false" type="string" value="192.168.110.236"/>
-              <Param name="Layer2Interface" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.Layer2Interface" writable="false" type="string" value="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4"/>
-              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.LeaseTimeRemaining" writable="false" type="int" value="0"/>
-              <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.MACAddress" writable="false" type="string" value="E2:F3:A3:25:CA:05"/>
-              <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.X_CMCC_Stats.">
-                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="146427"/>
-                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.5.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="1860140"/>
+            <Object name="3" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.">
+              <Param name="Active" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.Active" writable="false" type="boolean" value="TRUE"/>
+              <Param name="AddressSource" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.AddressSource" writable="false" type="string" value="Static"/>
+              <Param name="HostName" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.HostName" writable="false" type="string" value="PC-20221219BEMG"/>
+              <Param name="InterfaceType" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.InterfaceType" writable="false" type="string" value="Ethernet"/>
+              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.IPAddress" writable="false" type="string" value="192.168.110.207"/>
+              <Param name="Layer2Interface" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.Layer2Interface" writable="false" type="string" value="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4"/>
+              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.LeaseTimeRemaining" writable="false" type="int" value="0"/>
+              <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.MACAddress" writable="false" type="string" value="00:D8:61:74:C0:0E"/>
+              <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.X_CMCC_Stats.">
+                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="32816780"/>
+                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.3.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="10043359"/>
+              </Object>
+            </Object>
+            <Object name="4" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.">
+              <Param name="Active" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.Active" writable="false" type="boolean" value="TRUE"/>
+              <Param name="AddressSource" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.AddressSource" writable="false" type="string" value="Static"/>
+              <Param name="HostName" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.HostName" writable="false" type="string" value="anonymous"/>
+              <Param name="InterfaceType" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.InterfaceType" writable="false" type="string" value="Ethernet"/>
+              <Param name="IPAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.IPAddress" writable="false" type="string" value="192.168.110.191"/>
+              <Param name="Layer2Interface" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.Layer2Interface" writable="false" type="string" value="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4"/>
+              <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.LeaseTimeRemaining" writable="false" type="int" value="0"/>
+              <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.MACAddress" writable="false" type="string" value="74:56:3C:B0:0A:A6"/>
+              <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.X_CMCC_Stats.">
+                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="32817296"/>
+                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.4.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="10044161"/>
               </Object>
             </Object>
             <Object name="7" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.7.">
@@ -92,12 +78,12 @@
               <Param name="LeaseTimeRemaining" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.7.LeaseTimeRemaining" writable="false" type="int" value="0"/>
               <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.7.MACAddress" writable="false" type="string" value="26:52:75:DA:45:43"/>
               <Object name="X_CMCC_Stats" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.7.X_CMCC_Stats.">
-                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.7.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="146427"/>
-                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.7.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="1860140"/>
+                <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.7.X_CMCC_Stats.BytesReceived" writable="false" type="unsignedInt" value="32817296"/>
+                <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.Hosts.Host.7.X_CMCC_Stats.BytesSent" writable="false" type="unsignedInt" value="10044161"/>
               </Object>
             </Object>
           </Object>
-          <Param name="HostNumberOfEntries" path="InternetGatewayDevice.LANDevice.1.Hosts.HostNumberOfEntries" writable="false" type="unsignedInt" value="6"/>
+          <Param name="HostNumberOfEntries" path="InternetGatewayDevice.LANDevice.1.Hosts.HostNumberOfEntries" writable="false" type="unsignedInt" value="5"/>
         </Object>
         <Object name="LANEthernetInterfaceConfig" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.">
           <Object name="1" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.">
@@ -106,10 +92,10 @@
             <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress" writable="false" type="string" value="B4:E4:6B:AC:14:89"/>
             <Param name="MaxBitRate" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate" writable="true" type="string" value="1000"/>
             <Object name="Stats" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.">
-              <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.BytesReceived" writable="false" type="unsignedInt" value="2338936"/>
-              <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.BytesSent" writable="false" type="unsignedInt" value="1515217"/>
-              <Param name="PacketsReceived" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.PacketsReceived" writable="false" type="unsignedInt" value="7604"/>
-              <Param name="PacketsSent" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.PacketsSent" writable="false" type="unsignedInt" value="2814"/>
+              <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.BytesReceived" writable="false" type="unsignedInt" value="16149634"/>
+              <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.BytesSent" writable="false" type="unsignedInt" value="14536175"/>
+              <Param name="PacketsReceived" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.PacketsReceived" writable="false" type="unsignedInt" value="48801"/>
+              <Param name="PacketsSent" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Stats.PacketsSent" writable="false" type="unsignedInt" value="27085"/>
             </Object>
             <Param name="Status" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status" writable="false" type="string" value="Up"/>
             <Param name="X_CMCC_DetectionStatus" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.X_CMCC_DetectionStatus" writable="false" type="unsignedInt" value="0"/>
@@ -148,10 +134,10 @@
             <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.MACAddress" writable="false" type="string" value="B4:E4:6B:AC:14:89"/>
             <Param name="MaxBitRate" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.MaxBitRate" writable="true" type="string" value="1000"/>
             <Object name="Stats" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.">
-              <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.BytesReceived" writable="false" type="unsignedInt" value="1847040"/>
-              <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.BytesSent" writable="false" type="unsignedInt" value="146235"/>
-              <Param name="PacketsReceived" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.PacketsReceived" writable="false" type="unsignedInt" value="5290"/>
-              <Param name="PacketsSent" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.PacketsSent" writable="false" type="unsignedInt" value="1236"/>
+              <Param name="BytesReceived" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.BytesReceived" writable="false" type="unsignedInt" value="10039892"/>
+              <Param name="BytesSent" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.BytesSent" writable="false" type="unsignedInt" value="32810037"/>
+              <Param name="PacketsReceived" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.PacketsReceived" writable="false" type="unsignedInt" value="40867"/>
+              <Param name="PacketsSent" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Stats.PacketsSent" writable="false" type="unsignedInt" value="36226"/>
             </Object>
             <Param name="Status" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status" writable="false" type="string" value="Up"/>
             <Param name="X_CMCC_DetectionStatus" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.X_CMCC_DetectionStatus" writable="false" type="unsignedInt" value="0"/>
@@ -189,26 +175,26 @@
             <Param name="BSSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.BSSID" writable="false" type="string" value="B4:E4:6B:AC:14:8F"/>
             <Param name="Channel" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Channel" writable="true" type="unsignedInt" value="0"/>
             <Param name="ChannelsInAvailability" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.ChannelsInAvailability" writable="false" type="unsignedInt" value="0"/>
-            <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.ChannelsInUse" writable="false" type="string" value="4"/>
+            <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.ChannelsInUse" writable="false" type="string" value="10"/>
             <Param name="Enable" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Enable" writable="true" type="boolean" value="TRUE"/>
             <Param name="IEEE11iAuthenticationMode" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.IEEE11iAuthenticationMode" writable="true" type="string" value="PSKAuthentication"/>
-            <Param name="IEEE11iEncryptionModes" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.IEEE11iEncryptionModes" writable="true" type="string" value="TKIPandAESEncryption"/>
+            <Param name="IEEE11iEncryptionModes" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.IEEE11iEncryptionModes" writable="true" type="string" value="AESEncryption"/>
             <Param name="Name" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Name" writable="false" type="string" value="ssid1"/>
             <Object name="PreSharedKey" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.">
               <Object name="1" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.">
-                <Param name="KeyPassphrase" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase" writable="true" type="string" value="59ur3a16"/>
-                <Param name="PreSharedKey" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey" writable="true" type="string" value="59ur3a16"/>
+                <Param name="KeyPassphrase" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase" writable="true" type="string" value="88888888"/>
+                <Param name="PreSharedKey" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey" writable="true" type="string" value="88888888"/>
               </Object>
             </Object>
-            <Param name="SSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID" writable="true" type="string" value="CMCC-M6rq"/>
+            <Param name="SSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID" writable="true" type="string" value="8088"/>
             <Param name="SSIDAdvertisementEnabled" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSIDAdvertisementEnabled" writable="true" type="boolean" value="TRUE"/>
             <Param name="Standard" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Standard" writable="true" type="string" value="bgn"/>
             <Param name="Status" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Status" writable="false" type="string" value="Up"/>
             <Param name="TotalAssociations" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations" writable="true" type="unsignedInt" value="0"/>
-            <Param name="TotalBytesReceived" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalBytesReceived" writable="false" type="unsignedInt" value="0"/>
-            <Param name="TotalBytesSent" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalBytesSent" writable="false" type="unsignedInt" value="0"/>
-            <Param name="TotalPacketsReceived" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalPacketsReceived" writable="false" type="unsignedInt" value="0"/>
-            <Param name="TotalPacketsSent" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalPacketsSent" writable="false" type="unsignedInt" value="0"/>
+            <Param name="TotalBytesReceived" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalBytesReceived" writable="false" type="unsignedInt" value="982"/>
+            <Param name="TotalBytesSent" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalBytesSent" writable="false" type="unsignedInt" value="792"/>
+            <Param name="TotalPacketsReceived" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalPacketsReceived" writable="false" type="unsignedInt" value="30"/>
+            <Param name="TotalPacketsSent" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalPacketsSent" writable="false" type="unsignedInt" value="8"/>
             <Param name="TransmitPower" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TransmitPower" writable="true" type="unsignedInt" value="100"/>
             <Param name="WEPEncryptionLevel" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.WEPEncryptionLevel" writable="true" type="string" value="40-bit"/>
             <Object name="WEPKey" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.WEPKey.">
@@ -252,7 +238,7 @@
             <Param name="BSSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.BSSID" writable="false" type="string" value="B6:E4:6B:9C:14:8F"/>
             <Param name="Channel" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Channel" writable="true" type="unsignedInt" value="0"/>
             <Param name="ChannelsInAvailability" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.ChannelsInAvailability" writable="false" type="unsignedInt" value="0"/>
-            <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.ChannelsInUse" writable="false" type="string" value="4"/>
+            <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.ChannelsInUse" writable="false" type="string" value="10"/>
             <Param name="Enable" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Enable" writable="true" type="boolean" value="FALSE"/>
             <Param name="IEEE11iAuthenticationMode" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.IEEE11iAuthenticationMode" writable="true" type="string" value="PSKAuthentication"/>
             <Param name="IEEE11iEncryptionModes" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.IEEE11iEncryptionModes" writable="true" type="string" value="TKIPandAESEncryption"/>
@@ -315,7 +301,7 @@
             <Param name="BSSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.BSSID" writable="false" type="string" value="B6:E4:6B:AC:14:8F"/>
             <Param name="Channel" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.Channel" writable="true" type="unsignedInt" value="0"/>
             <Param name="ChannelsInAvailability" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.ChannelsInAvailability" writable="false" type="unsignedInt" value="0"/>
-            <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.ChannelsInUse" writable="false" type="string" value="4"/>
+            <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.ChannelsInUse" writable="false" type="string" value="10"/>
             <Param name="Enable" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.Enable" writable="true" type="boolean" value="FALSE"/>
             <Param name="IEEE11iAuthenticationMode" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.IEEE11iAuthenticationMode" writable="true" type="string" value="PSKAuthentication"/>
             <Param name="IEEE11iEncryptionModes" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.IEEE11iEncryptionModes" writable="true" type="string" value="TKIPandAESEncryption"/>
@@ -378,7 +364,7 @@
             <Param name="BSSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.BSSID" writable="false" type="string" value="B6:E4:6B:BC:14:8F"/>
             <Param name="Channel" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.Channel" writable="true" type="unsignedInt" value="0"/>
             <Param name="ChannelsInAvailability" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.ChannelsInAvailability" writable="false" type="unsignedInt" value="0"/>
-            <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.ChannelsInUse" writable="false" type="string" value="4"/>
+            <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.ChannelsInUse" writable="false" type="string" value="10"/>
             <Param name="Enable" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.Enable" writable="true" type="boolean" value="FALSE"/>
             <Param name="IEEE11iAuthenticationMode" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.IEEE11iAuthenticationMode" writable="true" type="string" value="PSKAuthentication"/>
             <Param name="IEEE11iEncryptionModes" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.IEEE11iEncryptionModes" writable="true" type="string" value="TKIPandAESEncryption"/>
@@ -444,15 +430,15 @@
             <Param name="ChannelsInUse" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.ChannelsInUse" writable="false" type="string" value="64"/>
             <Param name="Enable" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.Enable" writable="true" type="boolean" value="TRUE"/>
             <Param name="IEEE11iAuthenticationMode" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.IEEE11iAuthenticationMode" writable="true" type="string" value="PSKAuthentication"/>
-            <Param name="IEEE11iEncryptionModes" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.IEEE11iEncryptionModes" writable="true" type="string" value="TKIPandAESEncryption"/>
+            <Param name="IEEE11iEncryptionModes" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.IEEE11iEncryptionModes" writable="true" type="string" value="AESEncryption"/>
             <Param name="Name" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.Name" writable="false" type="string" value="ssid5"/>
             <Object name="PreSharedKey" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.">
               <Object name="1" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.">
-                <Param name="KeyPassphrase" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.KeyPassphrase" writable="true" type="string" value="59ur3a16"/>
-                <Param name="PreSharedKey" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey" writable="true" type="string" value="59ur3a16"/>
+                <Param name="KeyPassphrase" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.KeyPassphrase" writable="true" type="string" value="88888888"/>
+                <Param name="PreSharedKey" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey" writable="true" type="string" value="88888888"/>
               </Object>
             </Object>
-            <Param name="SSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID" writable="true" type="string" value="CMCC-M6rq-5G"/>
+            <Param name="SSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID" writable="true" type="string" value="8088_5G"/>
             <Param name="SSIDAdvertisementEnabled" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSIDAdvertisementEnabled" writable="true" type="boolean" value="TRUE"/>
             <Param name="Standard" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.Standard" writable="true" type="string" value="ac"/>
             <Param name="Status" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.Status" writable="false" type="string" value="Up"/>
@@ -703,25 +689,21 @@
           <Param name="ValidLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_DHCPv6Server.ValidLifeTime" writable="true" type="unsignedInt" value="0"/>
         </Object>
         <Object name="X_CMCC_HostCustomise" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.">
-          <Object name="12" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.12.">
-            <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.12.MACAddress" writable="true" type="string" value="DE:B0:1B:BC:74:18"/>
-            <Param name="Name" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.12.Name" writable="true" type="string" value="anonymous"/>
-          </Object>
-          <Object name="16" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.16.">
-            <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.16.MACAddress" writable="true" type="string" value="92:DB:6D:FD:73:81"/>
-            <Param name="Name" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.16.Name" writable="true" type="string" value="anonymous"/>
-          </Object>
-          <Object name="17" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.17.">
-            <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.17.MACAddress" writable="true" type="string" value="B4:86:55:8A:AB:44"/>
-            <Param name="Name" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.17.Name" writable="true" type="string" value="anonymous"/>
+          <Object name="1" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.1.">
+            <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.1.MACAddress" writable="true" type="string" value="A8:A1:59:42:EF:4C"/>
+            <Param name="Name" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.1.Name" writable="true" type="string" value="CH-202609061535"/>
           </Object>
           <Object name="2" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.2.">
             <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.2.MACAddress" writable="true" type="string" value="58:B4:BB:3C:D6:87"/>
             <Param name="Name" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.2.Name" writable="true" type="string" value="anonymous"/>
           </Object>
-          <Object name="5" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.5.">
-            <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.5.MACAddress" writable="true" type="string" value="E2:F3:A3:25:CA:05"/>
-            <Param name="Name" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.5.Name" writable="true" type="string" value="anonymous"/>
+          <Object name="3" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.3.">
+            <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.3.MACAddress" writable="true" type="string" value="00:D8:61:74:C0:0E"/>
+            <Param name="Name" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.3.Name" writable="true" type="string" value="PC-20221219BEMG"/>
+          </Object>
+          <Object name="4" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.4.">
+            <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.4.MACAddress" writable="true" type="string" value="74:56:3C:B0:0A:A6"/>
+            <Param name="Name" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.4.Name" writable="true" type="string" value="anonymous"/>
           </Object>
           <Object name="7" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.7.">
             <Param name="MACAddress" path="InternetGatewayDevice.LANDevice.1.X_CMCC_HostCustomise.7.MACAddress" writable="true" type="string" value="26:52:75:DA:45:43"/>
@@ -734,6 +716,34 @@
           <Param name="IPv6DNSServers" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.IPv6DNSServers" writable="true" type="string" value="fe80::1"/>
           <Param name="IPv6DNSWANConnection" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.IPv6DNSWANConnection" writable="true" type="string" value=""/>
           <Object name="PrefixInformation" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.">
+            <Object name="4" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.4.">
+              <Param name="DelegatedWanConnection" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.4.DelegatedWanConnection" writable="true" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5."/>
+              <Param name="Mode" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.4.Mode" writable="true" type="string" value="WANDelegated"/>
+              <Param name="PreferredLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.4.PreferredLifeTime" writable="true" type="unsignedInt" value="4294967295"/>
+              <Param name="Prefix" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.4.Prefix" writable="true" type="string" value="::"/>
+              <Param name="ValidLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.4.ValidLifeTime" writable="true" type="unsignedInt" value="4294967295"/>
+            </Object>
+            <Object name="5" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.5.">
+              <Param name="DelegatedWanConnection" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.5.DelegatedWanConnection" writable="true" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6."/>
+              <Param name="Mode" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.5.Mode" writable="true" type="string" value="WANDelegated"/>
+              <Param name="PreferredLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.5.PreferredLifeTime" writable="true" type="unsignedInt" value="4294967295"/>
+              <Param name="Prefix" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.5.Prefix" writable="true" type="string" value="::"/>
+              <Param name="ValidLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.5.ValidLifeTime" writable="true" type="unsignedInt" value="4294967295"/>
+            </Object>
+            <Object name="8" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.8.">
+              <Param name="DelegatedWanConnection" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.8.DelegatedWanConnection" writable="true" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9."/>
+              <Param name="Mode" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.8.Mode" writable="true" type="string" value="WANDelegated"/>
+              <Param name="PreferredLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.8.PreferredLifeTime" writable="true" type="unsignedInt" value="4294967295"/>
+              <Param name="Prefix" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.8.Prefix" writable="true" type="string" value="::"/>
+              <Param name="ValidLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.8.ValidLifeTime" writable="true" type="unsignedInt" value="4294967295"/>
+            </Object>
+            <Object name="9" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.9.">
+              <Param name="DelegatedWanConnection" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.9.DelegatedWanConnection" writable="true" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10."/>
+              <Param name="Mode" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.9.Mode" writable="true" type="string" value="WANDelegated"/>
+              <Param name="PreferredLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.9.PreferredLifeTime" writable="true" type="unsignedInt" value="4294967295"/>
+              <Param name="Prefix" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.9.Prefix" writable="true" type="string" value="::"/>
+              <Param name="ValidLifeTime" path="InternetGatewayDevice.LANDevice.1.X_CMCC_IPv6Config.PrefixInformation.9.ValidLifeTime" writable="true" type="unsignedInt" value="4294967295"/>
+            </Object>
           </Object>
         </Object>
         <Object name="X_CMCC_LoopbackDetection" path="InternetGatewayDevice.LANDevice.1.X_CMCC_LoopbackDetection.">
@@ -1501,9 +1511,9 @@
                   </Object>
                   <Param name="Enable" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.Enable" writable="true" type="string" value="Enabled"/>
                   <Object name="SIP" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.SIP.">
-                    <Param name="AuthPassword" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.SIP.AuthPassword" writable="true" type="string" value=""/>
-                    <Param name="AuthUserName" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.SIP.AuthUserName" writable="true" type="string" value=""/>
-                    <Param name="URI" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.SIP.URI" writable="true" type="string" value=""/>
+                    <Param name="AuthPassword" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.SIP.AuthPassword" writable="true" type="string" value="12345678"/>
+                    <Param name="AuthUserName" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.SIP.AuthUserName" writable="true" type="string" value="8088"/>
+                    <Param name="URI" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.SIP.URI" writable="true" type="string" value="8088@192.168.100.1"/>
                   </Object>
                   <Object name="Stats" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.Stats.">
                     <Param name="BytesReceived" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.Stats.BytesReceived" writable="false" type="int" value="0"/>
@@ -1523,7 +1533,7 @@
                     <Param name="ResetStatistics" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.Stats.ResetStatistics" writable="true" type="boolean" value="FALSE"/>
                     <Param name="TotalCallTime" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.Stats.TotalCallTime" writable="false" type="int" value="0"/>
                   </Object>
-                  <Param name="Status" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.Status" writable="false" type="string" value="Disabled"/>
+                  <Param name="Status" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.Status" writable="false" type="string" value="Error"/>
                   <Object name="VoiceProcessing" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.VoiceProcessing.">
                     <Param name="EchoCancellationEnable" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.VoiceProcessing.EchoCancellationEnable" writable="true" type="boolean" value="TRUE"/>
                     <Param name="EchoCancellationInUse" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.VoiceProcessing.EchoCancellationInUse" writable="false" type="boolean" value="TRUE"/>
@@ -1544,9 +1554,9 @@
                     <Param name="no-dialing-behaviour" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.X_CMCC_IMS.no-dialing-behaviour" writable="false" type="unsignedInt" value="0"/>
                     <Param name="three-party-service" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.X_CMCC_IMS.three-party-service" writable="false" type="unsignedInt" value="0"/>
                   </Object>
-                  <Param name="X_CMCC_LastRegisterError" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.X_CMCC_LastRegisterError" writable="false" type="unsignedInt" value="0"/>
+                  <Param name="X_CMCC_LastRegisterError" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.X_CMCC_LastRegisterError" writable="false" type="unsignedInt" value="2"/>
                   <Object name="X_CMCC_LastRegisterError" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.X_CMCC_LastRegisterError.">
-                    <Param name="Reason" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.X_CMCC_LastRegisterError.Reason" writable="false" type="string" value="0"/>
+                    <Param name="Reason" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.X_CMCC_LastRegisterError.Reason" writable="false" type="string" value="2"/>
                   </Object>
                 </Object>
                 <Object name="2" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.2.">
@@ -1840,12 +1850,12 @@
                 <Param name="ImplicitRegistrationEnable" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.ImplicitRegistrationEnable" writable="true" type="boolean" value="FALSE"/>
                 <Param name="OutboundProxy" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.OutboundProxy" writable="true" type="string" value="0.0.0.0"/>
                 <Param name="OutboundProxyPort" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.OutboundProxyPort" writable="true" type="unsignedInt" value="5060"/>
-                <Param name="ProxyServer" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.ProxyServer" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="ProxyServer" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.ProxyServer" writable="true" type="string" value="192.168.100.1"/>
                 <Param name="ProxyServerPort" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.ProxyServerPort" writable="true" type="unsignedInt" value="5060"/>
                 <Param name="ProxyServerTransport" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.ProxyServerTransport" writable="true" type="string" value="UDP"/>
                 <Param name="RegisterExpires" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.RegisterExpires" writable="true" type="unsignedInt" value="3600"/>
                 <Param name="RegisterRetryInterval" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.RegisterRetryInterval" writable="true" type="unsignedInt" value="30"/>
-                <Param name="RegistrarServer" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.RegistrarServer" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="RegistrarServer" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.RegistrarServer" writable="true" type="string" value="192.168.100.1"/>
                 <Param name="RegistrarServerPort" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.RegistrarServerPort" writable="true" type="unsignedInt" value="5060"/>
                 <Param name="RegistrarServerTransport" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.RegistrarServerTransport" writable="true" type="string" value="UDP"/>
                 <Param name="UserAgentDomain" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.UserAgentDomain" writable="true" type="string" value="0.0.0.0"/>
@@ -1938,11 +1948,19 @@
             </Object>
             <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.2.">
               <Param name="ActiveConnectionDeviceContainer" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.2.ActiveConnectionDeviceContainer" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1"/>
-              <Param name="ActiveConnectionServiceID" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.2.ActiveConnectionServiceID" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2"/>
+              <Param name="ActiveConnectionServiceID" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.2.ActiveConnectionServiceID" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5"/>
             </Object>
             <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.3.">
               <Param name="ActiveConnectionDeviceContainer" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.3.ActiveConnectionDeviceContainer" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1"/>
-              <Param name="ActiveConnectionServiceID" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.3.ActiveConnectionServiceID" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3"/>
+              <Param name="ActiveConnectionServiceID" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.3.ActiveConnectionServiceID" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6"/>
+            </Object>
+            <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.4.">
+              <Param name="ActiveConnectionDeviceContainer" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.4.ActiveConnectionDeviceContainer" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1"/>
+              <Param name="ActiveConnectionServiceID" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.4.ActiveConnectionServiceID" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9"/>
+            </Object>
+            <Object name="5" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.5.">
+              <Param name="ActiveConnectionDeviceContainer" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.5.ActiveConnectionDeviceContainer" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1"/>
+              <Param name="ActiveConnectionServiceID" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.Connection.5.ActiveConnectionServiceID" writable="false" type="string" value="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10"/>
             </Object>
           </Object>
           <Param name="EnabledForInternet" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.EnabledForInternet" writable="true" type="boolean" value="TRUE"/>
@@ -1951,10 +1969,10 @@
           <Param name="MaximumActiveConnections" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.MaximumActiveConnections" writable="false" type="unsignedInt" value="0"/>
           <Param name="NumberOfActiveConnections" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.NumberOfActiveConnections" writable="false" type="unsignedInt" value="0"/>
           <Param name="PhysicalLinkStatus" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.PhysicalLinkStatus" writable="false" type="string" value="Up"/>
-          <Param name="TotalBytesReceived" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.TotalBytesReceived" writable="false" type="unsignedInt" value="1123600"/>
-          <Param name="TotalBytesSent" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.TotalBytesSent" writable="false" type="unsignedInt" value="1423254"/>
-          <Param name="TotalPacketsReceived" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.TotalPacketsReceived" writable="false" type="unsignedInt" value="5039"/>
-          <Param name="TotalPacketsSent" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.TotalPacketsSent" writable="false" type="unsignedInt" value="2715"/>
+          <Param name="TotalBytesReceived" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.TotalBytesReceived" writable="false" type="unsignedInt" value="7352056"/>
+          <Param name="TotalBytesSent" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.TotalBytesSent" writable="false" type="unsignedInt" value="14228833"/>
+          <Param name="TotalPacketsReceived" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.TotalPacketsReceived" writable="false" type="unsignedInt" value="29392"/>
+          <Param name="TotalPacketsSent" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.TotalPacketsSent" writable="false" type="unsignedInt" value="26899"/>
           <Param name="WANAccessType" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.WANAccessType" writable="false" type="string" value="GPON"/>
         </Object>
         <Object name="WANConnectionDevice" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.">
@@ -1977,7 +1995,7 @@
                 <Object name="PortMapping" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.PortMapping.">
                 </Object>
                 <Param name="SubnetMask" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.SubnetMask" writable="true" type="string" value="255.255.255.0"/>
-                <Param name="Uptime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.Uptime" writable="false" type="unsignedInt" value="2358"/>
+                <Param name="Uptime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.Uptime" writable="false" type="unsignedInt" value="17865"/>
                 <Param name="X_CMCC_802-1pMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.X_CMCC_802-1pMark" writable="true" type="int" value="0"/>
                 <Param name="X_CMCC_Aftr" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.X_CMCC_Aftr" writable="true" type="string" value=""/>
                 <Param name="X_CMCC_AftrMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.X_CMCC_AftrMode" writable="true" type="int" value="0"/>
@@ -2072,232 +2090,584 @@
                 <Param name="X_CMCC_VLANIDMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.X_CMCC_VLANIDMark" writable="true" type="int" value="0"/>
                 <Param name="X_CMCC_VLANMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.X_CMCC_VLANMode" writable="true" type="int" value="0"/>
               </Object>
-              <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.">
-                <Param name="AddressingType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.AddressingType" writable="true" type="string" value="DHCP"/>
-                <Param name="ConnectionStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.ConnectionStatus" writable="false" type="string" value="Connecting"/>
-                <Param name="ConnectionType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.ConnectionType" writable="true" type="string" value="IP_Routed"/>
-                <Param name="DefaultGateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.DefaultGateway" writable="true" type="string" value="0.0.0.0"/>
-                <Param name="DNSEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.DNSEnabled" writable="true" type="boolean" value="TRUE"/>
-                <Param name="DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.DNSServers" writable="true" type="string" value=""/>
-                <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.Enable" writable="true" type="boolean" value="TRUE"/>
-                <Param name="ExternalIPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.ExternalIPAddress" writable="true" type="string" value="0.0.0.0"/>
-                <Param name="LastConnectionError" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.LastConnectionError" writable="false" type="string" value="ERROR_NONE"/>
-                <Param name="MACAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.MACAddress" writable="true" type="string" value="B4:E4:6B:AC:14:8A"/>
-                <Param name="MaxMTUSize" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.MaxMTUSize" writable="true" type="unsignedInt" value="1500"/>
-                <Param name="Name" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.Name" writable="true" type="string" value="2_VOIP_R_VID_41"/>
-                <Param name="NATEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.NATEnabled" writable="true" type="boolean" value="FALSE"/>
-                <Object name="PortMapping" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.PortMapping.">
+              <Object name="10" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.">
+                <Param name="AddressingType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.AddressingType" writable="true" type="string" value="DHCP"/>
+                <Param name="ConnectionStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.ConnectionStatus" writable="false" type="string" value="Connecting"/>
+                <Param name="ConnectionType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.ConnectionType" writable="true" type="string" value="IP_Routed"/>
+                <Param name="DefaultGateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.DefaultGateway" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="DNSEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.DNSEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Param name="DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.DNSServers" writable="true" type="string" value=""/>
+                <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.Enable" writable="true" type="boolean" value="TRUE"/>
+                <Param name="ExternalIPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.ExternalIPAddress" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="LastConnectionError" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.LastConnectionError" writable="false" type="string" value="ERROR_NONE"/>
+                <Param name="MACAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.MACAddress" writable="true" type="string" value="B4:E4:6B:AC:14:8D"/>
+                <Param name="MaxMTUSize" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.MaxMTUSize" writable="true" type="unsignedInt" value="1500"/>
+                <Param name="Name" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.Name" writable="true" type="string" value="10_INTERNET_R_VID_200"/>
+                <Param name="NATEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.NATEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Object name="PortMapping" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.PortMapping.">
                 </Object>
-                <Param name="SubnetMask" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.SubnetMask" writable="true" type="string" value="0.0.0.0"/>
-                <Param name="Uptime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.Uptime" writable="false" type="unsignedInt" value="0"/>
-                <Param name="X_CMCC_802-1pMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_802-1pMark" writable="true" type="int" value="0"/>
-                <Param name="X_CMCC_Aftr" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_Aftr" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_AftrMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_AftrMode" writable="true" type="int" value="0"/>
-                <Object name="X_CMCC_DDNSConfiguration" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DDNSConfiguration.">
+                <Param name="SubnetMask" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.SubnetMask" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="Uptime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.Uptime" writable="false" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_802-1pMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_802-1pMark" writable="true" type="int" value="0"/>
+                <Param name="X_CMCC_Aftr" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_Aftr" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_AftrMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_AftrMode" writable="true" type="int" value="0"/>
+                <Object name="X_CMCC_DDNSConfiguration" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DDNSConfiguration.">
                 </Object>
-                <Param name="X_CMCC_DefaultIPv6Gateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DefaultIPv6Gateway" writable="true" type="string" value="::"/>
-                <Object name="X_CMCC_DHCPOPTION125" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.">
-                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.1.">
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.1.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.1.Sub-option-data" writable="true" type="string" value=""/>
-                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.1.Subopt-code" writable="true" type="unsignedInt" value="0"/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.1.Type" writable="true" type="unsignedInt" value="2"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.1.Value" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_DefaultIPv6Gateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DefaultIPv6Gateway" writable="true" type="string" value="::"/>
+                <Object name="X_CMCC_DHCPOPTION125" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.1.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.1.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.1.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.1.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.1.Value" writable="true" type="string" value=""/>
                   </Object>
-                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.2.">
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.2.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.2.Sub-option-data" writable="true" type="string" value=""/>
-                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.2.Subopt-code" writable="true" type="unsignedInt" value="0"/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.2.Type" writable="true" type="unsignedInt" value="2"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.2.Value" writable="true" type="string" value=""/>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.2.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.2.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.2.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.2.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.2.Value" writable="true" type="string" value=""/>
                   </Object>
-                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.3.">
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.3.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.3.Sub-option-data" writable="true" type="string" value=""/>
-                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.3.Subopt-code" writable="true" type="unsignedInt" value="0"/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.3.Type" writable="true" type="unsignedInt" value="2"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.3.Value" writable="true" type="string" value=""/>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.3.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.3.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.3.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.3.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.3.Value" writable="true" type="string" value=""/>
                   </Object>
-                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.4.">
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.4.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.4.Sub-option-data" writable="true" type="string" value=""/>
-                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.4.Subopt-code" writable="true" type="unsignedInt" value="0"/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.4.Type" writable="true" type="unsignedInt" value="2"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION125.4.Value" writable="true" type="string" value=""/>
-                  </Object>
-                </Object>
-                <Object name="X_CMCC_DHCPOPTION16" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION16.">
-                </Object>
-                <Object name="X_CMCC_DHCPOPTION60" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.">
-                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.1.">
-                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.1.Account" writable="true" type="string" value=""/>
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.1.Enable" writable="true" type="boolean" value="TRUE"/>
-                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.1.Password" writable="true" type="string" value=""/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.1.Type" writable="true" type="unsignedInt" value="34"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.1.Value" writable="true" type="string" value="admin/admin"/>
-                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
-                  </Object>
-                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.2.">
-                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.2.Account" writable="true" type="string" value=""/>
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.2.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.2.Password" writable="true" type="string" value=""/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.2.Type" writable="true" type="unsignedInt" value="31"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.2.Value" writable="true" type="string" value="0"/>
-                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
-                  </Object>
-                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.3.">
-                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.3.Account" writable="true" type="string" value=""/>
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.3.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.3.Password" writable="true" type="string" value=""/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.3.Type" writable="true" type="unsignedInt" value="32"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.3.Value" writable="true" type="string" value="0"/>
-                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
-                  </Object>
-                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.4.">
-                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.4.Account" writable="true" type="string" value=""/>
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.4.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.4.Password" writable="true" type="string" value=""/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.4.Type" writable="true" type="unsignedInt" value="34"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.4.Value" writable="true" type="string" value="0"/>
-                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_DHCPOPTION60.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.4.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.4.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.4.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.4.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION125.4.Value" writable="true" type="string" value=""/>
                   </Object>
                 </Object>
-                <Param name="X_CMCC_Dslite_Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_Dslite_Enable" writable="true" type="boolean" value="FALSE"/>
-                <Param name="X_CMCC_IPMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPMode" writable="true" type="int" value="1"/>
-                <Param name="X_CMCC_IPv6ConnStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6ConnStatus" writable="false" type="string" value="Unconfigured"/>
-                <Param name="X_CMCC_IPv6DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6DNSServers" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_IPv6DomainName" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6DomainName" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_IPv6IPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6IPAddress" writable="true" type="string" value="::"/>
-                <Param name="X_CMCC_IPv6IPAddressAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6IPAddressAlias" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_IPv6IPAddressOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6IPAddressOrigin" writable="true" type="string" value="None"/>
-                <Param name="X_CMCC_IPv6Prefix" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6Prefix" writable="true" type="string" value="::"/>
-                <Param name="X_CMCC_IPv6PrefixAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6PrefixAlias" writable="false" type="string" value=""/>
-                <Param name="X_CMCC_IPv6PrefixDelegationEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6PrefixDelegationEnabled" writable="true" type="boolean" value="FALSE"/>
-                <Param name="X_CMCC_IPv6PrefixOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6PrefixOrigin" writable="true" type="string" value="None"/>
-                <Param name="X_CMCC_IPv6PrefixPltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6PrefixPltime" writable="true" type="unsignedInt" value="0"/>
-                <Param name="X_CMCC_IPv6PrefixVltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_IPv6PrefixVltime" writable="true" type="unsignedInt" value="0"/>
-                <Param name="X_CMCC_LanInterface" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_LanInterface" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_LanInterface-DHCPEnable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_LanInterface-DHCPEnable" writable="true" type="boolean" value="FALSE"/>
-                <Param name="X_CMCC_MulticastVlan" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_MulticastVlan" writable="true" type="int" value="-1"/>
-                <Param name="X_CMCC_NPTv6Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_NPTv6Enable" writable="true" type="boolean" value="FALSE"/>
-                <Param name="X_CMCC_ServiceList" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_ServiceList" writable="true" type="string" value="VOIP"/>
-                <Param name="X_CMCC_VLANIDMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_VLANIDMark" writable="true" type="int" value="41"/>
-                <Param name="X_CMCC_VLANMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.2.X_CMCC_VLANMode" writable="true" type="int" value="2"/>
+                <Object name="X_CMCC_DHCPOPTION16" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.1.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.1.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.1.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.1.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.1.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.2.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.2.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.2.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.2.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.2.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.3.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.3.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.3.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.3.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.3.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.4.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.4.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.4.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.4.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.4.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION16.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                </Object>
+                <Object name="X_CMCC_DHCPOPTION60" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.1.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.1.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.1.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.1.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.1.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.2.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.2.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.2.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.2.Type" writable="true" type="unsignedInt" value="31"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.2.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.3.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.3.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.3.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.3.Type" writable="true" type="unsignedInt" value="32"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.3.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.4.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.4.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.4.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.4.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.4.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_DHCPOPTION60.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                </Object>
+                <Param name="X_CMCC_Dslite_Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_Dslite_Enable" writable="true" type="boolean" value="FALSE"/>
+                <Param name="X_CMCC_IPMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPMode" writable="true" type="int" value="3"/>
+                <Param name="X_CMCC_IPv6ConnStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6ConnStatus" writable="false" type="string" value="Connecting"/>
+                <Param name="X_CMCC_IPv6DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6DNSServers" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6DomainName" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6DomainName" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6IPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6IPAddress" writable="true" type="string" value="::"/>
+                <Param name="X_CMCC_IPv6IPAddressAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6IPAddressAlias" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6IPAddressOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6IPAddressOrigin" writable="true" type="string" value="AutoAdaptive"/>
+                <Param name="X_CMCC_IPv6Prefix" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6Prefix" writable="true" type="string" value="::"/>
+                <Param name="X_CMCC_IPv6PrefixAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6PrefixAlias" writable="false" type="string" value=""/>
+                <Param name="X_CMCC_IPv6PrefixDelegationEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6PrefixDelegationEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Param name="X_CMCC_IPv6PrefixOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6PrefixOrigin" writable="true" type="string" value="PrefixDelegation"/>
+                <Param name="X_CMCC_IPv6PrefixPltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6PrefixPltime" writable="true" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_IPv6PrefixVltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_IPv6PrefixVltime" writable="true" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_LanInterface" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_LanInterface" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_LanInterface-DHCPEnable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_LanInterface-DHCPEnable" writable="true" type="boolean" value="TRUE"/>
+                <Param name="X_CMCC_MulticastVlan" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_MulticastVlan" writable="true" type="int" value="-1"/>
+                <Param name="X_CMCC_NPTv6Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_NPTv6Enable" writable="true" type="boolean" value="FALSE"/>
+                <Param name="X_CMCC_ServiceList" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_ServiceList" writable="true" type="string" value="INTERNET"/>
+                <Param name="X_CMCC_VLANIDMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_VLANIDMark" writable="true" type="int" value="200"/>
+                <Param name="X_CMCC_VLANMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.10.X_CMCC_VLANMode" writable="true" type="int" value="2"/>
               </Object>
-              <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.">
-                <Param name="AddressingType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.AddressingType" writable="true" type="string" value="DHCP"/>
-                <Param name="ConnectionStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.ConnectionStatus" writable="false" type="string" value="Connecting"/>
-                <Param name="ConnectionType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.ConnectionType" writable="true" type="string" value="IP_Routed"/>
-                <Param name="DefaultGateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.DefaultGateway" writable="true" type="string" value="0.0.0.0"/>
-                <Param name="DNSEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.DNSEnabled" writable="true" type="boolean" value="TRUE"/>
-                <Param name="DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.DNSServers" writable="true" type="string" value=""/>
-                <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.Enable" writable="true" type="boolean" value="TRUE"/>
-                <Param name="ExternalIPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.ExternalIPAddress" writable="true" type="string" value="0.0.0.0"/>
-                <Param name="LastConnectionError" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.LastConnectionError" writable="false" type="string" value="ERROR_NONE"/>
-                <Param name="MACAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.MACAddress" writable="true" type="string" value="B4:E4:6B:AC:14:8B"/>
-                <Param name="MaxMTUSize" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.MaxMTUSize" writable="true" type="unsignedInt" value="1500"/>
-                <Param name="Name" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.Name" writable="true" type="string" value="3_INTERNET_R_VID_45"/>
-                <Param name="NATEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.NATEnabled" writable="true" type="boolean" value="TRUE"/>
-                <Object name="PortMapping" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.PortMapping.">
+              <Object name="5" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.">
+                <Param name="AddressingType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.AddressingType" writable="true" type="string" value="DHCP"/>
+                <Param name="ConnectionStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.ConnectionStatus" writable="false" type="string" value="Connecting"/>
+                <Param name="ConnectionType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.ConnectionType" writable="true" type="string" value="IP_Routed"/>
+                <Param name="DefaultGateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.DefaultGateway" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="DNSEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.DNSEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Param name="DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.DNSServers" writable="true" type="string" value=""/>
+                <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.Enable" writable="true" type="boolean" value="TRUE"/>
+                <Param name="ExternalIPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.ExternalIPAddress" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="LastConnectionError" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.LastConnectionError" writable="false" type="string" value="ERROR_NONE"/>
+                <Param name="MACAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.MACAddress" writable="true" type="string" value="B4:E4:6B:AC:14:8B"/>
+                <Param name="MaxMTUSize" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.MaxMTUSize" writable="true" type="unsignedInt" value="1500"/>
+                <Param name="Name" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.Name" writable="true" type="string" value="5_INTERNET_R_VID_41"/>
+                <Param name="NATEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.NATEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Object name="PortMapping" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.PortMapping.">
                 </Object>
-                <Param name="SubnetMask" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.SubnetMask" writable="true" type="string" value="0.0.0.0"/>
-                <Param name="Uptime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.Uptime" writable="false" type="unsignedInt" value="0"/>
-                <Param name="X_CMCC_802-1pMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_802-1pMark" writable="true" type="int" value="0"/>
-                <Param name="X_CMCC_Aftr" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_Aftr" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_AftrMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_AftrMode" writable="true" type="int" value="0"/>
-                <Object name="X_CMCC_DDNSConfiguration" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DDNSConfiguration.">
+                <Param name="SubnetMask" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.SubnetMask" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="Uptime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.Uptime" writable="false" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_802-1pMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_802-1pMark" writable="true" type="int" value="0"/>
+                <Param name="X_CMCC_Aftr" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_Aftr" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_AftrMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_AftrMode" writable="true" type="int" value="0"/>
+                <Object name="X_CMCC_DDNSConfiguration" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DDNSConfiguration.">
                 </Object>
-                <Param name="X_CMCC_DefaultIPv6Gateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DefaultIPv6Gateway" writable="true" type="string" value="::"/>
-                <Object name="X_CMCC_DHCPOPTION125" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.">
-                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.1.">
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.1.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.1.Sub-option-data" writable="true" type="string" value=""/>
-                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.1.Subopt-code" writable="true" type="unsignedInt" value="0"/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.1.Type" writable="true" type="unsignedInt" value="2"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.1.Value" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_DefaultIPv6Gateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DefaultIPv6Gateway" writable="true" type="string" value="::"/>
+                <Object name="X_CMCC_DHCPOPTION125" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.1.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.1.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.1.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.1.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.1.Value" writable="true" type="string" value=""/>
                   </Object>
-                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.2.">
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.2.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.2.Sub-option-data" writable="true" type="string" value=""/>
-                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.2.Subopt-code" writable="true" type="unsignedInt" value="0"/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.2.Type" writable="true" type="unsignedInt" value="2"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.2.Value" writable="true" type="string" value=""/>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.2.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.2.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.2.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.2.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.2.Value" writable="true" type="string" value=""/>
                   </Object>
-                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.3.">
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.3.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.3.Sub-option-data" writable="true" type="string" value=""/>
-                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.3.Subopt-code" writable="true" type="unsignedInt" value="0"/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.3.Type" writable="true" type="unsignedInt" value="2"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.3.Value" writable="true" type="string" value=""/>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.3.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.3.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.3.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.3.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.3.Value" writable="true" type="string" value=""/>
                   </Object>
-                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.4.">
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.4.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.4.Sub-option-data" writable="true" type="string" value=""/>
-                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.4.Subopt-code" writable="true" type="unsignedInt" value="0"/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.4.Type" writable="true" type="unsignedInt" value="2"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION125.4.Value" writable="true" type="string" value=""/>
-                  </Object>
-                </Object>
-                <Object name="X_CMCC_DHCPOPTION16" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION16.">
-                </Object>
-                <Object name="X_CMCC_DHCPOPTION60" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.">
-                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.1.">
-                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.1.Account" writable="true" type="string" value=""/>
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.1.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.1.Password" writable="true" type="string" value=""/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.1.Type" writable="true" type="unsignedInt" value="34"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.1.Value" writable="true" type="string" value="0"/>
-                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
-                  </Object>
-                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.2.">
-                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.2.Account" writable="true" type="string" value=""/>
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.2.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.2.Password" writable="true" type="string" value=""/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.2.Type" writable="true" type="unsignedInt" value="31"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.2.Value" writable="true" type="string" value="0"/>
-                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
-                  </Object>
-                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.3.">
-                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.3.Account" writable="true" type="string" value=""/>
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.3.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.3.Password" writable="true" type="string" value=""/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.3.Type" writable="true" type="unsignedInt" value="32"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.3.Value" writable="true" type="string" value="0"/>
-                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
-                  </Object>
-                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.4.">
-                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.4.Account" writable="true" type="string" value=""/>
-                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.4.Enable" writable="true" type="boolean" value="FALSE"/>
-                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.4.Password" writable="true" type="string" value=""/>
-                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.4.Type" writable="true" type="unsignedInt" value="34"/>
-                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.4.Value" writable="true" type="string" value="0"/>
-                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_DHCPOPTION60.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.4.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.4.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.4.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.4.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION125.4.Value" writable="true" type="string" value=""/>
                   </Object>
                 </Object>
-                <Param name="X_CMCC_Dslite_Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_Dslite_Enable" writable="true" type="boolean" value="FALSE"/>
-                <Param name="X_CMCC_IPMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPMode" writable="true" type="int" value="1"/>
-                <Param name="X_CMCC_IPv6ConnStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6ConnStatus" writable="false" type="string" value="Unconfigured"/>
-                <Param name="X_CMCC_IPv6DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6DNSServers" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_IPv6DomainName" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6DomainName" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_IPv6IPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6IPAddress" writable="true" type="string" value="::"/>
-                <Param name="X_CMCC_IPv6IPAddressAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6IPAddressAlias" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_IPv6IPAddressOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6IPAddressOrigin" writable="true" type="string" value="None"/>
-                <Param name="X_CMCC_IPv6Prefix" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6Prefix" writable="true" type="string" value="::"/>
-                <Param name="X_CMCC_IPv6PrefixAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6PrefixAlias" writable="false" type="string" value=""/>
-                <Param name="X_CMCC_IPv6PrefixDelegationEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6PrefixDelegationEnabled" writable="true" type="boolean" value="FALSE"/>
-                <Param name="X_CMCC_IPv6PrefixOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6PrefixOrigin" writable="true" type="string" value="None"/>
-                <Param name="X_CMCC_IPv6PrefixPltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6PrefixPltime" writable="true" type="unsignedInt" value="0"/>
-                <Param name="X_CMCC_IPv6PrefixVltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_IPv6PrefixVltime" writable="true" type="unsignedInt" value="0"/>
-                <Param name="X_CMCC_LanInterface" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_LanInterface" writable="true" type="string" value=""/>
-                <Param name="X_CMCC_LanInterface-DHCPEnable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_LanInterface-DHCPEnable" writable="true" type="boolean" value="TRUE"/>
-                <Param name="X_CMCC_MulticastVlan" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_MulticastVlan" writable="true" type="int" value="-1"/>
-                <Param name="X_CMCC_NPTv6Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_NPTv6Enable" writable="true" type="boolean" value="FALSE"/>
-                <Param name="X_CMCC_ServiceList" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_ServiceList" writable="true" type="string" value="INTERNET"/>
-                <Param name="X_CMCC_VLANIDMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_VLANIDMark" writable="true" type="int" value="45"/>
-                <Param name="X_CMCC_VLANMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.3.X_CMCC_VLANMode" writable="true" type="int" value="2"/>
+                <Object name="X_CMCC_DHCPOPTION16" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.1.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.1.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.1.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.1.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.1.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.2.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.2.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.2.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.2.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.2.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.3.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.3.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.3.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.3.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.3.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.4.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.4.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.4.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.4.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.4.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION16.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                </Object>
+                <Object name="X_CMCC_DHCPOPTION60" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.1.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.1.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.1.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.1.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.1.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.2.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.2.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.2.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.2.Type" writable="true" type="unsignedInt" value="31"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.2.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.3.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.3.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.3.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.3.Type" writable="true" type="unsignedInt" value="32"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.3.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.4.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.4.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.4.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.4.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.4.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_DHCPOPTION60.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                </Object>
+                <Param name="X_CMCC_Dslite_Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_Dslite_Enable" writable="true" type="boolean" value="FALSE"/>
+                <Param name="X_CMCC_IPMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPMode" writable="true" type="int" value="3"/>
+                <Param name="X_CMCC_IPv6ConnStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6ConnStatus" writable="false" type="string" value="Connecting"/>
+                <Param name="X_CMCC_IPv6DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6DNSServers" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6DomainName" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6DomainName" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6IPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6IPAddress" writable="true" type="string" value="::"/>
+                <Param name="X_CMCC_IPv6IPAddressAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6IPAddressAlias" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6IPAddressOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6IPAddressOrigin" writable="true" type="string" value="AutoAdaptive"/>
+                <Param name="X_CMCC_IPv6Prefix" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6Prefix" writable="true" type="string" value="::"/>
+                <Param name="X_CMCC_IPv6PrefixAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6PrefixAlias" writable="false" type="string" value=""/>
+                <Param name="X_CMCC_IPv6PrefixDelegationEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6PrefixDelegationEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Param name="X_CMCC_IPv6PrefixOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6PrefixOrigin" writable="true" type="string" value="PrefixDelegation"/>
+                <Param name="X_CMCC_IPv6PrefixPltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6PrefixPltime" writable="true" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_IPv6PrefixVltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_IPv6PrefixVltime" writable="true" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_LanInterface" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_LanInterface" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_LanInterface-DHCPEnable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_LanInterface-DHCPEnable" writable="true" type="boolean" value="TRUE"/>
+                <Param name="X_CMCC_MulticastVlan" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_MulticastVlan" writable="true" type="int" value="-1"/>
+                <Param name="X_CMCC_NPTv6Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_NPTv6Enable" writable="true" type="boolean" value="FALSE"/>
+                <Param name="X_CMCC_ServiceList" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_ServiceList" writable="true" type="string" value="INTERNET"/>
+                <Param name="X_CMCC_VLANIDMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_VLANIDMark" writable="true" type="int" value="41"/>
+                <Param name="X_CMCC_VLANMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.5.X_CMCC_VLANMode" writable="true" type="int" value="2"/>
+              </Object>
+              <Object name="6" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.">
+                <Param name="AddressingType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.AddressingType" writable="true" type="string" value="DHCP"/>
+                <Param name="ConnectionStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.ConnectionStatus" writable="false" type="string" value="Connecting"/>
+                <Param name="ConnectionType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.ConnectionType" writable="true" type="string" value="IP_Routed"/>
+                <Param name="DefaultGateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.DefaultGateway" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="DNSEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.DNSEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Param name="DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.DNSServers" writable="true" type="string" value=""/>
+                <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.Enable" writable="true" type="boolean" value="TRUE"/>
+                <Param name="ExternalIPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.ExternalIPAddress" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="LastConnectionError" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.LastConnectionError" writable="false" type="string" value="ERROR_NONE"/>
+                <Param name="MACAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.MACAddress" writable="true" type="string" value="B4:E4:6B:AC:14:8A"/>
+                <Param name="MaxMTUSize" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.MaxMTUSize" writable="true" type="unsignedInt" value="1500"/>
+                <Param name="Name" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.Name" writable="true" type="string" value="6_INTERNET_R_VID_45"/>
+                <Param name="NATEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.NATEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Object name="PortMapping" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.PortMapping.">
+                </Object>
+                <Param name="SubnetMask" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.SubnetMask" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="Uptime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.Uptime" writable="false" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_802-1pMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_802-1pMark" writable="true" type="int" value="0"/>
+                <Param name="X_CMCC_Aftr" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_Aftr" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_AftrMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_AftrMode" writable="true" type="int" value="0"/>
+                <Object name="X_CMCC_DDNSConfiguration" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DDNSConfiguration.">
+                </Object>
+                <Param name="X_CMCC_DefaultIPv6Gateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DefaultIPv6Gateway" writable="true" type="string" value="::"/>
+                <Object name="X_CMCC_DHCPOPTION125" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.1.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.1.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.1.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.1.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.1.Value" writable="true" type="string" value=""/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.2.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.2.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.2.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.2.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.2.Value" writable="true" type="string" value=""/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.3.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.3.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.3.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.3.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.3.Value" writable="true" type="string" value=""/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.4.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.4.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.4.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.4.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION125.4.Value" writable="true" type="string" value=""/>
+                  </Object>
+                </Object>
+                <Object name="X_CMCC_DHCPOPTION16" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.1.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.1.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.1.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.1.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.1.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.2.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.2.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.2.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.2.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.2.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.3.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.3.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.3.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.3.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.3.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.4.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.4.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.4.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.4.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.4.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION16.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                </Object>
+                <Object name="X_CMCC_DHCPOPTION60" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.1.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.1.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.1.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.1.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.1.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.2.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.2.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.2.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.2.Type" writable="true" type="unsignedInt" value="31"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.2.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.3.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.3.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.3.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.3.Type" writable="true" type="unsignedInt" value="32"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.3.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.4.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.4.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.4.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.4.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.4.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_DHCPOPTION60.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                </Object>
+                <Param name="X_CMCC_Dslite_Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_Dslite_Enable" writable="true" type="boolean" value="FALSE"/>
+                <Param name="X_CMCC_IPMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPMode" writable="true" type="int" value="3"/>
+                <Param name="X_CMCC_IPv6ConnStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6ConnStatus" writable="false" type="string" value="Connecting"/>
+                <Param name="X_CMCC_IPv6DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6DNSServers" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6DomainName" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6DomainName" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6IPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6IPAddress" writable="true" type="string" value="::"/>
+                <Param name="X_CMCC_IPv6IPAddressAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6IPAddressAlias" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6IPAddressOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6IPAddressOrigin" writable="true" type="string" value="AutoAdaptive"/>
+                <Param name="X_CMCC_IPv6Prefix" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6Prefix" writable="true" type="string" value="::"/>
+                <Param name="X_CMCC_IPv6PrefixAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6PrefixAlias" writable="false" type="string" value=""/>
+                <Param name="X_CMCC_IPv6PrefixDelegationEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6PrefixDelegationEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Param name="X_CMCC_IPv6PrefixOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6PrefixOrigin" writable="true" type="string" value="PrefixDelegation"/>
+                <Param name="X_CMCC_IPv6PrefixPltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6PrefixPltime" writable="true" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_IPv6PrefixVltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_IPv6PrefixVltime" writable="true" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_LanInterface" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_LanInterface" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_LanInterface-DHCPEnable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_LanInterface-DHCPEnable" writable="true" type="boolean" value="TRUE"/>
+                <Param name="X_CMCC_MulticastVlan" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_MulticastVlan" writable="true" type="int" value="-1"/>
+                <Param name="X_CMCC_NPTv6Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_NPTv6Enable" writable="true" type="boolean" value="FALSE"/>
+                <Param name="X_CMCC_ServiceList" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_ServiceList" writable="true" type="string" value="INTERNET"/>
+                <Param name="X_CMCC_VLANIDMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_VLANIDMark" writable="true" type="int" value="45"/>
+                <Param name="X_CMCC_VLANMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.6.X_CMCC_VLANMode" writable="true" type="int" value="2"/>
+              </Object>
+              <Object name="9" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.">
+                <Param name="AddressingType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.AddressingType" writable="true" type="string" value="DHCP"/>
+                <Param name="ConnectionStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.ConnectionStatus" writable="false" type="string" value="Connecting"/>
+                <Param name="ConnectionType" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.ConnectionType" writable="true" type="string" value="IP_Routed"/>
+                <Param name="DefaultGateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.DefaultGateway" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="DNSEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.DNSEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Param name="DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.DNSServers" writable="true" type="string" value=""/>
+                <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.Enable" writable="true" type="boolean" value="TRUE"/>
+                <Param name="ExternalIPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.ExternalIPAddress" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="LastConnectionError" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.LastConnectionError" writable="false" type="string" value="ERROR_NONE"/>
+                <Param name="MACAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.MACAddress" writable="true" type="string" value="B4:E4:6B:AC:14:8C"/>
+                <Param name="MaxMTUSize" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.MaxMTUSize" writable="true" type="unsignedInt" value="1500"/>
+                <Param name="Name" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.Name" writable="true" type="string" value="9_INTERNET_R_VID_100"/>
+                <Param name="NATEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.NATEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Object name="PortMapping" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.PortMapping.">
+                </Object>
+                <Param name="SubnetMask" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.SubnetMask" writable="true" type="string" value="0.0.0.0"/>
+                <Param name="Uptime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.Uptime" writable="false" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_802-1pMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_802-1pMark" writable="true" type="int" value="0"/>
+                <Param name="X_CMCC_Aftr" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_Aftr" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_AftrMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_AftrMode" writable="true" type="int" value="0"/>
+                <Object name="X_CMCC_DDNSConfiguration" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DDNSConfiguration.">
+                </Object>
+                <Param name="X_CMCC_DefaultIPv6Gateway" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DefaultIPv6Gateway" writable="true" type="string" value="::"/>
+                <Object name="X_CMCC_DHCPOPTION125" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.1.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.1.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.1.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.1.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.1.Value" writable="true" type="string" value=""/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.2.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.2.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.2.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.2.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.2.Value" writable="true" type="string" value=""/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.3.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.3.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.3.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.3.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.3.Value" writable="true" type="string" value=""/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.4.">
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Sub-option-data" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.4.Sub-option-data" writable="true" type="string" value=""/>
+                    <Param name="Subopt-code" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.4.Subopt-code" writable="true" type="unsignedInt" value="0"/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.4.Type" writable="true" type="unsignedInt" value="2"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION125.4.Value" writable="true" type="string" value=""/>
+                  </Object>
+                </Object>
+                <Object name="X_CMCC_DHCPOPTION16" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.1.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.1.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.1.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.1.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.1.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.2.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.2.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.2.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.2.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.2.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.3.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.3.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.3.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.3.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.3.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.4.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.4.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.4.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.4.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.4.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION16.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                </Object>
+                <Object name="X_CMCC_DHCPOPTION60" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.">
+                  <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.1.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.1.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.1.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.1.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.1.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.1.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.1.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="2" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.2.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.2.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.2.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.2.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.2.Type" writable="true" type="unsignedInt" value="31"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.2.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.2.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="3" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.3.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.3.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.3.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.3.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.3.Type" writable="true" type="unsignedInt" value="32"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.3.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.3.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                  <Object name="4" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.4.">
+                    <Param name="Account" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.4.Account" writable="true" type="string" value=""/>
+                    <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.4.Enable" writable="true" type="boolean" value="FALSE"/>
+                    <Param name="Password" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.4.Password" writable="true" type="string" value=""/>
+                    <Param name="Type" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.4.Type" writable="true" type="unsignedInt" value="34"/>
+                    <Param name="Value" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.4.Value" writable="true" type="string" value="0"/>
+                    <Param name="ValueMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_DHCPOPTION60.4.ValueMode" writable="true" type="unsignedInt" value="2"/>
+                  </Object>
+                </Object>
+                <Param name="X_CMCC_Dslite_Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_Dslite_Enable" writable="true" type="boolean" value="FALSE"/>
+                <Param name="X_CMCC_IPMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPMode" writable="true" type="int" value="3"/>
+                <Param name="X_CMCC_IPv6ConnStatus" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6ConnStatus" writable="false" type="string" value="Connecting"/>
+                <Param name="X_CMCC_IPv6DNSServers" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6DNSServers" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6DomainName" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6DomainName" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6IPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6IPAddress" writable="true" type="string" value="::"/>
+                <Param name="X_CMCC_IPv6IPAddressAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6IPAddressAlias" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_IPv6IPAddressOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6IPAddressOrigin" writable="true" type="string" value="AutoAdaptive"/>
+                <Param name="X_CMCC_IPv6Prefix" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6Prefix" writable="true" type="string" value="::"/>
+                <Param name="X_CMCC_IPv6PrefixAlias" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6PrefixAlias" writable="false" type="string" value=""/>
+                <Param name="X_CMCC_IPv6PrefixDelegationEnabled" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6PrefixDelegationEnabled" writable="true" type="boolean" value="TRUE"/>
+                <Param name="X_CMCC_IPv6PrefixOrigin" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6PrefixOrigin" writable="true" type="string" value="PrefixDelegation"/>
+                <Param name="X_CMCC_IPv6PrefixPltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6PrefixPltime" writable="true" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_IPv6PrefixVltime" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_IPv6PrefixVltime" writable="true" type="unsignedInt" value="0"/>
+                <Param name="X_CMCC_LanInterface" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_LanInterface" writable="true" type="string" value=""/>
+                <Param name="X_CMCC_LanInterface-DHCPEnable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_LanInterface-DHCPEnable" writable="true" type="boolean" value="TRUE"/>
+                <Param name="X_CMCC_MulticastVlan" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_MulticastVlan" writable="true" type="int" value="-1"/>
+                <Param name="X_CMCC_NPTv6Enable" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_NPTv6Enable" writable="true" type="boolean" value="FALSE"/>
+                <Param name="X_CMCC_ServiceList" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_ServiceList" writable="true" type="string" value="INTERNET"/>
+                <Param name="X_CMCC_VLANIDMark" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_VLANIDMark" writable="true" type="int" value="100"/>
+                <Param name="X_CMCC_VLANMode" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.9.X_CMCC_VLANMode" writable="true" type="int" value="2"/>
               </Object>
             </Object>
-            <Param name="WANIPConnectionNumberOfEntries" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnectionNumberOfEntries" writable="false" type="unsignedInt" value="3"/>
+            <Param name="WANIPConnectionNumberOfEntries" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnectionNumberOfEntries" writable="false" type="unsignedInt" value="5"/>
             <Object name="WANPPPConnection" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.">
             </Object>
             <Param name="WANPPPConnectionNumberOfEntries" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnectionNumberOfEntries" writable="false" type="unsignedInt" value="0"/>
@@ -2306,10 +2676,10 @@
         <Param name="WANConnectionNumberOfEntries" path="InternetGatewayDevice.WANDevice.1.WANConnectionNumberOfEntries" writable="false" type="unsignedInt" value="1"/>
         <Object name="WANEthernetInterfaceConfig" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.">
           <Object name="Stats" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.">
-            <Param name="BytesReceived" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.BytesReceived" writable="false" type="unsignedInt" value="2294505"/>
-            <Param name="BytesSent" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.BytesSent" writable="false" type="unsignedInt" value="1440354"/>
-            <Param name="PacketsReceived" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.PacketsReceived" writable="false" type="unsignedInt" value="7526"/>
-            <Param name="PacketsSent" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.PacketsSent" writable="false" type="unsignedInt" value="2715"/>
+            <Param name="BytesReceived" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.BytesReceived" writable="false" type="unsignedInt" value="16051084"/>
+            <Param name="BytesSent" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.BytesSent" writable="false" type="unsignedInt" value="14397645"/>
+            <Param name="PacketsReceived" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.PacketsReceived" writable="false" type="unsignedInt" value="48594"/>
+            <Param name="PacketsSent" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Stats.PacketsSent" writable="false" type="unsignedInt" value="26899"/>
           </Object>
           <Param name="Status" path="InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.Status" writable="false" type="string" value="up"/>
         </Object>
