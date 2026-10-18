@@ -43,6 +43,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class SchemaEntityConsistencyTest {
 
+    static {
+        SqliteNativeLoader.ensureLoaded();
+    }
+
     @TempDir(cleanup = CleanupMode.NEVER)
     static Path tmp;
 

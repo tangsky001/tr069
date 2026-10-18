@@ -40,6 +40,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class TemplateBuilderTest {
 
+    static {
+        SqliteNativeLoader.ensureLoaded();
+    }
+
     @TempDir(cleanup = CleanupMode.NEVER)
     static Path tmp;
 
@@ -213,8 +217,12 @@ class TemplateBuilderTest {
         Sip row = sipDao.findByDeviceId(d.getId()).get(0);
         assertEquals("%sip_num%", row.getValUser(), "号码必须留变量");
         assertEquals("%sip_pwd%", row.getValPwd(), "密码必须留变量，库里不许有明文");
+        assertEquals("%sip_num%", row.getValUri(),
+                "URI 只放号码，不再拼 @%sip_proxy%，实际=" + row.getValUri());
         assertEquals("%sip_proxy%", row.getValProxy());
         assertEquals("%sip_port%", row.getValPort());
+        assertEquals("%sip_registrar%", row.getValRegistrar());
+        assertEquals("%sip_registrar_port%", row.getValRegistrarPort());
     }
 
     @Test
@@ -238,6 +246,8 @@ class TemplateBuilderTest {
         for (Sip row : sipDao.findByDeviceId(d.getId())) {
             assertTrue(row.getPathProxy().endsWith("VoiceProfile.1.SIP.ProxyServer"),
                     "代理服务器挂在 VoiceProfile 一级，每条 Line 各写一份是错的，实际=" + row.getPathProxy());
+            assertTrue(row.getPathRegistrar().endsWith("VoiceProfile.1.SIP.RegistrarServer"),
+                    "注册服务器也挂在 VoiceProfile 一级，实际=" + row.getPathRegistrar());
         }
     }
 

@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -172,6 +173,8 @@ public class SqlitePlanRenderer {
         put(items, errors, "Voice_Service", "sip_uri", row.getPathUri(), row.getValUri(), values, instance, overrides);
         put(items, errors, "Voice_Service", "sip_proxy", row.getPathProxy(), row.getValProxy(), values, instance, overrides);
         put(items, errors, "Voice_Service", "sip_port", row.getPathPort(), row.getValPort(), values, instance, overrides);
+        put(items, errors, "Voice_Service", "sip_registrar", row.getPathRegistrar(), row.getValRegistrar(), values, instance, overrides);
+        put(items, errors, "Voice_Service", "sip_registrar_port", row.getPathRegistrarPort(), row.getValRegistrarPort(), values, instance, overrides);
     }
 
     /**
@@ -249,7 +252,8 @@ public class SqlitePlanRenderer {
         if (path == null || path.isBlank()) {
             return;
         }
-        String value = resolve(field, effectiveValue(val, overrides, field), values, errors);
+        String value = normalize(field,
+                resolve(field, effectiveValue(val, overrides, field), values, errors));
         if (value == null) {
             return;
         }
@@ -258,7 +262,11 @@ public class SqlitePlanRenderer {
             errors.add("参数路径仍有未替换的实例号: " + realPath);
             return;
         }
-        items.add(new PlanItem(bizObject, field, realPath, value, valueTypeOf(value)));
+        String type = valueTypeOf(realPath, value);
+        if ("boolean".equalsIgnoreCase(type)) {
+            value = IntentDeliveryService.booleanValue(value);
+        }
+        items.add(new PlanItem(bizObject, field, realPath, value, type));
     }
 
     /**
@@ -285,7 +293,11 @@ public class SqlitePlanRenderer {
     /** 本字段及其在配置模板里的等价名字，按优先级排列。 */
     private static final Map<String, List<String>> ALIASES = Map.of(
             "enable", List.of("radio_enable"),
-            "wpa_mode", List.of("encryption"));
+            "wpa_mode", List.of("encryption"),
+            "sip_proxy", List.of("proxy"),
+            "sip_port", List.of("proxy_port"),
+            "sip_registrar", List.of("registrar"),
+            "sip_registrar_port", List.of("registrar_port"));
 
     private static List<String> keysToTry(String field) {
         List<String> aliases = ALIASES.get(field);
@@ -296,6 +308,61 @@ public class SqlitePlanRenderer {
         keys.add(field);
         keys.addAll(aliases);
         return keys;
+    }
+
+    /**
+     * 把业务侧的写法归一成设备认的写法。
+     *
+     * <p>配置模板面向人，取值是「auto」「WPA2-PSK」这类说法；设备参数只认自己那套枚举或数字，
+     * 照原样发一律 9003 Invalid arguments。SPV 又是按批生效的，一条不合法整批都废，
+     * 所以必须在渲染阶段兜住，而不是指望每个填模板的人都记得设备要什么。</p>
+     */
+    private static String normalize(String field, String value) {
+        if (value == null) {
+            return null;
+        }
+        return switch (field) {
+            case "channel" -> normalizeChannel(value);
+            case "wpa_mode" -> normalizeEncryptionModes(value);
+            default -> value;
+        };
+    }
+
+    /** 信道：模板里的 auto/自动 落到设备上是数字，0 表示自动选道。 */
+    private static String normalizeChannel(String value) {
+        String v = value.trim();
+        if (v.isEmpty() || v.matches("\\d+")) {
+            return v;
+        }
+        log.debug("信道值不是数字，按自动选道下发: {} -> 0", value);
+        return "0";
+    }
+
+    /**
+     * 加密方式：{@code IEEE11iEncryptionModes} 只认 {@code *Encryption} 写法，
+     * 而配置模板给的是 {@code BeaconType} 那套（Basic / WPA / 11i / WPAand11i），
+     * 两套枚举混用是实测 9003 的直接原因。
+     */
+    private static final Map<String, String> ENCRYPTION_MODES = Map.ofEntries(
+            Map.entry("none", "None"),
+            Map.entry("basic", "WEPEncryption"),
+            Map.entry("wep", "WEPEncryption"),
+            Map.entry("wpa", "TKIPEncryption"),
+            Map.entry("11i", "AESEncryption"),
+            Map.entry("wpa2", "AESEncryption"),
+            Map.entry("wpapsk", "AESEncryption"),
+            Map.entry("wpaand11i", "TKIPandAESEncryption"),
+            Map.entry("tkip", "TKIPEncryption"),
+            Map.entry("aes", "AESEncryption"),
+            Map.entry("tkipandaes", "TKIPandAESEncryption"));
+
+    private static String normalizeEncryptionModes(String value) {
+        String v = value.trim();
+        if (v.isEmpty() || v.endsWith("Encryption") || "None".equalsIgnoreCase(v)) {
+            return v;
+        }
+        String mapped = ENCRYPTION_MODES.get(v.toLowerCase(Locale.ROOT));
+        return mapped != null ? mapped : "AESEncryption";
     }
 
     /**
@@ -311,33 +378,86 @@ public class SqlitePlanRenderer {
             return val.trim();
         }
         String out = val;
-        m.reset();
-        while (m.find()) {
-            String token = m.group();
-            Object raw = values == null ? null : values.get(token);
-            if (raw == null && values != null) {
-                raw = values.get(m.group(1));
+        // 最多解两层：变量的值本身可能还是变量。SIP 账号常按房间号开，模板上写 %room%，
+        // 第一层解出 sip_num=%room%，不解第二层就把字面量 %room% 发给了设备（实测 9007）
+        for (int depth = 0; depth < 2; depth++) {
+            Matcher it = VAR.matcher(out);
+            if (!it.find()) {
+                break;
             }
-            if (raw == null) {
-                errors.add("缺业务字段值: " + token + "（" + field + "）");
-                return null;
+            it.reset();
+            while (it.find()) {
+                String token = it.group();
+                Object raw = values == null ? null : values.get(token);
+                if (raw == null && values != null) {
+                    raw = values.get(it.group(1));
+                }
+                if (raw == null) {
+                    errors.add("缺业务字段值: " + token + "（" + field + "）");
+                    return null;
+                }
+                out = out.replace(token, String.valueOf(raw).trim());
             }
-            out = out.replace(token, String.valueOf(raw).trim());
         }
         return out.trim();
     }
 
     /**
-     * 没有登记类型时按值本身猜：数字给 unsignedInt，true/false 给 boolean。
+     * 设备参数名里这些在设备上是整数或布尔，纯数字的值才该按数字下发。
+     *
+     * <p>反过来，SIP 账号、密码、电话号码常是纯数字（如 2026），而设备声明的是 string；
+     * 只看值就会把它们写成 unsignedInt，设备回 9007 Invalid parameter value。</p>
      */
-    private static String valueTypeOf(String value) {
+    private static final Pattern NUMERIC_LEAF = Pattern.compile(
+            "(?i)(channel|port|count|numberofentries|index|interval|seconds|"
+                    + "timeout|priority|gain|tail|vlanid|status|mode|level|length|rate|limit)$");
+
+    /**
+     * 设备参数名里这些是布尔：{@code Enable} / {@code SSIDAdvertisementEnabled} 等。
+     *
+     * <p>值常写成 1/0，按数字发出去设备回 9007——它要的是 xsd:boolean。</p>
+     */
+    private static final Pattern BOOLEAN_LEAF = Pattern.compile(
+            "(?i)(enable|enabled|disable|disabled)$");
+
+    /**
+     * 没有登记类型时按参数名与值一起判断：布尔语义的一律 boolean，
+     * 数字语义且值是纯数字才给 unsignedInt，其余一律 string。
+     */
+    private static String valueTypeOf(String path, String value) {
+        if (isBooleanLeaf(path)) {
+            return "boolean";
+        }
         if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
             return "boolean";
         }
-        if (value.matches("-?\\d+")) {
+        if (value.matches("-?\\d+") && isNumericLeaf(path)) {
             return "unsignedInt";
         }
         return "string";
+    }
+
+    private static boolean isBooleanLeaf(String path) {
+        String leaf = leafOf(path);
+        return leaf != null && BOOLEAN_LEAF.matcher(leaf).find();
+    }
+
+    private static boolean isNumericLeaf(String path) {
+        String leaf = leafOf(path);
+        if (leaf == null) {
+            return false;
+        }
+        return leaf.startsWith("NumberOf") || NUMERIC_LEAF.matcher(leaf).find();
+    }
+
+    /** 参数路径的最后一段，如 {@code ...Line.1.Enable} 取 {@code Enable}。 */
+    private static String leafOf(String path) {
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        String leaf = path.endsWith(".") ? path.substring(0, path.length() - 1) : path;
+        int dot = leaf.lastIndexOf('.');
+        return dot >= 0 ? leaf.substring(dot + 1) : leaf;
     }
 
     /** 供调用方判断某类业务是否有适配结果，避免下发时才报「查不到」。 */

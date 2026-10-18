@@ -223,12 +223,19 @@ public class TemplateBuilder {
         r.setPathPwd(line + "SIP.AuthPassword");
         r.setValPwd(TemplateVariables.SIP_PWD);
         r.setPathUri(line + "SIP.URI");
-        r.setValUri(TemplateVariables.SIP_NUM + "@" + TemplateVariables.SIP_PROXY);
+        // URI 只放号码，不再拼 @代理：设备上「号码/用户名」两栏直接读 URI，
+        // 带上 @192.168.x.x 会被当成号码的一部分，运维看着像账号开错了。
+        // 注册/代理用的服务器由 ProxyServer、RegistrarServer 单独下发，不需要塞进 URI。
+        r.setValUri(TemplateVariables.SIP_NUM);
         // 代理服务器挂在 VoiceProfile 一级，不是每个 Line 各一份
         r.setPathProxy(profile + "SIP.ProxyServer");
         r.setValProxy(TemplateVariables.SIP_PROXY);
         r.setPathPort(profile + "SIP.ProxyServerPort");
         r.setValPort(TemplateVariables.SIP_PORT);
+        r.setPathRegistrar(profile + "SIP.RegistrarServer");
+        r.setValRegistrar(TemplateVariables.SIP_REGISTRAR);
+        r.setPathRegistrarPort(profile + "SIP.RegistrarServerPort");
+        r.setValRegistrarPort(TemplateVariables.SIP_REGISTRAR_PORT);
         return r;
     }
 

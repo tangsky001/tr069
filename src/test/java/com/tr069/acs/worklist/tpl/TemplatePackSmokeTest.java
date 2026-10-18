@@ -24,6 +24,10 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class TemplatePackSmokeTest {
 
+    static {
+        SqliteNativeLoader.ensureLoaded();
+    }
+
     @TempDir(cleanup = CleanupMode.NEVER)
     static Path tmp;
 

@@ -42,6 +42,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import com.tr069.acs.common.log.AcsCoreLog;
 
 /**
@@ -89,6 +90,9 @@ public class IntentDeliveryService {
 
     /** 单批 SetParameterValues 携带的参数个数，避免报文过大被设备拒收。 */
     private static final int VALUE_BATCH = 32;
+
+    /** 下发后回读参数等待设备应答的秒数。超时就不再等，交给后面的全量补采。 */
+    private static final int READBACK_TIMEOUT_SECONDS = 8;
 
     /** 下发等待设备回应的时间不定，统一丢到这个后台线程池。 */
     private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool(r -> {
@@ -250,10 +254,24 @@ public class IntentDeliveryService {
             throw new IllegalArgumentException("设备不存在，请确认已注册: " + request.sn());
         }
 
+        // 配置模板字段有两处用途：按字段名覆盖渲染结果，以及给命名不一致的业务补下发变量，
+        // 这里取一次后面复用
+        Map<String, Object> tplFields = request.templateId() == null ? null
+                : configTemplateService.fieldsOf(request.templateId());
+
+        // SIP 配置模板的字段名与下发变量根本不是一套：模板上叫 registrar / proxy /
+        // sip_user_info，下发要的是 %sip_proxy% / %sip_num% / %sip_pwd%。不转换的话
+        // 模板里填的语音参数一个都传不进去，下发只会报「缺业务字段值」。
+        Map<String, Object> requested = request.values() == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(request.values());
+        if (tplFields != null && !tplFields.isEmpty()) {
+            applySipTemplateVariables(requested, stringValues(tplFields), resolveInstance(requested));
+        }
+
         // 变量兜底放在渲染前这个唯一汇聚点上：工单单台、批量、北向接口都从这里过，
         // 房间号取设备登记值、口令取约定默认值，调用方一个变量都不传也能渲染出完整计划
         Map<String, Object> values = TemplateVariables.applyDefaults(
-                request.category(), request.values(), device.getRoomNo());
+                request.category(), requested, device.getRoomNo());
 
         // 字段覆盖优先级：本次下发显式传的值 > 配置模板里保存的字段 > SQLite 默认值。
         // 必须按这个顺序塞：先放高优先级的 values，再用 putIfAbsent 补模板字段。
@@ -269,12 +287,9 @@ public class IntentDeliveryService {
             });
         }
         Map<String, Object> intentFields = new LinkedHashMap<>();
-        if (request.templateId() != null) {
-            Map<String, Object> tplFields = configTemplateService.fieldsOf(request.templateId());
-            if (tplFields != null) {
-                intentFields.putAll(tplFields);
-                tplFields.forEach((k, v) -> overrides.putIfAbsent(k, v == null ? null : String.valueOf(v)));
-            }
+        if (tplFields != null) {
+            intentFields.putAll(tplFields);
+            tplFields.forEach((k, v) -> overrides.putIfAbsent(k, v == null ? null : String.valueOf(v)));
         }
 
         Device model = findAdaptedModel(device, bizObject);
@@ -321,7 +336,7 @@ public class IntentDeliveryService {
         List<String> paths = plan.parameters().stream().map(PlanItem::path).toList();
         ModelTreeStore.PathResolution resolved = modelTreeStore.resolvePaths(sn, paths);
         if (resolved.getRewritten().isEmpty() && resolved.getUnsupported().isEmpty()
-                && resolved.getTypes().isEmpty()) {
+                && resolved.getTypes().isEmpty() && resolved.getReadOnly().isEmpty()) {
             return plan;
         }
         List<PlanItem> items = new ArrayList<>();
@@ -331,6 +346,10 @@ public class IntentDeliveryService {
                 continue;
             }
             String path = resolved.getRewritten().getOrDefault(item.path(), item.path());
+            if (resolved.getReadOnly().contains(path)) {
+                log.warn("该参数在该型号上是只读，跳过不下发: {}", path);
+                continue;
+            }
             // 下发格式以能力树声明的类型为准：SSID 取值 1111 全是数字，靠值猜会被写成整数
             String type = resolved.getTypes().getOrDefault(path, item.valueType());
             String value = item.value();
@@ -465,6 +484,39 @@ public class IntentDeliveryService {
     }
 
     /**
+     * 把本次刚写下去的参数读回来落库，让设备列表立刻对得上现场。
+     *
+     * <p>下发改的是设备现值，库里的快照不会自己跟上。只靠 {@link #refreshCapability} 的
+     * 全量补采是不够的：它要把整棵树重新走一遍，实测六十秒上下，而运维在下发完几秒内
+     * 就会刷新列表——那一刻库里还是下发前的旧值，看着像「下发没生效」，
+     * 实际手机上已经能搜到新 SSID 了。</p>
+     *
+     * <p>所以这里先按本次下发的路径回读一次（几秒内），全量补采仍照常异步跑，
+     * 负责把新建出来的实例补进快照。回读以设备上报值为准：下发成功但设备没吃进去的，
+     * 库里就留真实值，比留我们以为下发的值更可信。</p>
+     */
+    private void refreshDeliveredValues(String sn, IntentPlan plan) {
+        List<String> paths = new ArrayList<>();
+        for (PlanItem item : plan.parameters()) {
+            if (item.path() != null && !item.path().isBlank()) {
+                paths.add(item.path());
+            }
+        }
+        if (paths.isEmpty()) {
+            return;
+        }
+        try {
+            capabilityService.readPathValues(sn, paths)
+                    .get(READBACK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            log.info("已回读下发参数: sn={}, 参数={}", sn, paths.size());
+        } catch (TimeoutException e) {
+            log.warn("回读下发参数超时，等后续全量采集: sn={}, 参数={}", sn, paths.size());
+        } catch (Exception e) {
+            log.warn("回读下发参数失败: sn={}, err={}", sn, e.getMessage());
+        }
+    }
+
+    /**
      * 下发完成后补采一次能力树，让新实例出现在设备列表里。
      *
      * <p>前端那条「N 条 WAN 连接」读的是 {@code cpe_parameter} 的快照，而快照只在
@@ -482,6 +534,144 @@ public class IntentDeliveryService {
             capabilityService.collect(sn, true);
         } catch (Exception e) {
             log.warn("下发后补采能力树失败: sn={}, err={}", sn, e.getMessage());
+        }
+    }
+
+    /**
+     * 判断本次下发要不要在成功后重启设备。
+     *
+     * <p>「下发业务完成后重启光猫」是配置模板（OTHER/Device_Mgmt）里的字段
+     * {@code reboot_after}，渲染时会把它写进 {@code intentFields} 快照。这里把它读出来，
+     * true/1/是 都视为启用。</p>
+     *
+     * <p>独立建单的「重启」模板，以及业务模板整包里作为最后一个成员的「重启」成员，
+     * 都会走到这里。</p>
+     */
+    private boolean needReboot(DeviceTask task) {
+        String json = task.getIntentFields();
+        if (json == null || json.isBlank()) {
+            return false;
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = objectMapper.readValue(json, Map.class);
+            Object v = map.get("reboot_after");
+            if (v == null) {
+                return false;
+            }
+            String s = String.valueOf(v).trim();
+            return "true".equalsIgnoreCase(s) || "1".equals(s) || "是".equals(s);
+        } catch (Exception e) {
+            log.warn("解析 intentFields 失败: sn={}, err={}", task.getSn(), e.getMessage());
+            return false;
+        }
+    }
+
+    private void reboot(DeviceTask task) {
+        try {
+            rpcService.reboot(task.getSn(), task.getTaskNo());
+            log.info("已下发重启指令: sn={}, taskNo={}", task.getSn(), task.getTaskNo());
+        } catch (Exception e) {
+            log.warn("下发重启指令失败: sn={}, taskNo={}, err={}", task.getSn(), task.getTaskNo(), e.getMessage());
+        }
+    }
+
+    /**
+     * 整批被拒时逐条重发，定位到底哪一条不合法。
+     *
+     * <p>SetParameterValues 按批生效：一条不合法整批都废，而设备只回一个笼统的
+     * 9003/9007，无从判断错在哪个路径、哪个值。这里把这一批拆开逐条再发一遍，
+     * 被拒的那条就浮出来了。重复写同一个参数是幂等的，不会有额外副作用。</p>
+     *
+     * @return 被拒参数的说明；全都能写进去时返回 null（说明整批失败是别的原因）
+     */
+    /** 逐条定位的结果：设备拒收的（判失败），以及设备不接受、已跳过的（仅提示）。 */
+    private static class LocateResult {
+
+        private final List<String> rejected = new ArrayList<>();
+
+        private final List<String> skipped = new ArrayList<>();
+    }
+
+    private void locateRejected(DeviceTask task, List<ParameterValueStruct> values, LocateResult out) {
+        if (values == null || values.size() <= 1) {
+            return;
+        }
+        for (ParameterValueStruct v : values) {
+            if (tryWrite(task, v)) {
+                continue;
+            }
+            // 设备对同一个参数常只认某一种 xsi:type：VoiceService 的 Line.Enable 按 boolean
+            // 带 true 被拒、按 unsignedInt 带 1 也被拒，换 string 反而收。换写法再试一遍，
+            // 接受哪个就用哪个，省得为了一个开关让整单失败
+            ParameterValueStruct accepted = null;
+            for (ParameterValueStruct alt : alternates(v)) {
+                if (tryWrite(task, alt)) {
+                    accepted = alt;
+                    break;
+                }
+            }
+            if (accepted != null) {
+                log.info("该参数换写法后被设备接受: {}={}（type {} -> {}）",
+                        v.getName(), accepted.getValue(), v.getValueType(), accepted.getValueType());
+                continue;
+            }
+            // 启用开关类（Enable/Disable）设备收不下就算了：核心的账号、密码、代理都已写进去，
+            // 为一个设备压根不支持写入的开关判整单失败，运维还得重下一次
+            if (isSwitch(v.getName())) {
+                log.warn("启用开关设备不接受，跳过不下发: {}", v.getName());
+                out.skipped.add(v.getName());
+                continue;
+            }
+            out.rejected.add(v.getName() + "=" + v.getValue() + "（type=" + v.getValueType()
+                    + "，设备当前值=" + currentValue(task.getSn(), v.getName()) + "）");
+        }
+    }
+
+    /** 启用开关类参数：{@code Enable} / {@code SSIDAdvertisementEnabled} 等。 */
+    private static boolean isSwitch(String path) {
+        String leaf = leafOfPath(path);
+        return leaf != null && leaf.matches("(?i).*(enable|enabled|disable|disabled)$");
+    }
+
+    private boolean tryWrite(DeviceTask task, ParameterValueStruct v) {
+        try {
+            SoapMessage resp = await(rpcService.setParameterValues(
+                    task.getSn(), List.of(v), task.getTaskNo()));
+            return failureOf(resp, "SetParameterValues") == null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 同一个参数换几种 xsi:type 与值的写法，设备认哪种就用哪种。 */
+    private static List<ParameterValueStruct> alternates(ParameterValueStruct v) {
+        List<ParameterValueStruct> alts = new ArrayList<>();
+        String name = v.getName();
+        String raw = v.getValue();
+        alts.add(ParameterValueStruct.builder().name(name).value(raw).valueType("string").build());
+        String bool = booleanValue(raw);
+        if (!bool.equals(raw)) {
+            alts.add(ParameterValueStruct.builder().name(name).value(bool).valueType("boolean").build());
+        }
+        if (raw != null && raw.matches("\\d+")) {
+            alts.add(ParameterValueStruct.builder().name(name).value(raw).valueType("unsignedInt").build());
+        }
+        return alts;
+    }
+
+    /** 库里这台设备该参数的当前值。被拒时打出来对照——设备原本用什么写法，一目了然。 */
+    private String currentValue(String sn, String path) {
+        try {
+            List<CpeParameter> rows = parameterMapper.selectList(
+                    new LambdaQueryWrapper<CpeParameter>()
+                            .eq(CpeParameter::getSn, sn)
+                            .eq(CpeParameter::getParamPath, path)
+                            .last("LIMIT 1"));
+            return rows.isEmpty() || rows.get(0).getParamValue() == null
+                    ? "-" : rows.get(0).getParamValue();
+        } catch (Exception e) {
+            return "-";
         }
     }
 
@@ -681,13 +871,40 @@ public class IntentDeliveryService {
                         task.getSn(), values, task.getTaskNo()));
                 String error = failureOf(resp, "SetParameterValues 第 " + (i + 1) + "/" + chunks.size() + " 批");
                 if (error != null) {
-                    finish(task, DeviceTask.STATUS_FAILED, error);
+                    // SPV 是按批生效的，一条写错整批都废。不打这批参数根本不知道错在哪个路径、
+                    // 错在哪个值——设备只回一个笼统的 9003/9007，只能拆开逐条重发来定位
+                    log.warn("下发参数被设备拒绝: sn={}, taskNo={}, 批次={}/{}, err={}, 参数={}",
+                            task.getSn(), task.getTaskNo(), i + 1, chunks.size(), error, dump(values));
+                    LocateResult located = new LocateResult();
+                    locateRejected(task, values, located);
+                    if (!located.rejected.isEmpty()) {
+                        String rejected = "逐条重发后被拒的参数: " + String.join(" | ", located.rejected);
+                        log.warn("逐条定位结果: sn={}, taskNo={}, {}", task.getSn(), task.getTaskNo(), rejected);
+                        finish(task, DeviceTask.STATUS_FAILED, error + "；" + rejected);
+                        return;
+                    }
+                    // 整批被拒但拆开发全都成了：参数已经在设备上生效，按成功收尾，
+                    // 否则为了一个兼容性写法就得让运维重下一次
+                    log.info("整批被拒但逐条重发全部成功，按成功收尾: sn={}, taskNo={}",
+                            task.getSn(), task.getTaskNo());
+                    refreshDeliveredValues(task.getSn(), plan);
+                    if (needReboot(task)) {
+                        reboot(task);
+                    }
+                    refreshCapability(task.getSn());
+                    finish(task, DeviceTask.STATUS_SUCCESS, located.skipped.isEmpty() ? null
+                            : "已跳过设备不接受的参数: " + String.join(" | ", located.skipped));
                     return;
                 }
             }
             log.info("下发完成: sn={}, taskNo={}, 参数={}", task.getSn(), task.getTaskNo(),
                     plan.parameters().size());
-            // 下发改的是设备现值，库里的快照不会自己跟上，补采一次让列表对得上现场
+            // 下发改的是设备现值，库里的快照不会自己跟上。全量补采要几十秒，
+            // 页面这会儿早刷新过了——先把本次写下去的参数读回来落库，列表立刻对得上现场
+            refreshDeliveredValues(task.getSn(), plan);
+            if (needReboot(task)) {
+                reboot(task);
+            }
             refreshCapability(task.getSn());
             finish(task, DeviceTask.STATUS_SUCCESS, null);
         } catch (Exception e) {
@@ -1048,6 +1265,90 @@ public class IntentDeliveryService {
             log.error("回写下发结果失败: id={}, err={}", task.getId(), e.getMessage());
         }
         eventPublisher.publishEvent(new TaskFinishedEvent(this, task));
+    }
+
+    /**
+     * SIP 配置模板字段 → 下发变量。
+     *
+     * <p>模板面向开通界面，字段名是 {@code registrar} / {@code proxy} / {@code sip_user_info}；
+     * 下发要的变量是 {@code %sip_proxy%} / {@code %sip_num%} / {@code %sip_pwd%}。
+     * 名字对不上，模板上填好的语音参数就一个都传不进去，下发只剩「缺业务字段值」。</p>
+     *
+     * <p>账号密码那块是一整段文本，一行一路语音，行内「账号 密码」，按本次要写的第几路
+     * 取对应行；行里还能带 {@code %room%} 这类变量，后面统一替换。</p>
+     *
+     * <p>一律 {@code putIfAbsent}：调用方显式传的变量优先，模板只做补位。</p>
+     */
+    private static void applySipTemplateVariables(Map<String, Object> values,
+                                                  Map<String, String> fields, int instance) {
+        String proxy = firstNonBlank(fields.get("proxy"), fields.get("registrar"));
+        if (proxy != null) {
+            values.putIfAbsent(TemplateVariables.SIP_PROXY, proxy);
+        }
+        String registrar = fields.get("registrar");
+        if (registrar != null && !registrar.isBlank()) {
+            values.putIfAbsent(TemplateVariables.SIP_REGISTRAR, registrar);
+        }
+        String port = firstNonBlank(fields.get("proxy_port"), fields.get("registrar_port"));
+        if (port != null) {
+            values.putIfAbsent(TemplateVariables.SIP_PORT, port);
+        }
+        String registrarPort = fields.get("registrar_port");
+        if (registrarPort != null && !registrarPort.isBlank()) {
+            values.putIfAbsent(TemplateVariables.SIP_REGISTRAR_PORT, registrarPort);
+        }
+        String info = fields.get("sip_user_info");
+        if (info == null || info.isBlank()) {
+            return;
+        }
+        String[] lines = info.split("\\R");
+        int idx = Math.min(Math.max(instance, 1), lines.length) - 1;
+        if (idx < 0) {
+            return;
+        }
+        String[] pair = lines[idx].trim().split("\\s+");
+        if (pair.length > 0 && !pair[0].isBlank()) {
+            values.putIfAbsent(TemplateVariables.SIP_NUM, pair[0]);
+        }
+        if (pair.length > 1 && !pair[1].isBlank()) {
+            values.putIfAbsent(TemplateVariables.SIP_PWD, pair[1]);
+        }
+    }
+
+    /** 取第一个非空值，都没有返回 null。 */
+    private static String firstNonBlank(String... candidates) {
+        if (candidates == null) {
+            return null;
+        }
+        for (String c : candidates) {
+            if (c != null && !c.isBlank()) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    private static Map<String, String> stringValues(Map<String, Object> fields) {
+        Map<String, String> out = new LinkedHashMap<>();
+        fields.forEach((k, v) -> out.put(k, v == null ? null : String.valueOf(v)));
+        return out;
+    }
+
+    /**
+     * 把一批待下发参数拼成可读文本，只在下发失败时打进日志。
+     *
+     * <p>值一并打印：9003 报的是「值不合法」，只看到参数名无从判断。
+     * 下发计划本就明文存在 {@code device_task} 里，日志里出现的口令与库里是同一份。</p>
+     */
+    private static String dump(List<ParameterValueStruct> values) {
+        StringBuilder sb = new StringBuilder();
+        for (ParameterValueStruct v : values) {
+            if (sb.length() > 0) {
+                sb.append(" | ");
+            }
+            sb.append(v.getName()).append('=').append(v.getValue());
+        }
+        return sb.toString();
     }
 
     /**

@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS sip (
     path_uri      TEXT, val_uri      TEXT,
     path_proxy    TEXT, val_proxy    TEXT,
     path_port     TEXT, val_port     TEXT,
+    path_registrar    TEXT, val_registrar    TEXT,
+    path_registrar_port TEXT, val_registrar_port TEXT,
     UNIQUE(device_id, instance_no)
 );
 

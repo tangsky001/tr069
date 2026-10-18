@@ -26,7 +26,8 @@ public class SipDao {
 
     private static final String COLS = "id, device_id, instance_no, action, verified, " +
             "path_enable, val_enable, path_user, val_user, path_pwd, val_pwd, " +
-            "path_uri, val_uri, path_proxy, val_proxy, path_port, val_port";
+            "path_uri, val_uri, path_proxy, val_proxy, path_port, val_port, " +
+            "path_registrar, val_registrar, path_registrar_port, val_registrar_port";
 
     private static final RowMapper<Sip> ROW_MAPPER = (rs, n) -> {
         Sip r = new Sip();
@@ -47,6 +48,10 @@ public class SipDao {
         r.setValProxy(rs.getString("val_proxy"));
         r.setPathPort(rs.getString("path_port"));
         r.setValPort(rs.getString("val_port"));
+        r.setPathRegistrar(rs.getString("path_registrar"));
+        r.setValRegistrar(rs.getString("val_registrar"));
+        r.setPathRegistrarPort(rs.getString("path_registrar_port"));
+        r.setValRegistrarPort(rs.getString("val_registrar_port"));
         return r;
     };
 
@@ -79,23 +84,27 @@ public class SipDao {
             long id = exist.get().getId();
             jdbc.update("UPDATE sip SET action=?, verified=?, path_enable=?, val_enable=?, " +
                             "path_user=?, val_user=?, path_pwd=?, val_pwd=?, path_uri=?, val_uri=?, " +
-                            "path_proxy=?, val_proxy=?, path_port=?, val_port=? WHERE id=?",
+                            "path_proxy=?, val_proxy=?, path_port=?, val_port=?, " +
+                            "path_registrar=?, val_registrar=?, path_registrar_port=?, val_registrar_port=? WHERE id=?",
                     r.getAction(), r.getVerified(), r.getPathEnable(), r.getValEnable(),
                     r.getPathUser(), r.getValUser(), r.getPathPwd(), r.getValPwd(),
                     r.getPathUri(), r.getValUri(), r.getPathProxy(), r.getValProxy(),
-                    r.getPathPort(), r.getValPort(), id);
+                    r.getPathPort(), r.getValPort(),
+                    r.getPathRegistrar(), r.getValRegistrar(), r.getPathRegistrarPort(), r.getValRegistrarPort(), id);
             r.setId(id);
             return id;
         }
         long id = snowflake.nextId();
         jdbc.update("INSERT INTO sip(id, device_id, instance_no, action, verified, " +
                         "path_enable, val_enable, path_user, val_user, path_pwd, val_pwd, " +
-                        "path_uri, val_uri, path_proxy, val_proxy, path_port, val_port) " +
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "path_uri, val_uri, path_proxy, val_proxy, path_port, val_port, " +
+                        "path_registrar, val_registrar, path_registrar_port, val_registrar_port) " +
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, r.getDeviceId(), r.getInstanceNo(), r.getAction(), r.getVerified(),
                 r.getPathEnable(), r.getValEnable(), r.getPathUser(), r.getValUser(),
                 r.getPathPwd(), r.getValPwd(), r.getPathUri(), r.getValUri(),
-                r.getPathProxy(), r.getValProxy(), r.getPathPort(), r.getValPort());
+                r.getPathProxy(), r.getValProxy(), r.getPathPort(), r.getValPort(),
+                r.getPathRegistrar(), r.getValRegistrar(), r.getPathRegistrarPort(), r.getValRegistrarPort());
         r.setId(id);
         return id;
     }

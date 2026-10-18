@@ -33,10 +33,19 @@ public class Sip {
     private String pathUri;
     private String valUri;
 
-    /** 注册服务器，型号不同可能挂在不同路径 */
+    /** SIP 代理服务器（ProxyServer） */
     private String pathProxy;
     private String valProxy;
 
+    /** SIP 代理服务器端口（ProxyServerPort） */
     private String pathPort;
     private String valPort;
+
+    /** SIP 注册服务器（RegistrarServer） */
+    private String pathRegistrar;
+    private String valRegistrar;
+
+    /** SIP 注册服务器端口（RegistrarServerPort） */
+    private String pathRegistrarPort;
+    private String valRegistrarPort;
 }

@@ -112,16 +112,61 @@
       :image-size="60"
     />
 
-    <!-- ============ WLAN 卡片（底部状态条样式铺开） ============ -->
+    <!-- ============ LAN 网口卡片 ============ -->
+    <div class="section-title">LAN 网口（{{ lanItems.length }}）</div>
+    <div v-if="lanItems.length" class="lan-bar">
+      <div
+        v-for="item in lanItems"
+        :key="item.path"
+        class="lan-chip"
+        :class="{ 'lan-up': item.connected }"
+        :title="'MAC: ' + (item.mac || '-')"
+      >
+        <svg class="lan-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <rect x="3" y="8" width="18" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <line x1="7" y1="8" x2="7" y2="4" stroke="currentColor" stroke-width="1.5" />
+          <line x1="12" y1="8" x2="12" y2="4" stroke="currentColor" stroke-width="1.5" />
+          <line x1="17" y1="8" x2="17" y2="4" stroke="currentColor" stroke-width="1.5" />
+        </svg>
+        <div class="lan-label">LAN{{ item.instance }}</div>
+        <div class="lan-status">{{ item.connected ? '已连接' : '未连接' }}</div>
+      </div>
+    </div>
+    <el-empty
+      v-else
+      :description="collecting ? '采集中，设备回应后自动显示' : '未采集到网口信息，点击右上角重新采集'"
+      :image-size="60"
+    />
+
+    <!-- ============ WLAN 卡片：按频段分成 2.4G / 5.8G 上下两行 ============ -->
     <template v-if="wifiItems.length">
       <div class="section-title">WLAN（{{ wifiItems.length }}）</div>
-      <div class="wifi-bar">
-        <div v-for="item in wifiItems" :key="item.path" class="wifi-chip">
-          <span class="wifi-band">{{ wifiBand(item.params) }}</span>
-          <span class="wifi-ssid">{{ show(item.params.SSID) }}</span>
-          <i v-if="wifiEncrypted(item.params)" class="el-icon-lock" />
-          <span class="wifi-clients">{{ show(item.params.TotalAssociations, '0') }} 终端</span>
-          <span :class="isUp(item) ? 'status-ok' : 'status-bad'">{{ wanStatus(item.params.Status) }}</span>
+      <div class="wifi-band-row">
+        <span class="wifi-band-label">2.4G:</span>
+        <div class="wifi-bar">
+          <template v-if="wifi24Items.length">
+            <div v-for="item in wifi24Items" :key="item.path" class="wifi-chip">
+              <span class="wifi-ssid">{{ show(item.params.SSID) }}</span>
+              <i v-if="wifiEncrypted(item.params)" class="el-icon-lock" />
+              <span class="wifi-clients">{{ show(item.params.TotalAssociations, '0') }} 终端</span>
+              <span :class="isUp(item) ? 'status-ok' : 'status-bad'">{{ wanStatus(item.params.Status) }}</span>
+            </div>
+          </template>
+          <span v-else class="wifi-band-empty">-</span>
+        </div>
+      </div>
+      <div class="wifi-band-row">
+        <span class="wifi-band-label">5.8G:</span>
+        <div class="wifi-bar">
+          <template v-if="wifi58Items.length">
+            <div v-for="item in wifi58Items" :key="item.path" class="wifi-chip">
+              <span class="wifi-ssid">{{ show(item.params.SSID) }}</span>
+              <i v-if="wifiEncrypted(item.params)" class="el-icon-lock" />
+              <span class="wifi-clients">{{ show(item.params.TotalAssociations, '0') }} 终端</span>
+              <span :class="isUp(item) ? 'status-ok' : 'status-bad'">{{ wanStatus(item.params.Status) }}</span>
+            </div>
+          </template>
+          <span v-else class="wifi-band-empty">-</span>
         </div>
       </div>
     </template>
@@ -132,9 +177,9 @@
       <div class="wifi-bar">
         <div v-for="item in sipItems" :key="item.path" class="wifi-chip">
           <i :class="sipRegistered(item.params) ? 'el-icon-phone status-ok' : 'el-icon-phone-outline status-bad'" />
-          <span class="wifi-ssid">{{ show(item.params.UserName, '未配置') }}</span>
+          <span class="wifi-ssid">{{ sipDisplay(item.params) }}</span>
           <span :class="sipRegistered(item.params) ? 'status-ok' : 'status-bad'">
-            {{ show(item.params.SIPRegisterStatus, '未知') }}
+            {{ show(item.params.SIPRegisterStatus || item.params.Status, '未知') }}
           </span>
           <span class="wifi-clients">{{ sipServer(item.params) }}</span>
         </div>
@@ -146,6 +191,10 @@
 <script>
 import { fetchDeviceBusiness, collectDeviceBusiness, dispatchRpc } from '@/api/device'
 
+// 后端每 5 分钟自动刷新一次 LAN 网口状态，这里按 1 分钟回读业务快照：
+// 页面开着就能看到网口插拔变化，不必手动点「重新采集」
+const AUTO_REFRESH_MS = 60000
+
 export default {
   name: 'DeviceBusinessPanel',
   props: {
@@ -156,12 +205,21 @@ export default {
       loading: false,
       collecting: false,
       summary: {},
-      pingingPath: ''
+      pingingPath: '',
+      refreshTimer: null
     }
   },
   computed: {
     wanItems() { return this.summary.wan || [] },
+    // 详情页保留设备全部 WiFi 能力：启用的、未启用的都列出来，不做过滤
     wifiItems() { return this.summary.wifi || [] },
+    wifi24Items() {
+      return this.wifiItems.filter(item => this.wifiBand(item.params) === '2.4G')
+    },
+    wifi58Items() {
+      return this.wifiItems.filter(item => this.wifiBand(item.params) === '5.8G')
+    },
+    lanItems() { return this.summary.lan || [] },
     sipItems() { return this.summary.sip || [] },
     devTitle() {
       const info = this.summary.device || []
@@ -171,23 +229,14 @@ export default {
     },
     deviceRows() {
       const info = this.summary.device || []
-      const pick = (names, label, strong) => {
-        for (const n of names) {
-          const v = this.paramValue(info, n)
-          if (v !== undefined && v !== null && v !== '') {
-            return { label, value: v, strong: !!strong }
-          }
-        }
-        return null
-      }
+      const upTime = this.paramValue(info, 'UpTime')
+      // 按参考图顺序：运行时长 / 注册时间 / 最近上报 / 上报 IP
       return [
-        pick(['ManufacturerOUI', 'Manufacturer'], 'OUI', true),
-        pick(['SerialNumber'], '设备 SN', true),
-        pick(['AdditionalHardwareVersion', 'MACAddress'], 'MAC 地址'),
-        pick(['HardwareVersion'], '硬件版本'),
-        pick(['SoftwareVersion', 'AdditionalSoftwareVersion'], '固件版本'),
-        pick(['ProductClass', 'ModelName'], '设备型号')
-      ].filter(Boolean)
+        { label: '运行时长', value: upTime ? this.uptime(upTime) : '-', strong: false },
+        { label: '注册时间', value: this.formatTs(this.summary.registerTime), strong: false },
+        { label: '最近上报', value: this.formatTs(this.summary.lastContactTime), strong: false },
+        { label: '上报IP', value: this.summary.ip || '-', strong: true }
+      ]
     },
     message() {
       if (this.summary.collectStatus === 'empty') {
@@ -208,6 +257,18 @@ export default {
   },
   created() {
     this.load()
+    // 页面不可见时不回读，省掉无意义请求；切回来下一轮自动补上
+    this.refreshTimer = setInterval(() => {
+      if (!document.hidden) {
+        this.reload()
+      }
+    }, AUTO_REFRESH_MS)
+  },
+  beforeDestroy() {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer)
+      this.refreshTimer = null
+    }
   },
   methods: {
     paramValue(list, name) {
@@ -304,7 +365,7 @@ export default {
       return status || '未知'
     },
     sipRegistered(params) {
-      const s = String(params.SIPRegisterStatus || '').toLowerCase()
+      const s = String(params.SIPRegisterStatus || params.Status || '').toLowerCase()
       return s === 'registered' || s === 'ok' || s === '成功'
     },
     sipServer(params) {
@@ -313,6 +374,18 @@ export default {
       const port = params.RegistrarServerPort || params.ProxyServerPort
       return host + (port ? ':' + port : '')
     },
+    /**
+     * SIP 线路展示：优先用认证名/用户名/号码；没有就从 URI 里截 @ 前面的号码。
+     * 设备上有时只有 AuthUserName 和 URI，没有 UserName，不能直接拿 URI 当号码，
+     * 否则号码/用户名会显示成 "2026@192.168.xxx" 这种带域名的东西。
+     */
+    sipDisplay(params) {
+      const name = params.AuthUserName || params.UserName || params.DirectoryNumber || params.PhoneNumber
+      if (name) return name
+      const uri = params.URI || ''
+      const m = uri.match(/^([^@]+)@/)
+      return m ? m[1] : (uri || '未配置')
+    },
     async load() {
       this.loading = true
       try {
@@ -320,6 +393,15 @@ export default {
         this.summary = res.data || {}
       } finally {
         this.loading = false
+      }
+    },
+    // 定时回读：不置 loading（避免整页闪一下），失败也不弹提示，下一轮继续
+    async reload() {
+      try {
+        const res = await fetchDeviceBusiness(this.sn)
+        this.summary = res.data || {}
+      } catch (e) {
+        // 静默失败：定时刷新不该打扰正在看页面的人
       }
     },
     async collect() {
@@ -339,6 +421,10 @@ export default {
     },
     formatTime(value) {
       if (!value) return '从未采集'
+      return String(value).replace('T', ' ')
+    },
+    formatTs(value) {
+      if (!value) return '未记录'
       return String(value).replace('T', ' ')
     }
   }
@@ -462,6 +548,25 @@ export default {
   word-break: break-all;
 }
 /* ---- WLAN / SIP 状态条 ---- */
+.wifi-band-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.wifi-band-label {
+  width: 46px;
+  flex-shrink: 0;
+  color: #2f7d32;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 32px;
+}
+.wifi-band-empty {
+  color: #909399;
+  font-size: 13px;
+  line-height: 32px;
+}
 .wifi-bar {
   display: flex;
   flex-wrap: wrap;
@@ -488,5 +593,42 @@ export default {
 .wifi-clients {
   color: #909399;
   font-size: 12px;
+}
+/* ---- LAN 网口 ---- */
+.lan-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.lan-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 90px;
+  padding: 10px 0;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  background: #f5f7fa;
+  color: #909399;
+  transition: all .2s;
+}
+.lan-chip.lan-up {
+  border-color: #67c23a;
+  background: #f0f9eb;
+  color: #67c23a;
+}
+.lan-icon {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 4px;
+}
+.lan-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.lan-status {
+  font-size: 11px;
+  margin-top: 2px;
 }
 </style>

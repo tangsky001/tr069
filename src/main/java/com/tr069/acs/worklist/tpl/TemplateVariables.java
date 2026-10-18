@@ -49,6 +49,10 @@ public final class TemplateVariables {
     public static final String SIP_PROXY = "%sip_proxy%";
     /** SIP 端口 */
     public static final String SIP_PORT = "%sip_port%";
+    /** SIP 注册服务器域名 */
+    public static final String SIP_REGISTRAR = "%sip_registrar%";
+    /** SIP 注册服务器端口 */
+    public static final String SIP_REGISTRAR_PORT = "%sip_registrar_port%";
 
     // ==================== WAN ====================
     /** PPPoE 宽带账号 */
@@ -102,7 +106,9 @@ public final class TemplateVariables {
                     var(SIP_NUM, "SIP 号码", false, "02112345678", null),
                     var(SIP_PWD, "SIP 密码", true, "", null),
                     var(SIP_PROXY, "SIP 代理域名", false, "sip.example.com", null),
-                    var(SIP_PORT, "SIP 端口", false, "5060", null));
+                    var(SIP_PORT, "SIP 端口", false, "5060", null),
+                    var(SIP_REGISTRAR, "SIP 注册服务器", false, "sip.example.com", null),
+                    var(SIP_REGISTRAR_PORT, "SIP 注册服务器端口", false, "5060", null));
             case "WAN_PPPOE" -> List.of(
                     var(PPPOE_USER, "宽带账号", false, "user123", null),
                     var(PPPOE_PWD, "宽带密码", true, "", null));
@@ -136,13 +142,18 @@ public final class TemplateVariables {
                                                     String roomNo) {
         Map<String, Object> filled = values == null
                 ? new LinkedHashMap<>() : new LinkedHashMap<>(values);
+        // 房间号是通用变量，不只 WiFi 用：SIP 账号常按房间号开，配置模板上就写 %room%，
+        // 而 SIP 的变量清单里并没有它。按业务类型补的话，SIP 会把字面量 %room% 发给设备。
+        // 所以房间号不按业务区分，一律先兜住：优先设备登记的 roomNo，没有才是 0000。
+        if (!hasValue(filled, ROOM)) {
+            String room = roomNo != null && !roomNo.isBlank() ? roomNo.trim() : DEFAULT_ROOM;
+            filled.put(ROOM, room);
+        }
         for (Var v : forCategory(category)) {
             if (hasValue(filled, v.name())) {
                 continue;
             }
-            String fallback = ROOM.equals(v.name()) && roomNo != null && !roomNo.isBlank()
-                    ? roomNo.trim()
-                    : DEFAULTS.get(v.name());
+            String fallback = DEFAULTS.get(v.name());
             if (fallback != null && !fallback.isBlank()) {
                 filled.put(v.name(), fallback);
             }

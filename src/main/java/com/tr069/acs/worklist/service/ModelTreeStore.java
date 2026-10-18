@@ -450,6 +450,13 @@ public class ModelTreeStore {
                 continue;
             }
             String real = realPath(node, path);
+            // 设备声明只读的参数写了必失败，而且是 9007 这类笼统错误，会把整批都拖下水。
+            // 例如 VoiceService 的 Line.Enable，试过 1 和 true 都被拒——它不是值不合法，是设备不让写
+            if (!node.isWritable()) {
+                result.getReadOnly().add(real);
+                log.warn("该参数在设备上是只读，跳过不下发: {}", real);
+                continue;
+            }
             // 下发格式以型号档案声明的类型为准，不能靠字面值猜：SSID 取值 1111、密码 00000000
             // 全是数字，猜成 int 会被设备拒绝
             if (notBlank(node.getType())) {
@@ -1062,6 +1069,12 @@ public class ModelTreeStore {
          * 型号能力树上找不到的参数，留在下发列表里会让整条 SetParameterValues 被设备判 9003。
          */
         private final List<String> unsupported = new ArrayList<>();
+
+        /**
+         * 设备声明为只读的参数。写了设备必然拒绝，且回的是 9007 这种笼统错误，
+         * 会把同批其它参数一起拖下水——SPV 按批生效，一条被拒整批都废。
+         */
+        private final List<String> readOnly = new ArrayList<>();
 
         /**
          * 真实路径 -> 型号档案声明的值类型，下发时用它定 xsi:type。

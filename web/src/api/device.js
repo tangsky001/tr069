@@ -94,11 +94,31 @@ export function saveAdaptation(sn, data) {
 /**
  * 重新采集：向在线设备下发 GetParameterValues 刷新业务参数后再回库读。
  * 后端 collectStatus：success / timeout / fail / empty。
+ *
+ * 采集可能需要等 CPE 下一次空 POST（尤其是反向轮询或长周期上报），默认 5s 太短，
+ * 这里给到 60s，和后端 acs.device.business.collect-timeout-seconds 默认值对齐。
  */
 export function collectDeviceBusiness(sn) {
   return request({
     url: '/device/' + encodeURIComponent(sn) + '/business/collect',
-    method: 'post'
+    method: 'post',
+    timeout: 60000
+  })
+}
+
+/**
+ * 查询设备本地账号（超管 telecomadmin）及口令。
+ *
+ * 后端对在线设备下发 GetParameterValues 读 User.{i}.Username / Password，
+ * 要等设备回值（默认最长 30s），axios 默认超时不够，这里单独放宽。
+ * 返回 data：{ sn, online, status, accounts: [{ instance, path, username, password }], message }
+ * status：success / empty / timeout / fail / offline
+ */
+export function fetchAdminAccounts(sn) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/admin-account',
+    method: 'get',
+    timeout: 90000
   })
 }
 
