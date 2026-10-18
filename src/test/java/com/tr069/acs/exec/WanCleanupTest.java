@@ -6,14 +6,16 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * WAN 清理规则。这里是「会决定设备脱不脱管」的逻辑，每条用例都必须成立。
  *
+ * <p>当前策略：下发 WAN 配置时不删除任何已有连接——全部原样保留，只改参数。
+ * 所以下面每条用例的共同结论都是「{@code delete} 为空」。</p>
+ *
  * <p>参数名取自移动定制机型的真实写法 {@code X_CMCC_ServiceList}，顺带验证电信、联通、
- * 以及标准 {@code ServiceList} 也能认出来——判定不能只认某一家运营商的前缀。</p>
+ * 以及标准 {@code ServiceList} 也能认出来——业务类型判定不能只认某一家运营商的前缀。</p>
  */
 class WanCleanupTest {
 
@@ -27,33 +29,32 @@ class WanCleanupTest {
     }
 
     @Test
-    void tr069那条原样保留其余全部删掉() {
+    void 已有连接全部保留不删任何一条() {
         WanCleanup.Plan plan = WanCleanup.plan(List.of(
                 link(P9, "TR069"),
                 link(P10, "INTERNET"),
                 link(P11, "VOIP")));
 
-        assertEquals(1, plan.keep().size(), "只有 TR069 管理通道保留");
-        assertTrue(plan.keep().get(0).path().contains(".9."), "保留的必须是 TR069 那条");
-        assertEquals(2, plan.delete().size(), "INTERNET 与 VOIP 都要删");
-        assertTrue(plan.delete().stream().noneMatch(l -> l.path().equals(P9)),
-                "TR069 那条绝不能出现在删除列表里");
+        assertEquals(3, plan.keep().size(), "现有连接一条都不删");
+        assertTrue(plan.delete().isEmpty(), "清理列表必须为空");
+        assertTrue(plan.keep().stream().anyMatch(l -> l.path().contains(".9.")),
+                "TR069 那条仍在保留列表里");
     }
 
     @Test
-    void 认不出tr069就整体中止不删任何一条() {
-        WanCleanup.Tr069NotFound err = assertThrows(WanCleanup.Tr069NotFound.class,
-                () -> WanCleanup.plan(List.of(link(P9, "INTERNET"), link(P10, "VOIP"))),
-                "没识别出管理通道时必须中止，不能继续删");
+    void 认不出tr069也不删任何一条() {
+        WanCleanup.Plan plan = WanCleanup.plan(List.of(link(P9, "INTERNET"), link(P10, "VOIP")));
 
-        assertEquals(2, err.total());
-        assertTrue(err.getMessage().contains("TR069"), "错误信息要说清是没认出管理通道");
+        assertEquals(2, plan.keep().size());
+        assertTrue(plan.delete().isEmpty(),
+                "不删连接就不需要判定管理通道，也不该因为没认出来就中止下发");
     }
 
     @Test
-    void 一条连接都没有也中止() {
-        assertThrows(WanCleanup.Tr069NotFound.class, () -> WanCleanup.plan(List.of()));
-        assertThrows(WanCleanup.Tr069NotFound.class, () -> WanCleanup.plan(null));
+    void 一条连接都没有也不报错() {
+        assertTrue(WanCleanup.plan(List.of()).keep().isEmpty(), "空列表");
+        assertTrue(WanCleanup.plan(null).keep().isEmpty(), "null 也不抛异常");
+        assertTrue(WanCleanup.plan(null).delete().isEmpty());
     }
 
     @Test
@@ -76,21 +77,21 @@ class WanCleanupTest {
                 link(P10, "TR069"),
                 link(P11, "INTERNET")));
 
-        assertEquals(2, plan.keep().size());
-        assertEquals(1, plan.delete().size());
+        assertEquals(3, plan.keep().size());
+        assertTrue(plan.delete().isEmpty());
     }
 
     @Test
-    void 业务类型认不出的连接也会被删掉() {
+    void 业务类型认不出的连接同样保留() {
         // 用不带任何业务关键字的路径构造「真·认不出」的场景。
-        // 注意真实 root 多为 InternetGatewayDevice，光靠路径会被推断成 INTERNET——
-        // 那是既有行为且无害（管理通道靠 ServiceList 认，且无论推断成什么都会被删），
-        // 这里单独构造干净路径验证 UNKNOWN 也归入删除。
+        // 注意真实 root 多为 InternetGatewayDevice，光靠路径会被推断成 INTERNET，
+        // 所以这里单独构造干净路径验证 UNKNOWN 也归入保留。
         WanCleanup.Plan plan = WanCleanup.plan(List.of(
                 link(P9, "TR069"),
                 new WanCleanup.WanLink("WANIPConnection.10.", Map.of())));
 
-        assertEquals(1, plan.delete().size(), "认不出业务类型的连接按非管理通道处理，一并清理");
-        assertEquals("-", WanCleanup.serviceOf(plan.delete().get(0)));
+        assertEquals(2, plan.keep().size());
+        assertTrue(plan.delete().isEmpty(), "认不出业务类型照样保留，不再清理");
+        assertEquals("-", WanCleanup.serviceOf(plan.keep().get(1)), "认不出的仍标为 '-'");
     }
 }

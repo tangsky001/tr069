@@ -214,7 +214,15 @@ public class ModelAdaptationService {
         patch.setCapLanPorts(request.getLanPorts());
         patch.setCapLanSpeed(request.getLanSpeed());
         patch.setCapSipCount(request.getSipCount());
-        patch.setCapWifiSpec(request.getWifiSpec());
+        // 实测有 5.8G 但申报只勾了 2.4G 时按实测补齐：申报漏掉 5G 会让模板库里根本
+        // 没有 wlan_b 那张表，后面想改一次 5G 的 SSID 一律报「5G 模板里没有实例」
+        String wifiSpec = request.getWifiSpec();
+        if (detected.wifiBands.contains("5.8G") && wifiSpec != null
+                && wifiSpec.contains("2.4") && !wifiSpec.contains("5")) {
+            wifiSpec = "2.4G+5.8G";
+            log.info("申报 WIFI 规格只到 2.4G，但实测含 5.8G，按实测补齐: sn={}", sn);
+        }
+        patch.setCapWifiSpec(wifiSpec);
         if (model.getSampleSn() == null || model.getSampleSn().isBlank()) {
             patch.setSampleSn(sn);
         }

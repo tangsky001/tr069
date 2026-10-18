@@ -21,6 +21,7 @@ import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.template.service.ConfigTemplateService;
 import com.tr069.acs.worklist.service.ModelMappingService;
 import com.tr069.acs.worklist.service.ModelTreeStore;
+import com.tr069.acs.worklist.tpl.TemplateVariables;
 import com.tr069.acs.worklist.tpl.dao.DeviceDao;
 import com.tr069.acs.worklist.tpl.entity.Device;
 import com.tr069.acs.worklist.tpl.service.ModelTemplateService;
@@ -249,18 +250,39 @@ public class IntentDeliveryService {
             throw new IllegalArgumentException("设备不存在，请确认已注册: " + request.sn());
         }
 
+        // 变量兜底放在渲染前这个唯一汇聚点上：工单单台、批量、北向接口都从这里过，
+        // 房间号取设备登记值、口令取约定默认值，调用方一个变量都不传也能渲染出完整计划
+        Map<String, Object> values = TemplateVariables.applyDefaults(
+                request.category(), request.values(), device.getRoomNo());
+
+        // 字段覆盖优先级：本次下发显式传的值 > 配置模板里保存的字段 > SQLite 默认值。
+        // 必须按这个顺序塞：先放高优先级的 values，再用 putIfAbsent 补模板字段。
+        // 反过来（先模板后 putIfAbsent 补 values）会让模板里存的旧值压住本次要下发的新值，
+        // 表现为「业务模板上填了 0000，设备上下去的还是模板库里的 1111」。
+        // 空串不算显式值——表单把每个变量初始化成空串提交上来，那不代表要清掉模板值。
+        Map<String, String> overrides = new LinkedHashMap<>();
+        if (values != null) {
+            values.forEach((k, v) -> {
+                if (v != null && !String.valueOf(v).isBlank()) {
+                    overrides.put(k, String.valueOf(v));
+                }
+            });
+        }
         Map<String, Object> intentFields = new LinkedHashMap<>();
         if (request.templateId() != null) {
-            intentFields.putAll(configTemplateService.fieldsOf(request.templateId()));
+            Map<String, Object> tplFields = configTemplateService.fieldsOf(request.templateId());
+            if (tplFields != null) {
+                intentFields.putAll(tplFields);
+                tplFields.forEach((k, v) -> overrides.putIfAbsent(k, v == null ? null : String.valueOf(v)));
+            }
         }
-        Map<String, Object> values = request.values() == null ? Map.of() : request.values();
 
         Device model = findAdaptedModel(device, bizObject);
         // 数据模型对不上时宁可不发：把 IGD 的路径写进 TR-181 设备，设备只会回 9005
         checkDataModel(model, device);
 
         IntentPlan plan = renderer.render(bizObject, request.category(), model,
-                values, resolveInstance(values));
+                values, resolveInstance(values), overrides);
         plan = alignParameterNames(request.sn(), plan);
         plan = ensureServiceBinding(request.sn(), plan, values);
         plan = ensureVlanMode(request.sn(), plan);
@@ -546,6 +568,19 @@ public class IntentDeliveryService {
         // 型号登记过但没生成过模板（比如能力申报是后补的）：当场补一次，
         // 不必让运维再跑一遍采集
         if (!renderer.hasTemplate(adapted, bizObject)) {
+            // 设备都报出这个频段的 SSID 了，说明适配时 WIFI 规格那一项选漏了。
+            // 这里按设备实有频段补齐申报再生成——漏报 5G 的后果是模板库里根本没有
+            // wlan_b 那张表，想改一次 5G 的 SSID 得重做整轮适配
+            String spec = adapted.getCapWifiSpec();
+            boolean has24 = spec != null && spec.contains("2.4");
+            boolean has58 = spec != null && spec.contains("5");
+            if ("WiFi_5G".equals(bizObject) && !has58) {
+                adapted.setCapWifiSpec("2.4G+5.8G");
+                log.info("型号申报的 WIFI 规格不含 5.8G，按设备实有频段补齐: model={}", modelKey);
+            } else if ("WiFi_2G".equals(bizObject) && !has24) {
+                adapted.setCapWifiSpec(has58 ? "2.4G+5.8G" : "2.4G");
+                log.info("型号申报的 WIFI 规格不含 2.4G，按设备实有频段补齐: model={}", modelKey);
+            }
             log.info("型号缺少 {} 的模板，按能力申报补生成: model={}", bizObject, modelKey);
             templateService.generateAll(adapted);
         }

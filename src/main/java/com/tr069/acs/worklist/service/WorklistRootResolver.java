@@ -21,8 +21,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 结果就是「库里登记了 adapt_path，文件却不在那个位置」，适配状态永远判定失败。</p>
  *
  * <p>解析规则：配置值优先；若它指向的目录不存在或为空，依次回退到 jar 同级的
- * {@code configuration/} 与 {@code target/configuration/}（与 WorklistConfigService
- * 原有的回退逻辑一致）。结果缓存，进程内只解析一次。</p>
+ * {@code configuration/} 与 {@code target/configuration/}。结果缓存，进程内只解析一次。</p>
  *
  * <p>同目录里的其它落盘文件（模板库 SQLite 等）必须走 {@link #resolve(String)}，
  * 而不是自己拿相对路径去拼进程工作目录——否则又是一次「库连的是 A 处，档案写在

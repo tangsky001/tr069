@@ -79,7 +79,6 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 参数树导出 | 按型号导出能力树到 `configuration/models/`，并可按设备定位模型文件 | `worklist/service/ModelTreeStore` |
 | 业务快照 | WAN / WLAN / SIP 采集与解读，支持单台与整页批量读 | `acs/service/DeviceBusinessService` |
 | 型号语义映射 | `cpe_model` + `model_param_mapping` / `model_object_mapping`：业务字段 ↔ 型号真实 CWMP 路径，支持按 SN 推荐候选路径 | `worklist/controller/ModelMappingController`、`ModelMappingService` |
-| 光猫适配档案 | `configuration/profiles/*.yaml` 加载、匹配、WatchService 热加载 + 周期兜底扫描 | `worklist/loader`、`worklist/registry`、`WorklistConfigService` |
 | 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示 | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
 | RPC 下发（异步） | 下发返回任务号，按任务号轮询结果；超时统一收尾 | `agent/RpcDispatchService`、`queue/RpcTaskQueue`、`api/controller/RpcTaskController` |
 | 队列削峰 | 上报与下发走 Redis 队列，Redis 不可用时降级为进程内处理 | `queue/*` |
@@ -99,11 +98,10 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | --- | --- | --- |
 | 首页概览 | `/dashboard` | 已实现 |
 | 配置模板 | `/template/list` | 已实现（意图模板，按类型渲染意图字段；**高级模式/文件模板已彻底删除**） |
-| 业务模板 | `/biz/list` | 已实现（编排 + 成员视图 + 自检，整包下发等待新执行器） |
+| 业务模板 | `/biz/list` | 已实现（编排 + 成员视图 + 自检 + 整包串行下发，支持出错继续） |
 | 设备管理 | `/device/list` | 已实现（列表/详情/业务信息/WAN 参数弹窗/在线明细 + **右下角批量工具条**） |
 | 设备详情 | `/device-detail/:sn` | 已实现（能力树、参数树、RPC 调试） |
 | 工单记录 | `/worklist/instances` | 已实现（只读记录查询） |
-| 光猫适配 | `/worklist/profiles` | 已实现（档案列表、匹配、重载） |
 | OLT 管理 | `/olt/management` | **界面已实现，全量为前端模拟数据** |
 
 设备列表右下角工具条（`web/src/views/device/list.vue`，需先勾选设备）：
@@ -177,11 +175,11 @@ javaacs/
 
 ```
 configuration/
-├── profiles/    光猫适配档案 *.yaml（改文件热加载生效）
 └── models/      型号能力树 {isp}/{型号标识}.xml（由能力树导出生成）
 ```
 
-> 旧版的 `operators/` 工单模板目录已废弃，模板改为入库。
+> 旧版的 `operators/` 工单模板目录已废弃，模板改为入库；
+> 光猫适配档案也迁到了 SQLite 模板库（`acs.tr069tpl.db-path`），不再放 YAML 档案。
 
 ## 6. 后端包结构
 
@@ -257,7 +255,7 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.auth.cpe-to-acs-username/password` | `auto` | 光猫连 ACS 的账号；`auto`/留空即免认证，上线前改回真实账号 |
 | `acs.capability.enabled` / `collect-on-inform` | `true` | 能力树采集总开关与 Inform 后自动采集 |
 | `acs.config-template.auto-create-table` | `true` | 启动时补建 `config_template` |
-| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`profiles/`、`models/`），改文件热加载；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
+| `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`models/`）；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内处理 |
 | `acs.agent.rpc-timeout` | `510` | 单条 RPC 等待设备回应的超时（秒） |
 | `acs.exec.request-timeout-seconds` | `90` | 下发等待设备回应的超时（秒） |

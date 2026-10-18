@@ -1,5 +1,6 @@
 package com.tr069.acs.worklist.tpl;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,6 +26,19 @@ public final class TemplateVariables {
     public static final String ROOM = "%room%";
     /** WiFi 密码 */
     public static final String WIFI_PWD = "%wifi_pwd%";
+
+    /** 房间号没登记时的兜底值。 */
+    public static final String DEFAULT_ROOM = "0000";
+    /** WiFi 密码没填写时的兜底值。 */
+    public static final String DEFAULT_WIFI_PWD = "88888888";
+
+    /**
+     * 调用方没填时的兜底值，只对「有行业惯例默认值」的变量登记。
+     * SIP 号码、宽带账号这类填不出来就是填不出来，猜一个反而开错业务。
+     */
+    private static final Map<String, String> DEFAULTS = Map.of(
+            ROOM, DEFAULT_ROOM,
+            WIFI_PWD, DEFAULT_WIFI_PWD);
 
     // ==================== SIP 语音 ====================
     /** SIP 号码/账号 */
@@ -82,25 +96,67 @@ public final class TemplateVariables {
         }
         return switch (category.toUpperCase(java.util.Locale.ROOT)) {
             case "WIFI_24G", "WIFI_58G" -> List.of(
-                    var(ROOM, "房间名", false, "8301"),
-                    var(WIFI_PWD, "WiFi 密码", true, ""));
+                    var(ROOM, "房间名", false, "8301", DEFAULT_ROOM),
+                    var(WIFI_PWD, "WiFi 密码", true, "", DEFAULT_WIFI_PWD));
             case "SIP" -> List.of(
-                    var(SIP_NUM, "SIP 号码", false, "02112345678"),
-                    var(SIP_PWD, "SIP 密码", true, ""),
-                    var(SIP_PROXY, "SIP 代理域名", false, "sip.example.com"),
-                    var(SIP_PORT, "SIP 端口", false, "5060"));
+                    var(SIP_NUM, "SIP 号码", false, "02112345678", null),
+                    var(SIP_PWD, "SIP 密码", true, "", null),
+                    var(SIP_PROXY, "SIP 代理域名", false, "sip.example.com", null),
+                    var(SIP_PORT, "SIP 端口", false, "5060", null));
             case "WAN_PPPOE" -> List.of(
-                    var(PPPOE_USER, "宽带账号", false, "user123"),
-                    var(PPPOE_PWD, "宽带密码", true, ""));
+                    var(PPPOE_USER, "宽带账号", false, "user123", null),
+                    var(PPPOE_PWD, "宽带密码", true, "", null));
             case "WAN_STATIC" -> List.of(
-                    var(WAN_IP, "IP 地址", false, "10.0.0.2"),
-                    var(WAN_MASK, "子网掩码", false, "255.255.255.0"),
-                    var(WAN_GW, "网关", false, "10.0.0.1"),
-                    var(WAN_DNS, "DNS（逗号分隔）", false, "223.5.5.5,114.114.114.114"));
+                    var(WAN_IP, "IP 地址", false, "10.0.0.2", null),
+                    var(WAN_MASK, "子网掩码", false, "255.255.255.0", null),
+                    var(WAN_GW, "网关", false, "10.0.0.1", null),
+                    var(WAN_DNS, "DNS（逗号分隔）", false, "223.5.5.5,114.114.114.114", null));
             case "WAN_DHCP", "WAN_BRIDGE" -> List.of(
-                    var(VLAN_ID, "VLAN ID", false, "41"));
+                    var(VLAN_ID, "VLAN ID", false, "41", null));
             default -> List.of();
         };
+    }
+
+    /**
+     * 把调用方没填的变量补上兜底值，单台与批量下发都走这里，规则一致。
+     *
+     * <p>房间号优先取设备登记的 {@code roomNo}（运维在设备备注里维护的那个），
+     * 设备没登记才用 {@link #DEFAULT_ROOM}；WiFi 密码没填用 {@link #DEFAULT_WIFI_PWD}。
+     * 其余变量没有兜底，缺了仍然按错误处理——号码、账号猜出来就是开错业务。</p>
+     *
+     * <p><b>空串也算没填</b>：前端表单初始化时把每个变量都置成空串提交上来，
+     * 只判 null 会把「用户没输」当成「用户要下发空值」，SSID 与密码就被清成空。</p>
+     *
+     * @param category 业务类型
+     * @param values   调用方传的变量值，键可以是 {@code %room%} 或 {@code room}
+     * @param roomNo   设备登记的房间号，可为空
+     * @return 补过兜底值的新 map，不改动入参
+     */
+    public static Map<String, Object> applyDefaults(String category, Map<String, Object> values,
+                                                    String roomNo) {
+        Map<String, Object> filled = values == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(values);
+        for (Var v : forCategory(category)) {
+            if (hasValue(filled, v.name())) {
+                continue;
+            }
+            String fallback = ROOM.equals(v.name()) && roomNo != null && !roomNo.isBlank()
+                    ? roomNo.trim()
+                    : DEFAULTS.get(v.name());
+            if (fallback != null && !fallback.isBlank()) {
+                filled.put(v.name(), fallback);
+            }
+        }
+        return filled;
+    }
+
+    /** 变量是否已有值：键带不带百分号都认，空串视为没填。 */
+    private static boolean hasValue(Map<String, Object> values, String variable) {
+        Object raw = values.get(variable);
+        if (raw == null) {
+            raw = values.get(variable.replace("%", ""));
+        }
+        return raw != null && !String.valueOf(raw).isBlank();
     }
 
     /**
@@ -117,18 +173,20 @@ public final class TemplateVariables {
         return out;
     }
 
-    private static Var var(String name, String label, boolean secret, String example) {
-        return new Var(name, label, secret, example);
+    private static Var var(String name, String label, boolean secret, String example,
+                           String defaultValue) {
+        return new Var(name, label, secret, example, defaultValue);
     }
 
     /**
      * 变量描述，供前端表单与文档使用。
      *
-     * @param name    占位符，如 {@code %room%}
-     * @param label   中文标签
-     * @param secret  是否口令类
-     * @param example 示例值，仅用于输入框 placeholder，不参与下发
+     * @param name         占位符，如 {@code %room%}
+     * @param label        中文标签
+     * @param secret       是否口令类
+     * @param example      示例值，仅用于输入框 placeholder，不参与下发
+     * @param defaultValue 没填时的兜底值，null 表示必须人工填写
      */
-    public record Var(String name, String label, boolean secret, String example) {
+    public record Var(String name, String label, boolean secret, String example, String defaultValue) {
     }
 }

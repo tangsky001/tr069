@@ -2,25 +2,24 @@ package com.tr069.acs.exec;
 
 import com.tr069.acs.cwmp.WanServiceClassifier;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 下发业务 WAN 前的连接清理：保留 TR069 管理通道，删掉其余 WAN 连接。
+ * 下发业务 WAN 前的连接清理。
  *
- * <h3>为什么必须先清一遍</h3>
- * <p>设备出厂或上次配置残留的 WAN 连接如果留着，新下发的业务连接会和它们抢默认路由、
- * 争同一个 VLAN，表现为「配置下发成功但上网不通」。所以下发前统一清干净再按模板重建。</p>
+ * <h3>当前策略：一条都不删</h3>
+ * <p>早期实现会保留 TR069 管理通道、删掉其余 WAN 连接，理由是设备出厂或上次配置残留的
+ * 连接会和新建的业务连接抢默认路由、争同一个 VLAN。但现场要求下发时不得动已有连接
+ * （工单下发要保证所有 WAN 都还在），所以现在 {@link #plan} 固定返回「全部保留、不删除」，
+ * 只由 {@code SetParameterValues} 改参数；清理旧连接改由专门的清理动作或人工处理。</p>
  *
- * <h3>为什么 TR069 那条绝对不能删</h3>
- * <p>TR069 管理通道是设备与 ACS 通信的命脉，删掉它设备就再也连不上来，
- * 只能上门处理。所以这里把它挑出来单独保留。</p>
+ * <p>既然不删，也就不需要再判定哪条是管理通道：{@link #plan} 不再抛
+ * {@link Tr069NotFound}，下发不会因「没认出 TR069」而中止。</p>
  *
- * <h3>认不出来时的处置</h3>
- * <p>如果一台 TR069 通道都没识别出来，说明这套判定在该型号上不适用（或参数没采到），
- * 此时继续删除等同于赌博。约定是<b>整个下发中止</b>——宁可本次下发失败，也不冒脱管的险。
- * 失败会带着明确原因写进工单，运维一看就知道是识别问题，而不是配置问题。</p>
+ * <p>下面保留的判定方法（{@link #isBusy}、{@link #serviceOf}、
+ * {@link WanServiceClassifier}）仍用于日志里说明每条连接的业务与占用情况，
+ * 将来若恢复清理策略，把 {@link #plan} 改回按业务类型分流即可。</p>
  */
 public final class WanCleanup {
 
@@ -48,33 +47,16 @@ public final class WanCleanup {
     /**
      * 挑出要保留与要删除的连接。
      *
+     * <p>当前业务策略：下发 WAN 配置时不自动删除任何已有连接。
+     * 原有逻辑会删掉除 TR069 管理通道以外的所有 WAN 连接，但现场要求保留所有
+     * 已有连接，只通过 {@code SetParameterValues} 修改参数；清理旧连接改由
+     * 专门的清理接口或人工处理。因此本方法永远返回「全部保留、不删除」。</p>
+     *
      * @param links 设备上现有的全部 WAN 连接
-     * @throws Tr069NotFound 一条 TR069 都没认出来，调用方必须中止下发
      */
     public static Plan plan(List<WanLink> links) {
-        List<WanLink> keep = new ArrayList<>();
-        List<WanLink> delete = new ArrayList<>();
-        if (links != null) {
-            for (WanLink link : links) {
-                // 管理通道不能碰；正在承载业务的也不能碰——设备上正在用的连接
-                // 删不掉（实测回 9002 Internal error），强行删只会让下发失败
-                if (WanServiceClassifier.isTr069(link.params(), link.path()) || isBusy(link)) {
-                    keep.add(link);
-                } else {
-                    delete.add(link);
-                }
-            }
-        }
-        // 设备能通过 TR069 上报上来，管理通道必然存在；认不出就说明判定没生效
-        // （或参数没采到），此时删任何一条都可能删掉命脉，直接中止。
-        // 注意只看「保留里有没有管理通道」：占用中的业务连接也会被留下来，
-        // 但它们不能替代管理通道，光有它们仍说明没认出命脉在哪。
-        boolean hasTr069 = keep.stream()
-                .anyMatch(link -> WanServiceClassifier.isTr069(link.params(), link.path()));
-        if (!hasTr069) {
-            throw new Tr069NotFound(links == null ? 0 : links.size());
-        }
-        return new Plan(List.copyOf(keep), List.copyOf(delete));
+        List<WanLink> keep = links == null ? List.of() : List.copyOf(links);
+        return new Plan(keep, List.of());
     }
 
     /**
@@ -123,7 +105,10 @@ public final class WanCleanup {
     }
 
     /**
-     * 没能识别出 TR069 管理通道。抛出后下发必须整体中止，不得继续删连接。
+     * 没能识别出 TR069 管理通道。
+     *
+     * <p>当前「一条都不删」的策略下 {@link #plan} 不会抛它，保留是为了将来恢复清理策略时
+     * 直接复用：那时认不出管理通道就必须整体中止，不得继续删连接。</p>
      */
     public static class Tr069NotFound extends RuntimeException {
 

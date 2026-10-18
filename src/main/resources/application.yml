@@ -212,17 +212,10 @@ acs:
     #   从 server 目录启动  → server/configuration
     #   从 target 目录起 jar → server/target/configuration
     # 目录由程序自行读写，约定：
-    #   profiles/                     光猫适配档案 *.yaml，改动由下面的热加载接管
     #   models/{isp}/{型号标识}.xml    设备能力树按型号导出的归档
+    # 光猫适配档案已迁到 SQLite 模板库（acs.tr069tpl.db-path），不再放 YAML 档案
     # 该目录为空时，依次回退到 jar 同级的 configuration/、target/configuration/
     root-path: ./configuration
-    hot-reload:
-      # 文件监听 + 增量重载开关
-      enabled: true
-      # 变化去抖时间(毫秒)
-      debounce-millis: 800
-      # 周期全量扫描兜底间隔(秒)，0 表示关闭
-      rescan-interval-seconds: 60
 
   # ==================== 模板库（光猫已适配数据，便携化 SQLite） ====================
   tr069tpl:

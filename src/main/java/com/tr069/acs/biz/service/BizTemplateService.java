@@ -169,6 +169,20 @@ public class BizTemplateService {
                 .orderByAsc(BizTemplateItem::getId));
     }
 
+    /**
+     * 成员的展示结构，按执行顺序。
+     *
+     * <p>下发要用它：业务类型、入参覆盖、引用的配置模板是否还在，都在这一层补出来，
+     * 实体里只有 templateKey 一个字符串。</p>
+     */
+    public List<BizTemplateItemView> viewsOf(Long templateId) {
+        List<BizTemplateItemView> views = new ArrayList<>();
+        for (BizTemplateItem item : itemsOf(templateId)) {
+            views.add(toView(item));
+        }
+        return views;
+    }
+
     // ==================== 内部实现 ====================
 
     private void replaceItems(Long templateId, List<BizTemplateItemInput> inputs) {
@@ -195,9 +209,7 @@ public class BizTemplateService {
 
     private BizTemplateDetail detail(BizTemplate template) {
         BizTemplateDetail detail = BizTemplateDetail.of(template);
-        for (BizTemplateItem item : itemsOf(template.getId())) {
-            detail.getItems().add(toView(item));
-        }
+        detail.getItems().addAll(viewsOf(template.getId()));
         return detail;
     }
 

@@ -112,12 +112,6 @@ export const constantRoutes = [
         name: 'WorklistInstances',
         component: () => import('@/views/worklist/instances'),
         meta: { title: '工单记录', icon: 'el-icon-tickets' }
-      },
-      {
-        path: 'profiles',
-        name: 'WorklistProfiles',
-        component: () => import('@/views/worklist/profiles'),
-        meta: { title: '光猫适配', icon: 'el-icon-cpu' }
       }
     ]
   },

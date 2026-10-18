@@ -39,6 +39,10 @@
               :show-password="v.secret"
               clearable
             />
+            <div v-if="v.name === '%room%'" class="tip">
+              留空则取设备备注里登记的房间号，未登记用 {{ v.defaultValue }}
+            </div>
+            <div v-else-if="v.defaultValue" class="tip">留空则使用默认值 {{ v.defaultValue }}</div>
             <div v-if="v.secret" class="tip">口令类参数，不会明文写入日志</div>
           </el-form-item>
         </template>

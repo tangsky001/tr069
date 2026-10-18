@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -62,21 +63,24 @@ public class SqlitePlanRenderer {
      *
      * @param bizObject 业务对象：WiFi_2G / WiFi_5G / Voice_Service / Internet_WAN
      * @param category  下发业务类型：WIFI_24G / SIP / WAN_DHCP ...，WAN 用它挑对应的连接模板
-     * @param device    SQLite 里的已适配型号
-     * @param values    本次下发的业务字段值，键可以是 {@code %room%} 或 {@code room}
-     * @param instance  实例号，写第几个（第几个 SSID、第几路语音、第几个网口）
+     * @param device     SQLite 里的已适配型号
+     * @param values     本次下发的业务字段值，键可以是 {@code %room%} 或 {@code room}
+     * @param instance   实例号，写第几个（第几个 SSID、第几路语音、第几个网口）
+     * @param overrides  配置模板里保存的字段值，按字段名覆盖 SQLite 表里的默认值；
+     *                   允许模板里的值再带 {@code %room%} 等变量，会被 {@code values} 二次替换
      */
     public IntentPlan render(String bizObject, String category, Device device,
-                             Map<String, Object> values, int instance) {
+                             Map<String, Object> values, int instance,
+                             Map<String, String> overrides) {
         List<PlanItem> items = new ArrayList<>();
         List<String> objectsToAdd = new ArrayList<>();
         List<String> errors = new ArrayList<>();
 
         switch (bizObject == null ? "" : bizObject) {
-            case "WiFi_2G" -> wifi(device, values, instance, items, errors, true);
-            case "WiFi_5G" -> wifi(device, values, instance, items, errors, false);
-            case "Voice_Service" -> voice(device, values, instance, items, errors);
-            case "Internet_WAN" -> wan(category, device, values, items, objectsToAdd, errors);
+            case "WiFi_2G" -> wifi(device, values, instance, items, errors, true, overrides);
+            case "WiFi_5G" -> wifi(device, values, instance, items, errors, false, overrides);
+            case "Voice_Service" -> voice(device, values, instance, items, errors, overrides);
+            case "Internet_WAN" -> wan(category, device, values, items, objectsToAdd, errors, overrides);
             default -> errors.add("该业务还没有适配模板，请先对该型号做适配: " + bizObject);
         }
 
@@ -92,42 +96,69 @@ public class SqlitePlanRenderer {
     // ==================== 各业务 ====================
 
     private void wifi(Device device, Map<String, Object> values, int instance,
-                      List<PlanItem> items, List<String> errors, boolean band24) {
+                      List<PlanItem> items, List<String> errors, boolean band24,
+                      Map<String, String> overrides) {
         if (band24) {
-            WlanA row = wlanADao.findByDeviceId(device.getId()).stream()
-                    .filter(r -> r.getInstanceNo() != null && r.getInstanceNo() == instance)
-                    .findFirst().orElse(null);
+            WlanA row = pick(wlanADao.findByDeviceId(device.getId()), WlanA::getInstanceNo,
+                    instance, "2.4G", device.getModelKey(), errors);
             if (row == null) {
-                errors.add("2.4G 模板里没有第 " + instance + " 个实例，请重新适配");
                 return;
             }
-            put(items, errors, "WiFi_2G", "enable", row.getPathEnable(), row.getValEnable(), values, instance);
-            put(items, errors, "WiFi_2G", "ssid", row.getPathSsid(), row.getValSsid(), values, instance);
-            put(items, errors, "WiFi_2G", "wpa_key", row.getPathKey(), row.getValKey(), values, instance);
-            put(items, errors, "WiFi_2G", "wpa_psk", row.getPathPsk(), row.getValPsk(), values, instance);
-            put(items, errors, "WiFi_2G", "channel", row.getPathChannel(), row.getValChannel(), values, instance);
-            put(items, errors, "WiFi_2G", "beacon", row.getPathBeacon(), row.getValBeacon(), values, instance);
-            put(items, errors, "WiFi_2G", "wpa_mode", row.getPathWpaMode(), row.getValWpaMode(), values, instance);
+            put(items, errors, "WiFi_2G", "enable", row.getPathEnable(), row.getValEnable(), values, instance, overrides);
+            put(items, errors, "WiFi_2G", "ssid", row.getPathSsid(), row.getValSsid(), values, instance, overrides);
+            put(items, errors, "WiFi_2G", "wpa_key", row.getPathKey(), row.getValKey(), values, instance, overrides);
+            put(items, errors, "WiFi_2G", "wpa_psk", row.getPathPsk(), row.getValPsk(), values, instance, overrides);
+            put(items, errors, "WiFi_2G", "channel", row.getPathChannel(), row.getValChannel(), values, instance, overrides);
+            put(items, errors, "WiFi_2G", "beacon", row.getPathBeacon(), row.getValBeacon(), values, instance, overrides);
+            put(items, errors, "WiFi_2G", "wpa_mode", row.getPathWpaMode(), row.getValWpaMode(), values, instance, overrides);
         } else {
-            WlanB row = wlanBDao.findByDeviceId(device.getId()).stream()
-                    .filter(r -> r.getInstanceNo() != null && r.getInstanceNo() == instance)
-                    .findFirst().orElse(null);
+            WlanB row = pick(wlanBDao.findByDeviceId(device.getId()), WlanB::getInstanceNo,
+                    instance, "5G", device.getModelKey(), errors);
             if (row == null) {
-                errors.add("5G 模板里没有第 " + instance + " 个实例，请重新适配");
                 return;
             }
-            put(items, errors, "WiFi_5G", "enable", row.getPathEnable(), row.getValEnable(), values, instance);
-            put(items, errors, "WiFi_5G", "ssid", row.getPathSsid(), row.getValSsid(), values, instance);
-            put(items, errors, "WiFi_5G", "wpa_key", row.getPathKey(), row.getValKey(), values, instance);
-            put(items, errors, "WiFi_5G", "wpa_psk", row.getPathPsk(), row.getValPsk(), values, instance);
-            put(items, errors, "WiFi_5G", "channel", row.getPathChannel(), row.getValChannel(), values, instance);
-            put(items, errors, "WiFi_5G", "beacon", row.getPathBeacon(), row.getValBeacon(), values, instance);
-            put(items, errors, "WiFi_5G", "wpa_mode", row.getPathWpaMode(), row.getValWpaMode(), values, instance);
+            put(items, errors, "WiFi_5G", "enable", row.getPathEnable(), row.getValEnable(), values, instance, overrides);
+            put(items, errors, "WiFi_5G", "ssid", row.getPathSsid(), row.getValSsid(), values, instance, overrides);
+            put(items, errors, "WiFi_5G", "wpa_key", row.getPathKey(), row.getValKey(), values, instance, overrides);
+            put(items, errors, "WiFi_5G", "wpa_psk", row.getPathPsk(), row.getValPsk(), values, instance, overrides);
+            put(items, errors, "WiFi_5G", "channel", row.getPathChannel(), row.getValChannel(), values, instance, overrides);
+            put(items, errors, "WiFi_5G", "beacon", row.getPathBeacon(), row.getValBeacon(), values, instance, overrides);
+            put(items, errors, "WiFi_5G", "wpa_mode", row.getPathWpaMode(), row.getValWpaMode(), values, instance, overrides);
         }
     }
 
+    /**
+     * 按实例号取模板行，取不到就回退到该频段的第一行。
+     *
+     * <p>设备上报的 WLANConfiguration 索引和模板里登记的实例号常常不是一回事：
+     * 中兴 P22g-CIac 实测 2.4G 从 SSID1 起、5.8G 从 SSID5 起，中间 2~4 是别的 2.4G 网络，
+     * 而模板每组只登记了起始那一个。遇到没登记的实例号，宁可用该频段的起始实例继续下发，
+     * 也好过整单失败——回退会打 WARN，现场据此能看出写的是哪个实例。</p>
+     *
+     * <p>整张表为空说明这个型号压根没申报该频段的能力，回退也没意义，只能提示重新适配。</p>
+     */
+    private static <T> T pick(List<T> rows, Function<T, Integer> instanceNo, int wanted,
+                              String label, String modelKey, List<String> errors) {
+        if (rows == null || rows.isEmpty()) {
+            errors.add(label + " 没有可用模板：该型号适配时未申报这一档 WiFi 能力，"
+                    + "请重新适配并把「WIFI 规格」选成包含 " + label + " 的一档");
+            return null;
+        }
+        for (T row : rows) {
+            Integer no = instanceNo.apply(row);
+            if (no != null && no == wanted) {
+                return row;
+            }
+        }
+        T fallback = rows.get(0);
+        log.warn("{} 模板里没有第 {} 个实例，回退到第 {} 个下发: model={}",
+                label, wanted, instanceNo.apply(fallback), modelKey);
+        return fallback;
+    }
+
     private void voice(Device device, Map<String, Object> values, int instance,
-                       List<PlanItem> items, List<String> errors) {
+                       List<PlanItem> items, List<String> errors,
+                       Map<String, String> overrides) {
         Sip row = sipDao.findByDeviceId(device.getId()).stream()
                 .filter(r -> r.getInstanceNo() != null && r.getInstanceNo() == instance)
                 .findFirst().orElse(null);
@@ -135,12 +166,12 @@ public class SqlitePlanRenderer {
             errors.add("语音模板里没有第 " + instance + " 路，请重新适配");
             return;
         }
-        put(items, errors, "Voice_Service", "enable", row.getPathEnable(), row.getValEnable(), values, instance);
-        put(items, errors, "Voice_Service", "sip_num", row.getPathUser(), row.getValUser(), values, instance);
-        put(items, errors, "Voice_Service", "sip_pwd", row.getPathPwd(), row.getValPwd(), values, instance);
-        put(items, errors, "Voice_Service", "sip_uri", row.getPathUri(), row.getValUri(), values, instance);
-        put(items, errors, "Voice_Service", "sip_proxy", row.getPathProxy(), row.getValProxy(), values, instance);
-        put(items, errors, "Voice_Service", "sip_port", row.getPathPort(), row.getValPort(), values, instance);
+        put(items, errors, "Voice_Service", "enable", row.getPathEnable(), row.getValEnable(), values, instance, overrides);
+        put(items, errors, "Voice_Service", "sip_num", row.getPathUser(), row.getValUser(), values, instance, overrides);
+        put(items, errors, "Voice_Service", "sip_pwd", row.getPathPwd(), row.getValPwd(), values, instance, overrides);
+        put(items, errors, "Voice_Service", "sip_uri", row.getPathUri(), row.getValUri(), values, instance, overrides);
+        put(items, errors, "Voice_Service", "sip_proxy", row.getPathProxy(), row.getValProxy(), values, instance, overrides);
+        put(items, errors, "Voice_Service", "sip_port", row.getPathPort(), row.getValPort(), values, instance, overrides);
     }
 
     /**
@@ -148,7 +179,8 @@ public class SqlitePlanRenderer {
      * 再把 VLAN 一并带上——VLAN 参数是挂在 WAN 下的，分开表存只是管理上的拆分。
      */
     private void wan(String category, Device device, Map<String, Object> values,
-                     List<PlanItem> items, List<String> objectsToAdd, List<String> errors) {
+                       List<PlanItem> items, List<String> objectsToAdd, List<String> errors,
+                       Map<String, String> overrides) {
         int slot = wanSlot(category, errors);
         if (slot <= 0) {
             return;
@@ -163,23 +195,23 @@ public class SqlitePlanRenderer {
                 && !row.getObjectPath().isBlank()) {
             objectsToAdd.add(row.getObjectPath());
         }
-        put(items, errors, "Internet_WAN", "enable", row.getPathEnable(), row.getValEnable(), values, 1);
-        put(items, errors, "Internet_WAN", "conn_type", row.getPathConnType(), row.getValConnType(), values, 1);
-        put(items, errors, "Internet_WAN", "addr_type", row.getPathAddrType(), row.getValAddrType(), values, 1);
-        put(items, errors, "Internet_WAN", "nat", row.getPathNat(), row.getValNat(), values, 1);
-        put(items, errors, "Internet_WAN", "bind_port", row.getPathBindPort(), row.getValBindPort(), values, 1);
-        put(items, errors, "Internet_WAN", "pppoe_user", row.getPathUsername(), row.getValUsername(), values, 1);
-        put(items, errors, "Internet_WAN", "pppoe_pwd", row.getPathPassword(), row.getValPassword(), values, 1);
-        put(items, errors, "Internet_WAN", "wan_ip", row.getPathIp(), row.getValIp(), values, 1);
-        put(items, errors, "Internet_WAN", "wan_mask", row.getPathMask(), row.getValMask(), values, 1);
-        put(items, errors, "Internet_WAN", "wan_gw", row.getPathGw(), row.getValGw(), values, 1);
-        put(items, errors, "Internet_WAN", "wan_dns", row.getPathDns(), row.getValDns(), values, 1);
+        put(items, errors, "Internet_WAN", "enable", row.getPathEnable(), row.getValEnable(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "conn_type", row.getPathConnType(), row.getValConnType(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "addr_type", row.getPathAddrType(), row.getValAddrType(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "nat", row.getPathNat(), row.getValNat(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "bind_port", row.getPathBindPort(), row.getValBindPort(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "pppoe_user", row.getPathUsername(), row.getValUsername(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "pppoe_pwd", row.getPathPassword(), row.getValPassword(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "wan_ip", row.getPathIp(), row.getValIp(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "wan_mask", row.getPathMask(), row.getValMask(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "wan_gw", row.getPathGw(), row.getValGw(), values, 1, overrides);
+        put(items, errors, "Internet_WAN", "wan_dns", row.getPathDns(), row.getValDns(), values, 1, overrides);
 
         Vlan vlan = vlanDao.findOne(device.getId(), slot).orElse(null);
         if (vlan != null) {
-            put(items, errors, "Internet_WAN", "vlan_id", vlan.getPathVlanId(), vlan.getValVlanId(), values, 1);
-            put(items, errors, "Internet_WAN", "vlan_8021p", vlan.getPath8021p(), vlan.getVal8021p(), values, 1);
-            put(items, errors, "Internet_WAN", "vlan_mode", vlan.getPathVlanMode(), vlan.getValVlanMode(), values, 1);
+            put(items, errors, "Internet_WAN", "vlan_id", vlan.getPathVlanId(), vlan.getValVlanId(), values, 1, overrides);
+            put(items, errors, "Internet_WAN", "vlan_8021p", vlan.getPath8021p(), vlan.getVal8021p(), values, 1, overrides);
+            put(items, errors, "Internet_WAN", "vlan_mode", vlan.getPathVlanMode(), vlan.getValVlanMode(), values, 1, overrides);
         }
     }
 
@@ -207,13 +239,17 @@ public class SqlitePlanRenderer {
     /**
      * 落一条待下发参数。路径为空表示该型号没有这个参数（不是错误，跳过）；
      * 值为空同理（如绑定端口留空＝不修改）。
+     *
+     * <p>取值优先级：配置模板字段 {@code overrides} > SQLite 适配库默认值 {@code val} >
+     * 变量替换。这样模板里填的 SSID / 密码等才会真正下发，而不是被适配时的默认值顶掉。</p>
      */
     private void put(List<PlanItem> items, List<String> errors, String bizObject, String field,
-                     String path, String val, Map<String, Object> values, int instance) {
+                     String path, String val, Map<String, Object> values, int instance,
+                     Map<String, String> overrides) {
         if (path == null || path.isBlank()) {
             return;
         }
-        String value = resolve(field, val, values, errors);
+        String value = resolve(field, effectiveValue(val, overrides, field), values, errors);
         if (value == null) {
             return;
         }
@@ -223,6 +259,43 @@ public class SqlitePlanRenderer {
             return;
         }
         items.add(new PlanItem(bizObject, field, realPath, value, valueTypeOf(value)));
+    }
+
+    /**
+     * 配置模板字段覆盖 SQLite 默认值。模板没填（空串）时回退到默认值，
+     * 这样用户只改 SSID 时不会把其它字段清成空。
+     *
+     * <p>键按 {@link #ALIASES} 逐个试：配置模板里叫 {@code encryption} / {@code radio_enable}，
+     * 渲染器内部字段叫 {@code wpa_mode} / {@code enable}，两边命名不一样，
+     * 不认别名的话模板上配的加密方式与开关就等于白填。</p>
+     */
+    private static String effectiveValue(String val, Map<String, String> overrides, String field) {
+        if (overrides == null) {
+            return val;
+        }
+        for (String key : keysToTry(field)) {
+            String over = overrides.get(key);
+            if (over != null && !over.isBlank()) {
+                return over;
+            }
+        }
+        return val;
+    }
+
+    /** 本字段及其在配置模板里的等价名字，按优先级排列。 */
+    private static final Map<String, List<String>> ALIASES = Map.of(
+            "enable", List.of("radio_enable"),
+            "wpa_mode", List.of("encryption"));
+
+    private static List<String> keysToTry(String field) {
+        List<String> aliases = ALIASES.get(field);
+        if (aliases == null || aliases.isEmpty()) {
+            return List.of(field);
+        }
+        List<String> keys = new ArrayList<>();
+        keys.add(field);
+        keys.addAll(aliases);
+        return keys;
     }
 
     /**
@@ -288,7 +361,7 @@ public class SqlitePlanRenderer {
 
     /** LAN 网口：按实例号取对应网口。 */
     public List<PlanItem> lan(Device device, Map<String, Object> values, int instance,
-                              List<String> errors) {
+                              List<String> errors, Map<String, String> overrides) {
         List<PlanItem> items = new ArrayList<>();
         DeviceLan row = deviceLanDao.findByDeviceId(device.getId()).stream()
                 .filter(r -> r.getInstanceNo() != null && r.getInstanceNo() == instance)
@@ -297,9 +370,9 @@ public class SqlitePlanRenderer {
             errors.add("网口模板里没有第 " + instance + " 个网口，请重新适配");
             return items;
         }
-        put(items, errors, "LAN", "enable", row.getPathEnable(), row.getValEnable(), values, instance);
-        put(items, errors, "LAN", "duplex", row.getPathDuplex(), row.getValDuplex(), values, instance);
-        put(items, errors, "LAN", "speed", row.getPathSpeed(), row.getValSpeed(), values, instance);
+        put(items, errors, "LAN", "enable", row.getPathEnable(), row.getValEnable(), values, instance, overrides);
+        put(items, errors, "LAN", "duplex", row.getPathDuplex(), row.getValDuplex(), values, instance, overrides);
+        put(items, errors, "LAN", "speed", row.getPathSpeed(), row.getValSpeed(), values, instance, overrides);
         return items;
     }
 

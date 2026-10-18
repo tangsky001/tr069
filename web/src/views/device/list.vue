@@ -104,7 +104,8 @@
                 v-for="item in wifiList(row.sn)"
                 :key="item.path"
                 size="mini"
-                class="wifi-tag"
+                class="wifi-tag wifi-tag-editable"
+                @click.native="openWifiEdit(row, item)"
               >{{ item.params.SSID || '-' }}</el-tag>
             </template>
             <span v-else class="cell-empty">-</span>
@@ -188,12 +189,23 @@
         size="small"
         style="width:160px"
       >
+        <el-option-group v-if="bizTemplates.length" label="== 业务模板 ==">
+          <el-option
+            v-for="b in bizTemplates"
+            :key="'biz-' + b.template.id"
+            :label="b.template.name"
+            :value="'biz-' + b.template.id"
+          >
+            <span>{{ b.template.name }}</span>
+            <span class="member-hint">{{ (b.items || []).length }} 个成员</span>
+          </el-option>
+        </el-option-group>
         <el-option-group label="== 配置模板 ==">
           <el-option
             v-for="t in templates"
-            :key="t.id"
+            :key="'cfg-' + t.id"
             :label="t.name"
-            :value="t.id"
+            :value="'cfg-' + t.id"
           >
             <span>{{ t.name }}</span>
             <span class="member-hint">{{ t.categoryLabel || t.category }}</span>
@@ -404,6 +416,53 @@
     </el-dialog>
 
     <el-dialog
+      title="编辑 WLAN"
+      :visible.sync="wifiEditVisible"
+      width="480px"
+      top="8vh"
+    >
+      <div v-if="wifiEditForm.band" class="wifi-edit-head">
+        <el-tag size="mini" type="info">{{ wifiEditForm.band }}</el-tag>
+        <span class="wifi-edit-path">{{ wifiEditForm.path }}</span>
+      </div>
+      <el-form label-width="100px" size="small">
+        <el-form-item label="SSID 名称">
+          <el-input v-model="wifiEditForm.ssid" maxlength="32" show-word-limit />
+        </el-form-item>
+        <el-form-item label="加密方式">
+          <el-select
+            v-model="wifiEditForm.encryption"
+            style="width:100%"
+            allow-create
+            filterable
+            default-first-option
+            placeholder="选一种或输入设备实际值"
+          >
+            <el-option label="开放（无密码）" value="None" />
+            <el-option label="Basic" value="Basic" />
+            <el-option label="WPA-PSK" value="WPA" />
+            <el-option label="WPA2-PSK" value="11i" />
+            <el-option label="WPA/WPA2 混合" value="WPAand11i" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="wifiEditForm.password" type="password" show-password placeholder="为空表示不修改密码" />
+        </el-form-item>
+        <el-form-item label="启用状态">
+          <el-switch
+            v-model="wifiEditForm.enabled"
+            active-text="启用"
+            inactive-text="禁用"
+          />
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button @click="wifiEditVisible = false">取消</el-button>
+        <el-button type="primary" :loading="wifiSubmitting" @click="submitWifiEdit">提交下发</el-button>
+      </span>
+    </el-dialog>
+
+    <el-dialog
       :title="'机型适配 - ' + (adaptRow ? (adaptRow.productClass || adaptRow.deviceType || '') : '')"
       :visible.sync="adaptVisible"
       width="600px"
@@ -551,6 +610,7 @@ import {
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
+import { fetchBizTemplates, executeBizTemplate } from '@/api/bizTemplate'
 import { createWorklist, newWorklistDesc } from '@/api/worklist'
 import { RPC_METHODS } from '@/api/device'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
@@ -583,6 +643,18 @@ export default {
       wifiOptions: ['无', '2.4G', '2.4G+5.8G'],
       wanVisible: false,
       wanDialogSn: '',
+      wifiEditVisible: false,
+      wifiSubmitting: false,
+      wifiEditForm: {
+        sn: '',
+        band: '',
+        path: '',
+        instance: 1,
+        ssid: '',
+        encryption: '',
+        password: '',
+        enabled: true
+      },
       detailVisible: false,
       detailRow: null,
       sortKey: '',
@@ -596,6 +668,7 @@ export default {
       // 批量操作工具条
       selection: [],
       templates: [],
+      bizTemplates: [],
       selectedTemplate: '',
       customParamVisible: false,
       customParamRows: [{ name: '', value: '', type: 'xsd:string' }],
@@ -767,6 +840,84 @@ export default {
     wifiList(sn) {
       return this.bizOf(sn).wifi || []
     },
+
+    /**
+     * 从业务快照的 WiFi 参数里识别频段。
+     * 后端只返回 params.Standard，a/ac/ax 归为 5G，其余为 2.4G。
+     */
+    wifiBandOf(params) {
+      const std = String(params && params.Standard || '').toLowerCase()
+      return /a|ac|ax/.test(std) ? '5.8G' : '2.4G'
+    },
+
+    /**
+     * 从 path 里解析 WiFi 实例号，决定下发时写第几个 SSID。
+     * 常见形式：...WLANConfiguration.1. 或 ...SSID.1.
+     */
+    wifiInstanceOf(path) {
+      const m = String(path || '').match(/(?:WLANConfiguration|WLAN|SSID)\.?(\d+)/i)
+      return m ? parseInt(m[1], 10) : 1
+    },
+
+    openWifiEdit(row, item) {
+      const params = item && item.params || {}
+      const band = this.wifiBandOf(params)
+      const encryption = params.BasicEncryptionModes || params.BeaconType ||
+        params.WPAEncryptionModes || params.BasicAuthMode || ''
+      const password = params.KeyPassphrase || params.PreSharedKey || params.WPA_PSK || ''
+      const status = String(params.Status || '').toLowerCase()
+      const enableFlag = params.Enable
+      let enabled = true
+      if (status === 'disabled' || status === 'down') {
+        enabled = false
+      } else if (enableFlag !== undefined && enableFlag !== null) {
+        enabled = String(enableFlag).toLowerCase() === 'true' || enableFlag === true || enableFlag === 1
+      }
+      this.wifiEditForm = {
+        sn: row.sn,
+        band,
+        path: item.path || '',
+        instance: this.wifiInstanceOf(item.path),
+        ssid: params.SSID || '',
+        encryption: String(encryption).replace(/None/i, 'None'),
+        password: String(password),
+        enabled
+      }
+      this.wifiEditVisible = true
+    },
+
+    async submitWifiEdit() {
+      const form = this.wifiEditForm
+      const category = form.band === '5.8G' ? 'WIFI_58G' : 'WIFI_24G'
+      const values = {
+        instance: form.instance,
+        ssid: form.ssid,
+        wpa_mode: form.encryption,
+        wpa_key: form.password,
+        enable: form.enabled ? 'true' : 'false'
+      }
+      if (!form.ssid) {
+        this.$message.warning('SSID 名称不能为空')
+        return
+      }
+      this.wifiSubmitting = true
+      try {
+        await createWorklist({
+          sn: form.sn,
+          category,
+          values,
+          worklistDesc: newWorklistDesc(category),
+          username: this.$store.getters.name || 'admin'
+        })
+        this.$message.success('WLAN 修改工单已提交')
+        this.wifiEditVisible = false
+      } catch (e) {
+        this.$message.error('提交失败：' + ((e && e.message) || ''))
+      } finally {
+        this.wifiSubmitting = false
+      }
+    },
+
     sipList(sn) {
       return this.bizOf(sn).sip || []
     },
@@ -1045,6 +1196,12 @@ export default {
       }).catch(() => {
         this.templates = []
       })
+      // 业务模板与配置模板是两个库：下拉要都能选到，否则业务模板配好了却无从下发
+      fetchBizTemplates().then(res => {
+        this.bizTemplates = (res.data || []).filter(b => b && b.template)
+      }).catch(() => {
+        this.bizTemplates = []
+      })
     },
     batchDispatchTemplate() {
       const sns = this.requireSelection()
@@ -1053,9 +1210,52 @@ export default {
         this.$message.warning('请先选择模版关键字')
         return
       }
-      const tpl = this.templates.find(t => t.id === this.selectedTemplate) || {}
+      // 下拉里两类模板的 id 会撞，选型值带前缀区分
+      const picked = String(this.selectedTemplate)
+      const id = Number(picked.slice(4))
+      if (picked.startsWith('biz-')) {
+        this.batchCreateBizWorklist(sns, id)
+        return
+      }
+      const tpl = this.templates.find(t => t.id === id) || {}
       // 模板的 category 即业务类型，落到工单的业务类型上；取不到就留空由下发侧推导
       this.batchCreateWorklist(sns, (tpl.category || '').toUpperCase(), tpl.name || '模版下发')
+    },
+
+    /**
+     * 业务模板整包下发：交给后端按成员编排顺序串行执行，逐台各起一条执行记录。
+     *
+     * <p>成员依赖是有先后顺序的（先建连接再挂业务），所以不在这里一次性全排进队列，
+     * 而是让执行器等前一个成员结束再发下一个；失败即停由模板的「出错继续」决定。</p>
+     */
+    batchCreateBizWorklist(sns, templateId) {
+      const biz = this.bizTemplates.find(b => b.template && b.template.id === templateId)
+      if (!biz) {
+        this.$message.warning('业务模板不存在，请刷新后重试')
+        return
+      }
+      const items = (biz.items || []).filter(i => i.category)
+      if (!items.length) {
+        this.$message.warning('业务模板「' + biz.template.name + '」没有可下发的成员')
+        return
+      }
+      this.$confirm(
+        `将对已勾选的 ${sns.length} 台设备整包下发业务模板「${biz.template.name}」，` +
+        `${items.length} 个成员按编排顺序串行执行，确认提交？`,
+        '批量下发',
+        { type: 'warning' }
+      ).then(() => {
+        const username = this.$store.getters.name || 'admin'
+        const tasks = sns.map(sn => {
+          return executeBizTemplate({
+            templateId,
+            sn,
+            params: {},
+            username
+          }).then(() => null).catch(err => ({ sn, err: (err && err.message) || '提交失败' }))
+        })
+        Promise.all(tasks).then(results => this.reportBatchResult(results, sns.length))
+      }).catch(() => {})
     },
 
     /**
@@ -1080,21 +1280,24 @@ export default {
             username
           }).then(() => null).catch(err => ({ sn, err: (err && err.message) || '创建失败' }))
         })
-        Promise.all(tasks).then(results => {
-          const failed = results.filter(r => r)
-          if (!failed.length) {
-            this.$message.success(`已为 ${sns.length} 台设备提交工单，可在工单记录查看`)
-            this.$emit('refresh')
-            return
-          }
-          this.$notify.warning({
-            title: `${failed.length}/${sns.length} 台提交失败`,
-            message: failed.map(f => `${f.sn}：${f.err}`).join('<br>'),
-            dangerouslyUseHTMLString: true,
-            duration: 0
-          })
-        })
+        Promise.all(tasks).then(results => this.reportBatchResult(results, sns.length))
       }).catch(() => {})
+    },
+
+    /** 批量提交的汇总提示：全成功给个轻提示，有失败则列出每台的原因。 */
+    reportBatchResult(results, total) {
+      const failed = results.filter(r => r)
+      if (!failed.length) {
+        this.$message.success(`已提交 ${total} 条下发请求`)
+        this.$emit('refresh')
+        return
+      }
+      this.$notify.warning({
+        title: `${failed.length}/${total} 条提交失败`,
+        message: failed.map(f => `${f.sn}：${f.err}`).join('<br>'),
+        dangerouslyUseHTMLString: true,
+        duration: 0
+      })
     },
     handleBatchCommand(cmd) {
       if (cmd === 'worklist-record') {
@@ -1398,6 +1601,26 @@ export default {
 }
 .wifi-tag {
   margin: 0 4px 4px 0;
+}
+.wifi-tag-editable {
+  cursor: pointer;
+}
+.wifi-tag-editable:hover {
+  background-color: #ecf5ff;
+  border-color: #409eff;
+  color: #409eff;
+}
+/* ---- WiFi 编辑弹窗 ---- */
+.wifi-edit-head {
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wifi-edit-path {
+  font-size: 12px;
+  color: #909399;
+  word-break: break-all;
 }
 /* ---- WAN 连接参数弹窗 ---- */
 .wan-param-card {

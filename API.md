@@ -212,10 +212,13 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 | POST | `/save` | 新增或更新 |
 | POST | `/delete` | 删除，body `{id}` |
 | GET | `/{id}/validate` | 下发前自检：`{pass, issues:[...]}` |
+| POST | `/execute` | 对设备整包下发：按成员顺序串行执行，返回执行记录（含 `id` 供轮询） |
 | GET | `/executions` | 执行记录列表，可按 `sn`、`templateId`、`limit` 过滤 |
 | GET | `/executions/{id}` | 单条执行记录 |
 
-> 整包下发的执行入口已随旧工单引擎移除，待 §5 的新执行器补齐后按同样机制重建。
+执行记录状态：`running → success / partial / fail`。整包按成员顺序串行推进，前一个结束才发下一个；
+成员失败时按模板的 `continueOnError` 决定是停下还是继续，继续跑完且有失败即 `partial`。
+`result` 是每个成员的明细（序号、模板、业务类型、结果、错误原因）。
 
 ### 4.7 型号语义映射
 
@@ -238,20 +241,7 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 `cpe_model.root_node` 与设备 `cpe_device.root_node` 的数据模型**——不一致直接拒绝下发，
 避免把 TR-098 的路径写进 TR-181 设备（设备只会回 9005）。
 
-### 4.8 光猫适配档案
-
-基础路径 `/api/worklist`（配置侧）。
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| POST | `/reload` | 重载外部配置目录，返回 `ReloadReport` |
-| POST | `/samples` | 解包内置样例档案，返回写入数量 |
-| GET | `/status` | 外部配置根目录、档案数、模型数等状态 |
-| GET | `/profiles` | 档案列表 |
-| GET | `/profiles/{key}` | 单个档案详情 |
-| GET | `/profiles/match` | 按 `manufacturer`、`oui`、`productClass` 匹配档案 |
-
-### 4.9 工单记录（只读）
+### 4.8 工单记录（只读）
 
 基础路径 `/api/worklist`（执行侧）。执行引擎已移除，仅保留历史查询。
 
@@ -264,7 +254,7 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 
 工单状态：`build → bind → reserve → standby → running → success / fail / abnormal → expire`。
 
-### 4.10 首页概览
+### 4.9 首页概览
 
 `GET /api/dashboard/overview`
 
@@ -510,9 +500,7 @@ X-ACS-Signature: 8Z3k...（Base64）
 `GET /api/models/{id}`、`POST /api/models/{id}/update`、`POST /api/models/{id}/mappings`、
 `GET /api/models/candidates`
 
-**档案与工单**：`POST /api/worklist/reload`、`POST /api/worklist/samples`、`GET /api/worklist/status`、
-`GET /api/worklist/profiles`、`GET /api/worklist/profiles/{key}`、`GET /api/worklist/profiles/match`、
-`GET /api/worklist/instances`、`GET /api/worklist/instances/{id}`、
+**工单**：`GET /api/worklist/instances`、`GET /api/worklist/instances/{id}`、
 `GET /api/worklist/instances/device/{sn}`、`GET /api/worklist/instances/{id}/steps`
 
 **概览**：`GET /api/dashboard/overview`

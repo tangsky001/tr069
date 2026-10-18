@@ -14,13 +14,13 @@ import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.mapper.WorklistMapper;
 import com.tr069.acs.mapper.WorklistStepMapper;
 import com.tr069.acs.template.service.ConfigTemplateService;
+import com.tr069.acs.worklist.tpl.TemplateVariables;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -87,6 +87,10 @@ public class WorklistDeliveryService {
             return exist;
         }
 
+        // 变量兜底：房间号取设备登记的备注，口令没填用约定默认值。
+        // 单台与批量下发都在这里补齐，调用方一个变量都不传也能渲染出完整计划
+        Map<String, String> filled = withDefaults(category, device, values);
+
         LocalDateTime now = LocalDateTime.now();
         Worklist w = new Worklist();
         w.setWorklistDesc(worklistDesc);
@@ -97,7 +101,7 @@ public class WorklistDeliveryService {
         w.setDomain(device.getDeviceType());
         w.setStatus("build");
         // 口令值不落日志，只记录填了哪些变量
-        w.setParameters(toJson(values));
+        w.setParameters(toJson(filled));
         w.setUsername(username);
         w.setRollbackFlag(0);
         w.setTimeInit(now);
@@ -105,9 +109,26 @@ public class WorklistDeliveryService {
         w.setUpdatedAt(now);
         worklistMapper.insert(w);
         log.info("创建下发工单: id={}, sn={}, category={}, 变量={}", w.getId(), sn, category,
-                values == null ? Collections.emptyList() : List.copyOf(values.keySet()));
-        triggerDelivery(w, values, templateId);
+                List.copyOf(filled.keySet()));
+        triggerDelivery(w, filled, templateId);
         return w;
+    }
+
+    /**
+     * 补上调用方没填的业务变量，规则由 {@link TemplateVariables} 统一定义。
+     *
+     * <p>房间号取设备备注里登记的 {@code roomNo}，没登记才是 {@code 0000}；
+     * WiFi 密码没填是 {@code 88888888}。前端表单会把每个变量初始化成空串提交上来，
+     * 空串一律按「没填」处理。</p>
+     */
+    private Map<String, String> withDefaults(String category, CpeDevice device,
+                                             Map<String, String> values) {
+        Map<String, String> filled = new HashMap<>();
+        TemplateVariables.applyDefaults(category,
+                        values == null ? null : new HashMap<>(values),
+                        device == null ? null : device.getRoomNo())
+                .forEach((k, v) -> filled.put(k, v == null ? null : String.valueOf(v)));
+        return filled;
     }
 
     // ==================== 工单 → 下发 ====================
@@ -123,11 +144,6 @@ public class WorklistDeliveryService {
     private void triggerDelivery(Worklist w, Map<String, String> values, Long templateId) {
         Long tpl = templateId != null ? templateId : defaultTemplateId(w.getWorklistName());
         Map<String, Object> vars = values == null ? new HashMap<>() : new HashMap<>(values);
-        // 模板固化的字段（VLAN ID、DNS 等）并入变量，前端填的优先：
-        // 下发变量表里的 example 只是输入框 placeholder，不参与下发
-        if (tpl != null) {
-            configTemplateService.fieldsOf(tpl).forEach(vars::putIfAbsent);
-        }
         try {
             DeviceTask task = intentDeliveryService.deliver(new DeliveryRequest(
                     "WL-" + w.getId(), w.getSn(), w.getWorklistName(), tpl, null,
