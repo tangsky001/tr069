@@ -3,7 +3,7 @@
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
-- 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
+- 光猫型号适配清单（已适配 / 适配中）见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
 - 界面截图见 [doc/Display/](./doc/Display)（见下文「效果展示」）
 
@@ -62,7 +62,7 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 业务状态（WAN 连接 + **LAN 网口图标**、**WIFI 按 2.4G / 5.8G 上下分行**、SIP 信息、设备状态）、
 **运行信息**（运行时长 / 加入时间 / 最后汇报时间 / 汇报 IP，表头可排序）、操作：
 
-![设备列表](doc/Display/162046_560.png)
+![设备列表](doc/Display/025159_916.png)
 
 设备详情业务面板：信息卡（运行时长 / 注册时间 / 最近上报 / 上报 IP）、WAN 连接、LAN 网口（插线绿色、
 未插灰色，悬停看 MAC）、WLAN 按 2.4G / 5.8G 分行、SIP 语音（只列真实线路实例）：
@@ -133,12 +133,18 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | OLT融合管理 ▲ | OLT/ONU 管理（跳转 OLT 页） | OLT 拓扑 |
 | 重启 | 批量 `Reboot`（带二次确认） | — |
 
-### 1.3 已适配光猫型号
+### 1.3 光猫型号适配清单
 
 清单单独维护在 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**（只记运营商 + 厂家型号，
-适配一台加一行），当前已适配 **2 款**：`CIOT P22g-CIac`、`CIOT ZNM802`（均为 CMCC 移动）。
-适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
+适配一台加一行）。适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
 （配置项 `acs.tr069tpl.db-path`），随仓库走，拷到部署机即识别为已适配，不必重新适配。
+
+- **已适配 2 款**：`CIOT P22g-CIac`、`CIOT ZNM802`（均为 CMCC 移动）
+- **适配中 3 款**：
+  - CT 电信 `HS8145C5-GPON` —— 能力树已归档（360 对象 / 1947 参数），待申报保存
+  - CT 电信 `B866-S1-4E1P3W1-Ethernet` —— 能力树已归档（565 对象 / 3018 参数），待申报保存
+  - `MSG2100E-UPON-8V-AC` —— 只读到 5 对象 / 3 参数（参数树扫不动），待适配；
+    运营商待台账确认（Inform 上报了 `X_CT-COM_UserInfo`）
 
 ---
 
@@ -185,7 +191,7 @@ javaacs/
 ├── API.md                    接口文档（管理端 /api 与北向 /openapi/v1）
 ├── doc/
 │   ├── DEPLOYMENT.md         部署文档
-│   ├── ADAPTED_MODELS.md     已适配光猫型号清单（运营商 + 厂家型号）
+│   ├── ADAPTED_MODELS.md     光猫型号适配清单（已适配 / 适配中）
 │   └── Display/              界面截图（见「效果展示」）
 ├── pom.xml                   后端（Maven）
 ├── sql/schema.sql            全库唯一建表脚本（所有表）

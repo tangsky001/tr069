@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ModelTree sn="001681S17513S0080" isp="standard" modelKey="MSG2100E-UPON-8V-AC_V0200-0101190724" productClass="MSG2100E-UPON-8V-AC" softwareVersion="V0200-0101190724" manufacturer="RC" objectCount="5" paramCount="3" exportTime="2026-10-20 02:50:08">
+  <Object name="InternetGatewayDevice" path="InternetGatewayDevice.">
+    <Object name="WANDevice" path="InternetGatewayDevice.WANDevice.">
+      <Object name="1" path="InternetGatewayDevice.WANDevice.1.">
+        <Object name="WANCommonInterfaceConfig" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.">
+          <Param name="WANAccessType" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.WANAccessType" writable="true" type="string" value="GPON"/>
+        </Object>
+      </Object>
+    </Object>
+    <Object name="X_CT-COM_UserInfo" path="InternetGatewayDevice.X_CT-COM_UserInfo.">
+      <Param name="UserId" path="InternetGatewayDevice.X_CT-COM_UserInfo.UserId" writable="true" type="string" value=""/>
+      <Param name="UserName" path="InternetGatewayDevice.X_CT-COM_UserInfo.UserName" writable="true" type="string" value="5775SN200906971"/>
+    </Object>
+  </Object>
+</ModelTree>
