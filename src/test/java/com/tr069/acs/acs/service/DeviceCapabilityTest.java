@@ -3,22 +3,31 @@ package com.tr069.acs.acs.service;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.cwmp.SoapEnvelopeBuilder;
 import com.tr069.acs.cwmp.SoapParser;
+import com.tr069.acs.acs.config.CapabilityProfiles;
+import com.tr069.acs.cwmp.model.InformRequest;
+import com.tr069.acs.cwmp.model.ParameterValueStruct;
+import com.tr069.acs.acs.model.Isp;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.PendingRpc;
 import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.cwmp.model.SoapMessage;
+import com.tr069.acs.domain.entity.CpeDevice;
+import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.mapper.CpeParameterMapper;
 import com.tr069.acs.queue.config.QueueProperties;
+import com.tr069.acs.worklist.service.ModelTreeStore;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -244,7 +253,8 @@ class DeviceCapabilityTest {
 
         DeviceCapabilityService service = new DeviceCapabilityService(
                 sessionManager, null, Mockito.mock(CpeParameterMapper.class),
-                Mockito.mock(QueueProperties.class), null);
+                Mockito.mock(QueueProperties.class), null,
+                Mockito.mock(CpeDeviceMapper.class), null);
         ReflectionTestUtils.setField(service, "workerThreads", 2);
         ReflectionTestUtils.setField(service, "valueBatchSize", 2);
 
@@ -261,10 +271,418 @@ class DeviceCapabilityTest {
                 .contains(bad).doesNotContain(good1);
     }
 
+    /**
+     * 首次上报的设备：采集跑在台账入库之前（要抢空 POST 窗口），这时查库还没有运营商。
+     * Inform 自带 {@code X_CT-COM_UserInfo}，采摘要据此直接按电信档走，
+     * 而不是等入库后第二轮才用上电信档。
+     */
+    @Test
+    void 首次上报按Inform认运营商不走通用档() {
+        String sn = "36833B4B055937557";
+        List<String> gpvPaths = Collections.synchronizedList(new ArrayList<>());
+
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterNames"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> pendingRpc(namesXml(List.of())));
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterValues"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> args = inv.getArgument(2);
+                    gpvPaths.addAll((List<String>) args.get("ParameterNames"));
+                    return pendingRpc(valuesXml(Map.of(
+                            "InternetGatewayDevice.X_CT-COM_UserInfo.UserId", "")));
+                });
+
+        // 台账上还没有运营商：这是采集开跑那一刻的真实状态
+        CpeDevice device = new CpeDevice();
+        device.setIsp(null);
+        CpeDeviceMapper deviceMapper = Mockito.mock(CpeDeviceMapper.class);
+        Mockito.when(deviceMapper.selectOne(Mockito.any())).thenReturn(device);
+
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, Mockito.mock(CpeParameterMapper.class),
+                Mockito.mock(QueueProperties.class), null, deviceMapper, new CapabilityProfiles());
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+        ReflectionTestUtils.setField(service, "valueBatchSize", 64);
+
+        InformRequest inform = InformRequest.builder()
+                .parameterList(List.of(ParameterValueStruct.builder()
+                        .name("InternetGatewayDevice.X_CT-COM_UserInfo.UserId")
+                        .value("")
+                        .build()))
+                .build();
+        ReflectionTestUtils.invokeMethod(service, "rememberInformIsp", sn, inform);
+
+        DeviceCapabilityService.CollectStatus status =
+                new DeviceCapabilityService.CollectStatus(sn, "inform");
+        ReflectionTestUtils.<CompletableFuture<?>>invokeMethod(service, "runCollect",
+                sn, "InternetGatewayDevice.", status.getBatch(), status).join();
+
+        // 电信档的兜底清单里有天翼业务参数，通用档没有：拿它坐实走的是电信档
+        assertThat(gpvPaths).as("首次上报也要按电信档采")
+                .contains("InternetGatewayDevice.X_CT-COM_UserInfo.UserId");
+    }
+
+    /**
+     * 电信天翼网关扫不动参数树时（B866 撞 9002）要降级为只读关键字段，
+     * 但必须是**连续两次**：9002 也可能只是设备当时状态不对（重启中、CWMP 模块忙），
+     * 一次就把设备永久判成扫不动，会让它从此只剩十几条关键字段、型号档案停更。
+     */
+    @Test
+    void 参数树撞9002后记住这台设备后续不再扫() {
+        String sn = "001681S17513S0080";
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("InternetGatewayDevice.DeviceInfo.Manufacturer", "Huawei");
+        values.put("InternetGatewayDevice.DeviceInfo.ProductClass", "B866-S1-4E1P3W1-Ethernet");
+
+        List<String> asked = Collections.synchronizedList(new ArrayList<>());
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterNames"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    asked.add("GetParameterNames");
+                    return pendingRpc(faultXml("9002", "Internal error"));
+                });
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterValues"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> pendingRpc(valuesXml(values)));
+
+        CpeDevice device = new CpeDevice();
+        device.setIsp("CT");
+        CpeDeviceMapper deviceMapper = Mockito.mock(CpeDeviceMapper.class);
+        Mockito.when(deviceMapper.selectOne(Mockito.any())).thenReturn(device);
+
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, Mockito.mock(CpeParameterMapper.class),
+                Mockito.mock(QueueProperties.class), null, deviceMapper, new CapabilityProfiles());
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+        ReflectionTestUtils.setField(service, "valueBatchSize", 64);
+
+        // 第一轮：按电信档先试参数树，撞 9002 后降级读关键字段
+        DeviceCapabilityService.CollectStatus first =
+                new DeviceCapabilityService.CollectStatus(sn, "inform");
+        ReflectionTestUtils.<CompletableFuture<?>>invokeMethod(service, "runCollect",
+                sn, "InternetGatewayDevice.", first.getBatch(), first).join();
+        assertThat(asked).as("第一轮要先试一次参数树").isNotEmpty();
+        assertThat(first.getValueCount()).isEqualTo(2);
+        assertThat(first.getStatus()).isEqualTo("partial");
+
+        // 第二轮：只失败一次不算，仍要再试——万一上次只是设备状态不对
+        asked.clear();
+        DeviceCapabilityService.CollectStatus second =
+                new DeviceCapabilityService.CollectStatus(sn, "inform");
+        ReflectionTestUtils.<CompletableFuture<?>>invokeMethod(service, "runCollect",
+                sn, "InternetGatewayDevice.", second.getBatch(), second).join();
+        assertThat(asked).as("只失败一次不该就判死，要再试一轮").isNotEmpty();
+
+        // 第三轮：连续两次失败，才降级为只读关键字段
+        asked.clear();
+        DeviceCapabilityService.CollectStatus third =
+                new DeviceCapabilityService.CollectStatus(sn, "inform");
+        ReflectionTestUtils.<CompletableFuture<?>>invokeMethod(service, "runCollect",
+                sn, "InternetGatewayDevice.", third.getBatch(), third).join();
+        assertThat(asked).as("连续两次扫不动才降级，别每轮都白等").isEmpty();
+        assertThat(third.getValueCount()).isEqualTo(2);
+    }
+
+    /**
+     * 电信天翼网关这类设备：一条 GetParameterNames 都不发，直接按需读关键字段。
+     * 对象路径的 GPN 一律回 9002（连「只列下一层」都回），扫树纯属白等。
+     */
+    @Test
+    void 只读关键字段的设备不发任何GetParameterNames() {
+        String sn = "001681S17513S0080";
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("InternetGatewayDevice.DeviceInfo.Manufacturer", "Huawei");
+        values.put("InternetGatewayDevice.DeviceInfo.ProductClass", "B866-S1-4E1P3W1-Ethernet");
+        values.put("InternetGatewayDevice.X_CT-COM_UserInfo.UserId", "");
+
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterValues"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> pendingRpc(valuesXml(values)));
+
+        CpeParameterMapper parameterMapper = Mockito.mock(CpeParameterMapper.class);
+        CpeDeviceMapper deviceMapper = Mockito.mock(CpeDeviceMapper.class);
+        CpeDevice device = new CpeDevice();
+        device.setIsp("CT");
+        Mockito.when(deviceMapper.selectOne(Mockito.any())).thenReturn(device);
+
+        // 电信档默认是自适应（先试一次参数树），这里要测的是「明确禁止扫树」那一档
+        CapabilityProfiles.Profile noTree = CapabilityProfiles.builtin(Isp.CT);
+        noTree.setGpnStrategy(CapabilityProfiles.Profile.STRATEGY_VALUES_ONLY);
+        CapabilityProfiles profiles = Mockito.mock(CapabilityProfiles.class);
+        Mockito.when(profiles.forIsp(Mockito.any())).thenReturn(noTree);
+
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, parameterMapper, Mockito.mock(QueueProperties.class), null,
+                deviceMapper, profiles);
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+        ReflectionTestUtils.setField(service, "valueBatchSize", 64);
+
+        DeviceCapabilityService.CollectStatus status =
+                new DeviceCapabilityService.CollectStatus(sn, "inform");
+        CompletableFuture<?> done = ReflectionTestUtils.invokeMethod(
+                service, "runCollect", sn, "InternetGatewayDevice.", status.getBatch(), status);
+        done.join();
+
+        // 一条 GPN 都不该下发，只有 GPV
+        Mockito.verify(session, Mockito.never())
+                .enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterNames"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any());
+        assertThat(status.getValueCount()).isEqualTo(3);
+        assertThat(status.getStatus()).isEqualTo("partial");
+        Mockito.verify(parameterMapper).updateValues(Mockito.eq(sn), ArgumentMatchers.anyList());
+    }
+
+    /**
+     * 逐层展开遇到 {@code X_CTC_} 私有分支就停：节点记下来，但不再往下钻。
+     * 电信固件一遍历进去就抛 9002，整个子树连带报废。
+     */
+    @Test
+    void 逐层展开绕开天翼私有分支() {
+        String sn = "001681S17513S0080";
+        String wan = "InternetGatewayDevice.WANDevice.1.";
+        String ctc = wan + "X_CTC_IPTV.";
+        String conn = wan + "WANConnectionDevice.";
+
+        List<String> asked = Collections.synchronizedList(new ArrayList<>());
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterNames"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> args = inv.getArgument(2);
+                    String path = String.valueOf(args.get("ParameterPath"));
+                    asked.add(path);
+                    if (wan.equals(path)) {
+                        // 这一层既有天翼私有分支，也有正常分支
+                        return pendingRpc(namesXml(List.of(ctc, conn)));
+                    }
+                    if (conn.equals(path)) {
+                        return pendingRpc(namesXml(List.of(conn + "1.")));
+                    }
+                    return pendingRpc(namesXml(List.of()));
+                });
+
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, Mockito.mock(CpeParameterMapper.class),
+                Mockito.mock(QueueProperties.class), null,
+                Mockito.mock(CpeDeviceMapper.class), null);
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+        ReflectionTestUtils.setField(service, "maxObjectRounds", 500);
+
+        List<DeviceCapabilityService.Node> sink = Collections.synchronizedList(new ArrayList<>());
+        DeviceCapabilityService.CollectStatus status =
+                new DeviceCapabilityService.CollectStatus(sn, "inform");
+        CompletableFuture<?> done = ReflectionTestUtils.invokeMethod(service, "fetchLevel",
+                sn, wan, sink, new AtomicInteger(), status, CapabilityProfiles.builtin(Isp.CT));
+        done.join();
+
+        assertThat(asked).as("私有分支不该再往下问").doesNotContain(ctc);
+        assertThat(asked).as("正常分支照常展开").contains(conn);
+        assertThat(paths(sink)).contains(ctc, conn, conn + "1.");
+    }
+
+    /**
+     * 设备对 GetParameterNames 一句都答不出来时（电信那台父对象一律 9002），退到采集标准
+     * 登记的已知路径直接 GetParameterValues，至少把设备身份读回来。
+     */
+    @Test
+    void GPN全废时按已知路径读回设备身份() {
+        String sn = "001681S17513S0080";
+        Map<String, String> identity = new LinkedHashMap<>();
+        identity.put("InternetGatewayDevice.DeviceInfo.SpecVersion", "1.0");
+        identity.put("InternetGatewayDevice.DeviceInfo.Manufacturer", "CIOT");
+        identity.put("InternetGatewayDevice.DeviceInfo.ProductClass", "HG6145F1");
+
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterValues"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> pendingRpc(valuesXml(identity)));
+
+        CpeParameterMapper parameterMapper = Mockito.mock(CpeParameterMapper.class);
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, parameterMapper, Mockito.mock(QueueProperties.class), null,
+                Mockito.mock(CpeDeviceMapper.class), null);
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+
+        DeviceCapabilityService.CollectStatus status =
+                new DeviceCapabilityService.CollectStatus(sn, "inform");
+        CompletableFuture<Boolean> done = ReflectionTestUtils.invokeMethod(service, "probeGlobalPaths",
+                sn, "InternetGatewayDevice.", CapabilityProfiles.builtin(Isp.STANDARD), status);
+
+        assertThat(done.join()).isTrue();
+        assertThat(status.getValueCount()).isEqualTo(3);
+        // 值要落到 cpe_parameter，设备详情与能力参数接口才查得到
+        Mockito.verify(parameterMapper).updateValues(Mockito.eq(sn), ArgumentMatchers.anyList());
+    }
+
+    /**
+     * 读 {@code InternetGatewayDevice.DeviceInfo.*} 的身份参数并打印。
+     *
+     * <p>GPN 拉不出树的猫（电信那台对 {@code WANDevice.} 回 9002）也能走这条路：
+     * DeviceInfo 是已知路径，直接发 GetParameterValues 就行。打印出来看设备到底给了什么——
+     * SpecVersion 只是规范版本，认型号要看 ProductClass / Manufacturer / ManufacturerOUI。</p>
+     */
+    @Test
+    void 读取DeviceInfo身份参数并打印() {
+        String sn = "001681S17513S0080";
+        Map<String, String> deviceInfo = new LinkedHashMap<>();
+        deviceInfo.put("InternetGatewayDevice.DeviceInfo.SpecVersion", "1.0");
+        deviceInfo.put("InternetGatewayDevice.DeviceInfo.Manufacturer", "CIOT");
+        deviceInfo.put("InternetGatewayDevice.DeviceInfo.ManufacturerOUI", "A0B1C2");
+        deviceInfo.put("InternetGatewayDevice.DeviceInfo.ProductClass", "ZNM802");
+        deviceInfo.put("InternetGatewayDevice.DeviceInfo.HardwareVersion", "T");
+        deviceInfo.put("InternetGatewayDevice.DeviceInfo.SoftwareVersion", "V0200-0101190724");
+
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), Mockito.eq("GetParameterValues"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> args = inv.getArgument(2);
+                    System.out.println("[DeviceInfo] 下发 GetParameterValues: " + args.get("ParameterNames"));
+                    return pendingRpc(valuesXml(deviceInfo));
+                });
+
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, Mockito.mock(CpeParameterMapper.class),
+                Mockito.mock(QueueProperties.class), null,
+                Mockito.mock(CpeDeviceMapper.class), null);
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+        ReflectionTestUtils.setField(service, "valueBatchSize", 64);
+
+        Map<String, String> got = service.readPathValues(sn, new ArrayList<>(deviceInfo.keySet())).join();
+
+        for (String path : deviceInfo.keySet()) {
+            System.out.println("[DeviceInfo] " + path + " = " + got.get(path));
+        }
+
+        assertThat(got).containsEntry("InternetGatewayDevice.DeviceInfo.SpecVersion", "1.0");
+        assertThat(got).containsEntry("InternetGatewayDevice.DeviceInfo.ProductClass", "ZNM802");
+    }
+
+    /**
+     * 采集标准按运营商配置子树：电信定制机拉不动 {@code WANDevice.} 时，
+     * 直接在标准里写死带实例号的子树，不动代码。
+     */
+    @Test
+    void 按运营商采集标准取子树() {
+        DeviceCapabilityService service = newDeviceCapabilityService();
+
+        CapabilityProfiles.Profile ct = new CapabilityProfiles.Profile();
+        ct.setName("中国电信");
+        ct.setSubtrees(List.of("WANDevice.1.WANConnectionDevice.", "LANDevice."));
+
+        List<String> paths = ReflectionTestUtils.invokeMethod(
+                service, "resolveSubtrees", "InternetGatewayDevice.", ct);
+
+        assertThat(paths).containsExactly("InternetGatewayDevice.WANDevice.1.WANConnectionDevice.",
+                "InternetGatewayDevice.LANDevice.");
+    }
+
+    /**
+     * 电信定制机的典型表现：{@code GetParameterNames(InternetGatewayDevice.WANDevice.)} 回
+     * 9002 Internal error，递归与逐层都不认，只能按实例号 {@code WANDevice.1.} 逐个问。
+     */
+    @Test
+    void 父对象GPN被拒时按实例号探测() {
+        String sn = "001681S17513S0080";
+        String parent = "InternetGatewayDevice.WANDevice.";
+        String instance = "InternetGatewayDevice.WANDevice.1.";
+
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(),
+                        Mockito.eq("GetParameterNames"),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> args = inv.getArgument(2);
+                    String path = String.valueOf(args.get("ParameterPath"));
+                    // 父对象一律 9002，只有第一个实例号应答，第二个实例号不存在
+                    return pendingRpc(instance.equals(path)
+                            ? namesXml(List.of(instance + "WANConnectionDevice."))
+                            : faultXml("9002", "Internal error"));
+                });
+
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, Mockito.mock(CpeParameterMapper.class),
+                Mockito.mock(QueueProperties.class), null,
+                Mockito.mock(CpeDeviceMapper.class), null);
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+        ReflectionTestUtils.setField(service, "fallbackNextLevel", true);
+        // @Value 的默认值在单测里不生效，逐层展开的上限要自己给，否则第一轮就判超限
+        ReflectionTestUtils.setField(service, "maxObjectRounds", 500);
+
+        CapabilityProfiles.Profile profile = new CapabilityProfiles.Profile();
+        List<DeviceCapabilityService.Node> sink = Collections.synchronizedList(new ArrayList<>());
+        DeviceCapabilityService.CollectStatus status =
+                new DeviceCapabilityService.CollectStatus(sn, "inform");
+
+        CompletableFuture<?> done = ReflectionTestUtils.invokeMethod(service, "collectSubtree",
+                sn, parent, profile, sink, new AtomicInteger(), status);
+        done.join();
+
+        assertThat(paths(sink)).contains(instance + "WANConnectionDevice.");
+        // 实例号探到第一个不存在的就停，不会一路试到上限
+        assertThat(String.join(";", status.getErrors()))
+                .contains("InternetGatewayDevice.WANDevice.2.");
+        assertThat(status.isAborted()).isFalse();
+    }
+
+    /**
+     * 采集成功后的归档走统一入口：不管哪家运营商的猫，都先截到 standard 目录
+     * （models/standard/standard/{型号}.xml），按运营商分目录是人工适配申报时才做的事。
+     */
+    @Test
+    void 采集成功后按通用目录归档() {
+        ModelTreeStore store = Mockito.mock(ModelTreeStore.class);
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                null, null, null, null, store, null, null);
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+
+        ReflectionTestUtils.invokeMethod(service, "exportModelTreeAsync", "SN001");
+
+        Mockito.verify(store, Mockito.timeout(3000)).exportCollected("SN001");
+    }
+
     private static PendingRpc pendingRpc(SoapMessage message) {
         PendingRpc rpc = Mockito.mock(PendingRpc.class);
         Mockito.when(rpc.getResponse()).thenReturn(CompletableFuture.completedFuture(message));
         return rpc;
+    }
+
+    /** 组装一个 GetParameterValuesResponse：按给定值回带每个路径。 */
+    private static SoapMessage valuesXml(Map<String, String> values) {
+        StringBuilder list = new StringBuilder();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            list.append("<ParameterValueStruct><Name>").append(entry.getKey())
+                    .append("</Name><Value xsi:type=\"xsd:string\">").append(entry.getValue())
+                    .append("</Value></ParameterValueStruct>");
+        }
+        return SoapParser.parse("<SOAP-ENV:Envelope " + NAMESPACES + ">"
+                + "<SOAP-ENV:Header><cwmp:ID SOAP-ENV:mustUnderstand=\"1\">1</cwmp:ID></SOAP-ENV:Header>"
+                + "<SOAP-ENV:Body><cwmp:GetParameterValuesResponse>"
+                + "<ParameterList SOAP-ENC:arrayType=\"cwmp:ParameterValueStruct[" + values.size() + "]\">"
+                + list
+                + "</ParameterList></cwmp:GetParameterValuesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>");
     }
 
     /** 组装一个 GetParameterValuesResponse：回带每个路径的值。 */
@@ -282,6 +700,21 @@ class DeviceCapabilityTest {
                 + "</ParameterList></cwmp:GetParameterValuesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>");
     }
 
+    /** 组装一个 GetParameterNamesResponse：回带若干路径。 */
+    private static SoapMessage namesXml(List<String> names) {
+        StringBuilder list = new StringBuilder();
+        for (String name : names) {
+            list.append("<ParameterInfoStruct><Name>").append(name)
+                    .append("</Name><Writable>true</Writable></ParameterInfoStruct>");
+        }
+        return SoapParser.parse("<SOAP-ENV:Envelope " + NAMESPACES + ">"
+                + "<SOAP-ENV:Header><cwmp:ID SOAP-ENV:mustUnderstand=\"1\">1</cwmp:ID></SOAP-ENV:Header>"
+                + "<SOAP-ENV:Body><cwmp:GetParameterNamesResponse>"
+                + "<ParameterList SOAP-ENC:arrayType=\"cwmp:ParameterInfoStruct[" + names.size() + "]\">"
+                + list
+                + "</ParameterList></cwmp:GetParameterNamesResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>");
+    }
+
     /** 组装一个 CWMP 故障响应（9005 无效参数名）。 */
     private static SoapMessage faultXml(String code, String text) {
         return SoapParser.parse("<SOAP-ENV:Envelope " + NAMESPACES + ">"
@@ -296,7 +729,7 @@ class DeviceCapabilityTest {
     }
 
     private static DeviceCapabilityService newDeviceCapabilityService() {
-        return new DeviceCapabilityService(null, null, null, null, null);
+        return new DeviceCapabilityService(null, null, null, null, null, null, null);
     }
 
     private static List<String> paths(List<?> nodes) {

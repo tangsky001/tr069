@@ -85,6 +85,18 @@ public class CwmpController {
     @Value("${acs.session.wait-rpc-response-timeout:60}")
     private long waitRpcResponseTimeout;
 
+    /**
+     * 队列空时还要等一会儿才回 204 的时长（毫秒）。
+     *
+     * <p>见 {@link #deliverNextRpcWithWait}：能力采集是一问一答编排出来的，
+     * 上一条的响应刚被处理完、下一条往往几十毫秒后才入队。此刻回 204 就等于掐断会话。</p>
+     */
+    @Value("${acs.session.piggyback-wait-ms:1500}")
+    private long piggybackWaitMs;
+
+    /** 等下一条指令时的轮询间隔。 */
+    private static final long PIGGYBACK_POLL_INTERVAL_MS = 20L;
+
     private final ScheduledExecutorService timeoutScheduler =
             Executors.newScheduledThreadPool(4, r -> {
                 Thread t = new Thread(r, "acs-timeout");
@@ -142,7 +154,52 @@ public class CwmpController {
             sendStatus(response, 204);
             return;
         }
+        if (!deliverNextRpcWithWait(sn, session, response)) {
+            log.debug("无待下发任务, 回复 204: sn={}", sn);
+            sendStatus(response, 204);
+        }
+    }
 
+    /**
+     * 取一条待下发指令捎带出去，队列暂时空时稍等一会儿。
+     *
+     * <p>队列空<strong>不等于</strong>这一轮该结束了：能力采集是一问一答编排出来的，
+     * 上一条响应刚被处理、下一条往往几十毫秒后才入队（要拿上一轮的返回值拼出下一批）。
+     * 这时候回 204，华为电信这类固件就认为会话结束、不再发空 POST，剩下的指令只能等它
+     * 下一次上报——周期常常是十几分钟，采一棵树要拖上几个小时，设备多半中途掉线，
+     * 采集就停在半路了。所以先等一小会儿，等到就继续捎带，等不到再收尾。</p>
+     *
+     * <p>等的是 Tomcat 线程，时间很短（默认 1.5 秒），且只发生在会话末尾，
+     * 不会长期占用。</p>
+     */
+    private boolean deliverNextRpcWithWait(String sn, CpeSession session, HttpServletResponse response)
+            throws IOException {
+        if (deliverNextRpc(sn, session, response)) {
+            return true;
+        }
+        long deadline = System.currentTimeMillis() + piggybackWaitMs;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(PIGGYBACK_POLL_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            if (deliverNextRpc(sn, session, response)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 取一条待下发指令并写进当前 HTTP 响应。
+     *
+     * @return 是否真的下发了指令；{@code false} 表示队列已空（或指令非法已被丢弃），
+     *         由调用方回复 204 结束这一轮
+     */
+    private boolean deliverNextRpc(String sn, CpeSession session, HttpServletResponse response)
+            throws IOException {
         PendingRpc rpc = null;
         if (queueProperties.isEnabled()) {
             RpcTaskQueue.RpcTask task = rpcTaskQueue.poll(sn);
@@ -157,15 +214,13 @@ public class CwmpController {
             rpc = session.pollForSend();
         }
         if (rpc == null) {
-            log.debug("无待下发任务, 回复 204: sn={}", sn);
-            sendStatus(response, 204);
-            return;
+            return false;
         }
 
         RpcMethod method = RpcMethod.of(rpc.getRpcName());
         if (method == null) {
             // 队列里可能残留方法名不合法的旧指令（如写成枚举名 GET_PARAMETER_NAMES），
-            // 不能让它把这次空 POST 打成 500：判失败并回 204，设备下次照常来取后面的指令
+            // 不能让它把这次下发打成 500：判失败并丢弃，设备下次照常来取后面的指令
             log.error("待下发指令的 CWMP 方法无法识别，丢弃该指令: sn={}, taskId={}, rpc={}",
                     sn, rpc.getRpcId(), rpc.getRpcName());
             if (rpc.getRpcId() > 0) {
@@ -173,8 +228,7 @@ public class CwmpController {
             } else {
                 rpc.getResponse().complete(null);
             }
-            sendStatus(response, 204);
-            return;
+            return false;
         }
         String soap = SoapEnvelopeBuilder.build(method, rpc.getArgs(),
                 null, session.getCwmpVersion());
@@ -184,6 +238,7 @@ public class CwmpController {
 
         log.info("下发 RPC: sn={}, rpc={}, taskId={}", sn, rpc.getRpcName(), rpc.getRpcId());
         writeXml(response, soap);
+        return true;
     }
 
     // ==================== SOAP 报文 ====================
@@ -194,7 +249,7 @@ public class CwmpController {
         String methodName = message.getMethodName();
 
         if ("Inform".equals(methodName)) {
-            handleInform(connId, body, request, response);
+            handleInform(connId, body, request, response, message.getCwmpId());
             return;
         }
 
@@ -227,7 +282,13 @@ public class CwmpController {
             log.warn("收到未预期的 RPC 响应: sn={}, method={}", sn, methodName);
         }
         session.setState(SessionState.READY);
-        sendStatus(response, 204);
+        // 在同一个 HTTP 响应里直接带上下一条指令：这是 CWMP 允许的捎带方式，也几乎是
+        // 华为电信这类固件的唯一通路——它们收到 204 就认为会话结束，不会再发空 POST。
+        // 不捎带的话一条指令就要等一个上报周期，采一棵树得拖上几十分钟，
+        // 设备还常常就此掉线（采集卡在半路）
+        if (!deliverNextRpcWithWait(sn, session, response)) {
+            sendStatus(response, 204);
+        }
     }
 
     /**
@@ -235,9 +296,15 @@ public class CwmpController {
      *
      * <p>参数入库与事件调度交给队列消费者，这里只保留必须在响应前完成的动作，
      * 让 Tomcat 线程尽快释放。</p>
+     *
+     * @param cwmpId 设备报文头里的会话 ID，必须原样回显：
+     *               CWMP 规定响应的 {@code cwmp:ID} 要与请求一致，华为电信固件
+     *               （HS8145C5 / B866 这类）对不上就认为这次会话没被接受，
+     *               会带着递增的 RetryCount 反复重发 BOOTSTRAP，也不发空 POST，
+     *               ACS 于是永远没有下发窗口
      */
     private void handleInform(String connId, String body, HttpServletRequest request,
-                              HttpServletResponse response) throws IOException {
+                              HttpServletResponse response, String cwmpId) throws IOException {
         InformRequest inform = SoapParser.parseInform(body);
         if (inform.getDeviceId() == null || inform.getDeviceId().getSerialNumber() == null
                 || inform.getDeviceId().getSerialNumber().isBlank()) {
@@ -306,7 +373,7 @@ public class CwmpController {
             informService.handle(session, inform, body);
         }
 
-        String informResponse = SoapEnvelopeBuilder.buildInformResponse(null, session.getCwmpVersion());
+        String informResponse = SoapEnvelopeBuilder.buildInformResponse(cwmpId, session.getCwmpVersion());
         writeXml(response, informResponse);
 
         session.setState(SessionState.WAIT_POST_NULL);

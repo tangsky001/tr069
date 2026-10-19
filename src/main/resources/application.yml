@@ -172,6 +172,8 @@ acs:
       max-object-rounds: 500
       # 采集与回调线程数
       worker-threads: 8
+      # 按运营商的采集标准（子树 / GPN 策略 / 实例探测）与运营商自动识别都写死在代码里，
+      # 见 CapabilityProfiles#builtin 与 DeviceCapabilityService，这里不落配置
       # 启动时自动补建 cpe_parameter 表，存量库升级时不用手工执行 DDL
       auto-create-table: true
 

@@ -1,6 +1,7 @@
 package com.tr069.acs.worklist.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tr069.acs.acs.model.Isp;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.domain.entity.CpeModel;
 import com.tr069.acs.domain.entity.CpeParameter;
@@ -307,13 +308,8 @@ public class ModelMappingService {
      * 走的是「运营商 -> 标准档位」两级，后续同一运营商再有别的档位可直接加同级目录。</p>
      */
     public static String ispDir(String isp) {
-        String v = isp == null ? "" : isp.trim().toUpperCase();
-        return switch (v) {
-            case "CMCC", "CM" -> "CM";
-            case "CT", "TELECOM" -> "CT";
-            case "CU", "UNICOM" -> "CU";
-            default -> "standard";
-        };
+        // 归一化与目录名集中在 Isp 枚举里：四家运营商 + 广电 + 通用档只维护一处
+        return Isp.of(isp).getDir();
     }
 
     /**

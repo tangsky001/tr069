@@ -10,6 +10,7 @@
             <el-option label="电信 CT" value="CT" />
             <el-option label="联通 CU" value="CU" />
             <el-option label="移动 CMCC" value="CMCC" />
+            <el-option label="广电 CBN" value="CBN" />
             <el-option label="通用 standard" value="standard" />
           </el-select>
         </el-form-item>
@@ -709,7 +710,8 @@ export default {
       adaptForm: { isp: 'standard', lanPorts: '1', lanSpeed: '自动', sipCount: '无', wifiSpec: '2.4G' },
       ispOptions: [
         { v: 'CT', t: '电信' }, { v: 'CU', t: '联通' },
-        { v: 'CMCC', t: '移动' }, { v: 'standard', t: '标准/通用' }
+        { v: 'CMCC', t: '移动' }, { v: 'CBN', t: '广电' },
+        { v: 'standard', t: '标准/通用' }
       ],
       portOptions: ['无', '1', '2', '3', '4', '8'],
       speedOptions: ['无', '自动', '100M', '1000M', '2500M'],
@@ -1128,7 +1130,7 @@ export default {
       // yml profile 里的 isp 是申报时的原始值（如 CMCC）
       const ispNames = {
         CMCC: '中国移动', CM: '中国移动',
-        CT: '中国电信', CU: '中国联通',
+        CT: '中国电信', CU: '中国联通', CBN: '中国广电',
         standard: '标准/通用'
       }
       // 运营商单独一行：以设备台账登记值为准（适配时选定的运营商会写回台账），

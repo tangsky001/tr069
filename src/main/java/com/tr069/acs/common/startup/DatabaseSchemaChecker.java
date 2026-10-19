@@ -47,7 +47,7 @@ public class DatabaseSchemaChecker implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         if (!enabled) {
-            log.info("数据库表结构自检已关闭");
+            //log.info("数据库表结构自检已关闭");
             return;
         }
         List<String> missing;

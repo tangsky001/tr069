@@ -3,6 +3,7 @@ package com.tr069.acs.worklist.service;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.domain.entity.CpeParameter;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -63,7 +64,7 @@ class ModelTreeStoreTest {
         Files.writeString(file, xml, StandardCharsets.UTF_8);
 
         List<ModelTreeStore.ParamNode> params =
-                new ModelTreeStore(null, null, null, null, null, null).readParams(file);
+                new ModelTreeStore(null, null, null, null, null, null, null).readParams(file);
         assertEquals(1, params.size());
         assertEquals(WAN_SIP, params.get(0).getPath());
         assertTrue(params.get(0).isWritable(), "下发前要能看出该节点可写");
@@ -185,6 +186,30 @@ class ModelTreeStoreTest {
                 ModelTreeStore.normalizeInstances(
                         "InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANIPConnection.4."),
                 "新建实例号在档案里不存在，比较父对象时必须忽略实例号");
+    }
+
+    /**
+     * 不管哪家运营商的猫，进来先归档到 standard：models/standard/standard/{型号}.xml，
+     * 与移动那台当初一样，按运营商分目录留到人工适配申报时。
+     */
+    @Test
+    void 未适配型号一律归档到通用目录() {
+        ModelTreeStore store = new ModelTreeStore(null, null, null, null, null, null, null);
+
+        assertEquals("standard", store.archiveIsp(device()), "电信猫没适配过也要先落 standard");
+        assertEquals("standard", store.archiveIsp(null), "设备查不到时也不能落到别的目录");
+    }
+
+    /**
+     * 已适配过的型号继续归档到已适配那家，否则同一型号会散出两份档案。
+     */
+    @Test
+    void 已适配型号归档到已适配那家() {
+        ModelAdaptationProfileStore profileStore = Mockito.mock(ModelAdaptationProfileStore.class);
+        Mockito.when(profileStore.findAdaptedIsp("HG6145F1_V3.0")).thenReturn("CT");
+        ModelTreeStore store = new ModelTreeStore(null, null, null, null, null, null, profileStore);
+
+        assertEquals("CT", store.archiveIsp(device()));
     }
 
     private static ModelTreeStore.ParamNode node(String path, boolean writable) {

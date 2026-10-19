@@ -2,6 +2,7 @@ package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.tr069.acs.acs.model.Isp;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
@@ -13,6 +14,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import com.tr069.acs.common.log.AcsCoreLog;
 
 /**
@@ -59,6 +61,17 @@ public class DeviceRegistryService implements ApplicationRunner {
      * 设备上线或信息变更时落库：已存在则更新，否则新建。
      */
     public void upsertOnline(CpeSession session) {
+        upsertOnline(session, List.of());
+    }
+
+    /**
+     * 设备上线或信息变更时落库：已存在则更新，否则新建。
+     *
+     * @param informPaths Inform 上报的参数名，用来顺手认出运营商——
+     *                    电信定制机的 {@code InternetGatewayDevice.X_CT-COM_UserInfo} 之类
+     *                    是随 Inform 一起上来的，不必等能力树采完
+     */
+    public void upsertOnline(CpeSession session, List<String> informPaths) {
         try {
             LocalDateTime now = LocalDateTime.now();
             CpeDevice exist = cpeDeviceMapper.selectOne(
@@ -66,6 +79,7 @@ public class DeviceRegistryService implements ApplicationRunner {
             if (exist == null) {
                 CpeDevice device = new CpeDevice();
                 fill(device, session);
+                device.setIsp(detectIsp(session.getSn(), informPaths, null));
                 device.setStatus(STATUS_ONLINE);
                 device.setLastContactTime(now);
                 cpeDeviceMapper.insert(device);
@@ -81,12 +95,36 @@ public class DeviceRegistryService implements ApplicationRunner {
             CpeDevice update = new CpeDevice();
             update.setId(exist.getId());
             fill(update, session);
+            // 填上才更新：updateById 不动 null 字段，认不出来时保持库里原样
+            update.setIsp(detectIsp(session.getSn(), informPaths, exist.getIsp()));
             update.setStatus(STATUS_ONLINE);
             update.setLastContactTime(now);
             cpeDeviceMapper.updateById(update);
         } catch (Exception e) {
             log.error("设备落库失败: sn={}", session.getSn(), e);
         }
+    }
+
+    /**
+     * 按 Inform 上报的私有参数前缀认运营商，只补台账上还没有运营商的设备。
+     *
+     * <p>认出来有什么用：采集标准是按运营商分的（电信档逐层下钻、绕开 X_CTC_）。
+     * 等采完能力树再认，第一轮只能按通用档先试递归——电信定制机对递归必回 9002，
+     * 白等一整轮。Inform 里就带着前缀，进来就认，第一轮就能按对的标准采。</p>
+     *
+     * @param current 库里现有的运营商，非空表示人工申报或早先已认出，以它为准
+     * @return 要写入的运营商代码，{@code null} 表示保持原样
+     */
+    private String detectIsp(String sn, List<String> informPaths, String current) {
+        if (current != null && !current.isBlank()) {
+            return null;
+        }
+        Isp detected = Isp.detect(informPaths);
+        if (detected == null || detected == Isp.STANDARD) {
+            return null;
+        }
+        log.info("按 Inform 私有前缀登记设备运营商: sn={}, isp={}", sn, detected.getCode());
+        return detected.getCode();
     }
 
     /**
