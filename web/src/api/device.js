@@ -33,6 +33,17 @@ export function fetchOnlineDevices() {
 }
 
 /**
+ * 设备台账统计：{ total, online, offline }。
+ * 口径与列表行的在线标签一致（cpe_device.status），与「在线会话」不是一回事。
+ */
+export function fetchDeviceStat() {
+  return request({
+    url: '/device/stat',
+    method: 'get'
+  })
+}
+
+/**
  * 设备业务信息（WAN / WLAN / SIP），只读库里最近一次采集的快照。
  */
 export function fetchDeviceBusiness(sn) {

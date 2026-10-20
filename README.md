@@ -146,8 +146,8 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
   - CT 电信 `B866-S1-4E1P3W1-Ethernet`（XGPON 机型，现场按 Ethernet 上行，见下方备注）
 - **适配中 2 款**：
   - CT 电信 `HS8145C5-GPON` —— 能力树已归档（360 对象 / 1947 参数），待申报保存
-  - `MSG2100E-UPON-8V-AC` —— 只读到 5 对象 / 3 参数（参数树扫不动），待适配；
-    运营商待台账确认（Inform 上报了 `X_CT-COM_UserInfo`）
+  - `MSG2100E-UPON-8V-AC` —— GPN 固件不可用（一律 9002），改按已知路径取到 26 对象 / 12 参数，
+    待申报保存；运营商待台账确认（Inform 上报了 `X_CT-COM_UserInfo`）
 
 > `B866-S1-4E1P3W1` 硬件是 **XGPON** 上行，这台改成 **Ethernet 上行**后上报的 ProductClass
 > 是 `B866-S1-4E1P3W1-Ethernet`，档案也按它归档。若哪天切回 XGPON，ProductClass 会跟着变，

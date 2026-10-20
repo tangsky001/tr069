@@ -177,13 +177,30 @@ public class ModelAdaptationService {
         // 真下发一次：把参数当前值原样写回，验证光猫确实能执行这些能力
         List<Probe> probes = collected ? probeCapabilities(sn, params, request) : List.of();
         data.put("probes", probes.stream().map(Probe::asMap).toList());
+        // 试探失败只作提示：Writable 未知时候选面本来就宽，写回同值被拒常常只是值域
+        // 问题（MaxBitRate 上报「1000M」，标准是 bps 数字或 Auto），不代表能力缺失，
+        // 拿它拦人会让这类固件永远适不上
+        List<String> notes = new ArrayList<>(notes(detected, request));
         for (Probe p : probes) {
             if (p.failed) {
-                reasons.add("参数下发未通过：" + p.capability + " " + p.path + " -> " + p.status);
+                notes.add("参数下发未通过：" + p.capability + " " + p.path + " -> " + p.status);
+            }
+        }
+        // 没挑到候选的组要说清原因。表格里那个「-」容易被读成「这台没有这块能力」，
+        // 其实多数时候是这条路径压根没采到，或参数当前值是空的
+        for (ProbeGroup group : PROBE_GROUPS) {
+            if (!group.required(request)) {
+                continue;
+            }
+            String label = group.label;
+            if (probes.stream().noneMatch(p -> label.equals(p.getCapability()))) {
+                notes.add(label + "：这次没做试探——设备上没采到可调参数"
+                        + "（路径不存在，或值为空），能力判定不受影响");
             }
         }
         data.put("supported", reasons.isEmpty());
         data.put("reasons", reasons);
+        data.put("notes", notes);
         return data;
     }
 
@@ -207,6 +224,10 @@ public class ModelAdaptationService {
             coreLog.adaptation(request.getIsp() + "/" + device.getProductClass(),
                     "适配入库", false, "能力不符: " + reason);
             throw new IllegalStateException("设备能力与申报不符，已拒绝入库：" + reason);
+        }
+        List<String> notes = notes(detected, request);
+        if (!notes.isEmpty()) {
+            log.info("机型适配提示（不阻断保存）: sn={}, notes={}", sn, String.join("；", notes));
         }
         // 申报的运营商与设备上报不一致时，给目标运营商另立一份档案
         String isp = request.getIsp() != null && !request.getIsp().isBlank()
@@ -363,6 +384,14 @@ public class ModelAdaptationService {
         Set<String> vendorSips = new TreeSet<>();
         double maxSpeedMbps = -1;
         Set<String> bands = new LinkedHashSet<>();
+        // 设备自报的条目数。有些固件不建 LANEthernetInterfaceConfig（只给个
+        // LANHostConfigManagement），语音只建一路 Line，靠数实例会把 4 口 8 路
+        // 误判成 0 口 1 路，申报怎么填都比不过
+        int lanEntries = 0;
+        int wlanEntries = 0;
+        int profileEntries = 0;
+        int lineEntries = 0;
+        int phyEntries = 0;
 
         for (CpeParameter row : params) {
             String path = row.getParamPath() == null ? "" : row.getParamPath();
@@ -395,23 +424,45 @@ public class ModelAdaptationService {
                 vendorSips.add(m.group(1));
             }
             String leaf = leafOf(path);
+            if ("LANEthernetInterfaceNumberOfEntries".equals(leaf)) {
+                lanEntries = Math.max(lanEntries, intValue(row));
+            } else if ("WLANConfigurationNumberOfEntries".equals(leaf)) {
+                wlanEntries = Math.max(wlanEntries, intValue(row));
+            } else if ("VoiceProfileNumberOfEntries".equals(leaf)) {
+                profileEntries = Math.max(profileEntries, intValue(row));
+            } else if ("LineNumberOfEntries".equals(leaf)) {
+                lineEntries = Math.max(lineEntries, intValue(row));
+            } else if ("PhyInterfaceNumberOfEntries".equals(leaf)) {
+                phyEntries = Math.max(phyEntries, intValue(row));
+            }
             double speed = speedMbps(row, leaf);
             if (speed > maxSpeedMbps) {
                 maxSpeedMbps = speed;
             }
             collectBand(row, leaf, bands);
         }
-        // 频段识别不出时，双射频直接视为 2.4G+5G 兜底
-        int radioCount = Math.max(wlans.size(), radios.size());
-        if (bands.isEmpty() && radioCount >= 2) {
+        int radioCount = Math.max(Math.max(wlans.size(), radios.size()), wlanEntries);
+        // 频段一个都识别不出时按射频数推断：单射频基本都是 2.4G，双射频才是双频。
+        // 老固件不报 OperatingFrequencyBand，SSID 也不带频段（ChinaNet-xxxx 这种），
+        // 不兜底的话「实测 WIFI 无」，申报 2.4G 永远过不了
+        if (bands.isEmpty() && radioCount >= 1) {
             bands.add("2.4G");
-            bands.add("5.8G");
+            if (radioCount >= 2) {
+                bands.add("5.8G");
+            }
         }
         Detection d = new Detection();
-        d.lanPortCount = Math.max(lanIfs.size(), ethIfs.size());
+        // 语音容量有没有证据：条目数可读，或者本身就能数出多路实例。
+        // 一个 VoiceProfile、一条 Line、条目数全 9005 的设备，攒出的「1 路」不算证据
+        d.sipCapacityKnown = profileEntries > 0 || lineEntries > 0 || phyEntries > 0
+                || voiceProfiles.size() > 1 || voicePhys.size() > 1 || vendorSips.size() > 1;
+        d.lanPortCount = Math.max(Math.max(lanIfs.size(), ethIfs.size()), lanEntries);
         d.lanSpeedMbps = maxSpeedMbps > 0 ? maxSpeedMbps : null;
-        // SIP 数量按「能打几路电话」口径：VoiceProfile / PhyInterface / 厂商私有对象取最大
-        d.sipCount = Math.max(Math.max(voiceProfiles.size(), voicePhys.size()), vendorSips.size());
+        // SIP 数量按「能打几路电话」口径：VoiceProfile / PhyInterface / 厂商私有对象 /
+        // Line 条目数取最大——只有一路 Line 实例但 LineNumberOfEntries=8 的机型很常见
+        d.sipCount = Math.max(
+                Math.max(Math.max(voiceProfiles.size(), voicePhys.size()), vendorSips.size()),
+                Math.max(Math.max(profileEntries, lineEntries), phyEntries));
         d.radioCount = radioCount;
         d.wifiBands = new ArrayList<>(bands);
         return d;
@@ -449,6 +500,15 @@ public class ModelAdaptationService {
         }
     }
 
+    /** NumberOfEntries 这类计数字段，读不出数字按 0 处理。 */
+    private static int intValue(CpeParameter row) {
+        try {
+            return Integer.parseInt(row.getParamValue() == null ? "" : row.getParamValue().trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
     private static String leafOf(String path) {
         int idx = path.lastIndexOf('.');
         if (idx < 0) {
@@ -477,7 +537,10 @@ public class ModelAdaptationService {
             }
         }
         int sipRequired = parseCount(req.getSipCount());
-        if (sipRequired > 0 && d.sipCount < sipRequired) {
+        // 只有设备确实报了语音容量（条目数或可数的多路实例）才谈得上「不足」。
+        // 有的固件一个容量参数都不给、只暴露 Line.1，攒出来的「1 路」并不是证据，
+        // 按实物（8 个语音口）申报 8 路反倒会被它挡住
+        if (sipRequired > 0 && d.sipCount < sipRequired && d.sipCapacityKnown) {
             reasons.add("SIP 数量不足：申报 " + req.getSipCount() + "，实测 " + d.sipCount);
         }
         String wifi = req.getWifiSpec();
@@ -488,6 +551,23 @@ public class ModelAdaptationService {
             reasons.add("未检测到 5.8G WIFI");
         }
         return reasons;
+    }
+
+    /**
+     * 需要提醒、但不阻断保存的项。
+     *
+     * <p>「实测没数出来」和「设备没有」是两回事：有的固件压根不给语音容量参数，
+     * 实测只剩 1 路；拿这个去否定申报（实物有 8 个语音口）就把设备挡在门外了。
+     * 这种交给人工判断的走提示，确实矛盾的（申报数超过设备自报条目数）才走 {@link #compare}。</p>
+     */
+    List<String> notes(Detection d, AdaptRequest req) {
+        List<String> notes = new ArrayList<>();
+        int sipRequired = parseCount(req.getSipCount());
+        if (sipRequired > 0 && !d.sipCapacityKnown) {
+            notes.add("设备未上报语音容量（Line / PhyInterface 条目数均不可读），"
+                    + "SIP " + req.getSipCount() + " 路按申报为准，请核对实物语音口数量");
+        }
+        return notes;
     }
 
     /** 申报数量：无=0，4-8=4（下限），其余取数字。 */
@@ -545,7 +625,13 @@ public class ModelAdaptationService {
             }
             List<CpeParameter> candidates = new ArrayList<>();
             for (CpeParameter row : params) {
-                if (row.getParamPath() == null || !isTrue(row.getWritable())) {
+                if (row.getParamPath() == null) {
+                    continue;
+                }
+                // 0 = 设备明确说只读；null / -1（只能走 GetParameterValues 兜底读参数的
+                // 固件，Writable 属性无从而知）都放行——真能不能写，由这次下发自己证明
+                Integer writable = row.getWritable();
+                if (writable != null && writable == 0) {
                     continue;
                 }
                 if (!group.prefix.matcher(row.getParamPath()).find()) {
@@ -639,13 +725,14 @@ public class ModelAdaptationService {
 
     /** 试探分组：能力名 -> 命中该能力的子树正则 + 倾向试探的叶子名 + 申报了才测。 */
     private static final List<ProbeGroup> PROBE_GROUPS = List.of(
+            // 网口只拿开关类参数做试探。速率（MaxBitRate）刻意排除：厂商对它的值域
+            // 各行其是（bps 数字 / Mbps 数字 / 枚举 Auto /「1000M」这种自由文本），
+            // 把上报值原样写回也常被判 9003，拿它当「能不能写」的证据只会误伤
             new ProbeGroup("网口", Pattern.compile(
                     "(?:LANDevice\\.\\d+\\.)?(?:LANEthernetInterfaceConfig|EthernetInterface)\\.\\d+\\."
                             + "|(?:^|\\.)Ethernet\\.Interface\\.\\d+\\."),
-                    Pattern.compile("(?i)(enable|status|maxbitrate|portbind|portenable)"),
+                    Pattern.compile("(?i)(enable|status|portbind|portenable)"),
                     req -> parseCount(req.getLanPorts()) > 0),
-            new ProbeGroup("网口速率", Pattern.compile("."), SPEED_LEAF,
-                    req -> parseSpeed(req.getLanSpeed()) > 0),
             new ProbeGroup("SIP", Pattern.compile(
                     "VoiceService\\.\\d+\\.VoiceProfile\\.\\d+\\."
                             + "|(?i)X_[a-z0-9-]+_SIP[A-Za-z]*\\.\\d+\\."),
@@ -712,12 +799,15 @@ public class ModelAdaptationService {
         private int sipCount;
         private int radioCount;
         private List<String> wifiBands = new ArrayList<>();
+        /** 设备是否上报了语音容量；false 时「实测几路」只是下限，不能用来否定申报。 */
+        private boolean sipCapacityKnown;
 
         Map<String, Object> asMap() {
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("lanPortCount", lanPortCount);
             data.put("lanSpeedMbps", lanSpeedMbps);
             data.put("sipCount", sipCount);
+            data.put("sipCapacityKnown", sipCapacityKnown);
             data.put("radioCount", radioCount);
             data.put("wifiBands", wifiBands);
             return data;

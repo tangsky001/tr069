@@ -78,7 +78,44 @@ public class CapabilityProfiles {
                 // 连接请求（ACS 反连设备）的认证凭据是设备侧生成的，只有问它才知道。
                 // 没有凭据就唤不醒设备，手动采集只能干等它自己上报，所以一并读回来
                 "ManagementServer.ConnectionRequestUsername",
-                "ManagementServer.ConnectionRequestPassword"));
+                "ManagementServer.ConnectionRequestPassword",
+                // 业务能力：拉不动参数树的设备（GetParameterNames 一律回 9002 的固件，
+                // 瑞斯康达 MSG2100E 就是这种）拿不到完整的树，型号模板里的
+                // WiFi / LAN / SIP 数就全是 0，同型号的工单没法下发这几类业务。
+                // 这几条是 TR-098 的代表性叶子，读到就等于承认有这块能力，
+                // 读不到会被二分拆批剔掉，不影响其他路径
+                "LANDevice.1.WLANConfiguration.1.Enable",
+                "LANDevice.1.WLANConfiguration.1.SSID",
+                "LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase",
+                "LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress",
+                "LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceSubnetMask",
+                "LANDevice.1.LANHostConfigManagement.DHCPServerEnable",
+                "LANDevice.1.WLANConfiguration.1.X_CT-COM_SSID",
+                // 条目数与频段：适配页要拿实测数校验申报值（4 口 / 8 路 SIP / 2.4G）。
+                // 只数实例容易低估——不建 LANEthernetInterfaceConfig 的固件数出 0 口，
+                // 只建一路 Line 的数出 1 路。NumberOfEntries 是设备自报的口径，更准
+                "LANDevice.1.LANEthernetInterfaceNumberOfEntries",
+                "LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate",
+                // 网口的开关类参数：适配页的试探下发要靠它证明「这个能力真能配」。
+                // 只采 MaxBitRate 的话，值域各厂商不一（「1000M」写回去就被判 9003），
+                // 表格里网口那一行只能显示「无可写参数」
+                "LANDevice.1.LANEthernetInterfaceConfig.1.Enable",
+                "LANDevice.1.LANEthernetInterfaceConfig.1.Status",
+                "LANDevice.1.WLANConfigurationNumberOfEntries",
+                "LANDevice.1.WLANConfiguration.1.OperatingFrequencyBand",
+                "Services.VoiceService.1.VoiceProfileNumberOfEntries",
+                "Services.VoiceService.1.VoiceProfile.1.LineNumberOfEntries",
+                // 8 路语音口的机器常常只建一条 Line，容量挂在物理口上
+                "Services.VoiceService.1.PhyInterfaceNumberOfEntries",
+                "WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress",
+                "WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username",
+                "Services.VoiceService.1.VoiceProfile.1.Line.1.DirectoryNumber",
+                // SIP 未配置时 ProxyServer / AuthUserName 是空值或直接 9005，
+                // 试探就一个候选都挑不出来。Line 与 SIP 的开关是必定有值的
+                "Services.VoiceService.1.VoiceProfile.1.Line.1.Enable",
+                "Services.VoiceService.1.VoiceProfile.1.SIP.Enable",
+                "Services.VoiceService.1.VoiceProfile.1.SIP.AuthUserName",
+                "Services.VoiceService.1.VoiceProfile.1.SIP.ProxyServer"));
         // 天翼那套私有分支，遍历进去必抛 9002：逐层展开到此为止
         profile.setSkipPrefixes(List.of("X_CTC_"));
         if (target == Isp.CT) {

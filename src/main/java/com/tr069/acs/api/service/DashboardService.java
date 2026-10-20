@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -64,22 +65,90 @@ public class DashboardService {
 
     /**
      * 品牌（厂商）分布，空厂商用 OUI 兜底。
+     *
+     * <p>设备上报的厂商名是各家固件自己写的，同一家会出现多种形态
+     * （{@code Huawei Technologies Co., Ltd.} 与 {@code ...Ltd}、
+     * {@code RAISECOM} 与 {@code RC}）。直接按字符串分组会让同一个牌子在图上占两行，
+     * 所以先归一成现场叫得出口的名字，再按台数重排。</p>
      */
     private List<Map<String, Object>> brands() {
-        List<Map<String, Object>> brands = new ArrayList<>();
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT COALESCE(NULLIF(TRIM(manufacturer), ''), NULLIF(TRIM(oui), ''), '未识别') AS brand, "
                         + "COUNT(*) AS total "
                         + "FROM cpe_device WHERE deleted = ? "
-                        + "GROUP BY brand ORDER BY total DESC, brand ASC",
+                        + "GROUP BY brand",
                 NOT_DELETED);
+        Map<String, Integer> merged = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("name", row.get("brand"));
-            item.put("count", toInt(row.get("total")));
-            brands.add(item);
+            String name = brandName(String.valueOf(row.get("brand")));
+            merged.merge(name, toInt(row.get("total")), Integer::sum);
         }
+        List<Map<String, Object>> brands = new ArrayList<>(merged.size());
+        merged.entrySet().stream()
+                .sorted((a, b) -> b.getValue().equals(a.getValue())
+                        ? a.getKey().compareTo(b.getKey())
+                        : b.getValue() - a.getValue())
+                .forEach(e -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("name", e.getKey());
+                    item.put("count", e.getValue());
+                    brands.add(item);
+                });
         return brands;
+    }
+
+    /**
+     * 厂商品牌映射：上报的厂商名（大小写不敏感，取子串）-> 现场用的中文品牌。
+     *
+     * <p>表里放各家固件实际会写的字样。英文那列是固件上报的写法，中文那列是
+     * 部分国产厂商直接回中文的情况，两种都要能认。</p>
+     */
+    private static final Map<String, String> BRAND_NAMES = brandNames();
+
+    private static Map<String, String> brandNames() {
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put("huawei", "华为");
+        map.put("华为", "华为");
+        map.put("ciot", "中移物联");
+        map.put("中移", "中移物联");
+        map.put("raisecom", "瑞斯达康");
+        map.put("瑞斯", "瑞斯达康");
+        map.put("zte", "中兴");
+        map.put("中兴", "中兴");
+        map.put("fiberhome", "烽火");
+        map.put("烽火", "烽火");
+        // 创维固件有的报 SKYWORTH、有的只报 SKYW 前缀，取前四个字母覆盖两种
+        map.put("skyw", "创维");
+        map.put("创维", "创维");
+        map.put("tianyi", "天邑");
+        map.put("天邑", "天邑");
+        map.put("youhua", "友华");
+        map.put("友华", "友华");
+        map.put("zhaoneng", "兆能");
+        // 兆能固件也直接报缩写 ZNXT
+        map.put("znxt", "兆能");
+        map.put("兆能", "兆能");
+        return map;
+    }
+
+    /** 厂商名归一：认得的换成中文品牌，认不得的保留原样。 */
+    private static String brandName(String raw) {
+        String name = raw == null ? "" : raw.trim();
+        if (name.isEmpty() || "未识别".equals(name)) {
+            return "未识别";
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        // RC 是 RAISECOM 的简称，MSG2100E 上报的厂商就是它。
+        // 这两个字太短，做包含匹配会把 Arcadyan 之类一起吞掉，只能整名比对
+        if ("rc".equals(lower)) {
+            return "瑞斯达康";
+        }
+        for (Map.Entry<String, String> entry : BRAND_NAMES.entrySet()) {
+            if (lower.contains(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        return name;
     }
 
     /**

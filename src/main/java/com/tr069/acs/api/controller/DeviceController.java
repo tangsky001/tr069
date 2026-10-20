@@ -49,6 +49,25 @@ public class DeviceController {
     private final DeviceAccountService accountService;
 
     /**
+     * 设备台账统计：总数 / 在线 / 离线。
+     *
+     * <p>口径与列表每一行的在线标签一致，都取 {@code cpe_device.status}：
+     * 顶上这三个数就是列表里绿标灰标的数量，两者不会打架。首页概览用的是
+     * 「最近上报落在窗口内」的另一套口径，那边统计的是业务在线率，不要混用。</p>
+     */
+    @GetMapping("/stat")
+    public Result<Map<String, Object>> stat() {
+        long total = cpeDeviceMapper.selectCount(new LambdaQueryWrapper<>());
+        long online = cpeDeviceMapper.selectCount(new LambdaQueryWrapper<CpeDevice>()
+                .eq(CpeDevice::getStatus, "online"));
+        Map<String, Object> data = new HashMap<>();
+        data.put("total", total);
+        data.put("online", online);
+        data.put("offline", Math.max(0, total - online));
+        return Result.success(data);
+    }
+
+    /**
      * 设备分页查询，支持按序列号模糊匹配与运营商筛选。
      */
     @GetMapping("/page")
@@ -91,7 +110,10 @@ public class DeviceController {
         CpeDevice device = cpeDeviceMapper.selectOne(
                 new LambdaQueryWrapper<CpeDevice>().eq(CpeDevice::getSn, sn));
         if (device == null) {
-            return Result.failure("设备不存在");
+            // 带上 SN：清过型号档案、设备还没重新上报时这里会命中，
+            // 前端提示和日志里都得能看出是哪台
+            log.info("设备详情查询不到台账: sn={}", sn);
+            return Result.failure("设备不存在: " + sn);
         }
         Map<String, Object> data = new HashMap<>();
         data.put("device", device);

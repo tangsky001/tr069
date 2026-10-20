@@ -694,12 +694,78 @@ public class DeviceCapabilityService {
             buckets.add(bucket);
             futures.add(collectSubtree(sn, path, profile, bucket, rounds, status));
         }
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+        CompletableFuture<List<Node>> done = CompletableFuture
+                .allOf(futures.toArray(new CompletableFuture[0]))
                 .thenApply(v -> {
                     List<Node> sink = new ArrayList<>();
                     buckets.forEach(sink::addAll);
                     return sink;
                 });
+        if (root == null || root.isBlank()) {
+            return done;
+        }
+        return done.thenComposeAsync(sink -> {
+            if (!sink.isEmpty() || status.isAborted()) {
+                return CompletableFuture.completedFuture(sink);
+            }
+            return probeRoot(sn, root, profile, rounds, status).thenApply(rootNodes -> {
+                if (rootNodes.isEmpty()) {
+                    return sink;
+                }
+                List<Node> merged = new ArrayList<>(sink.size() + rootNodes.size());
+                merged.addAll(rootNodes);
+                merged.addAll(sink);
+                return merged;
+            });
+        }, executor());
+    }
+
+    /**
+     * 逐棵子树都问不出来时的最后一步：拿整棵树的根再问一遍。
+     *
+     * <p>子树全军覆没不一定是设备没这块能力，也可能是这固件压根不吃「子树路径」——
+     * 只知道 {@code InternetGatewayDevice.}，给个 {@code WANDevice.} 就回 9002。
+     * 根节点能出东西的话，{@code NextLevel=false} 一次就是整棵树。
+     * 这里把所有姿势过一遍（递归 / 逐层 × 带尾点 / 不带尾点），全落空才算这台拉不了参数树。</p>
+     */
+    private CompletableFuture<List<Node>> probeRoot(String sn, String root,
+                                                    CapabilityProfiles.Profile profile,
+                                                    AtomicInteger rounds, CollectStatus status) {
+        List<String> candidates = new ArrayList<>();
+        candidates.add(root);
+        // 少数老固件认「不带尾点」的写法
+        if (root.endsWith(".")) {
+            String trimmed = root.substring(0, root.length() - 1);
+            if (!trimmed.isBlank()) {
+                candidates.add(trimmed);
+            }
+        }
+        log.info("子树都问不出来，改从根节点试 GetParameterNames: sn={}, root={}", sn, root);
+        List<Node> sink = Collections.synchronizedList(new ArrayList<>());
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (String candidate : candidates) {
+            String path = candidate;
+            chain = chain.thenComposeAsync(v -> {
+                if (!sink.isEmpty() || status.isAborted()) {
+                    return CompletableFuture.<Void>completedFuture(null);
+                }
+                return fetchRecursive(sn, path, sink, status).thenComposeAsync(hit -> {
+                    if (hit) {
+                        log.info("根节点成功取到参数树: sn={}, path={}, 节点={}", sn, path, sink.size());
+                        return CompletableFuture.<Void>completedFuture(null);
+                    }
+                    List<Node> level = Collections.synchronizedList(new ArrayList<>());
+                    return fetchLevel(sn, path, level, rounds, status, profile).thenApply(nodes -> {
+                        if (nodes != null && nodes.booleanValue()) {
+                            sink.addAll(level);
+                            log.info("根节点逐层取到参数树: sn={}, path={}, 节点={}", sn, path, sink.size());
+                        }
+                        return null;
+                    });
+                }, executor());
+            }, executor());
+        }
+        return chain.thenApply(v -> sink);
     }
 
     /**
@@ -855,8 +921,10 @@ public class DeviceCapabilityService {
      * 最后一道兜底：GetParameterNames 各种姿势都不认时，按采集标准里登记的已知路径
      * 直接发 GetParameterValues（一条一回），至少把业务参数读回来。
      *
-     * <p>只在采集标准显式配了 {@code probe-paths} 时才走，默认不开——每条路径都要等
-     * 设备一次上报周期，全靠它采太慢。</p>
+     * <p>只在采集标准显式配了 {@code probe-paths} 时才走，默认不开。
+     * 清单只放真正用得上的路径：读不到的会被二分拆批剔掉，每剔除一轮就是一次来回。
+     * （早年间每条路径要等设备一个上报周期，所以清单刻意保持短；指令捎带打通之后，
+     * 一个会话里能连发几十条，这层顾虑没有了，但清单仍不宜膨胀。）</p>
      */
     private CompletableFuture<Boolean> probeKnownPaths(String sn, String path,
                                                        CapabilityProfiles.Profile profile,
@@ -899,7 +967,89 @@ public class DeviceCapabilityService {
                 });
             }, executor());
         }
-        return chain.thenApply(v -> true);
+        return chain.thenComposeAsync(v -> expandInstances(sn, root, sink, status), executor())
+                .thenApply(v -> true);
+    }
+
+    /** 已做过实例扩展的「sn|root」，同一次采集里每棵子树的兜底不重复扩展。 */
+    private final Set<String> expandedRoots = ConcurrentHashMap.newKeySet();
+
+    /** 设备上报的条目数；解析不出来按 0 处理，也就是不扩实例。 */
+    private static int intOf(String value) {
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 按设备自报的条目数把实例 2..N 补采回来。
+     *
+     * <p>兜底清单只能写死一个实例号（{@code LANEthernetInterfaceConfig.1}），可设备报的
+     * {@code LANEthernetInterfaceNumberOfEntries} 才是真口数：MSG2100E 自报 4 口，
+     * 兜底清单只问了 1 口，采完页面就只能画出一个网口，申报 4 口也看不出依据。
+     * 这里先读三个条目数，再按它把 2..N 的开关、状态、速率、号码补上；读不到的路径
+     * 会被拆批剔掉，不影响已有的那一口。</p>
+     */
+    private CompletableFuture<Void> expandInstances(String sn, String root, List<Node> sink,
+                                                    CollectStatus status) {
+        if (root == null || root.isEmpty() || !expandedRoots.add(sn + "|" + root)) {
+            return CompletableFuture.completedFuture(null);
+        }
+        List<String> entries = List.of(
+                root + "LANDevice.1.LANEthernetInterfaceNumberOfEntries",
+                root + "Services.VoiceService.1.VoiceProfile.1.LineNumberOfEntries",
+                root + "Services.VoiceService.1.VoiceProfile.1.PhyInterfaceNumberOfEntries");
+        return getParameterValues(sn, entries).thenComposeAsync(resp -> {
+            if (resp == null || resp.isFault()) {
+                return CompletableFuture.completedFuture(null);
+            }
+            List<CpeParameter> rows = parseValues(sn, resp);
+            saveValues(sn, rows);
+            int lanPorts = 0;
+            int lines = 0;
+            for (CpeParameter row : rows) {
+                String leaf = nameOf(row.getParamPath());
+                if ("LANEthernetInterfaceNumberOfEntries".equals(leaf)) {
+                    lanPorts = Math.max(lanPorts, intOf(row.getParamValue()));
+                } else if ("LineNumberOfEntries".equals(leaf)) {
+                    lines = Math.max(lines, intOf(row.getParamValue()));
+                }
+            }
+            List<String> targets = new ArrayList<>();
+            // 最多认到 32，防止设备报个离谱的数把下发队列灌满
+            for (int i = 2; i <= Math.min(lanPorts, 32); i++) {
+                String base = root + "LANDevice.1.LANEthernetInterfaceConfig." + i + ".";
+                targets.add(base + "Enable");
+                targets.add(base + "Status");
+                targets.add(base + "MACAddress");
+                targets.add(base + "MaxBitRate");
+            }
+            for (int i = 2; i <= Math.min(lines, 32); i++) {
+                String base = root + "Services.VoiceService.1.VoiceProfile.1.Line." + i + ".";
+                targets.add(base + "Enable");
+                targets.add(base + "DirectoryNumber");
+            }
+            if (targets.isEmpty()) {
+                return CompletableFuture.completedFuture(null);
+            }
+            log.info("按条目数补采实例: sn={}, LAN 口数={}, Line 数={}, 追加路径 {} 条",
+                    sn, lanPorts, lines, targets.size());
+            CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+            for (List<String> batch : partition(targets, Math.max(1, valueBatchSize))) {
+                chain = chain.thenComposeAsync(v -> readValuesBatch(sn, batch, status, 0, 1),
+                        executor());
+            }
+            return chain.thenAccept(v -> {
+                for (String target : targets) {
+                    sink.add(new Node(target, false, true));
+                }
+            });
+        }, executor());
     }
 
     /**
@@ -1565,20 +1715,39 @@ public class DeviceCapabilityService {
         List<List<String>> batches = partition(paths, Math.max(1, valueBatchSize));
         CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
         for (List<String> batch : batches) {
-            chain = chain.thenComposeAsync(v -> getParameterValues(sn, batch).thenAccept(resp -> {
-                if (resp == null || resp.isFault()) {
-                    log.warn("业务参数读取失败: sn={}, size={}, err={}",
-                            sn, batch.size(), faultText(resp));
-                    return;
-                }
+            chain = chain.thenComposeAsync(v -> readBatch(sn, batch, result), executor());
+        }
+        return chain.thenApply(v -> result);
+    }
+
+    /**
+     * 读一批参数；整批失败就二分拆批重读。
+     *
+     * <p>GetParameterValues 对参数名是「全对才成功」的语义：一批里只要有一条路径在该
+     * 型号上不存在，设备直接回 9005，其余本来读得到的值一起丢。MSG2100E 这类固件尤其
+     * 明显——猜的 {@code X_CT-COM-UpLineStatus} 四种拼法只要有一条不对，整批网口状态
+     * 就全空了。拆到单条为止，坏路径自己失败，好的照常回填。</p>
+     */
+    private CompletableFuture<Void> readBatch(String sn, List<String> batch,
+                                              Map<String, String> result) {
+        return getParameterValues(sn, batch).thenCompose(resp -> {
+            if (resp != null && !resp.isFault()) {
                 List<CpeParameter> rows = parseValues(sn, resp);
                 for (CpeParameter row : rows) {
                     result.put(row.getParamPath(), row.getParamValue());
                 }
                 saveValues(sn, rows);
-            }), executor());
-        }
-        return chain.thenApply(v -> result);
+                return CompletableFuture.completedFuture(null);
+            }
+            if (batch.size() > 1) {
+                int mid = batch.size() / 2;
+                return readBatch(sn, batch.subList(0, mid), result)
+                        .thenCompose(v -> readBatch(sn, batch.subList(mid, batch.size()), result));
+            }
+            log.debug("业务参数读取失败: sn={}, path={}, err={}",
+                    sn, batch.get(0), faultText(resp));
+            return CompletableFuture.completedFuture(null);
+        });
     }
 
     // ==================== 解析 ====================
@@ -1601,6 +1770,9 @@ public class DeviceCapabilityService {
     /**
      * 解析 GetParameterValuesResponse 为待回填的行。
      */
+    /** 可写性未知：参数存在（GPV 读到了），但设备没告诉我们能不能写。 */
+    public static final int WRITABLE_UNKNOWN = -1;
+
     private List<CpeParameter> parseValues(String sn, SoapMessage resp) {
         List<CpeParameter> rows = new ArrayList<>();
         for (Map<String, Object> item : resp.listValue("ParameterList")) {
@@ -1613,6 +1785,10 @@ public class DeviceCapabilityService {
             row.setParamPath(truncate(name, 400));
             row.setParamValue(truncate(str(item.get("Value")), MAX_VALUE_LENGTH));
             row.setValueType(truncate(str(item.get("Value_type")), 32));
+            // GetParameterValues 不回 Writable（那是 GetParameterNames 才有的字段），
+            // 记成「未知」而不是 0：MSG2100E 这类 GPN 一律 9002 的固件只能靠兜底
+            // 路径读参数，一律按只读处理会让适配试探连一个候选都挑不出来
+            row.setWritable(WRITABLE_UNKNOWN);
             rows.add(row);
         }
         return rows;

@@ -190,6 +190,7 @@
 
 <script>
 import { fetchDeviceBusiness, collectDeviceBusiness, dispatchRpc } from '@/api/device'
+import { wifiBandOf } from '@/utils/wifi'
 
 // 后端每 5 分钟自动刷新一次 LAN 网口状态，这里按 1 分钟回读业务快照：
 // 页面开着就能看到网口插拔变化，不必手动点「重新采集」
@@ -214,10 +215,10 @@ export default {
     // 详情页保留设备全部 WiFi 能力：启用的、未启用的都列出来，不做过滤
     wifiItems() { return this.summary.wifi || [] },
     wifi24Items() {
-      return this.wifiItems.filter(item => this.wifiBand(item.params) === '2.4G')
+      return this.wifiItems.filter(item => wifiBandOf(item) === '2.4G')
     },
     wifi58Items() {
-      return this.wifiItems.filter(item => this.wifiBand(item.params) === '5.8G')
+      return this.wifiItems.filter(item => wifiBandOf(item) === '5.8G')
     },
     lanItems() { return this.summary.lan || [] },
     sipItems() { return this.summary.sip || [] },
@@ -299,7 +300,16 @@ export default {
       return mode + ' / ' + addr
     },
     isNat(params) {
-      return String(params.NATEnabled || '').toLowerCase() === 'true' || params.NATEnabled === 1
+      // CWMP 布尔回来是 "1"/"0" 字符串，只认 === true 会把开着 NAT 的连接显示成关闭
+      return this.boolOf(params.NATEnabled, false)
+    },
+    /** 识别 CWMP 的布尔写法："1"/"0"、true/false、Up/Down、Enabled/Disabled 都算。 */
+    boolOf(value, fallback = true) {
+      if (value === undefined || value === null || value === '') return fallback
+      const s = String(value).trim().toLowerCase()
+      if (['0', 'false', 'no', 'off', 'disabled', 'down'].includes(s)) return false
+      if (['1', 'true', 'yes', 'on', 'enabled', 'up'].includes(s)) return true
+      return fallback
     },
     // 业务模式：优先设备报的 ServiceList，没有就从连接名里猜（TR069/VOIP/INTERNET）
     serviceMode(item) {
@@ -349,10 +359,6 @@ export default {
       } finally {
         this.pingingPath = ''
       }
-    },
-    wifiBand(params) {
-      const std = String(params.Standard || '').toLowerCase()
-      return /a|ac|ax/.test(std) ? '5.8G' : '2.4G'
     },
     wifiEncrypted(params) {
       const enc = String(params.BasicEncryptionModes || params.BeaconType || '').toLowerCase()

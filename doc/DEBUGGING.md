@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | `36833B4B055937557` | HS8145C5-GPON | CT 电信 | 能力树完整（360 对象 / 1947 参数） |
 | `37300148C4AA410D6` | B866-S1-4E1P3W1-Ethernet | CT 电信 | 已适配成功（565 对象 / 3018 参数） |
-| `001681S17513S0080` | MSG2100E-UPON-8V-AC | CT 电信（待台账确认） | 只有 5 对象 / 3 参数，卡在参数树扫不动 |
+| `001681S17513S0080` | MSG2100E-UPON-8V-AC | CT 电信（Inform 上报了 `X_CT-COM_UserInfo`） | GPN 固件不可用（一律 9002），按已知路径取到 26 对象 / 12 参数 |
 | `9C5C8E7F9101` | MSG2100E-UPON-8V-AC | CMCC 移动 | 待采 |
 | `CIOT29AC19D1` | CIOT P22g-CIac | CMCC 移动 | 已适配 |
 | `CXOT165B6SCQ` | CIOT ZNM802 | CMCC 移动 | 已适配 |
@@ -164,8 +164,16 @@ HTTP 线程此刻去队列取不到货就回 204，会话当场结束。
 
 ## 六、遗留问题
 
-1. `MSG2100E-UPON-8V-AC` 只归档到 5 对象 / 3 参数，参数树没采下来（判断为降级成只读关键字段）。
-   需要它在一次会话里完整采一轮，`status=success` 后再去适配页申报。
-2. `MSG2100E` 的运营商待确认：台账标的是电信，但它上报了 `X_CT-COM_UserInfo` 私有节点，
+1. `MSG2100E-UPON-8V-AC` 的 `GetParameterNames` 是固件级的坏：递归、逐层、根路径、实例号
+   探测全回 9002，而 `GetParameterValues` 一切正常。参数树这条路对它彻底封死，
+   只能走「已知路径清单」的 GPV —— 现在能取到 26 对象 / 12 参数（WiFi 使能 / SSID / 密码、
+   LAN 地址 / 掩码 / DHCP、SIP 号码 / 代理、WAN IP / 接入方式、电信 UserId / UserName）。
+   清单里被这台回 9005 剔掉的三条：`WANPPPConnection.1.Username`、`SIP.AuthUserName`、
+   `WLANConfiguration.1.X_CT-COM_SSID`。
+2. **模板里的 wifi / sip / lan 数不等于采集能力**：这三项取自适配页的人工申报
+   （`cap_wifi_spec` / `cap_sip_count` / `cap_lan_ports`，见 `TemplateBuilder#buildWifi`
+   等），未申报就跳过，所以会出现「采到了 WiFi 参数、模板却显示 wifi=0」。
+   WAN 模板不看申报，故总是能生成。要补齐就到适配页申报后保存。
+3. `MSG2100E` 的运营商待确认：台账标的是电信，但它上报了 `X_CT-COM_UserInfo` 私有节点，
    和移动固件的行为不一致，以现场申报为准。
-3. 型号适配进度见 [`ADAPTED_MODELS.md`](./ADAPTED_MODELS.md)。
+4. 型号适配进度见 [`ADAPTED_MODELS.md`](./ADAPTED_MODELS.md)。
