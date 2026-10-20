@@ -1,0 +1,11 @@
+# 型号适配档：只有能力测试通过才会写 adapted: true
+model_key: B866-S1-4E1P3W1-Ethernet_V5R022C01S300
+isp: CT
+adapted: true
+config_file: models/CT/standard/b866-s1-4e1p3w1-ethernet_v5r022c01s300.xml
+lan_ports: 4
+lan_speed: 自动
+sip_count: 1
+wifi_spec: 2.4G+5.8G
+sample_sn: 37300148C4AA410D6
+adapted_at: 2026-10-20 21:03:39

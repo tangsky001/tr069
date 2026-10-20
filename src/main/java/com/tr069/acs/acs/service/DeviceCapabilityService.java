@@ -23,7 +23,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Base64;
+import java.util.Locale;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -249,6 +258,47 @@ public class DeviceCapabilityService {
     private static final int TREE_FAIL_THRESHOLD = 2;
 
     /**
+     * 一轮采集的总时长上限（毫秒）。
+     *
+     * <p>设备不在下发窗口时（比如手动点采集，而设备的下一次上报要十几分钟后），
+     * 指令只会压在队列里，等响应的 future 就一直挂着。没有上限的话这个 future
+     * 永远不完成，{@link #inFlight} 也跟着不释放——这台设备从此再也采不了，
+     * 只能重启 ACS。到点就结束本轮，指令清掉或留到下一轮。</p>
+     */
+    @Value("${acs.capability.collect-timeout-ms:600000}")
+    private long collectTimeoutMillis;
+
+    /** 本轮采集的到期时刻（sn → 毫秒时间戳）。 */
+    private final Map<String, Long> deadlines = new ConcurrentHashMap<>();
+
+    /** 连接请求的默认账号（ACS -> CPE），配置里写 auto 或留空表示设备侧免认证。 */
+    @Value("${acs.auth.acs-to-cpe-username:}")
+    private String defaultAcsToCpeUser;
+
+    @Value("${acs.auth.acs-to-cpe-password:}")
+    private String defaultAcsToCpePassword;
+
+    private static final String AUTH_AUTO = "auto";
+
+    /**
+     * 是否在手动采集前主动唤醒设备（连接请求）。
+     *
+     * <p>不是每家的猫都吃这一套：有的设备对这个请求要求 HTTP 认证，ACS 手上没有凭据就
+     * 只能拿到 401，而它的采集本来靠周期上报也跑得好好的。现场确认不需要就整个关掉。</p>
+     */
+    @Value("${acs.capability.wakeup-enabled:true}")
+    private boolean wakeupEnabled;
+
+    /** 唤醒过但没凭据的设备（sn → 下次再试的时刻），免得每次采集都撞一次 401。 */
+    private final Map<String, Long> wakeupRetryAfter = new ConcurrentHashMap<>();
+
+    /** 无凭据唤醒失败后隔多久再试（毫秒）。 */
+    private static final long WAKEUP_RETRY_INTERVAL = 60 * 60 * 1000L;
+
+    /** 设备最近有通信就算还在下发窗口，不必叫它（秒）。 */
+    private static final long WAKEUP_SESSION_FRESH_SECONDS = 60L;
+
+    /**
      * 从 Inform 上报参数预判出的运营商（sn → 运营商代码）。
      *
      * <p>只在这次 Inform 触发的采集里用：采集跑在台账入库之前，查库拿不到运营商，
@@ -437,20 +487,44 @@ public class DeviceCapabilityService {
     private CollectStatus start(String sn, String root, String trigger) {
         CollectStatus current = statuses.get(sn);
         if (current != null && "running".equals(current.getStatus())) {
-            return current;
+            if (System.currentTimeMillis() - current.getStartTime() < collectTimeoutMillis) {
+                return current;
+            }
+            // 上一轮卡死了：设备不在下发窗口，指令压在队列里等不到回应，future 没个头。
+            // 不强制收尾的话 {inFlight} 永远占着，这台设备从此再也采不了，只能重启 ACS。
+            log.warn("上一轮采集超时未结束，强制收尾后重开: sn={}, 已运行={}ms",
+                    sn, System.currentTimeMillis() - current.getStartTime());
+            current.fail("上一轮采集超时未结束");
+            inFlight.remove(sn);
+            deadlines.remove(sn);
         }
         if (!inFlight.add(sn)) {
             return current != null ? current : new CollectStatus(sn, trigger);
         }
         CollectStatus status = new CollectStatus(sn, trigger);
         statuses.put(sn, status);
-        log.info("开始采集设备能力: sn={}, root={}, trigger={}, batch={}",
-                sn, root, trigger, status.getBatch());
+        log.info("开始采集设备能力: sn={}, root={}, trigger={}, batch={}, 时限={}ms",
+                sn, root, trigger, status.getBatch(), collectTimeoutMillis);
         dropStaleRpc(sn, status.getBatch());
+        deadlines.put(sn, System.currentTimeMillis() + collectTimeoutMillis);
 
+        // 手动采集是「人点下去的那一刻」开跑的，设备多半不在下发窗口里——光猫十几分钟
+        // 才上报一次，不叫它一声就得干等。先叫再入队：设备收到连接请求到真正上报
+        // 有几百毫秒网络往返，足够第一批指令进队列
+        if ("manual".equals(trigger)) {
+            wakeUp(sn);
+        }
+        // 手动采集时设备多半不在线（下一次上报可能十几分钟后），指令只能排在队列里。
+        // 把这一点写进状态，界面上不至于看着像卡住了
+        CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
+        if (session == null || session.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
+            status.setPhase("等待设备上报");
+            log.info("设备当前不在下发窗口，指令已排队，将随它下一次上报下发: sn={}", sn);
+        }
         runCollect(sn, root, status.getBatch(), status)
                 .whenComplete((ignored, ex) -> {
                     inFlight.remove(sn);
+                    deadlines.remove(sn);
                     status.setFinishTime(System.currentTimeMillis());
                     if (ex != null) {
                         status.fail(String.valueOf(ex.getMessage()));
@@ -935,6 +1009,219 @@ public class DeviceCapabilityService {
     }
 
     /**
+     * 用设备的 ConnectionRequestURL 反连唤醒它，让它立刻来上报。
+     *
+     * <p>手动采集是人点下去的那一刻开跑的，可设备不一定在下发窗口里——光猫往往十几分钟
+     * 才上报一次，指令只能压在队列里干等，等到采集时限到了还是一场空。TR-069 允许 ACS
+     * 反向请求设备建会话（ConnectionRequest），设备收到就会立刻 Inform，
+     * 队列里的指令马上能发出去。</p>
+     *
+     * <p>唤醒失败一律忽略：URL 没上报过、设备侧端口不通、要求认证都可能，
+     * 这时只是退化成「等它自己上报」，不牵连采集本身。</p>
+     */
+    private void wakeUp(String sn) {
+        if (!wakeupEnabled) {
+            return;
+        }
+        Long retryAfter = wakeupRetryAfter.get(sn);
+        if (retryAfter != null && System.currentTimeMillis() < retryAfter) {
+            return;
+        }
+        // 设备刚上报过、还在下发窗口里的话直接下发就行，不必多此一举去叫它
+        CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
+        if (session != null && !session.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
+            return;
+        }
+        CpeDevice device = findDevice(sn);
+        if (device == null) {
+            return;
+        }
+        String url = device.getConnectionRequestUrl();
+        if (url == null || url.isBlank()) {
+            return;
+        }
+        // 台账上的设备级凭据优先，没有就用全局配置（电信现场多见 itms/itms）
+        String user = firstNonBlank(device.getAcsToCpeName(), defaultAcsToCpeUser);
+        String password = firstNonBlank(device.getAcsToCpePassword(), defaultAcsToCpePassword);
+        if (authDisabled(user)) {
+            // 台账和全局都没配：翻这台已经采集到的参数——采过完整树的设备，
+            // 凭据的值本来就在库里，不用为它再采一轮
+            user = paramValue(sn, "ManagementServer.ConnectionRequestUsername");
+            password = paramValue(sn, "ManagementServer.ConnectionRequestPassword");
+        }
+        boolean withCredentials = !authDisabled(user);
+        try {
+            HttpResponse<String> resp = sendConnectionRequest(url, user, password);
+            if (resp.statusCode() >= 400) {
+                if (!withCredentials && resp.statusCode() == 401) {
+                    // 手上没有凭据，这台又要求认证：短期内别再撞了。
+                    // 唤醒只是加速手段，拿不到就等它自己上报，不影响采集
+                    wakeupRetryAfter.put(sn, System.currentTimeMillis() + WAKEUP_RETRY_INTERVAL);
+                    log.info("设备要求认证且本机未配置连接请求凭据，跳过唤醒（等它自行上报）: "
+                            + "sn={}, url={}。需要唤醒就配 acs.auth.acs-to-cpe-username/password，"
+                            + "或让它采集一轮把 ManagementServer.ConnectionRequestUsername 读回来", sn, url);
+                } else {
+                    log.warn("连接请求被设备拒绝: sn={}, url={}, 响应码={}, 已带认证={}",
+                            sn, url, resp.statusCode(), withCredentials);
+                }
+            } else {
+                log.info("已发连接请求唤醒设备: sn={}, url={}, 响应码={}", sn, url, resp.statusCode());
+            }
+        } catch (Exception e) {
+            log.warn("连接请求唤醒失败，改为等待设备自行上报: sn={}, url={}, err={}",
+                    sn, url, e.getMessage());
+        }
+    }
+
+    /**
+     * 发连接请求；设备要认证就带上凭据重发一次。
+     *
+     * <p>TR-069 的连接请求认证普遍是 HTTP Digest，而 JDK 自带的 {@link HttpClient}
+     * 只支持 Basic，Digest 得自己算（HA1 / HA2 / response）。设备回 401 时不重试，
+     * 就只能眼看着唤醒失败。</p>
+     */
+    private HttpResponse<String> sendConnectionRequest(String url, String user, String password)
+            throws Exception {
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        URI uri = URI.create(url);
+        HttpResponse<String> resp = client.send(
+                HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 401 || authDisabled(user)) {
+            return resp;
+        }
+        String challenge = resp.headers().firstValue("WWW-Authenticate").orElse("");
+        String authorization = authorizationHeader(challenge, user, password, uri, "GET");
+        if (authorization == null) {
+            log.warn("设备要求认证但无法构造凭据: sn-url={}, challenge={}", url, challenge);
+            return resp;
+        }
+        return client.send(HttpRequest.newBuilder(uri)
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Authorization", authorization)
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** 按设备的 WWW-Authenticate 构造 Authorization 头，支持 Digest 与 Basic。 */
+    private static String authorizationHeader(String challenge, String user, String password,
+                                              URI uri, String method) {
+        if (challenge == null || challenge.isBlank()) {
+            return null;
+        }
+        String scheme = challenge.split("\\s+")[0];
+        Map<String, String> params = parseAuthParams(challenge.substring(scheme.length()));
+        if ("basic".equalsIgnoreCase(scheme)) {
+            return "Basic " + Base64.getEncoder().encodeToString(
+                    (user + ":" + password).getBytes(StandardCharsets.UTF_8));
+        }
+        if (!"digest".equalsIgnoreCase(scheme)) {
+            return null;
+        }
+        String realm = params.getOrDefault("realm", "");
+        String nonce = params.getOrDefault("nonce", "");
+        String qop = params.get("qop");
+        String uriPath = uri.getRawPath() == null || uri.getRawPath().isBlank()
+                ? "/" : uri.getRawPath();
+        if (uri.getRawQuery() != null && !uri.getRawQuery().isBlank()) {
+            uriPath = uriPath + "?" + uri.getRawQuery();
+        }
+        String ha1 = md5(user + ":" + realm + ":" + password);
+        String ha2 = md5(method + ":" + uriPath);
+        String digest;
+        StringBuilder header = new StringBuilder("Digest ")
+                .append("username=\"").append(user).append("\", ")
+                .append("realm=\"").append(realm).append("\", ")
+                .append("nonce=\"").append(nonce).append("\", ")
+                .append("uri=\"").append(uriPath).append("\", ");
+        if (qop != null && qop.contains("auth")) {
+            String cnonce = md5(user + nonce + System.nanoTime());
+            digest = md5(ha1 + ":" + nonce + ":00000001:" + cnonce + ":auth:" + ha2);
+            header.append("qop=auth, nc=00000001, cnonce=\"").append(cnonce).append("\", ");
+        } else {
+            digest = md5(ha1 + ":" + nonce + ":" + ha2);
+        }
+        header.append("response=\"").append(digest).append("\", algorithm=MD5");
+        if (params.get("opaque") != null) {
+            header.append(", opaque=\"").append(params.get("opaque")).append("\"");
+        }
+        return header.toString();
+    }
+
+    /** 解析 {@code realm="x", nonce="y"} 这类认证参数。 */
+    private static Map<String, String> parseAuthParams(String raw) {
+        Map<String, String> params = new LinkedHashMap<>();
+        for (String part : raw.split(",")) {
+            int eq = part.indexOf('=');
+            if (eq <= 0) {
+                continue;
+            }
+            String key = part.substring(0, eq).trim().toLowerCase(Locale.ROOT);
+            String value = part.substring(eq + 1).trim();
+            if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                value = value.substring(1, value.length() - 1);
+            }
+            params.put(key, value);
+        }
+        return params;
+    }
+
+    private static String md5(String raw) {
+        try {
+            byte[] bytes = MessageDigest.getInstance("MD5")
+                    .digest(raw.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : bytes) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException("MD5 不可用", e);
+        }
+    }
+
+    /** 凭据未配置（配置里写 auto 或留空 = 设备侧免认证）。 */
+    private static boolean authDisabled(String user) {
+        return user == null || user.isBlank() || AUTH_AUTO.equalsIgnoreCase(user.trim());
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        return preferred != null && !preferred.isBlank() ? preferred : fallback;
+    }
+
+    /** 从已采集到的参数里取某个路径的值，取不到返回 null。 */
+    private String paramValue(String sn, String pathSuffix) {
+        if (parameterMapper == null) {
+            return null;
+        }
+        try {
+            CpeParameter row = parameterMapper.selectOne(new LambdaQueryWrapper<CpeParameter>()
+                    .eq(CpeParameter::getSn, sn)
+                    .like(CpeParameter::getParamPath, pathSuffix)
+                    .last("LIMIT 1"));
+            return row == null ? null : row.getParamValue();
+        } catch (Exception e) {
+            log.warn("查询参数值失败: sn={}, path={}, err={}", sn, pathSuffix, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 台账上的设备记录，查不到返回 null。 */
+    private CpeDevice findDevice(String sn) {
+        try {
+            return deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
+                    .eq(CpeDevice::getSn, sn)
+                    .last("LIMIT 1"));
+        } catch (Exception e) {
+            log.warn("查询设备台账失败: sn={}, err={}", sn, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 按能力树里的厂商私有前缀认运营商，并回写台账。
      *
      * <p>只补「台账还没运营商」的设备：人工适配申报过的以申报为准，自动识别不去覆盖，
@@ -1186,6 +1473,15 @@ public class DeviceCapabilityService {
     }
     private CompletableFuture<SoapMessage> submit(String sn, String rpcName,
                                                   Map<String, Object> args) {
+        // 到点了就别再等：设备不在下发窗口时响应永远等不来，见 collectTimeoutMillis 的说明。
+        // 措辞里刻意不带「超时」——那会被当成单条指令超时而只放弃当前分支，
+        // 总时长到了是要中止整轮的
+        long remaining = deadlines.getOrDefault(sn, 0L) - System.currentTimeMillis();
+        if (deadlines.containsKey(sn) && remaining <= 0) {
+            log.warn("采集已到时限，不再等待响应: sn={}, rpc={}", sn, rpcName);
+            return CompletableFuture.completedFuture(sessionFault("采集总时长已到，未等到设备回应"));
+        }
+        CompletableFuture<SoapMessage> future;
         if (queueProperties.isEnabled()) {
             // 带上批次号：新一轮采集开始时据此丢掉上一轮没发完的旧指令
             RpcDispatchService.DispatchHandle handle =
@@ -1193,15 +1489,24 @@ public class DeviceCapabilityService {
             if (!handle.isQueued()) {
                 log.warn("采集指令未入队: sn={}, rpc={}, taskId={}", sn, rpcName, handle.getTaskId());
             }
-            return handle.getFuture();
+            future = handle.getFuture();
+        } else {
+            CpeSession session = sessionManager.find(sn);
+            if (session == null) {
+                log.warn("会话不存在，采集指令无法下发: sn={}, rpc={}", sn, rpcName);
+                return CompletableFuture.completedFuture(sessionFault("会话不存在"));
+            }
+            PendingRpc rpc = session.enqueue(-outboxSequence.incrementAndGet(), rpcName, args, null);
+            future = rpc.getResponse();
         }
-        CpeSession session = sessionManager.find(sn);
-        if (session == null) {
-            log.warn("会话不存在，采集指令无法下发: sn={}, rpc={}", sn, rpcName);
-            return CompletableFuture.completedFuture(sessionFault("会话不存在"));
+        if (!deadlines.containsKey(sn)) {
+            return future;
         }
-        PendingRpc rpc = session.enqueue(-outboxSequence.incrementAndGet(), rpcName, args, null);
-        return rpc.getResponse();
+        return future.orTimeout(Math.max(remaining, 1L), TimeUnit.MILLISECONDS)
+                .exceptionally(ex -> {
+                    log.warn("采集指令等待回应超时: sn={}, rpc={}", sn, rpcName);
+                    return sessionFault("采集总时长已到，未等到设备回应");
+                });
     }
 
     /**
@@ -1412,6 +1717,47 @@ public class DeviceCapabilityService {
             } catch (Exception e) {
                 log.error("参数值回填失败: sn={}, size={}, err={}", sn, chunk.size(), e.getMessage());
             }
+        }
+        rememberConnectionRequestCredentials(sn, rows);
+    }
+
+    /**
+     * 读到设备的连接请求凭据就记进台账，唤醒设备时用得上。
+     *
+     * <p>ACS 反连设备要做 HTTP 认证，而账号密码是设备侧生成的
+     * （{@code ManagementServer.ConnectionRequestUsername/Password}），全局配一个不一定对得上。
+     * 所以这里把设备自己报的凭据存下来，下次唤醒就能认证通过，不必靠人去猜。</p>
+     */
+    private void rememberConnectionRequestCredentials(String sn, List<CpeParameter> rows) {
+        String user = null;
+        String password = null;
+        for (CpeParameter row : rows) {
+            String path = row.getParamPath();
+            if (path == null) {
+                continue;
+            }
+            if (path.endsWith("ManagementServer.ConnectionRequestUsername")) {
+                user = row.getParamValue();
+            } else if (path.endsWith("ManagementServer.ConnectionRequestPassword")) {
+                password = row.getParamValue();
+            }
+        }
+        if ((user == null || user.isBlank()) && (password == null || password.isBlank())) {
+            return;
+        }
+        try {
+            CpeDevice device = new CpeDevice();
+            if (user != null && !user.isBlank()) {
+                device.setAcsToCpeName(user);
+            }
+            if (password != null && !password.isBlank()) {
+                device.setAcsToCpePassword(password);
+            }
+            deviceMapper.update(device,
+                    new LambdaUpdateWrapper<CpeDevice>().eq(CpeDevice::getSn, sn));
+            log.info("已登记设备连接请求凭据: sn={}, 账号={}", sn, user);
+        } catch (Exception e) {
+            log.warn("登记设备连接请求凭据失败: sn={}, err={}", sn, e.getMessage());
         }
     }
 

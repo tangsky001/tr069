@@ -9,13 +9,18 @@
 | --- | --- |
 | CMCC（移动） | CIOT P22g-CIac |
 | CMCC（移动） | CIOT ZNM802 |
+| CT（电信） | B866-S1-4E1P3W1-Ethernet |
+
+> `B866-S1-4E1P3W1` 硬件是 **XGPON** 上行；这台改成 **Ethernet 上行**后上报的 ProductClass
+> 为 `B866-S1-4E1P3W1-Ethernet`，型号 XML 也是按这个 ProductClass 归档的
+> （`b866-s1-4e1p3w1-ethernet_v5r022c01s300.xml`，565 对象 / 3018 参数）。
+> 上行方式一改 DeviceInfo.ProductClass 就跟着变，等同于另一个型号，需另走一遍适配流程。
 
 ## 适配中
 
 | 运营商 | 厂家型号 | 进度 |
 | --- | --- | --- |
 | CT（电信） | HS8145C5-GPON | 能力树已归档（360 对象 / 1947 参数），待申报保存 |
-| CT（电信） | B866-S1-4E1P3W1-Ethernet | 能力树已归档（565 对象 / 3018 参数），待申报保存 |
 | CT（电信） | MSG2100E-UPON-8V-AC | 只读到 5 对象 / 3 参数（参数树扫不动），待适配；运营商待台账确认（Inform 上报了 `X_CT-COM_UserInfo`） |
 
 ---

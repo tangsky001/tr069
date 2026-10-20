@@ -4,6 +4,7 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
 - 光猫型号适配清单（已适配 / 适配中）见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
+- 设备能力采集的调试记录（症状 / 根因 / 修法 / 日志判读）见 **[doc/DEBUGGING.md](./doc/DEBUGGING.md)**
 - 前端工程见 [web/](./web)
 - 界面截图见 [doc/Display/](./doc/Display)（见下文「效果展示」）
 
@@ -139,12 +140,18 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 适配一台加一行）。适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
 （配置项 `acs.tr069tpl.db-path`），随仓库走，拷到部署机即识别为已适配，不必重新适配。
 
-- **已适配 2 款**：`CIOT P22g-CIac`、`CIOT ZNM802`（均为 CMCC 移动）
-- **适配中 3 款**：
+- **已适配 3 款**：
+  - CMCC 移动 `CIOT P22g-CIac`
+  - CMCC 移动 `CIOT ZNM802`
+  - CT 电信 `B866-S1-4E1P3W1-Ethernet`（XGPON 机型，现场按 Ethernet 上行，见下方备注）
+- **适配中 2 款**：
   - CT 电信 `HS8145C5-GPON` —— 能力树已归档（360 对象 / 1947 参数），待申报保存
-  - CT 电信 `B866-S1-4E1P3W1-Ethernet` —— 能力树已归档（565 对象 / 3018 参数），待申报保存
   - `MSG2100E-UPON-8V-AC` —— 只读到 5 对象 / 3 参数（参数树扫不动），待适配；
     运营商待台账确认（Inform 上报了 `X_CT-COM_UserInfo`）
+
+> `B866-S1-4E1P3W1` 硬件是 **XGPON** 上行，这台改成 **Ethernet 上行**后上报的 ProductClass
+> 是 `B866-S1-4E1P3W1-Ethernet`，档案也按它归档。若哪天切回 XGPON，ProductClass 会跟着变，
+> 需要重新适配一台。
 
 ---
 
@@ -192,7 +199,8 @@ javaacs/
 ├── doc/
 │   ├── DEPLOYMENT.md         部署文档
 │   ├── ADAPTED_MODELS.md     光猫型号适配清单（已适配 / 适配中）
-│   └── Display/              界面截图（见「效果展示」）
+│   ├── DEBUGGING.md          设备能力采集调试记录（踩坑与验证）
+│   └── Display/              界面截图（Debug/ 下为采集调试截图）
 ├── pom.xml                   后端（Maven）
 ├── sql/schema.sql            全库唯一建表脚本（所有表）
 ├── deploy/

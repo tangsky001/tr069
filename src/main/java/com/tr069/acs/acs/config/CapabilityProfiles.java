@@ -74,7 +74,11 @@ public class CapabilityProfiles {
                 "DeviceInfo.ManufacturerOUI",
                 "DeviceInfo.ProductClass",
                 "DeviceInfo.HardwareVersion",
-                "DeviceInfo.SoftwareVersion"));
+                "DeviceInfo.SoftwareVersion",
+                // 连接请求（ACS 反连设备）的认证凭据是设备侧生成的，只有问它才知道。
+                // 没有凭据就唤不醒设备，手动采集只能干等它自己上报，所以一并读回来
+                "ManagementServer.ConnectionRequestUsername",
+                "ManagementServer.ConnectionRequestPassword"));
         // 天翼那套私有分支，遍历进去必抛 9002：逐层展开到此为止
         profile.setSkipPrefixes(List.of("X_CTC_"));
         if (target == Isp.CT) {

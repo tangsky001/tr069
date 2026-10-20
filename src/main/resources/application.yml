@@ -123,9 +123,13 @@ acs:
     # 联调阶段设备侧账号密码写法不一时用它先跑通链路，上线前改回真实账号
     cpe-to-acs-username: auto
     cpe-to-acs-password: auto
-    # ACS -> CPE 反向连接的默认账号，同样支持 auto / 留空
-    acs-to-cpe-username: auto
-    acs-to-cpe-password: auto
+    # ACS -> CPE 反向连接（手动采集前唤醒设备）的默认账号，同样支持 auto / 留空。
+    # 电信 ITMS 现场多为 itms/itms，移动猫常用 admin/admin 或留空。
+    # 留空时若设备要求认证，唤醒会拿到 401 并被跳过，采集退化为等设备自行上报。
+    # 每台设备自己的凭据会在采集时自动读回来（ManagementServer.ConnectionRequestUsername
+    # /Password），登记进台账后以台账为准
+    acs-to-cpe-username: itms
+    acs-to-cpe-password: itms
 
   device:
     # 设备离线判定周期(秒)：超过该时长没有任何通信才判离线
@@ -172,6 +176,12 @@ acs:
       max-object-rounds: 500
       # 采集与回调线程数
       worker-threads: 8
+      # 一轮采集的总时长上限（毫秒）。设备不在下发窗口时指令只能排在队列里等它上报，
+      # 周期十几分钟的猫要覆盖到「至少一次上报」，否则还没采就判超时。
+      # 调小能更快失败，调大能给慢设备更多机会，按现场上报周期取 1.5 倍左右
+      collect-timeout-ms: 900000
+      # 手动采集前是否先用连接请求把设备叫起来。不需要（靠周期上报就够了）就设 false
+      wakeup-enabled: true
       # 按运营商的采集标准（子树 / GPN 策略 / 实例探测）与运营商自动识别都写死在代码里，
       # 见 CapabilityProfiles#builtin 与 DeviceCapabilityService，这里不落配置
       # 启动时自动补建 cpe_parameter 表，存量库升级时不用手工执行 DDL

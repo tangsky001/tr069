@@ -663,6 +663,47 @@ class DeviceCapabilityTest {
         Mockito.verify(store, Mockito.timeout(3000)).exportCollected("SN001");
     }
 
+    /**
+     * 手动采集时设备多半不在下发窗口：指令压在队列里，等响应的 future 永远不完成，
+     * 那一轮就一直挂着。不强制收尾的话 {@code inFlight} 永远占着，
+     * 这台设备从此再也采不了（界面一直转圈，只能重启 ACS）。
+     */
+    @Test
+    void 卡死的采集要能被下一轮强制收尾() {
+        String sn = "37300148C4AA410D6";
+
+        CpeSession session = Mockito.mock(CpeSession.class);
+        SessionManager sessionManager = Mockito.mock(SessionManager.class);
+        Mockito.when(sessionManager.find(sn)).thenReturn(session);
+        Mockito.when(session.enqueue(ArgumentMatchers.anyLong(), ArgumentMatchers.anyString(),
+                        ArgumentMatchers.<Map<String, Object>>any(), ArgumentMatchers.any()))
+                .thenAnswer(inv -> pendingRpc(namesXml(List.of())));
+
+        DeviceCapabilityService service = new DeviceCapabilityService(
+                sessionManager, null, Mockito.mock(CpeParameterMapper.class),
+                Mockito.mock(QueueProperties.class), null,
+                Mockito.mock(CpeDeviceMapper.class), new CapabilityProfiles());
+        ReflectionTestUtils.setField(service, "workerThreads", 2);
+        ReflectionTestUtils.setField(service, "collectTimeoutMillis", 200L);
+
+        // 上一轮卡死：开跑于 10 秒前，到现在还是 running
+        DeviceCapabilityService.CollectStatus stuck =
+                new DeviceCapabilityService.CollectStatus(sn, "manual");
+        ReflectionTestUtils.setField(stuck, "status", "running");
+        ReflectionTestUtils.setField(stuck, "startTime", System.currentTimeMillis() - 10_000L);
+        @SuppressWarnings("unchecked")
+        Map<String, DeviceCapabilityService.CollectStatus> statuses =
+                (Map<String, DeviceCapabilityService.CollectStatus>)
+                        ReflectionTestUtils.getField(service, "statuses");
+        statuses.put(sn, stuck);
+
+        DeviceCapabilityService.CollectStatus next = service.collect(sn, true);
+
+        assertThat(stuck.getStatus()).as("超时的上一轮要被判失败，不能永远 running")
+                .isEqualTo("fail");
+        assertThat(next).as("要开新的一轮，不能把卡死那轮原样还回去").isNotSameAs(stuck);
+    }
+
     private static PendingRpc pendingRpc(SoapMessage message) {
         PendingRpc rpc = Mockito.mock(PendingRpc.class);
         Mockito.when(rpc.getResponse()).thenReturn(CompletableFuture.completedFuture(message));
