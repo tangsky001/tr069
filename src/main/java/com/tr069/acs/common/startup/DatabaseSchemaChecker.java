@@ -47,6 +47,7 @@ public class DatabaseSchemaChecker implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         if (!enabled) {
+            log.info("数据库表结构自检已关闭");
             return;
         }
         List<String> missing;
@@ -60,6 +61,7 @@ public class DatabaseSchemaChecker implements ApplicationRunner {
             return;
         }
         if (missing.isEmpty()) {
+            log.info("数据库自检通过，{} 张核心表均已存在", REQUIRED_TABLES.length);
             return;
         }
         log.error("数据库缺少以下表：{}。请先执行发布包中 sql/schema.sql 建表后重启", missing);

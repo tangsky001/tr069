@@ -157,6 +157,7 @@ public class CwmpController {
             rpc = session.pollForSend();
         }
         if (rpc == null) {
+            log.debug("无待下发任务, 回复 204: sn={}", sn);
             sendStatus(response, 204);
             return;
         }
@@ -181,6 +182,7 @@ public class CwmpController {
         session.setState(SessionState.WAIT_RPC_RESPONSE);
         armRpcResponseTimer(session);
 
+        log.info("下发 RPC: sn={}, rpc={}, taskId={}", sn, rpc.getRpcName(), rpc.getRpcId());
         writeXml(response, soap);
     }
 
@@ -211,6 +213,8 @@ public class CwmpController {
         session.touch();
         PendingRpc completed = session.completeAwaiting(message);
         if (completed != null) {
+            log.info("收到 RPC 响应: sn={}, rpc={}, fault={}",
+                    sn, completed.getRpcName(), message.isFault());
             if (message.isFault() && message.getStrResult() != null) {
                 // 设备给的故障明细（含逐参数失败）只在这一刻拿得到，打出来便于定位是哪一个参数不对
                 log.warn("设备故障明细: sn={}, rpc={}, {}",
@@ -255,6 +259,7 @@ public class CwmpController {
         if (auth == CpeAuthenticator.AuthResult.NO_AUTHENTICATION) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setHeader("WWW-Authenticate", authenticator.digestChallenge());
+            log.info("等待设备携带认证重发 Inform: sn={}", sn);
             return;
         }
         if (auth == CpeAuthenticator.AuthResult.FAIL) {
@@ -307,6 +312,7 @@ public class CwmpController {
         session.setState(SessionState.WAIT_POST_NULL);
         armWaitPostNullTimer(session);
 
+        log.debug("Inform 处理完成, 等待空 POST: sn={}, queued={}", sn, queued);
     }
 
     // ==================== 超时控制 ====================
@@ -337,6 +343,7 @@ public class CwmpController {
                 }
             }
             session.setState(SessionState.READY);
+            log.info("下发窗口结束, 等待设备下一次上报: sn={}", session.getSn());
         }, waitPostNullTimeout, TimeUnit.SECONDS));
     }
 

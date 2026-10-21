@@ -1,17 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  日志分通道配置。
-
-  通道划分（改动前先想清楚，三个通道解决的问题不同）：
-    ACS_CORE  业务事件日志，由 common/log 的 LogPrinter 单线程写入，
-              覆盖上线/离线/上报/指令/工单等全部分类，落到 log/ACS_LOG.LOG。
-              异步写盘，不占用 CWMP 处理线程。
-    ACS_ERROR WARN/ERROR 单独再落一份到 log/ACS_ERROR.LOG，
-              排障时第一眼看这个文件，不用在几十万行里 grep。
-    ACS_LOG_INFRA 日志子系统自身的故障（Redis 不可用、队列积压、反序列化失败）。
-              只进控制台：落盘会产生"记日志的日志"，故障时反而把真正的错误刷掉。
-
-  控制台保留 Spring Boot 默认行为（含框架与其他类的 warn/error）。
+  核心业务日志单独落盘：运行目录/log/ACS_LOG.LOG。
+  控制台保留 Spring Boot 默认行为（全部日志、含 CWMP 调试），
+  核心事件由 ACS_CORE logger 额外写一份到文件，方便直接翻文件排障。
 -->
 <configuration>
 
@@ -21,74 +12,36 @@
     <!-- 日志目录：默认进程运行目录下的 log/，可用 -DACS_LOG_DIR=D:\xxx\log 覆盖 -->
     <property name="ACS_LOG_DIR" value="${ACS_LOG_DIR:-log}"/>
     <property name="CORE_FILE" value="${ACS_LOG_DIR}/ACS_LOG.LOG"/>
-    <property name="ERROR_FILE" value="${ACS_LOG_DIR}/ACS_ERROR.LOG"/>
-    <property name="ACS_PATTERN"
+    <property name="CORE_PATTERN"
               value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level - %msg%n"/>
 
-    <!-- ==================== 业务事件通道 ==================== -->
     <appender name="ACS_CORE_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${CORE_FILE}</file>
         <!-- 按天 + 20MB 滚动：注意类名要跟 logback 版本对得上，
-             1.4.x 用 SizeAndTimeBasedRollingPolicy -->
+             1.4.x 用 SizeAndTimeBasedRollingPolicy（1.5 才改名 SizeAndTimeBasedFNATP 之外那套） -->
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${ACS_LOG_DIR}/ACS_LOG.%d{yyyy-MM-dd}.%i.LOG</fileNamePattern>
             <maxFileSize>20MB</maxFileSize>
             <maxHistory>30</maxHistory>
-            <totalSizeCap>2GB</totalSizeCap>
+            <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>${ACS_PATTERN}</pattern>
+            <pattern>${CORE_PATTERN}</pattern>
             <charset>UTF-8</charset>
         </encoder>
     </appender>
 
-    <!-- ==================== 错误通道 ==================== -->
-    <appender name="ACS_ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>${ERROR_FILE}</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>${ACS_LOG_DIR}/ACS_ERROR.%d{yyyy-MM-dd}.%i.LOG</fileNamePattern>
-            <maxFileSize>10MB</maxFileSize>
-            <maxHistory>60</maxHistory>
-            <totalSizeCap>200MB</totalSizeCap>
-        </rollingPolicy>
-        <!-- 错误通道只收 WARN/ERROR：logger 级别是 INFO，不加这个过滤器
-             会把每条业务 INFO 也复制一份进 ACS_ERROR.LOG -->
-        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-            <level>WARN</level>
-        </filter>
-        <encoder>
-            <pattern>${ACS_PATTERN}</pattern>
-            <charset>UTF-8</charset>
-        </encoder>
-    </appender>
-
-    <!-- 异步写盘：核心日志不能因为磁盘 IO 拖慢 CWMP 处理。
-         discardingThreshold=0 表示宁可阻塞生产者也不丢日志——
-         但生产端是 Redis 队列，真正的背压点在队列长度上限上。 -->
+    <!-- 异步写盘：核心日志不能因为磁盘 IO 拖慢 CWMP 处理 -->
     <appender name="ACS_CORE_ASYNC" class="ch.qos.logback.classic.AsyncAppender">
         <appender-ref ref="ACS_CORE_FILE"/>
-        <queueSize>4096</queueSize>
+        <queueSize>2048</queueSize>
         <discardingThreshold>0</discardingThreshold>
         <includeCallerData>false</includeCallerData>
     </appender>
 
-    <appender name="ACS_ERROR_ASYNC" class="ch.qos.logback.classic.AsyncAppender">
-        <appender-ref ref="ACS_ERROR_FILE"/>
-        <queueSize>1024</queueSize>
-        <discardingThreshold>0</discardingThreshold>
-        <includeCallerData>false</includeCallerData>
-    </appender>
-
-    <!-- additivity=true：业务事件既进文件也进控制台，
-         不加过滤级别，DEBUG 的取舍已在生产端（acs.log.level）做过一次。 -->
+    <!-- additivity=true：核心事件既进文件也进控制台 -->
     <logger name="ACS_CORE" level="INFO" additivity="true">
         <appender-ref ref="ACS_CORE_ASYNC"/>
-        <appender-ref ref="ACS_ERROR_ASYNC"/>
-    </logger>
-
-    <!-- 日志子系统自身的故障：只进控制台，不落盘、不上卷 -->
-    <logger name="ACS_LOG_INFRA" level="INFO" additivity="false">
-        <appender-ref ref="CONSOLE"/>
     </logger>
 
     <root level="INFO">

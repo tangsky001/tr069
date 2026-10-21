@@ -114,6 +114,7 @@ public class TemplateBuilder {
         }
         String spec = device.getCapWifiSpec();
         if (spec == null || spec.isBlank() || "无".equals(spec.trim())) {
+            log.debug("型号未申报 WiFi 能力，跳过: id={}", device.getId());
             return r;
         }
 
@@ -128,6 +129,8 @@ public class TemplateBuilder {
             wlanBDao.upsert(fill58(device, base(device, SSID_58G), SSID_58G));
             r.wlanB = 1;
         }
+        log.info("生成 WiFi 模板: deviceId={}, cap={}, wlan_a={}, wlan_b={}",
+                device.getId(), spec, r.wlanA, r.wlanB);
         return r;
     }
 
@@ -153,6 +156,7 @@ public class TemplateBuilder {
         }
         int count = declaredCount(device.getCapSipCount());
         if (count <= 0) {
+            log.debug("型号未申报语音能力，跳过 SIP: id={}", device.getId());
             return r;
         }
         String profile = rootOf(device) + VOICE_BASE;
@@ -160,6 +164,8 @@ public class TemplateBuilder {
             sipDao.upsert(fillSip(device, profile, line));
             r.sip++;
         }
+        log.info("生成 SIP 模板: deviceId={}, cap={}, lines={}",
+                device.getId(), device.getCapSipCount(), r.sip);
         return r;
     }
 
@@ -278,6 +284,7 @@ public class TemplateBuilder {
         upsertVlan(device, WAN_SLOT_DHCP, p + "X_CMCC_VLANID");
         r.setVlan(1);
 
+        log.info("生成 WAN DHCP 模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
         return r;
     }
 
@@ -314,6 +321,7 @@ public class TemplateBuilder {
         upsertVlan(device, WAN_SLOT_PPPOE, p + "X_CMCC_VLANID");
         r.setVlan(1);
 
+        log.info("生成 WAN PPPoE 模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
         return r;
     }
 
@@ -349,6 +357,7 @@ public class TemplateBuilder {
         upsertVlan(device, WAN_SLOT_STATIC, p + "X_CMCC_VLANID");
         r.setVlan(1);
 
+        log.info("生成 WAN 静态地址模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
         return r;
     }
 
@@ -368,6 +377,7 @@ public class TemplateBuilder {
         }
         int ports = declaredCount(device.getCapLanPorts());
         if (ports <= 0) {
+            log.debug("型号未申报网口数，跳过 LAN: id={}", device.getId());
             return r;
         }
         String base = rootOf(device) + LAN_BASE;
@@ -387,6 +397,7 @@ public class TemplateBuilder {
             deviceLanDao.upsert(lan);
             r.setLan(r.getLan() + 1);
         }
+        log.info("生成 LAN 模板: deviceId={}, ports={}", device.getId(), ports);
         return r;
     }
 

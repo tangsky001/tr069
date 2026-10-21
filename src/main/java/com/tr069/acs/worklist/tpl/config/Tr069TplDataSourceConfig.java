@@ -1,7 +1,5 @@
 package com.tr069.acs.worklist.tpl.config;
 
-import com.tr069.acs.common.log.AcsCoreLog;
-import com.tr069.acs.common.log.LogCategory;
 import com.tr069.acs.worklist.service.WorklistRootResolver;
 
 import org.slf4j.Logger;
@@ -79,8 +77,7 @@ public class Tr069TplDataSourceConfig {
     public JdbcTemplate tr069TplJdbcTemplate(SQLiteDataSource tr069TplDataSource,
                                              Tr069TplProperties props,
                                              WorklistRootResolver rootResolver,
-                                             ResourceLoader resourceLoader,
-                                             AcsCoreLog coreLog) {
+                                             ResourceLoader resourceLoader) {
         JdbcTemplate t = new JdbcTemplate(tr069TplDataSource);
         String absPath;
         try {
@@ -97,7 +94,7 @@ public class Tr069TplDataSourceConfig {
             LOG.warn("模板库 PRAGMA 设置时遇到非致命异常: {}", e.getMessage());
         }
         initSchema(t, tr069TplDataSource, resourceLoader);
-        logState(t, absPath, coreLog);
+        logState(t, absPath);
         return t;
     }
 
@@ -122,25 +119,20 @@ public class Tr069TplDataSourceConfig {
     }
 
     /** 启动自检：把连的哪个文件、表齐不齐、有几个已适配型号一次说清。 */
-    private void logState(JdbcTemplate t, String absPath, AcsCoreLog coreLog) {
+    private void logState(JdbcTemplate t, String absPath) {
         try {
             List<String> tables = t.queryForList(
                     "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name", String.class);
             if (!tables.contains("device")) {
-                coreLog.entry(LogCategory.STARTUP).bizKey("模板库").result(false)
-                        .with("file", absPath).with("现有表", tables)
-                        .error("模板库缺 device 主表，型号适配与下发都会失败");
+                LOG.error("模板库缺 device 主表，现有表={} file={}", tables, absPath);
                 return;
             }
             Integer models = t.queryForObject("SELECT COUNT(*) FROM device", Integer.class);
-            coreLog.entry(LogCategory.STARTUP).bizKey("模板库").result(true)
-                    .with("file", absPath).with("表数", tables.size())
-                    .with("已适配型号", models)
-                    .with("journal_mode", t.queryForObject("PRAGMA journal_mode", String.class))
-                    .info("模板库就绪");
+            LOG.info("模板库就绪: file={}, 表={}张, 已适配型号={}个, journal_mode={}",
+                    absPath, tables.size(), models,
+                    t.queryForObject("PRAGMA journal_mode", String.class));
         } catch (Exception e) {
-            coreLog.entry(LogCategory.STARTUP).bizKey("模板库").result(false)
-                    .with("file", absPath).error("模板库自检失败: " + e.getMessage());
+            LOG.error("模板库自检失败: file={}, err={}", absPath, e.getMessage());
         }
     }
 }

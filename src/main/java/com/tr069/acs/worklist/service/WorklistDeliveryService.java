@@ -83,6 +83,7 @@ public class WorklistDeliveryService {
                 .eq(Worklist::getWorklistDesc, worklistDesc)
                 .last("LIMIT 1"));
         if (exist != null) {
+            log.info("工单已存在，本次提交忽略: desc={}, id={}", worklistDesc, exist.getId());
             return exist;
         }
 
@@ -107,6 +108,8 @@ public class WorklistDeliveryService {
         w.setCreatedAt(now);
         w.setUpdatedAt(now);
         worklistMapper.insert(w);
+        log.info("创建下发工单: id={}, sn={}, category={}, 变量={}", w.getId(), sn, category,
+                List.copyOf(filled.keySet()));
         triggerDelivery(w, filled, templateId);
         return w;
     }
@@ -151,6 +154,8 @@ public class WorklistDeliveryService {
                 w.setStatus("sending");
                 w.setUpdatedAt(LocalDateTime.now());
                 worklistMapper.updateById(w);
+                log.info("工单已转下发任务: worklistId={}, taskId={}, status={}",
+                        w.getId(), task.getId(), task.getStatus());
             }
         } catch (Exception e) {
             fail(w, e.getMessage());
@@ -199,6 +204,7 @@ public class WorklistDeliveryService {
             w.setTimeExecFinish(LocalDateTime.now());
             w.setUpdatedAt(LocalDateTime.now());
             worklistMapper.updateById(w);
+            log.info("工单下发结束: id={}, status={}, err={}", w.getId(), w.getStatus(), task.getErrorMsg());
         } catch (Exception e) {
             log.warn("工单状态回写失败: taskNo={}, err={}", task.getTaskNo(), e.getMessage());
         }

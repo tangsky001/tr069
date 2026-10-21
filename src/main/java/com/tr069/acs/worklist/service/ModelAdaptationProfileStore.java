@@ -167,6 +167,7 @@ public class ModelAdaptationProfileStore {
         } catch (IOException e) {
             throw new IllegalStateException("写入型号适配档失败: " + file + ", " + e.getMessage(), e);
         }
+        log.info("写入型号适配档: file={}, adapted=true", file);
         // 入库值统一为相对配置根的 models/... 形式，与 cpe_model.config_path 同一套约定
         String relative = rootResolver.root().relativize(file.toAbsolutePath().normalize())
                 .toString().replace('\\', '/');

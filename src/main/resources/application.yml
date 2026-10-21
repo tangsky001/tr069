@@ -219,28 +219,6 @@ acs:
       # 等待设备响应的最长时间(秒)
       timeout-seconds: 510
 
-  # ==================== 分类日志（统一走 common/log） ====================
-  log:
-    # 日志是否经 Redis 队列中转。
-    # 开启：业务线程只做一次 RPUSH 立即返回，落盘由单线程批量完成，不反压 CWMP。
-    # 关闭：业务线程内同步写 logback，日志与打印语句同线程同序，绝不丢，排障时用。
-    enabled: true
-    # 日志队列 key，与上报/指令队列分开，避免互相拖慢
-    queue-key: acs:q:log
-    # 输出级别下限，低于此级别不入队。DEBUG 是逐条跟踪量，默认关掉
-    level: INFO
-    # Redis 内队列堆积上限，超出后丢弃最旧的日志。
-    # 日志不允许反压业务：宁可丢日志也不能让设备 Inform 变慢，所以必须有硬上限
-    max-queue-length: 200000
-    # Redis 不可用时的进程内降级缓冲容量，满了才丢弃
-    fallback-capacity: 20000
-    # 消费端单次批量取出的条数
-    batch-size: 200
-    # 队列为空时的轮询间隔(毫秒)，非阻塞取数
-    poll-interval-millis: 200
-    # 停机时等待队列排空的最长时间(毫秒)
-    flush-on-shutdown-millis: 3000
-
   worklist:
     # 外部配置根目录，相对进程工作目录解析，刻意放在 jar 外部：现场改文件即时生效。
     #   从 server 目录启动  → server/configuration

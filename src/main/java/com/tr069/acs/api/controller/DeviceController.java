@@ -170,6 +170,8 @@ public class DeviceController {
             device.setRemark(request.getRemark());
         }
         int rows = cpeDeviceMapper.updateById(device);
+        log.info("更新设备房间号/备注: sn={}, roomNo={}, remark={}",
+                sn, device.getRoomNo(), device.getRemark());
         return Result.success(rows > 0);
     }
 

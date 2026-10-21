@@ -89,6 +89,8 @@ public class SqlitePlanRenderer {
             errors.add("该型号没有可下发的适配结果: bizObject=" + bizObject
                     + "，请重新发起适配");
         }
+        log.debug("SQLite 渲染: model={}, bizObject={}, instance={}, 参数={}, 新建对象={}",
+                device.getModelKey(), bizObject, instance, items.size(), objectsToAdd.size());
         return new IntentPlan(bizObject, instance, objectsToAdd, items, errors);
     }
 
@@ -332,6 +334,7 @@ public class SqlitePlanRenderer {
         if (v.isEmpty() || v.matches("\\d+")) {
             return v;
         }
+        log.debug("信道值不是数字，按自动选道下发: {} -> 0", value);
         return "0";
     }
 

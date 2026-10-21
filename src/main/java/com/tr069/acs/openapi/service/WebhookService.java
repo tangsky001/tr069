@@ -297,6 +297,8 @@ public class WebhookService {
             }
             delivery.setUpdatedAt(LocalDateTime.now());
             deliveryMapper.updateById(delivery);
+            log.info("北向事件推送: event={}, url={}, code={}", delivery.getEventType(),
+                    subscription.getUrl(), code);
         } catch (Exception e) {
             delivery.setAttempts(attempts + 1);
             delivery.setResponseBody(truncate(e.getMessage()));

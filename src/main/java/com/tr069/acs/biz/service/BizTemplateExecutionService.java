@@ -138,6 +138,8 @@ public class BizTemplateExecutionService {
 
         Progress progress = new Progress(execution, template, items, sn.trim(), params, username);
         running.put(execution.getId(), progress);
+        log.info("业务模板整包下发开始: executionId={}, 模板={}, sn={}, 成员={}",
+                execution.getId(), template.getName(), sn, items.size());
         startNext(progress);
         return execution;
     }
@@ -216,6 +218,8 @@ public class BizTemplateExecutionService {
         progress.record(item, ok, ok ? null : task.getErrorMsg());
         String seq = "成员 " + (progress.index() + 1) + "/" + progress.items().size()
                 + "（" + item.getTemplateKey() + "）";
+        log.info("整包成员结束: executionId={}, {}, 结果={}",
+                progress.execution().getId(), seq, ok ? "成功" : task.getErrorMsg());
         advance(progress, ok, ok ? null : seq + "下发失败: " + task.getErrorMsg());
     }
 
@@ -256,6 +260,9 @@ public class BizTemplateExecutionService {
         }
         executionMapper.updateById(execution);
         running.remove(execution.getId());
+        log.info("业务模板整包下发结束: executionId={}, status={}, 成功={}, 失败={}, err={}",
+                execution.getId(), execution.getStatus(),
+                progress.successCount(), progress.failCount(), error);
     }
 
     // ==================== 内部实现 ====================

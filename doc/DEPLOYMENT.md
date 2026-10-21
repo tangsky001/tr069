@@ -1,7 +1,5 @@
 # javaacs 部署文档
 
-[English](./DEPLOYMENT.en.md) | 简体中文
-
 TR069 ACS（Java 版）的构建、部署与验收说明。目标是让一台干净机器按本文步骤走完就能跑起来并接上光猫。
 
 ---

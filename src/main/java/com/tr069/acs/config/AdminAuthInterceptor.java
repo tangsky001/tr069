@@ -51,6 +51,7 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
         String token = resolveToken(request);
         String username = token == null ? null : jwtTokenService.parse(token);
         if (username == null) {
+            log.debug("拒绝未授权访问: {} {}", request.getMethod(), request.getRequestURI());
             writeUnauthorized(response);
             return false;
         }

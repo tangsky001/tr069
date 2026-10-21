@@ -35,15 +35,18 @@ public class OpenApiSchemaInitializer implements InitializingBean {
     @Override
     public void afterPropertiesSet() {
         if (!enabled) {
+            log.info("北向事件表自动建表已关闭");
             return;
         }
         try {
             if (allTablesExist()) {
+                log.info("北向事件表已存在，跳过建表");
                 return;
             }
             for (String sql : SchemaScript.createStatements(TABLES)) {
                 jdbcTemplate.execute(sql);
             }
+            log.info("北向事件表已补齐: {}", String.join(", ", TABLES));
         } catch (Exception e) {
             log.error("北向事件表自动建表失败，请手工执行 classpath:{}（对应仓库 sql/schema.sql）: {}",
                     SchemaScript.RESOURCE, e.getMessage());

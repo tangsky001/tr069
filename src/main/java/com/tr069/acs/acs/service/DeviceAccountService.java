@@ -141,6 +141,7 @@ public class DeviceAccountService {
         } else {
             data.put("message", null);
         }
+        log.info("查询设备本地账号: sn={}, 账号数={}, status={}", sn, accounts.size(), status);
         return data;
     }
 

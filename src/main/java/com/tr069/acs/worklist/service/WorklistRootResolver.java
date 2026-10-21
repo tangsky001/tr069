@@ -55,6 +55,7 @@ public class WorklistRootResolver {
         if (result == null) {
             result = resolveBase();
             cachedBase.set(result);
+            log.info("外部配置基准目录: {}", result);
         }
         return result;
     }
@@ -65,6 +66,7 @@ public class WorklistRootResolver {
         if (result == null) {
             result = resolveRoot();
             cachedRoot.set(result);
+            log.info("光猫配置根目录: {}", result);
         }
         return result;
     }
@@ -146,6 +148,7 @@ public class WorklistRootResolver {
                 return asDirectory(Path.of(uri.toString()));
             }
         } catch (Exception e) {
+            log.debug("无法确定 jar 所在目录: {}", e.getMessage());
             return null;
         }
     }

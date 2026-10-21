@@ -40,6 +40,7 @@ public class ReportConsumer {
     @PostConstruct
     public void start() {
         if (!properties.isEnabled()) {
+            log.info("队列未启用，上报消费者不启动，上报将就地同步处理");
             return;
         }
         String[] keys = queue.allReportKeys();
@@ -52,6 +53,7 @@ public class ReportConsumer {
         for (String key : keys) {
             pool.submit(() -> consumeLoop(key));
         }
+        log.info("上报消费者已启动: 队列数={}", keys.length);
     }
 
     @PreDestroy

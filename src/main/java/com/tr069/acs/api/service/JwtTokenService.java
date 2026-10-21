@@ -54,6 +54,7 @@ public class JwtTokenService {
                     .getPayload();
             return claims.getSubject();
         } catch (Exception e) {
+            log.debug("令牌解析失败: {}", e.getMessage());
             return null;
         }
     }
