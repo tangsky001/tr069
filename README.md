@@ -1,10 +1,11 @@
 # javaacs
 
+[English](./README.en.md) | 简体中文
+
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
-- 光猫型号适配清单（已适配 / 适配中）见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
-- 设备能力采集的调试记录（症状 / 根因 / 修法 / 日志判读）见 **[doc/DEBUGGING.md](./doc/DEBUGGING.md)**
+- 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
 - 界面截图见 [doc/Display/](./doc/Display)（见下文「效果展示」）
 
@@ -63,7 +64,7 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 业务状态（WAN 连接 + **LAN 网口图标**、**WIFI 按 2.4G / 5.8G 上下分行**、SIP 信息、设备状态）、
 **运行信息**（运行时长 / 加入时间 / 最后汇报时间 / 汇报 IP，表头可排序）、操作：
 
-![设备列表](doc/Display/025159_916.png)
+![设备列表](doc/Display/162046_560.png)
 
 设备详情业务面板：信息卡（运行时长 / 注册时间 / 最近上报 / 上报 IP）、WAN 连接、LAN 网口（插线绿色、
 未插灰色，悬停看 MAC）、WLAN 按 2.4G / 5.8G 分行、SIP 语音（只列真实线路实例）：
@@ -91,14 +92,13 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 协议层 | SOAP 解析/封装、RPC 方法枚举、命名空间 | `cwmp/*` |
 | 会话管理 | 会话状态机、待回应 RPC、超时兜底；周期上报视为心跳与会话接管（CPE 换 TCP 连接不重建会话、不打离线、不清待下发队列），离线只按长期无通信判定，疑似双会话仅告警 | `acs/session/*` |
 | 设备管理 | 设备自动注册、在线状态、分页详情、在线会话明细 | `acs/service/DeviceRegistryService`、`api/controller/DeviceController` |
-| 能力树采集 | 只采集 WAN / WiFi / LAN 网口 / SIP 四类子树：GetParameterNames 拉路径 + GetParameterValues 分批读值，Inform 后自动采集、BOOTSTRAP 强制重采、NextLevel 兜底 | `acs/service/DeviceCapabilityService` |
-| **按运营商采集标准** | 移动 / 电信 / 联通 / 广电各一份采集标准（业务子树 + GPN 策略 + 实例探测 + 已知路径探测），**写死在代码** `CapabilityProfiles#builtin`，现场不用维护配置；台账运营商为空时走通用档，采到私有前缀（`X_CMCC_` / `X_CT-COM_` / `X_CU_`）后回写台账供下一轮采集选标准 | `acs/model/Isp`、`acs/config/CapabilityProfiles`、`DeviceCapabilityService` |
+| 能力树采集 | 只采集 WAN / WiFi / LAN 网口 / SIP 四类子树（代码内固定）：GetParameterNames 拉路径 + GetParameterValues 分批读值，Inform 后自动采集、BOOTSTRAP 强制重采、NextLevel 兜底 | `acs/service/DeviceCapabilityService` |
 | 参数树导出 | 按型号导出能力树到 `configuration/models/`，并可按设备定位模型文件 | `worklist/service/ModelTreeStore` |
 | 业务快照 | `device` / `wan` / `wifi` / `lan` / `sip` / `pon` 分区，支持单台与整页批量读；LAN 区补插线状态（`connected`）与 MAC、SIP 区只保留真实线路实例（剔除 `VoiceProfile.{n}.SIP.` 汇总对象）、台账的注册时间与最近上报时间一并返回 | `acs/service/DeviceBusinessService` |
 | **LAN 网口状态自动刷新** | 定时（默认 5 分钟）对在线设备重读网口状态叶子（`Enable/Status/X_CT-COM_*LineStatus/MAC/速率`），拔插网线后页面不必手动点「重新采集」；只刷在线设备、只读网口那几个叶子，等回值超时不判失败（指令仍在队列里） | `acs/service/LanStatusRefreshService`、`DeviceBusinessService#lanStatusPaths` |
 | **超管账号查询** | `GET /api/device/{sn}/admin-account`：对在线设备实时读 `User.{i}.Username/Password` 并明文返回；离线直接返回 `offline`；能力树没采到时按 TR-098 / TR-181 标准路径兜底；整批被拒时逐条重发，共用 30s 总预算；只认 `.User.{i}.` 下的账号，WAN 拨号账号不会被误收 | `acs/service/DeviceAccountService`、`api/controller/DeviceController` |
 | 型号语义映射 | `cpe_model` + `model_param_mapping` / `model_object_mapping`：业务字段 ↔ 型号真实 CWMP 路径，支持按 SN 推荐候选路径 | `worklist/controller/ModelMappingController`、`ModelMappingService` |
-| 机型适配 | **先采集后归档**：不管哪家运营商的猫，采完先把能力树 XML 截到 `configuration/models/standard/standard/{型号}.xml` 并入库；人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格时先试采集逐项验证，通过后按申报运营商另立档案（XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示 | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
+| 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示 | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
 | RPC 下发（异步） | 下发返回任务号，按任务号轮询结果；超时统一收尾 | `agent/RpcDispatchService`、`queue/RpcTaskQueue`、`api/controller/RpcTaskController` |
 | 队列削峰 | 上报与下发走 Redis 队列，Redis 不可用时降级为进程内处理 | `queue/*` |
 | **配置意图模板** | 入库 `config_template`，只描述开通意图（不下发任何数据）：7 类（WAN DHCP / WAN PPPoE / WAN 静态IP / WAN 桥接 / 2.4G WiFi / 5.8G WiFi / SIP），各类自带意图字段；支持 `/meta` 字段定义、列表、详情、保存、删除 | `template/*`（`ConfigTemplateService`、`ConfigTemplateController`） |
@@ -134,24 +134,11 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | OLT融合管理 ▲ | OLT/ONU 管理（跳转 OLT 页） | OLT 拓扑 |
 | 重启 | 批量 `Reboot`（带二次确认） | — |
 
-### 1.3 光猫型号适配清单
+### 1.3 已适配光猫型号
 
 清单单独维护在 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**（只记运营商 + 厂家型号，
 适配一台加一行）。适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
 （配置项 `acs.tr069tpl.db-path`），随仓库走，拷到部署机即识别为已适配，不必重新适配。
-
-- **已适配 3 款**：
-  - CMCC 移动 `CIOT P22g-CIac`
-  - CMCC 移动 `CIOT ZNM802`
-  - CT 电信 `B866-S1-4E1P3W1-Ethernet`（XGPON 机型，现场按 Ethernet 上行，见下方备注）
-- **适配中 2 款**：
-  - CT 电信 `HS8145C5-GPON` —— 能力树已归档（360 对象 / 1947 参数），待申报保存
-  - `MSG2100E-UPON-8V-AC` —— GPN 固件不可用（一律 9002），改按已知路径取到 26 对象 / 12 参数，
-    待申报保存；运营商待台账确认（Inform 上报了 `X_CT-COM_UserInfo`）
-
-> `B866-S1-4E1P3W1` 硬件是 **XGPON** 上行，这台改成 **Ethernet 上行**后上报的 ProductClass
-> 是 `B866-S1-4E1P3W1-Ethernet`，档案也按它归档。若哪天切回 XGPON，ProductClass 会跟着变，
-> 需要重新适配一台。
 
 ---
 
@@ -198,9 +185,8 @@ javaacs/
 ├── API.md                    接口文档（管理端 /api 与北向 /openapi/v1）
 ├── doc/
 │   ├── DEPLOYMENT.md         部署文档
-│   ├── ADAPTED_MODELS.md     光猫型号适配清单（已适配 / 适配中）
-│   ├── DEBUGGING.md          设备能力采集调试记录（踩坑与验证）
-│   └── Display/              界面截图（Debug/ 下为采集调试截图）
+│   ├── ADAPTED_MODELS.md     已适配光猫型号清单（运营商 + 厂家型号）
+│   └── Display/              界面截图（见「效果展示」）
 ├── pom.xml                   后端（Maven）
 ├── sql/schema.sql            全库唯一建表脚本（所有表）
 ├── deploy/
@@ -217,7 +203,6 @@ javaacs/
 ```
 configuration/
 └── models/      型号能力树 {isp}/{型号标识}.xml（由能力树导出生成）
-                 新猫一律先落 standard/（与移动那台当初一样），按运营商分目录在人工适配申报时
 ```
 
 > 旧版的 `operators/` 工单模板目录已废弃，模板改为入库；
@@ -296,8 +281,6 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.cwmp.extra-cpe-paths` | `/acs,/cwmp,/tr069,/` 等 | 兼容的上报路径，遇到 405 时在此追加 |
 | `acs.auth.cpe-to-acs-username/password` | `auto` | 光猫连 ACS 的账号；`auto`/留空即免认证，上线前改回真实账号 |
 | `acs.capability.enabled` / `collect-on-inform` | `true` | 能力树采集总开关与 Inform 后自动采集 |
-| `acs.device.capability.auto-detect-isp` | `true`（写死在代码，不落配置） | 按能力树私有前缀（`X_CMCC_` / `X_CT-COM_` / `X_CU_`）识别运营商并回写台账，只补台账上还没有运营商的设备 |
-| `acs.device.capability.profiles.<CMCC\|CT\|CU\|CBN\|standard>` | 不配置（用 `CapabilityProfiles#builtin` 写死的那份） | **按运营商采集标准的临时覆盖**：只在排障时写，可覆盖子树清单、`gpn-strategy`（递归优先 / 逐层优先）、`instance-probe` 与 `max-instances`（父对象 GPN 被拒时按 `1..N` 实例号逐个探）、`probe-paths`（GPN 全失败时直接 GPV 的已知路径） |
 | `acs.config-template.auto-create-table` | `true` | 启动时补建 `config_template` |
 | `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`models/`）；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内处理 |
