@@ -1,5 +1,7 @@
 # javaacs
 
+[English](./README.en.md) | 简体中文
+
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**

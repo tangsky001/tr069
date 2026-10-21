@@ -135,8 +135,6 @@ public class ModelTreeStore {
 
         if (Files.isRegularFile(file) && !force && notBlank(modelRow.getSampleSn())
                 && !sn.equals(modelRow.getSampleSn())) {
-            log.info("型号能力树已存在且来自其它样机，本次不覆盖: model={}, file={}, sample={}",
-                    modelKey, relative, modelRow.getSampleSn());
             return ExportResult.skipped(sn, isp, modelKey, relative, file, count(nodes, true),
                     count(nodes, false), modelRow.getSampleSn());
         }
@@ -148,8 +146,6 @@ public class ModelTreeStore {
             modelRow.setSampleSn(sn);
         }
         deviceDao.upsert(modelRow);
-        log.info("导出型号能力树: model={}, 对象={}, 参数={}, file={}",
-                modelKey, count(nodes, true), count(nodes, false), file);
 
         // 能力申报可能刚变过，模板要跟着重推一遍；模板没生成出来不影响导出本身
         if (templateService != null) {
@@ -202,15 +198,11 @@ public class ModelTreeStore {
         row.setStatus("ADAPTED");
         deviceDao.upsert(row);
 
-        log.info("能力申报已同步到模板库: model={}, wifi={}, sip={}, lan={}, root={}",
-                modelKey, row.getCapWifiSpec(), row.getCapSipCount(),
-                row.getCapLanPorts(), row.getRootNode());
 
         // 回查一次拿到主键：新建行的 id 由 upsert 落库时才产生
         Device saved = deviceDao.findByIspModelKey(isp, modelKey).orElse(row);
         try {
             ModelTemplateService.GenerateResult r = templateService.generateAll(saved);
-            log.info("按申报重新生成模板: model={}, 共 {} 条", modelKey, r.total());
         } catch (Exception e) {
             log.warn("按申报生成模板失败: model={}, err={}", modelKey, e.getMessage());
         }
@@ -467,7 +459,6 @@ public class ModelTreeStore {
             }
             if (!real.equals(path)) {
                 result.getRewritten().put(path, real);
-                log.info("按型号能力树校正参数路径: {} -> {}", path, real);
             }
         }
         dropCollisions(result);
@@ -539,7 +530,6 @@ public class ModelTreeStore {
         for (String alias : LEAF_ALIASES.getOrDefault(leafOf(templatePath), List.of())) {
             ParamNode aliasHit = matchKnown(params, parentOf(templatePath) + alias);
             if (aliasHit != null) {
-                log.info("参数名按别名改判: {} -> {}", templatePath, realPath(aliasHit, templatePath));
                 return aliasHit;
             }
         }

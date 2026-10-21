@@ -36,18 +36,15 @@ public class CapabilitySchemaInitializer implements InitializingBean {
     @Override
     public void afterPropertiesSet() {
         if (!enabled) {
-            log.info("设备能力树表自动建表已关闭");
             return;
         }
         try {
             if (allTablesExist()) {
-                log.info("设备能力树表已存在，跳过建表");
                 return;
             }
             for (String sql : SchemaScript.createStatements(TABLES)) {
                 jdbcTemplate.execute(sql);
             }
-            log.info("设备能力树表已补齐: {}", String.join(", ", TABLES));
         } catch (Exception e) {
             // 建表失败不阻断启动：CWMP 交互与工单下发不依赖能力树
             log.error("设备能力树表自动建表失败，请手工执行 classpath:{}（对应仓库 sql/schema.sql）: {}",

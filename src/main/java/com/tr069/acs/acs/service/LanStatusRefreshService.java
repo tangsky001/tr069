@@ -2,6 +2,8 @@ package com.tr069.acs.acs.service;
 
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.SessionManager;
+import com.tr069.acs.common.log.AcsCoreLog;
+import com.tr069.acs.common.log.LogCategory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -44,6 +46,7 @@ public class LanStatusRefreshService {
     private final SessionManager sessionManager;
     private final DeviceBusinessService businessService;
     private final DeviceCapabilityService capabilityService;
+    private final AcsCoreLog coreLog;
 
     @Value("${acs.device.lan.auto-refresh.enabled:true}")
     private boolean enabled;
@@ -98,7 +101,6 @@ public class LanStatusRefreshService {
             }
         }
         if (pending.isEmpty()) {
-            log.debug("LAN 网口状态刷新：本轮没有可刷新的设备: 在线={}, 跳过={}", sns.size(), skipped);
             return;
         }
         CompletableFuture<Void> all = CompletableFuture.allOf(
@@ -107,7 +109,9 @@ public class LanStatusRefreshService {
             all.get(waitSeconds, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
             // 设备还没轮到空 POST，指令在队列里；回应到达时照常回库，下一轮就能看到
-            log.info("LAN 网口状态刷新等待回值超时，未回值的设备下一轮继续: 下发台数={}", pending.size());
+            coreLog.entry(LogCategory.DEVICE).bizKey("LAN状态刷新").code("等待超时").result(true)
+                    .with("下发台数", pending.size())
+                    .info("LAN 网口状态刷新等待回值超时，未回值的设备下一轮继续");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
@@ -116,8 +120,11 @@ public class LanStatusRefreshService {
         long replied = pending.values().stream()
                 .filter(f -> f.isDone() && !f.isCompletedExceptionally())
                 .count();
-        log.info("LAN 网口状态刷新完成: 在线={}, 下发={}, 本轮回值={}, 无LAN参数={}, 失败={}",
-                sns.size(), pending.size(), replied, skipped, failed);
+        // 一轮只记一条汇总：设备多时逐台记会把上线/离线事件冲掉
+        coreLog.entry(LogCategory.DEVICE).bizKey("LAN状态刷新").result(failed == 0)
+                .with("在线", sns.size()).with("下发", pending.size())
+                .with("已回值", replied).with("跳过", skipped).with("失败", failed)
+                .info("LAN 网口状态刷新完成");
     }
 
     /** 当前在线（有活动会话且未标离线）的设备序列号。 */

@@ -233,7 +233,6 @@ public class ModelAdaptationService {
         if (detected.wifiBands.contains("5.8G") && wifiSpec != null
                 && wifiSpec.contains("2.4") && !wifiSpec.contains("5")) {
             wifiSpec = "2.4G+5.8G";
-            log.info("申报 WIFI 规格只到 2.4G，但实测含 5.8G，按实测补齐: sn={}", sn);
         }
         patch.setCapWifiSpec(wifiSpec);
         // 适配通过后状态置为 READY：后续状态判断可以直接以库为准，不必依赖文件系统
@@ -257,10 +256,7 @@ public class ModelAdaptationService {
             devicePatch.setId(device.getId());
             devicePatch.setIsp(isp);
             deviceMapper.updateById(devicePatch);
-            log.info("按适配申报登记设备运营商: sn={}, {} -> {}", sn, device.getIsp(), isp);
         }
-        log.info("机型适配入库: sn={}, isp={}, modelKey={}, configPath={}, adaptPath={}",
-                sn, isp, model.getModelKey(), export.getConfigPath(), adaptPath);
         coreLog.adaptation(isp + "/" + model.getModelKey(), "适配入库", true,
                 "sn=" + sn + ", adaptPath=" + adaptPath);
         Map<String, Object> data = new LinkedHashMap<>();

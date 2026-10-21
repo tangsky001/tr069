@@ -294,7 +294,6 @@ public class DeviceCapabilityService {
         }
         long count = paramCount(sn);
         if (count > 0) {
-            log.info("下发前补采设备能力完成: sn={}, 参数={}", sn, count);
         } else {
             log.warn("下发前补采设备能力未取到参数: sn={}, status={}",
                     sn, status == null ? "无" : status.getStatus());
@@ -355,8 +354,6 @@ public class DeviceCapabilityService {
         }
         CollectStatus status = new CollectStatus(sn, trigger);
         statuses.put(sn, status);
-        log.info("开始采集设备能力: sn={}, root={}, trigger={}, batch={}",
-                sn, root, trigger, status.getBatch());
 
         runCollect(sn, root, status.getBatch(), status)
                 .whenComplete((ignored, ex) -> {
@@ -375,9 +372,6 @@ public class DeviceCapabilityService {
                             status.setStatus("success");
                         }
                     }
-                    log.info("设备能力采集结束: sn={}, status={}, 路径={}, 读值={}, 耗时={}ms",
-                            sn, status.getStatus(), status.getNameCount(), status.getValueCount(),
-                            status.getFinishTime() - status.getStartTime());
                     if (exportModelTree && "success".equals(status.getStatus())) {
                         exportModelTreeAsync(sn);
                     }
@@ -452,7 +446,6 @@ public class DeviceCapabilityService {
      */
     private CompletableFuture<List<Node>> collectNames(String sn, String root, CollectStatus status) {
         List<String> paths = resolveSubtrees(root);
-        log.info("按子树采集设备能力: sn={}, 子树={}", sn, paths);
         List<Node> sink = Collections.synchronizedList(new ArrayList<>());
         AtomicInteger rounds = new AtomicInteger();
         CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
@@ -484,7 +477,6 @@ public class DeviceCapabilityService {
                     sink.addAll(nodes);
                     return CompletableFuture.<Void>completedFuture(null);
                 }
-                log.info("子树递归拉取为空，改用逐层展开: sn={}, subtree={}", sn, path);
             } else {
                 if (isSessionFault(resp)) {
                     status.addError("GetParameterNames(" + path + ") 失败: " + faultText(resp));

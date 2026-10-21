@@ -44,6 +44,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import com.tr069.acs.common.log.AcsCoreLog;
+import com.tr069.acs.common.log.LogCategory;
 
 /**
  * 意图模板下发执行器。
@@ -144,7 +145,8 @@ public class IntentDeliveryService {
     public DeviceTask deliver(DeliveryRequest request) {
         DeviceTask existing = findByTaskNo(request.source(), request.taskNo());
         if (existing != null) {
-            log.info("重复下发请求，返回既有任务: taskNo={}, id={}", request.taskNo(), existing.getId());
+            coreLog.task(request.sn(), request.taskNo(), "重复提交",
+                    "任务号已存在，返回既有任务，不重复下发", true);
             return existing;
         }
         DeviceTask task = newTask(request);
@@ -411,7 +413,6 @@ public class IntentDeliveryService {
             String type = resolved.getTypes().getOrDefault(real, "string");
             List<PlanItem> items = new ArrayList<>(plan.parameters());
             items.add(new PlanItem(plan.bizObject(), "service_list", real, service, type));
-            log.info("补写业务绑定: sn={}, 参数={}={}", sn, real, service);
             return new IntentPlan(plan.bizObject(), plan.instance(),
                     plan.objectsToAdd(), items, plan.errors());
         }
@@ -476,7 +477,6 @@ public class IntentDeliveryService {
             String type = resolved.getTypes().getOrDefault(real, "int");
             List<PlanItem> items = new ArrayList<>(plan.parameters());
             items.add(at, new PlanItem(plan.bizObject(), "vlan_mode", real, VLAN_TAG_MODE, type));
-            log.info("补写 VLAN 模式: sn={}, 参数={}={}", sn, real, VLAN_TAG_MODE);
             return new IntentPlan(plan.bizObject(), plan.instance(),
                     plan.objectsToAdd(), items, plan.errors());
         }
@@ -508,7 +508,6 @@ public class IntentDeliveryService {
         try {
             capabilityService.readPathValues(sn, paths)
                     .get(READBACK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            log.info("已回读下发参数: sn={}, 参数={}", sn, paths.size());
         } catch (TimeoutException e) {
             log.warn("回读下发参数超时，等后续全量采集: sn={}, 参数={}", sn, paths.size());
         } catch (Exception e) {
@@ -570,7 +569,8 @@ public class IntentDeliveryService {
     private void reboot(DeviceTask task) {
         try {
             rpcService.reboot(task.getSn(), task.getTaskNo());
-            log.info("已下发重启指令: sn={}, taskNo={}", task.getSn(), task.getTaskNo());
+            coreLog.entry(LogCategory.TASK).sn(task.getSn()).bizKey(task.getTaskNo())
+                    .code("重启").result(true).info("已下发重启指令");
         } catch (Exception e) {
             log.warn("下发重启指令失败: sn={}, taskNo={}, err={}", task.getSn(), task.getTaskNo(), e.getMessage());
         }
@@ -612,8 +612,6 @@ public class IntentDeliveryService {
                 }
             }
             if (accepted != null) {
-                log.info("该参数换写法后被设备接受: {}={}（type {} -> {}）",
-                        v.getName(), accepted.getValue(), v.getValueType(), accepted.getValueType());
                 continue;
             }
             // 启用开关类（Enable/Disable）设备收不下就算了：核心的账号、密码、代理都已写进去，
@@ -743,8 +741,6 @@ public class IntentDeliveryService {
                     .filter(IntentDeliveryService::declared)
                     .findFirst().orElse(null);
             if (withCap != null) {
-                log.info("型号按运营商命中的归档无申报，改用已申报那份: model={}, {} -> {}",
-                        modelKey, adapted == null ? "无" : adapted.getIsp(), withCap.getIsp());
                 adapted = withCap;
             }
         }
@@ -766,12 +762,9 @@ public class IntentDeliveryService {
             boolean has58 = spec != null && spec.contains("5");
             if ("WiFi_5G".equals(bizObject) && !has58) {
                 adapted.setCapWifiSpec("2.4G+5.8G");
-                log.info("型号申报的 WIFI 规格不含 5.8G，按设备实有频段补齐: model={}", modelKey);
             } else if ("WiFi_2G".equals(bizObject) && !has24) {
                 adapted.setCapWifiSpec(has58 ? "2.4G+5.8G" : "2.4G");
-                log.info("型号申报的 WIFI 规格不含 2.4G，按设备实有频段补齐: model={}", modelKey);
             }
-            log.info("型号缺少 {} 的模板，按能力申报补生成: model={}", bizObject, modelKey);
             templateService.generateAll(adapted);
         }
         return adapted;
@@ -854,8 +847,6 @@ public class IntentDeliveryService {
                 if (instance != null) {
                     allocated.put(objectName, instance);
                 }
-                log.info("已创建业务对象: sn={}, object={}, instance={}",
-                        task.getSn(), objectName, instance);
             }
             List<List<PlanItem>> chunks = chunks(orderByDependency(remapInstances(plan, allocated)));
             for (int i = 0; i < chunks.size(); i++) {
@@ -885,8 +876,8 @@ public class IntentDeliveryService {
                     }
                     // 整批被拒但拆开发全都成了：参数已经在设备上生效，按成功收尾，
                     // 否则为了一个兼容性写法就得让运维重下一次
-                    log.info("整批被拒但逐条重发全部成功，按成功收尾: sn={}, taskNo={}",
-                            task.getSn(), task.getTaskNo());
+                    coreLog.task(task.getSn(), task.getTaskNo(), "整批被拒但逐条重发成功",
+                            "参数已在设备上生效，按成功收尾", true);
                     refreshDeliveredValues(task.getSn(), plan);
                     if (needReboot(task)) {
                         reboot(task);
@@ -897,8 +888,6 @@ public class IntentDeliveryService {
                     return;
                 }
             }
-            log.info("下发完成: sn={}, taskNo={}, 参数={}", task.getSn(), task.getTaskNo(),
-                    plan.parameters().size());
             // 下发改的是设备现值，库里的快照不会自己跟上。全量补采要几十秒，
             // 页面这会儿早刷新过了——先把本次写下去的参数读回来落库，列表立刻对得上现场
             refreshDeliveredValues(task.getSn(), plan);
@@ -906,6 +895,9 @@ public class IntentDeliveryService {
                 reboot(task);
             }
             refreshCapability(task.getSn());
+            coreLog.entry(LogCategory.TASK).sn(task.getSn()).bizKey(task.getTaskNo())
+                    .code("下发完成").result(true).with("参数数", plan.parameters().size())
+                    .info("参数已全部下发到设备");
             finish(task, DeviceTask.STATUS_SUCCESS, null);
         } catch (Exception e) {
             log.warn("下发异常: sn={}, taskNo={}, err={}", task.getSn(), task.getTaskNo(), e.getMessage());
@@ -1082,8 +1074,6 @@ public class IntentDeliveryService {
             if (clean.delete().isEmpty()) {
                 return true;
             }
-            log.info("下发前清理旧 WAN: sn={}, 保留={}条, 删除={}条, 明细={}",
-                    task.getSn(), clean.keep().size(), clean.delete().size(), describe(clean));
             List<String> skipped = new ArrayList<>();
             for (WanCleanup.WanLink victim : clean.delete()) {
                 SoapMessage resp = await(rpcService.deleteObject(
@@ -1139,8 +1129,10 @@ public class IntentDeliveryService {
                 .toList();
         boolean changed = !objects.equals(plan.objectsToAdd());
         // 常打一行：挂载位置对不对是「下发 9002」最常见的根因，事后要能看到当时取的是几号
-        log.info("WAN 挂载位置: sn={}, 设备实际=WANConnectionDevice.{}, {}",
-                task.getSn(), actual, changed ? "已按设备结构校正模板" : "与模板一致");
+        coreLog.entry(LogCategory.BUSINESS).sn(task.getSn()).bizKey("WAN挂载").result(true)
+                .with("实例", actual)
+                .info(changed ? "WAN 挂载位置与模板不一致，已按设备结构校正"
+                        : "WAN 挂载位置与模板一致");
         return new IntentPlan(plan.bizObject(), plan.instance(), objects, params, plan.errors());
     }
 

@@ -90,8 +90,6 @@ public class InformService {
         // 台账落库：设备列表与离线判定都读这张表
         deviceRegistry.upsertOnline(session);
 
-        log.info("收到 Inform: sn={}, events={}, sw={}, hw={}",
-                session.getSn(), eventCodes, session.getSoftwareVersion(), session.getHardwareVersion());
         // 核心日志：设备上报单独记一行到 log/ACS_LOG.LOG
         coreLog.inform(session.getSn(), eventCodes, session.getConnectionId());
         return eventCodes;

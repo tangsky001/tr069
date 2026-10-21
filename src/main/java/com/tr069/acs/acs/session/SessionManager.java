@@ -1,8 +1,9 @@
 package com.tr069.acs.acs.session;
 
 import com.tr069.acs.acs.service.DeviceRegistryService;
+import com.tr069.acs.common.log.AcsCoreLog;
+import com.tr069.acs.common.log.LogCategory;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -15,8 +16,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * CPE 会话注册表。
  *
  * <p>对应 Python 版 cpe.py 的 {@code m_dict_sn2cpe} 与 {@code m_dict_sessionno2cpe}。</p>
+ *
+ * <p>本类不直接打日志：会话相关事件统一交给 {@link AcsCoreLog} 的
+ * {@link LogCategory#SESSION} 分类，避免设备频繁换连接时把日志刷爆。</p>
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class SessionManager {
@@ -48,6 +51,8 @@ public class SessionManager {
 
     private final DeviceRegistryService deviceRegistry;
 
+    private final AcsCoreLog coreLog;
+
     /**
      * 获取或创建会话。
      *
@@ -58,7 +63,8 @@ public class SessionManager {
      */
     public CpeSession getOrCreate(String oui, String sn, String connId) {
         CpeSession session = snToSession.computeIfAbsent(sn, key -> {
-            log.info("新设备注册: sn={}, oui={}", key, oui);
+            coreLog.entry(LogCategory.SESSION).sn(key).bizKey("新建会话").result(true)
+                    .with("oui", oui).info("设备首次建立会话");
             return new CpeSession(oui, key);
         });
         // 设备换了 TCP 连接（CPE 每次新建连接源端口都不同，周期性 Inform 基本都会换）：
@@ -69,7 +75,9 @@ public class SessionManager {
             if (session.hasPendingAwaiting()) {
                 // 指令已下发、设备从新连接回来：CWMP 反向通道下回应很可能就走这条新连接，
                 // 会话对象没变，等待中的指令继续留着，由 RPC 响应定时器兜底超时
-                log.info("设备换新连接，等待中的指令继续保留: sn={}, {} -> {}", sn, previous, connId);
+                coreLog.entry(LogCategory.SESSION).sn(sn).bizKey("会话接管").result(true)
+                        .with("旧连接", previous).with("新连接", connId)
+                        .info("设备换新连接，等待中的指令继续保留");
             } else {
                 session.failAwaiting("device reconnected on a new connection");
             }
@@ -121,7 +129,9 @@ public class SessionManager {
         // 判成重复会把会话关掉、设备打离线、正在等待的探测指令当场作废——
         // 表现就是适配测试做到一半设备"掉线"。
         if (session.hasPendingAwaiting()) {
-            log.info("设备换新连接但仍有指令在等待回应，按会话接管处理: sn={}, {} -> {}", sn, exists, connId);
+            coreLog.entry(LogCategory.SESSION).sn(sn).bizKey("双会话检测").result(true)
+                    .with("旧连接", exists).with("新连接", connId)
+                    .info("旧连接仍有指令在等待回应，按会话接管处理，不判重复会话");
             return false;
         }
         return !session.isExpired(duplicateGraceSeconds);
@@ -143,7 +153,8 @@ public class SessionManager {
         session.getOutbox().clear();
         connectionToSn.remove(session.getConnectionId());
         deviceRegistry.markOffline(sn);
-        log.info("会话关闭: sn={}, reason={}", sn, reason);
+        coreLog.entry(LogCategory.SESSION).sn(sn).bizKey("关闭会话").code(reason)
+                .result(true).info("会话关闭");
     }
 
     /**
@@ -156,7 +167,6 @@ public class SessionManager {
         }
         CpeSession session = snToSession.get(sn);
         if (session != null && connId.equals(session.getConnectionId())) {
-            log.debug("连接断开: sn={}, conn={}", sn, connId);
             // 周期上报之间这条 TCP 连接本来就会断，设备常常另开一条把指令回应发回来。
             // 所以只清连接标识，等待中的指令继续保留，真等不到由 RPC 响应定时器兜底
             session.setConnectionId(null);
@@ -172,7 +182,6 @@ public class SessionManager {
      */
     @Scheduled(fixedDelayString = "${acs.device.session-sweep-interval:300000}")
     public void sweepExpiredSessions() {
-        long now = System.currentTimeMillis();
         for (CpeSession session : snToSession.values()) {
             if (session.isExpired(onlineCheckInterval)) {
                 session.setOnline(false);
@@ -182,9 +191,9 @@ public class SessionManager {
                 if (session.isExpired(onlineCheckInterval * SESSION_RECLAIM_FACTOR)) {
                     closeSession(session.getSn(), "session expired");
                 }
-            } else if (now - session.getLastContactTime() > 180_000L) {
-                log.debug("设备长时间未通信: sn={}", session.getSn());
             }
+            // 未到离线阈值的「长时间未通信」不记日志：每台设备每轮都会命中一次，
+            // 记下来只会把真正的上下线事件淹没。需要排查时看 ACS_CORE 的会话分类。
         }
     }
 

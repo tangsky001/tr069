@@ -48,7 +48,6 @@ public class DeviceRegistryService implements ApplicationRunner {
             int rows = cpeDeviceMapper.update(update,
                     new LambdaUpdateWrapper<CpeDevice>().eq(CpeDevice::getStatus, STATUS_ONLINE));
             if (rows > 0) {
-                log.info("启动时清理残留在线设备: {} 台", rows);
             }
         } catch (Exception e) {
             log.warn("清理残留在线设备失败，忽略: {}", e.getMessage());
@@ -69,7 +68,6 @@ public class DeviceRegistryService implements ApplicationRunner {
                 device.setStatus(STATUS_ONLINE);
                 device.setLastContactTime(now);
                 cpeDeviceMapper.insert(device);
-                log.info("设备入库: sn={}, oui={}", session.getSn(), session.getOui());
                 coreLog.online(session.getSn(), "首次上报入库");
                 registerModel(session, device);
                 return;
@@ -103,7 +101,6 @@ public class DeviceRegistryService implements ApplicationRunner {
             update.setId(exist.getId());
             update.setStatus(STATUS_OFFLINE);
             cpeDeviceMapper.updateById(update);
-            log.info("设备离线: sn={}", sn);
             coreLog.offline(sn, "会话结束或超时未上报");
         } catch (Exception e) {
             log.error("标记设备离线失败: sn={}", sn, e);

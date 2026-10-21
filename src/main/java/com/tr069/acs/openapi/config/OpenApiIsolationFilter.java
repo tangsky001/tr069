@@ -47,8 +47,6 @@ public class OpenApiIsolationFilter extends OncePerRequestFilter {
         if (northPort != openApiPath) {
             // 北向端口上问别的路径，或者别的端口上问北向路径：都不存在，按 404 处理
             if (log.isDebugEnabled()) {
-                log.debug("拒绝跨端口访问: port={}, uri={}", request.getLocalPort(),
-                        request.getRequestURI());
             }
             response.setStatus(HttpServletResponse.SC_NOT_FOUND);
             response.setContentType("application/json;charset=UTF-8");

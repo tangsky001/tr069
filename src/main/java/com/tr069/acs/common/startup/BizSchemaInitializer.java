@@ -36,18 +36,15 @@ public class BizSchemaInitializer implements InitializingBean {
     @Override
     public void afterPropertiesSet() {
         if (!enabled) {
-            log.info("业务模板表自动建表已关闭");
             return;
         }
         try {
             if (allTablesExist()) {
-                log.info("业务模板表已存在，跳过建表");
                 return;
             }
             for (String sql : SchemaScript.createStatements(TABLES)) {
                 jdbcTemplate.execute(sql);
             }
-            log.info("业务模板表已补齐: {}", String.join(", ", TABLES));
         } catch (Exception e) {
             // 建表失败不阻断启动：设备侧 ACS 与工单下发不依赖业务模板
             log.error("业务模板表自动建表失败，请手工执行 classpath:{}（对应仓库 sql/schema.sql）: {}",

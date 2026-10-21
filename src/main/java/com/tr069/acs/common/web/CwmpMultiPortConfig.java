@@ -49,10 +49,7 @@ public class CwmpMultiPortConfig {
                 factory.addAdditionalTomcatConnectors(connector);
             }
             if (extraPorts.isEmpty()) {
-                log.info("CPE 上报监听端口：{}（未配置额外端口）", serverPort);
             } else {
-                log.info("CPE 上报监听端口：{}（主端口 {}，额外 {}）",
-                        new TreeSet<>(listenedPorts(extraPorts)), serverPort, extraPorts);
             }
         };
     }

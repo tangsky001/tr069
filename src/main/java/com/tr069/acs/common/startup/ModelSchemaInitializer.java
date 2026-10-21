@@ -39,17 +39,14 @@ public class ModelSchemaInitializer implements InitializingBean {
     @Override
     public void afterPropertiesSet() {
         if (!enabled) {
-            log.info("型号映射表自动建表已关闭");
             return;
         }
         try {
             if (allTablesExist()) {
-                log.info("型号映射表已存在，跳过建表");
             } else {
                 for (String sql : SchemaScript.createStatements(TABLES)) {
                     jdbcTemplate.execute(sql);
                 }
-                log.info("型号映射表已补齐: {}", String.join(" / ", TABLES));
             }
             // 存量库补列与是否建过表无关，每次启动都确认一遍
             addColumnsIfMissing();
@@ -114,7 +111,6 @@ public class ModelSchemaInitializer implements InitializingBean {
                 return;
             }
             jdbcTemplate.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
-            log.info("型号档案已补齐列: {}.{}", table, column);
         } catch (Exception e) {
             log.error("补齐 {}.{} 失败，相关能力降级: {}", table, column, e.getMessage());
         }

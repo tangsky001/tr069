@@ -36,7 +36,6 @@ public class ModelTemplateService {
     public GenerateResult generateAll(Device device) {
         GenerateResult r = new GenerateResult();
         if (device == null || device.getId() == null) {
-            log.debug("型号未落库，跳过模板生成");
             return r;
         }
         r.wifi = templateBuilder.buildWifi(device);
@@ -47,10 +46,6 @@ public class ModelTemplateService {
         r.vlan = r.wanDhcp.getVlan() + r.wanPppoe.getVlan() + r.wanStatic.getVlan();
         r.lan = templateBuilder.buildLan(device).getLan();
 
-        log.info("生成型号模板: id={}, model={}, wifi={}, sip={}, wan={}, lan={}",
-                device.getId(), device.getModelKey(),
-                r.wifi.total(), r.sip.getSip(),
-                r.wanDhcp.getWan() + r.wanPppoe.getWan() + r.wanStatic.getWan(), r.lan);
         return r;
     }
 

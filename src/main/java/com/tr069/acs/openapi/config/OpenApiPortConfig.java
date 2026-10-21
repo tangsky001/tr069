@@ -42,18 +42,15 @@ public class OpenApiPortConfig {
         int port = normalizePort(openApiPort);
         return factory -> {
             if (port <= 0) {
-                log.info("北向接口未启用独立端口，与管理端共用 {}", serverPort);
                 return;
             }
             if (port == serverPort) {
-                log.info("北向端口与管理端口相同（{}），不额外绑定连接器", port);
                 return;
             }
             Connector connector = new Connector(TomcatServletWebServerFactory.DEFAULT_PROTOCOL);
             connector.setPort(port);
             connector.setURIEncoding(uriEncoding);
             factory.addAdditionalTomcatConnectors(connector);
-            log.info("北向接口监听端口: {}（路径前缀 {}）", port, normalizedPrefix());
         };
     }
 

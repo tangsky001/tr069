@@ -175,8 +175,6 @@ public class ModelMappingService {
         model.setSampleSn(sn);
         try {
             modelMapper.insert(model);
-            log.info("登记新型号待适配: isp={}, model={}, firmware={}, 样机={}",
-                    owner, productClass, softwareVersion, sn);
             return model;
         } catch (DuplicateKeyException e) {
             return modelMapper.selectOne(new LambdaQueryWrapper<CpeModel>()

@@ -146,7 +146,6 @@ public class DeviceBusinessService {
             data.put("message", "设备能力树为空或未覆盖业务路径，请先执行能力树采集");
             return data;
         }
-        log.info("采集设备业务参数: sn={}, pathCount={}", sn, paths.size());
         // PON/光模块参数不在业务分区实例下，单独补进采集清单
         paths.addAll(ponParams(sn).keySet());
         CompletableFuture<Map<String, String>> future =

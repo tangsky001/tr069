@@ -73,7 +73,6 @@ public class CpePathDispatchFilter implements Filter {
                 cpePaths.add(normalize(part));
             }
         }
-        log.info("CPE 上报路径：主路径 {}，兼容 {}", cpePath, cpePaths);
     }
 
     @Override
@@ -91,7 +90,6 @@ public class CpePathDispatchFilter implements Filter {
 
         String path = normalize(pathWithoutContext(request));
         if (cpePaths.contains(path)) {
-            log.debug("CPE 上报：端口 {} 路径 {}", request.getLocalPort(), request.getRequestURI());
             cwmpController.handleCpe(request, response);
             return;
         }

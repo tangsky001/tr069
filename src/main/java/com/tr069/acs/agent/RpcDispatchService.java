@@ -112,7 +112,6 @@ public class RpcDispatchService {
             return new DispatchHandle(taskId, future, false);
         }
         rpcTaskQueue.saveQueued(task);
-        log.debug("指令已入队: taskId={}, sn={}, rpc={}", taskId, sn, rpcName);
         return new DispatchHandle(taskId, future, true);
     }
 
