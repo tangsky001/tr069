@@ -4,8 +4,6 @@ import lombok.Getter;
 
 /**
  * CWMP / SOAP 命名空间常量。
- *
- * <p>取值对齐 Python 版 construct.py 的 {@code create_soap_envelope}。</p>
  */
 public final class SoapNamespace {
 

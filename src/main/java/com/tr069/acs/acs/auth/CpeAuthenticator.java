@@ -14,20 +14,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * CPE -> ACS 的 HTTP 认证。
  *
- * <p>对应 Python 版 {@code lib/acss/acs/cpeauth.py}。</p>
+ * <p>支持的认证类型：digest / basic / None。</p>
  *
- * <p><b>重要：本实现刻意保留了原版 Digest 计算的一处非标准行为。</b>
- * 当 CPE 请求中<b>不带 qop</b> 时，原版按 {@code H(HA1 + ":" + nonce + HA2)} 计算
- * （nonce 与 HA2 之间缺少 RFC 2617 要求的英文冒号），而非标准的
- * {@code H(HA1 + ":" + nonce + ":" + HA2)}。由于现网设备是按原版行为实现的，
- * 这里必须保持一致，否则设备无法通过认证。带 qop 的分支与原版及 RFC 一致。</p>
+ * <p><b>重要：这里的 Digest 计算与 RFC 2617 有一处刻意的不同。</b>
+ * 当 CPE 请求中<b>不带 qop</b> 时按 {@code H(HA1 + ":" + nonce + HA2)} 计算
+ * （nonce 与 HA2 之间缺少标准要求的英文冒号），而非标准的
+ * {@code H(HA1 + ":" + nonce + ":" + HA2)}。现网设备是按这一行为实现的，
+ * 改成标准写法会导致设备认证失败。带 qop 的分支按 RFC 标准计算。</p>
  */
 @Slf4j
 @Component
 public class CpeAuthenticator {
 
     /**
-     * 认证结果，对应原版的 ACS_AUTHENTICATE_PASS / ACS_NO_AUTHENTICATION / ACS_AUTHENTICATE_FAIL。
+     * 认证结果。
      */
     public enum AuthResult {
         /**
@@ -45,7 +45,7 @@ public class CpeAuthenticator {
     }
 
     /**
-     * 默认 Digest realm，对应原版 dict_acs_option.get('realm', 'tr069')
+     * 默认 Digest realm。
      */
     public static final String DEFAULT_DIGEST_REALM = "tr069";
 
@@ -182,7 +182,7 @@ public class CpeAuthenticator {
     }
 
     /**
-     * 对应原版 try_username_password：先比用户名，再比 realm 与 response。
+     * 校验凭据：先比用户名，再比 realm 与 response。
      */
     private boolean tryUsernamePassword(Map<String, String> fields, String user, String password) {
         if (user == null || !user.equals(fields.get("username"))) {
@@ -199,7 +199,7 @@ public class CpeAuthenticator {
     /**
      * 计算期望的 response。
      *
-     * <p>对应原版 create_response。注意无 qop 分支沿用原版缺少冒号的写法。</p>
+     * <p>计算 Digest response。无 qop 分支按前述非标准写法，缺少 nonce 与 HA2 之间的冒号。</p>
      */
     private String createResponse(String user, String password, String realm,
                                   Map<String, String> fields) {
@@ -208,7 +208,7 @@ public class CpeAuthenticator {
 
         String qop = fields.get("qop");
         if (qop == null || qop.isEmpty()) {
-            // 原版写法：nonce 与 HA2 之间没有冒号
+            // 非标准写法（见类注释）：nonce 与 HA2 之间没有冒号
             return md5(ha1 + ":" + fields.get("nonce") + ha2);
         }
         if ("auth".equals(qop) || "auth-int".equals(qop)) {
@@ -222,7 +222,7 @@ public class CpeAuthenticator {
     }
 
     /**
-     * 对应原版 A1。
+     * 计算 A1。
      */
     private String a1(Map<String, String> fields, String user, String password, String realm) {
         String algorithm = fields.get("algorithm");
@@ -234,7 +234,7 @@ public class CpeAuthenticator {
     }
 
     /**
-     * 对应原版 A2。
+     * 计算 A2。
      */
     private String a2(Map<String, String> fields) {
         String method = fields.getOrDefault("method", "");
@@ -243,7 +243,7 @@ public class CpeAuthenticator {
         if (qop == null || "auth".equals(qop)) {
             return method + ":" + uri;
         }
-        // auth-int 分支原版存在实现缺陷（引用了未定义的 body），此处按 method:uri:H(body) 语义保留
+        // auth-int 分支按 method:uri:H(body) 语义拼接
         String body = fields.getOrDefault("body", "");
         return method + ":" + uri + ":" + md5(body);
     }
@@ -277,8 +277,8 @@ public class CpeAuthenticator {
     /**
      * 解析 Authorization 头为字段表。
      *
-     * <p>对应原版 get_data：以第一个空格分割出认证类型，其余按逗号切分，
-     * 带引号取值内容，不带引号直接取值。</p>
+     * <p>以第一个空格分割出认证类型，其余按逗号切分，带引号的取引号内内容，
+     * 不带引号的直接取值。</p>
      */
     public Map<String, String> parseAuthFields(String authorization) {
         Map<String, String> fields = new LinkedHashMap<>();

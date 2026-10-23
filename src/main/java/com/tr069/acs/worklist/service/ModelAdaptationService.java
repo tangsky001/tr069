@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -366,6 +367,15 @@ public class ModelAdaptationService {
             "(?i)(maxbitrate|maxspeed|linkrate|portspeed|linkspeed)$");
     private static final Pattern BAND_LEAF = Pattern.compile(
             "(?i)(frequencyband|operatingfrequencyband|frequency)");
+    /**
+     * 信道列表叶子。2.4G 只用 1~14，5G 从 36 起，据此反推频段——
+     * 不少定制固件不实现 {@code OperatingFrequencyBand}，但这两个参数一定有值。
+     */
+    private static final Pattern CHANNEL_LEAF = Pattern.compile(
+            "(?i)(possiblechannels|supportedchannels|channelsinuse|channel)$");
+    private static final Pattern CHANNEL_NUMBER = Pattern.compile("\\d+");
+    /** 2.4G 的最大信道号，超过它的就是 5G。 */
+    private static final int MAX_2G_CHANNEL = 14;
 
     /**
      * 从参数树解析设备实际能力：网口数量、网口速率(Mbps)、SIP 数量、WIFI 频段。
@@ -384,6 +394,8 @@ public class ModelAdaptationService {
         Set<String> vendorSips = new TreeSet<>();
         double maxSpeedMbps = -1;
         Set<String> bands = new LinkedHashSet<>();
+        // 自己报出过频段证据的射频：用来判断「还有几个射频没标频段」
+        Set<String> bandedWlan = new LinkedHashSet<>();
         // 设备自报的条目数。有些固件不建 LANEthernetInterfaceConfig（只给个
         // LANHostConfigManagement），语音只建一路 Line，靠数实例会把 4 口 8 路
         // 误判成 0 口 1 路，申报怎么填都比不过
@@ -439,9 +451,22 @@ public class ModelAdaptationService {
             if (speed > maxSpeedMbps) {
                 maxSpeedMbps = speed;
             }
-            collectBand(row, leaf, bands);
+            if (collectBand(row, leaf, bands)) {
+                Matcher mi = WLAN_IF.matcher(path);
+                if (mi.find()) {
+                    bandedWlan.add("wlan:" + mi.group(1));
+                } else if ((mi = WIFI_RADIO.matcher(path)).find()) {
+                    bandedWlan.add("radio:" + mi.group(1));
+                }
+            }
         }
         int radioCount = Math.max(Math.max(wlans.size(), radios.size()), wlanEntries);
+        // 只标 5G、不标 2.4G 是行业惯例：CMCC-xxxx-5G 配一个什么都不标的 CMCC-xxxx。
+        // 所以认出 5.8G 却还剩射频没标出频段时，没标的那个按 2.4G 认定——
+        // 反过来不成立，只有一个射频且它标了 5G 就是纯 5G 设备
+        if (bands.contains("5.8G") && !bands.contains("2.4G") && radioCount > bandedWlan.size()) {
+            bands.add("2.4G");
+        }
         // 频段一个都识别不出时按射频数推断：单射频基本都是 2.4G，双射频才是双频。
         // 老固件不报 OperatingFrequencyBand，SSID 也不带频段（ChinaNet-xxxx 这种），
         // 不兜底的话「实测 WIFI 无」，申报 2.4G 永远过不了
@@ -483,21 +508,61 @@ public class ModelAdaptationService {
         return v >= 10000 ? v / 1000.0 : v;
     }
 
-    /** 从频段叶子或 SSID 名推断 WIFI 频段。 */
-    private void collectBand(CpeParameter row, String leaf, Set<String> bands) {
-        String value = row.getParamValue() == null ? "" : row.getParamValue();
-        boolean bandLeaf = !leaf.isEmpty() && BAND_LEAF.matcher(leaf).find();
-        boolean ssidLeaf = "SSID".equalsIgnoreCase(leaf);
-        if (!bandLeaf && !ssidLeaf) {
-            return;
+    /** 从频段字段、信道列表或 802.11 制式推断 WIFI 频段，返回这条参数是否给出了频段证据。 */
+    private boolean collectBand(CpeParameter row, String leaf, Set<String> bands) {
+        String value = row.getParamValue() == null ? "" : row.getParamValue().trim();
+        if (value.isEmpty() || leaf.isEmpty()) {
+            return false;
         }
-        String lower = value.toLowerCase();
-        if (lower.contains("2.4") || (ssidLeaf && (lower.contains("2.4g") || lower.contains("24g")))) {
+        int before = bands.size();
+        String lower = value.toLowerCase(Locale.ROOT);
+        if (BAND_LEAF.matcher(leaf).find()) {
+            // SupportedFrequencyBands 是逗号分隔的多值（2.4GHz,5GHz），两个频段都要认
+            collectBandsFromText(lower, bands);
+        } else if (CHANNEL_LEAF.matcher(leaf).find()) {
+            // 信道列表是最可靠的判据：1-13 只可能是 2.4G，36 起只可能是 5G
+            int maxChannel = maxChannelOf(value);
+            if (maxChannel > MAX_2G_CHANNEL) {
+                bands.add("5.8G");
+            } else if (maxChannel >= 1) {
+                bands.add("2.4G");
+            }
+        } else if ("standard".equalsIgnoreCase(leaf)) {
+            // b/g 只跑 2.4G，ac/ax 只跑 5G。值为 "n" 时不表态：n 两个频段都能跑
+            if (lower.contains("ac") || lower.contains("ax") || lower.contains("be")) {
+                bands.add("5.8G");
+            } else if (lower.contains("b") || lower.contains("g")) {
+                bands.add("2.4G");
+            }
+        } else if ("SSID".equalsIgnoreCase(leaf)) {
+            // SSID 只有在带频段字样时才作数：CMCC-5G 认得出，CMCC-0002 认不出
+            collectBandsFromText(lower, bands);
+        }
+        return bands.size() > before;
+    }
+
+    /** 从文本里找频段字样。两个频段分开判断，多值字段才能都认出来。 */
+    private static void collectBandsFromText(String lower, Set<String> bands) {
+        if (lower.contains("2.4") || lower.contains("2g") || lower.contains("24g")) {
             bands.add("2.4G");
-        } else if (lower.contains("5g") || lower.contains("5.8") || lower.contains("5ghz")
-                || lower.contains("5 ghz")) {
+        }
+        if (lower.contains("5.8") || lower.contains("5g") || lower.contains("5ghz")) {
             bands.add("5.8G");
         }
+    }
+
+    /** 取信道列表里的最大信道号：{@code 1-13}、{@code 36 40 44}、{@code 36-64,149-165} 都能解析。 */
+    private static int maxChannelOf(String value) {
+        int max = 0;
+        Matcher m = CHANNEL_NUMBER.matcher(value);
+        while (m.find()) {
+            try {
+                max = Math.max(max, Integer.parseInt(m.group()));
+            } catch (NumberFormatException ignored) {
+                // 超长数字与信道无关，跳过
+            }
+        }
+        return max;
     }
 
     /** NumberOfEntries 这类计数字段，读不出数字按 0 处理。 */

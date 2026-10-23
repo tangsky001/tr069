@@ -62,4 +62,43 @@ class DeviceAccountServiceTest {
         assertEquals("cuadmin", accounts.get(0).get("username"));
         assertEquals("cupwd", accounts.get(0).get("password"));
     }
+
+    @Test
+    void recognizesHuaweiWebUserInfo() {
+        // 华为通用固件：超管挂在 UserInterface.X_HW_WebUserInfo.2，叶子写作 UserName
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.UserName",
+                "CMCCAdmin");
+        values.put("InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.Password",
+                "aDm8H%MdA");
+        values.put("InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.UserName",
+                "user");
+        values.put("InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Password",
+                "userpwd");
+
+        List<Map<String, Object>> accounts = DeviceAccountService.assemble(values);
+
+        assertEquals(2, accounts.size(), "WebUserInfo 的两路实例都应产出账号");
+        assertEquals("1", accounts.get(0).get("instance"));
+        assertEquals("user", accounts.get(0).get("username"));
+        assertEquals("2", accounts.get(1).get("instance"), "移动版超管在实例 2");
+        assertEquals("CMCCAdmin", accounts.get(1).get("username"));
+        assertEquals("aDm8H%MdA", accounts.get(1).get("password"));
+    }
+
+    @Test
+    void recognizesTelecomAccountWithoutInstance() {
+        // 运营商超管节点没有实例号：X_CMCC_TeleComAccount.Username
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount.Username",
+                "CMCCAdmin");
+        values.put("InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount.Password",
+                "pwd");
+
+        List<Map<String, Object>> accounts = DeviceAccountService.assemble(values);
+
+        assertEquals(1, accounts.size(), "无实例号的超管节点也要能识别");
+        assertEquals("", accounts.get(0).get("instance"), "没有实例序号时留空");
+        assertEquals("CMCCAdmin", accounts.get(0).get("username"));
+    }
 }

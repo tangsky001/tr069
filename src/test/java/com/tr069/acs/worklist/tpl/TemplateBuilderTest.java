@@ -231,7 +231,7 @@ class TemplateBuilderTest {
         builder.buildSip(d);
 
         Sip row = sipDao.findByDeviceId(d.getId()).get(0);
-        // 中兴这个型号压根没有 VoiceProfile.1.Enable，照搬标准写会被设备回无效参数
+        // 中兴这个型号压根没有 VoiceProfile.1.Enable，按标准写会被设备回无效参数
         assertFalse(row.getPathEnable().contains("VoiceProfile.1.Enable"),
                 "开关必须挂在 Line 上，实际=" + row.getPathEnable());
         assertTrue(row.getPathEnable().endsWith("VoiceProfile.1.Line.1.Enable"),

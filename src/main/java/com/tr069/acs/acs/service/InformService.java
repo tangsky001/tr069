@@ -17,8 +17,7 @@ import com.tr069.acs.common.log.AcsCoreLog;
 /**
  * Inform 事务处理。
  *
- * <p>对应 Python 版 cpe.py 的 on_rx_inform 相关逻辑：更新设备属性、
- * 记录 RPC 与 SOAP 报文、按事件码调度后续业务。</p>
+ * <p>收到 Inform 后更新设备属性、记录 RPC 与 SOAP 报文、按事件码调度后续业务。</p>
  */
 @Slf4j
 @Service
@@ -26,7 +25,7 @@ import com.tr069.acs.common.log.AcsCoreLog;
 public class InformService {
 
     /**
-     * 0 BOOTSTRAP 事件码，处理时须排在最前，对应原版 process_inform_events 的排序规则
+     * 0 BOOTSTRAP 事件码，处理时须排在最前：它要先把设备档案建起来，其余事件才有着落
      */
     private static final String EVENT_BOOTSTRAP = "0 BOOTSTRAP";
 

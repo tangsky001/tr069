@@ -12,8 +12,7 @@ import java.util.List;
 /**
  * CWMP 故障结构。
  *
- * <p>对应 Python 版 rpcstruct.py 的 {@code CWMPFaultStruct}。CPE 通过 SOAP Fault
- * 返回时会包含此结构；SetParameterValues 部分失败时还会带
+ * <p>CPE 通过 SOAP Fault 返回时会包含此结构；SetParameterValues 部分失败时还会带
  * {@link SetParameterValuesFault} 列表。</p>
  */
 @Data

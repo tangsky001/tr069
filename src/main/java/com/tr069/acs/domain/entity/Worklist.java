@@ -10,8 +10,7 @@ import java.time.LocalDateTime;
 /**
  * 工单实例。
  *
- * <p>对应 Python 版 WORKLIST + WORKLIST_EX 的合并。一张工单实例就是
- * "给某台设备下发某个业务"的一次完整记录，包含参数、结果与各阶段时间戳。</p>
+ * <p>一张工单实例就是"给某台设备下发某个业务"的一次完整记录，包含参数、结果与各阶段时间戳。</p>
  *
  * <p>状态流转：build -> bind -> standby -> running -> success / fail / abnormal -> expire</p>
  */

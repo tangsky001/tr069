@@ -9,13 +9,13 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 /**
  * TR069 ACS 服务端入口。
  *
- * <p>Java 版在单一进程内对齐 Python 版的全部能力，按职责划分为：</p>
+ * <p>按职责划分为：</p>
  * <ul>
- *   <li>{@code cwmp}  - CWMP/SOAP 协议层，对应 Python 版 lib/acss/xml</li>
- *   <li>{@code acs}   - ACS 会话与设备管理，对应 lib/acss/cpes、lib/acss/acs</li>
- *   <li>{@code agent} - 按 SN 串行的下发队列，对应 lib/agent</li>
- *   <li>{@code worklist} - 工单引擎，对应 lib/worklists</li>
- *   <li>{@code api}   - 管理端 REST 接口，对应 web/tr069_site</li>
+ *   <li>{@code cwmp}  - CWMP/SOAP 协议层：报文构造与解析</li>
+ *   <li>{@code acs}   - 会话、鉴权与设备管理</li>
+ *   <li>{@code agent} - 按 SN 串行的下发队列</li>
+ *   <li>{@code worklist} - 工单引擎</li>
+ *   <li>{@code api}   - 管理端 REST 接口</li>
  * </ul>
  */
 @EnableScheduling

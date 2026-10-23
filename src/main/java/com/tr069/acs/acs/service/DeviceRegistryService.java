@@ -1,7 +1,6 @@
 package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.tr069.acs.acs.model.Isp;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.domain.entity.CpeDevice;
@@ -9,8 +8,10 @@ import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.worklist.service.ModelMappingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -35,26 +36,29 @@ public class DeviceRegistryService implements ApplicationRunner {
     private static final String STATUS_OFFLINE = "offline";
 
     private final CpeDeviceMapper cpeDeviceMapper;
+
+    /**
+     * 在线判定窗口（秒）：最近一次上报落在窗口内就算在线。
+     *
+     * <p>取值要覆盖常见的周期性 Inform 间隔（多为 300~1800 秒）。
+     * 与首页概览的 {@code acs.dashboard.online-window-seconds} 保持一致。</p>
+     */
+    @Value("${acs.session.online-window-seconds:900}")
+    private long onlineWindowSeconds;
     private final ModelMappingService modelMappingService;
 
     private final AcsCoreLog coreLog;
 
     /**
-     * 启动后把残留的在线标记清掉：会话是内存态，重启后没有设备是在线的。
+     * 启动后重算在线标记。
+     *
+     * <p>原先是把在线记录一律清成离线——理由是「会话在内存里，重启了就没有在线的」。
+     * 但台账在线与否是按最近上报时间判的，跟本进程有没有会话无关：一次普通重启
+     * 不该让刚报过的设备集体掉线。这里改成套同样的窗口规则扫一遍。</p>
      */
     @Override
     public void run(ApplicationArguments args) {
-        try {
-            CpeDevice update = new CpeDevice();
-            update.setStatus(STATUS_OFFLINE);
-            int rows = cpeDeviceMapper.update(update,
-                    new LambdaUpdateWrapper<CpeDevice>().eq(CpeDevice::getStatus, STATUS_ONLINE));
-            if (rows > 0) {
-                log.info("启动时清理残留在线设备: {} 台", rows);
-            }
-        } catch (Exception e) {
-            log.warn("清理残留在线设备失败，忽略: {}", e.getMessage());
-        }
+        sweepExpiredOnline();
     }
 
     /**
@@ -125,6 +129,29 @@ public class DeviceRegistryService implements ApplicationRunner {
         }
         log.info("按 Inform 私有前缀登记设备运营商: sn={}, isp={}", sn, detected.getCode());
         return detected.getCode();
+    }
+
+    /**
+     * 按上报窗口清扫：超过窗口还没再上报的设备才置离线。
+     *
+     * <p>台账在线与否只能看最近上报时间。CWMP 是短连接，光猫报完一轮就把 TCP 断了，
+     * 早先在连接关闭那条路径上直接标记离线，结果周期性上报的设备刚报完就被判离线，
+     * 台账上在线时长几乎为零。这里统一按窗口判定，与服务重启、多实例部署都无关。</p>
+     */
+    @Scheduled(fixedDelayString = "${acs.session.offline-sweep-interval-millis:60000}")
+    public void sweepExpiredOnline() {
+        try {
+            LocalDateTime deadline = LocalDateTime.now().minusSeconds(onlineWindowSeconds);
+            List<CpeDevice> expired = cpeDeviceMapper.selectList(
+                    new LambdaQueryWrapper<CpeDevice>()
+                            .eq(CpeDevice::getStatus, STATUS_ONLINE)
+                            .lt(CpeDevice::getLastContactTime, deadline));
+            for (CpeDevice device : expired) {
+                markOffline(device.getSn());
+            }
+        } catch (Exception e) {
+            log.warn("按上报窗口清扫离线失败，忽略: {}", e.getMessage());
+        }
     }
 
     /**

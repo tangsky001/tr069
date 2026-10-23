@@ -21,7 +21,7 @@ import java.util.List;
 /**
  * CWMP 报文的 DOM 构建与序列化工具。
  *
- * <p>对齐 Python 版 ElementTree 的输出行为：无 XML 声明、无缩进空白。</p>
+ * <p>输出不带 XML 声明、不带缩进空白。</p>
  */
 @Slf4j
 public final class XmlUtils {
@@ -32,7 +32,7 @@ public final class XmlUtils {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /**
-     * 对应 Python 版 cwmp:ID 缺省时的 random.randint(1, 1000000)。
+     * 生成 cwmp:ID 的缺省取值，区间 1~1000000。
      */
     public static String randomCwmpId() {
         return String.valueOf(RANDOM.nextInt(1000000) + 1);
@@ -98,7 +98,7 @@ public final class XmlUtils {
     /**
      * 追加空值元素：{@code <tag xsi:nil="true"/>}。
      *
-     * <p>对齐 Python 版的判定 {@code value == ""}，此处同时把 null 视为空值。</p>
+     * <p>空串与 null 都视为空值。</p>
      */
     public static Element appendNil(Document doc, Element parent, String nsUri, String prefix, String localName) {
         Element el = element(doc, nsUri, prefix, localName);
@@ -108,7 +108,7 @@ public final class XmlUtils {
     }
 
     /**
-     * 值非空则写文本，否则写 nil。对应 Python 版分支 {@code != ""}。
+     * 值非空则写文本，否则写 nil。
      */
     public static void appendTextOrNil(Document doc, Element parent, String nsUri, String prefix,
                                        String localName, String value) {

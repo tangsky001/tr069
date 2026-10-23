@@ -137,8 +137,8 @@ public class TemplateBuilder {
     /**
      * 按设备的语音能力申报生成 SIP 下发模板，一路 Line 一条记录。
      *
-     * <p>路径全部取自中兴 P22g-CIac 实际采集到的参数名。其中有两条是实测才发现、
-     * 照搬 TR-104 标准一定会踩的坑：</p>
+     * <p>路径全部取自中兴 P22g-CIac 实际采集到的参数名。其中有两条是按 TR-104 标准
+     * 写一定会踩的坑，取自实测结果：</p>
      * <ul>
      *   <li>{@code VoiceProfile.1.Enable} 在这个型号上<b>并不存在</b>，可写开关只挂在
      *       {@code Line.{i}.Enable}，写前者设备会回「无效参数」</li>

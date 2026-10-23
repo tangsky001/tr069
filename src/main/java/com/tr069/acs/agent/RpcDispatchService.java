@@ -29,8 +29,7 @@ import com.tr069.acs.common.log.AcsCoreLog;
 /**
  * RPC 下发服务。
  *
- * <p>对应 Python 版 Agent 的职责：把一次 CWMP 调用投递到目标设备。由于 ACS 不主动连接设备，
- * 指令只能在 CPE 空 POST 的响应体里捎带，所以这里改为「入队即返回」：</p>
+ * <p>下发流程：</p>
  * <ul>
  *   <li>{@link #submitAsync} 把指令放进 Redis 队列，立即返回任务号与结果凭据，不占用线程</li>
  *   <li>CPE 空 POST 时由 {@code CwmpController} 从队列取出捎带</li>

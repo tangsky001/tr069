@@ -12,8 +12,8 @@ import java.util.Map;
 /**
  * 一条 CWMP 报文的解析结果。
  *
- * <p>{@link #getBody()} 的结构严格对应 Python 版 {@code cpe.py:convert_result} 生成的
- * {@code dict_data}，以保证上层的取值方式与原版一致。</p>
+ * <p>{@link #getBody()} 是各 RPC 响应的统一字段结构，上层按一套方式取值，
+ * 不必逐个 RPC 分辨。</p>
  */
 @Data
 @Builder

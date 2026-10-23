@@ -39,6 +39,9 @@ class RpcTaskQueueTest {
                         ArgumentMatchers.anyLong()))
                 .thenReturn(List.of(json(mapper, staleCollect), json(mapper, currentCollect),
                         json(mapper, worklist)));
+        Mockito.when(ops.remove(ArgumentMatchers.anyString(), ArgumentMatchers.anyLong(),
+                        ArgumentMatchers.any()))
+                .thenReturn(1L);
 
         QueueProperties.Rpc rpcProps = Mockito.mock(QueueProperties.Rpc.class);
         Mockito.when(rpcProps.getQueueTtlSeconds()).thenReturn(3600L);
@@ -50,9 +53,13 @@ class RpcTaskQueueTest {
 
         assertThat(dropped).as("只丢上一轮那一批").isEqualTo(1);
 
-        // 留下的是「本轮采集指令 + 工单指令」两条
-        Mockito.verify(ops).rightPushAll(ArgumentMatchers.anyString(),
-                ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any());
+        // 按值单条删除，不能 DEL 整个 key 再重写保留的：清理期间若有新指令入队、
+        // 或另一跳正在取指令，重写会连带把它们抹掉，指令就凭空丢了
+        Mockito.verify(ops).remove(ArgumentMatchers.anyString(), ArgumentMatchers.eq(0L),
+                ArgumentMatchers.eq(json(mapper, staleCollect)));
+        Mockito.verify(redis, Mockito.never()).delete(ArgumentMatchers.anyString());
+        Mockito.verify(ops, Mockito.never()).rightPushAll(ArgumentMatchers.anyString(),
+                ArgumentMatchers.<String>any());
     }
 
     /**

@@ -106,6 +106,30 @@ acs:
     cwmp-version: urn:dslforum-org:cwmp-1-0
 
   session:
+    # 在线判定窗口(秒)：台账里最近一次上报落在窗口内就算在线，设备列表、详情页、
+    # 台账统计都按这一条判。不能按「TCP 连着没有」判——CWMP 是短连接，
+    # 光猫报完一轮就断，刚报过的设备会被判成离线。
+    # 取值要覆盖常见的周期性 Inform 间隔（多为 300~1800 秒）
+    online-window-seconds: 900
+    # 超过窗口还没再上报的设备，隔多久被清扫成离线(毫秒)
+    offline-sweep-interval-millis: 60000
+    # 队列空时把这一跳请求挂起多久再回 204(毫秒)。这段时间不占 Tomcat 线程，
+    # 指令入队时会把挂着的请求叫起来，不用等到超时
+    piggyback-wait-ms: 1500
+    # 单条指令最多尝试下发几次：只有「没等到回应」才重排队列重试，
+    # 设备明确回了 fault（节点不存在、不可写）重发也是同一个结果，直接判失败
+    max-delivery-attempts: 2
+    # 重试前的基本等待(秒)，实际每次按 2 的幂递增（第 1 次等 60s、第 2 次 120s…）。
+    # 设备这一跳没回应多半是它正忙，接着在同一周期重发大概率还是同样的结果
+    retry-delay-seconds: 60
+    # 同一设备的会话互斥：多实例部署时防止两个 ACS 同时对一台设备编排下发。
+    # 拿不到 Redis 时自动放行，不会把设备挡在外面
+    session-lock-enabled: true
+    # 会话锁的持有时长(秒)，要盖住一轮会话的最长静默时间（等空 POST 的超时 + 余量）
+    session-lock-ttl-seconds: 90
+    # 报文顺序不对时是否直接回绝。
+    # 默认 false 只记日志：现场固件顺序花样多，严格回 400 会把本来能用的设备打挂
+    strict-state-check: false
     # 收到 Inform 后等待 CPE 空 POST 的超时(秒)。超时只结束本轮下发窗口，不判设备离线
     wait-post-null-timeout: 60
     # 下发 RPC 后等待响应的超时(秒)
@@ -123,11 +147,11 @@ acs:
     # 联调阶段设备侧账号密码写法不一时用它先跑通链路，上线前改回真实账号
     cpe-to-acs-username: auto
     cpe-to-acs-password: auto
-    # ACS -> CPE 反向连接（手动采集前唤醒设备）的默认账号，同样支持 auto / 留空。
-    # 电信 ITMS 现场多为 itms/itms，移动猫常用 admin/admin 或留空。
-    # 留空时若设备要求认证，唤醒会拿到 401 并被跳过，采集退化为等设备自行上报。
-    # 每台设备自己的凭据会在采集时自动读回来（ManagementServer.ConnectionRequestUsername
-    # /Password），登记进台账后以台账为准
+    # ACS -> CPE 反向连接（唤醒设备）用的账号密码，与上面「光猫连 ACS」那对不是一回事。
+    # 不同批次的光猫出厂 CR 密码各不相同，ACS 猜不出来，所以默认 itms/itms——
+    # 纳管时会把设备上的 CR 凭据统一改成这个值（见 acs.device.provision），
+    # 改成功后登记进台账，唤醒就以台账为准，不再靠猜。
+    # 某批次确定用别的密码就在这里改；留空或 auto 同样按 itms 处理
     acs-to-cpe-username: itms
     acs-to-cpe-password: itms
 
@@ -138,6 +162,24 @@ acs:
     session-sweep-interval: 60000
     # 超时未完成工单的清理周期(秒)
     worklist-status-check-interval: 604800
+    # 设备纳管：收到 Inform 后把 ACS 地址与上报间隔写回设备
+    provision:
+      # 总开关
+      enabled: true
+      # 下发给设备的周期上报间隔(秒)。0 表示不改这一项
+      inform-interval-seconds: 300
+      # 下发给设备的 ACS 上报地址。留空则按 http://{acs.public-host}:{上报端口}{cpe-path} 拼
+      acs-url: http://10.101.125.100:9090/ACS-server/ACS
+      # 一并下发给设备的连接请求凭据，默认跟随 acs.auth.acs-to-cpe-*（即 itms/itms）。
+      # 各批次光猫出厂的 CR 密码不一样，ACS 拿不到就唤不醒它，所以纳管时统一改写，
+      # 写成功后同步登记进台账。这一项留空或 auto 时同样按 itms 处理
+      connection-request-username: ${acs.auth.acs-to-cpe-username}
+      connection-request-password: ${acs.auth.acs-to-cpe-password}
+      # 距上次下发超过该小时数才重发，0 表示每次 Inform 都发。
+      # 设备已被纳管时每次上报都写一遍纯属浪费下发窗口，由它控制校正频率
+      reprovision-interval-hours: 24
+      # BOOTSTRAP 事件是否强制重发：设备恢复出厂后地址会变回原厂平台
+      force-on-bootstrap: true
     # 业务信息（WAN/WLAN/SIP）采集：向在线设备下发 GetParameterValues 后回库解析，
     # 数据源是能力树快照，能力树没采过就只能先做能力采集
     business:
