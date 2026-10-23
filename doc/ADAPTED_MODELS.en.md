@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Adapted ONT Models
 
 [English](./ADAPTED_MODELS.en.md) | [简体中文](./ADAPTED_MODELS.md)
@@ -28,11 +29,23 @@ Models still in progress (capability tree collected, or under investigation) go 
 | --- | --- | --- |
 | CT (China Telecom) | HS8145C5-GPON | Capability tree archived (360 objects / 1947 parameters), awaiting declaration and save |
 | CT (China Telecom) | MSG2100E-UPON-8V-AC | GPN firmware unusable (always 9002); 26 objects / 12 parameters retrieved via known paths, awaiting declaration and save; ISP pending ledger confirmation (Inform reported `X_CT-COM_UserInfo`) |
+=======
+# Adapted ONU Models
+
+English | [简体中文](./ADAPTED_MODELS.md)
+
+Only two columns are tracked: **operator** + **vendor model**. Add one line per successfully adapted device — no version numbers or capability items, since those change over time.
+
+| Operator | Vendor model |
+| --- | --- |
+| CMCC (China Mobile) | CIOT P22g-CIac |
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 
 ---
 
 ## Notes
 
+<<<<<<< HEAD
 - Adaptation records live in the portable SQLite template library `configuration/tr069_tpl.pack`
   (property `acs.tr069tpl.db-path`). It ships with the repository — copy it to a deployment host
   and those models are recognized as adapted.
@@ -74,3 +87,14 @@ Two fallback rules:
 2. **No band detected at all → infer from the radio count.** One radio means 2.4G, two radios mean
    dual-band. Old firmware reports neither the band parameter nor any band wording in the SSID
    (`ChinaNet-xxxx`); without this fallback a 2.4G declaration could never pass.
+=======
+- Adaptation profiles are stored in the portable SQLite template library `configuration/tr069_tpl.pack` (property `acs.tr069tpl.db-path`),
+  which ships with the repository: copy it to the deployment host and the models are recognized as adapted.
+- Only devices with `device.status = ADAPTED` count as adapted; `PENDING` is just an auto-registered placeholder awaiting adaptation and does not take part in delivery.
+- This table and the database are two views of the same thing: one row inserted successfully into the library means one row added here.
+
+## Adding a new device
+
+Device list → select the device → Model adaptation (declare operator / port count / port speed / SIP count / WiFi specs)
+→ trial collection → save once it passes. Saving writes into the template library; then add one row to this table.
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6

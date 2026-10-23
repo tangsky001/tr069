@@ -64,7 +64,11 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 业务状态（WAN 连接 + **LAN 网口图标**、**WIFI 按 2.4G / 5.8G 上下分行**、SIP 信息、设备状态）、
 **运行信息**（运行时长 / 加入时间 / 最后汇报时间 / 汇报 IP，表头可排序）、操作：
 
+<<<<<<< HEAD
 ![设备列表](doc/Display/013530_034.png)
+=======
+![设备列表](doc/Display/162046_560.png)
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 
 设备详情业务面板：信息卡（运行时长 / 注册时间 / 最近上报 / 上报 IP）、WAN 连接、LAN 网口（插线绿色、
 未插灰色，悬停看 MAC）、WLAN 按 2.4G / 5.8G 分行、SIP 语音（只列真实线路实例）：
@@ -93,14 +97,21 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 会话管理 | 会话状态机、待回应 RPC、超时兜底；周期上报视为心跳与会话接管（CPE 换 TCP 连接不重建会话、不打离线、不清待下发队列），离线只按长期无通信判定，疑似双会话仅告警 | `acs/session/*` |
 | 设备管理 | 设备自动注册、在线状态、分页详情、在线会话明细 | `acs/service/DeviceRegistryService`、`api/controller/DeviceController` |
 | 能力树采集 | 只采集 WAN / WiFi / LAN 网口 / SIP 四类子树（代码内固定）：GetParameterNames 拉路径 + GetParameterValues 分批读值，Inform 后自动采集、BOOTSTRAP 强制重采、NextLevel 兜底 | `acs/service/DeviceCapabilityService` |
+<<<<<<< HEAD
 | **设备纳管** | Inform 后立刻下发一条 `SetParameterValues`，把 `ManagementServer.URL`（ACS 地址）、`PeriodicInformInterval`（上报间隔）、`ConnectionRequestUsername/Password`（连接请求凭据）写回设备；上报值已一致就跳过、24 小时内不重发、BOOTSTRAP 强制重发；凭据改写成功登记进台账供唤醒使用 | `acs/service/InformProvisionService` |
 | **下发前唤醒** | CWMP 是短连接，ACS 不能主动推数据：常规下发排队等设备下一次周期 Inform；人工触发的下发（工单 / 业务模板 / 手动采集）先发连接请求叫设备立刻上报，指令随这一轮带下去，叫不醒则退化成等上报；取凭据的顺序是台账 → 采集参数 → 全局配置 → `itms` 兜底 | `acs/service/DeviceCapabilityService#wakeUp`、`exec/IntentDeliveryService` |
+=======
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 | 参数树导出 | 按型号导出能力树到 `configuration/models/`，并可按设备定位模型文件 | `worklist/service/ModelTreeStore` |
 | 业务快照 | `device` / `wan` / `wifi` / `lan` / `sip` / `pon` 分区，支持单台与整页批量读；LAN 区补插线状态（`connected`）与 MAC、SIP 区只保留真实线路实例（剔除 `VoiceProfile.{n}.SIP.` 汇总对象）、台账的注册时间与最近上报时间一并返回 | `acs/service/DeviceBusinessService` |
 | **LAN 网口状态自动刷新** | 定时（默认 5 分钟）对在线设备重读网口状态叶子（`Enable/Status/X_CT-COM_*LineStatus/MAC/速率`），拔插网线后页面不必手动点「重新采集」；只刷在线设备、只读网口那几个叶子，等回值超时不判失败（指令仍在队列里） | `acs/service/LanStatusRefreshService`、`DeviceBusinessService#lanStatusPaths` |
 | **超管账号查询** | `GET /api/device/{sn}/admin-account`：对在线设备实时读 `User.{i}.Username/Password` 并明文返回；离线直接返回 `offline`；能力树没采到时按 TR-098 / TR-181 标准路径兜底；整批被拒时逐条重发，共用 30s 总预算；只认 `.User.{i}.` 下的账号，WAN 拨号账号不会被误收 | `acs/service/DeviceAccountService`、`api/controller/DeviceController` |
 | 型号语义映射 | `cpe_model` + `model_param_mapping` / `model_object_mapping`：业务字段 ↔ 型号真实 CWMP 路径，支持按 SN 推荐候选路径 | `worklist/controller/ModelMappingController`、`ModelMappingService` |
+<<<<<<< HEAD
 | 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示。**频段识别**按「频段字段 / 信道列表 / 802.11 制式 / SSID 字样」四条判据取并集，只标 5G 不标 2.4G 时按双频认定、一个频段都认不出时按射频数推断（判据清单见 [doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)） | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
+=======
+| 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示 | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 | RPC 下发（异步） | 下发返回任务号，按任务号轮询结果；超时统一收尾 | `agent/RpcDispatchService`、`queue/RpcTaskQueue`、`api/controller/RpcTaskController` |
 | 队列削峰 | 上报与下发走 Redis 队列，Redis 不可用时降级为进程内处理 | `queue/*` |
 | **配置意图模板** | 入库 `config_template`，只描述开通意图（不下发任何数据）：7 类（WAN DHCP / WAN PPPoE / WAN 静态IP / WAN 桥接 / 2.4G WiFi / 5.8G WiFi / SIP），各类自带意图字段；支持 `/meta` 字段定义、列表、详情、保存、删除 | `template/*`（`ConfigTemplateService`、`ConfigTemplateController`） |
@@ -142,6 +153,7 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 适配一台加一行）。适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
 （配置项 `acs.tr069tpl.db-path`），随仓库走，拷到部署机即识别为已适配，不必重新适配。
 
+<<<<<<< HEAD
 ### 1.4 设备纳管与唤醒
 
 出厂的光猫上写着原厂平台的地址，不改的话它下一轮就报到别处去了。设备每次 Inform 上来，
@@ -209,6 +221,8 @@ acs:
 设备不接受这几项（部分厂商设为只读）会回 fault，日志打 `纳管参数下发失败: sn=..., err=...`，
 此时台账不登记，按周期重试一次就停；要么改设备侧权限，要么把 `enabled` 关掉。
 
+=======
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 ---
 
 ## 2. 待实现 / 进行中
@@ -259,7 +273,10 @@ javaacs/
 ├── doc/
 │   ├── DEPLOYMENT.md         部署文档
 │   ├── ADAPTED_MODELS.md     已适配光猫型号清单（运营商 + 厂家型号）
+<<<<<<< HEAD
 │   ├── ADAPTED_MODELS.en.md  Adapted ONT models (English)
+=======
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 │   └── Display/              界面截图（见「效果展示」）
 ├── pom.xml                   后端（Maven）
 ├── sql/schema.sql            全库唯一建表脚本（所有表）
