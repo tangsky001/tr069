@@ -1,7 +1,10 @@
 package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.tr069.acs.acs.config.CapabilityProfiles;
 import com.tr069.acs.acs.model.DataModel;
+import com.tr069.acs.acs.model.Isp;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.PendingRpc;
 import com.tr069.acs.acs.session.SessionManager;
@@ -10,7 +13,9 @@ import com.tr069.acs.cwmp.model.EventStruct;
 import com.tr069.acs.cwmp.model.InformRequest;
 import com.tr069.acs.cwmp.model.ParameterValueStruct;
 import com.tr069.acs.cwmp.model.SoapMessage;
+import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.domain.entity.CpeParameter;
+import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.mapper.CpeParameterMapper;
 import com.tr069.acs.queue.config.QueueProperties;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +23,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Base64;
+import java.util.Locale;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -26,6 +40,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -34,6 +49,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -42,10 +58,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>一次采集分两步，全程跑在「Inform -> InformResponse -> 空 POST 捎带下发」这条链路上：</p>
  * <ol>
  *   <li>{@code GetParameterNames(子树, NextLevel=false)}：逐个子树递归拿到设备支持的路径，
- *       路径以句点结尾的是对象，其余是普通参数，同时带回读写权限。子树固定只取
- *       WAN / WiFi / LAN 网口 / SIP 电话四类，见 {@link #SUBTREES}</li>
+ *       路径以句点结尾的是对象，其余是普通参数，同时带回读写权限。子树只取
+ *       WAN / WiFi / LAN 网口 / SIP 电话四类，清单按运营商的采集标准取，
+ *       见 {@link CapabilityProfiles}</li>
  *   <li>{@code GetParameterValues}：把上一步得到的参数路径分批读值，回填进同一张表</li>
  * </ol>
+ *
+ * <p>子树按什么姿势问，各家运营商的定制机答案不一样：移动定制机一次递归就给全量，电信定制机
+ * 对 {@code InternetGatewayDevice.WANDevice.} 直接回 9002 Internal error，得换成
+ * {@code InternetGatewayDevice.WANDevice.1.} 才认。所以每棵子树依次试「递归 → 逐层 →
+ * 按实例号 1..N 探测 → 已知路径 GPV」，哪种成了用哪种，策略本身也写在采集标准里。</p>
  *
  * <p>关键在于「抢窗口」：Inform 的响应体只能是 InformResponse，不能夹带下发；CPE 收到
  * InformResponse 后会立刻在<strong>同一条 TCP 连接</strong>上空 POST 一次，ACS 的指令就是在
@@ -66,6 +88,14 @@ public class DeviceCapabilityService {
     private static final String EVENT_BOOTSTRAP = "0 BOOTSTRAP";
 
     /**
+     * 采集状态：只拿到了已知路径那几个参数（设备身份），参数树没采到。
+     *
+     * <p>不算 success——它导不出型号能力档案，拿它归档会把一份残缺的 XML 锁成型号档案；
+     * 但也不是失败：设备身份进库了，页面上能看到这是什么猫。</p>
+     */
+    private static final String PARTIAL = "partial";
+
+    /**
      * 兜底的根数据模型节点：设备台账与会话都还没认出来时按 TR-098 处理。
      * 真正生效的根节点来自 {@link DataModel#detect}，别在不确定的地方写死字符串。
      */
@@ -81,6 +111,9 @@ public class DeviceCapabilityService {
      * 数据模型：前者用 {@code WANDevice./LANDevice.}，后者用 {@code WAN./Ethernet.Interface./WiFi.}；
      * TR-098 的 WiFi（{@code WLANConfiguration}）挂在 {@code LANDevice.} 下面，一并随 LAN 子树取回。
      * 某块子树取不到由 {@link #collectSubtree} 兜底处理，不影响其它子树。</p>
+     *
+     * <p>这两份是<strong>内置默认</strong>：只在采集标准没配子树时兜底，
+     * 各运营商真正生效的清单在 {@code acs.device.capability.profiles}。</p>
      */
     /**
      * TR-098（{@code InternetGatewayDevice.}）下的业务子树。
@@ -145,6 +178,10 @@ public class DeviceCapabilityService {
     private final CpeParameterMapper parameterMapper;
     private final QueueProperties queueProperties;
     private final com.tr069.acs.worklist.service.ModelTreeStore modelTreeStore;
+    /** 设备台账：取运营商，采完再把识别出的运营商写回去。 */
+    private final CpeDeviceMapper deviceMapper;
+    /** 按运营商的能力采集标准。 */
+    private final CapabilityProfiles capabilityProfiles;
 
     /** 采集总开关。 */
     @Value("${acs.device.capability.enabled:true}")
@@ -186,6 +223,17 @@ public class DeviceCapabilityService {
     @Value("${acs.device.capability.export-model-tree:true}")
     private boolean exportModelTree;
 
+    /**
+     * 是否按能力树里的厂商私有前缀（X_CMCC_ / X_CT-COM_ / X_CU_）回写设备运营商。
+     *
+     * <p>台账的运营商原本只有人工适配时才会填，而采集发生在适配之前：设备刚进来时运营商
+     * 是空的，只能按通用档采。认出前缀后写回台账，下一轮采集与型号归档就按这家运营商走。</p>
+     *
+     * <p>写死开启：这是「设备进来就能认出是哪家的运营商」的唯一自动来源，关掉后未适配设备
+     * 会一直停在通用档。要临时关掉改这里。</p>
+     */
+    private boolean autoDetectIsp = true;
+
     /** 下发前补采时最多等这么久，超时就按现有参数拼路径。 */
     @Value("${acs.device.capability.auto-collect-timeout-millis:120000}")
     private long autoCollectTimeoutMillis;
@@ -195,6 +243,68 @@ public class DeviceCapabilityService {
 
     /** 正在采集中的设备，避免同一台设备被并发采集。 */
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
+
+    /**
+     * 自适应档设备「连续扫不动参数树」的次数（sn → 连续失败次数）。
+     *
+     * <p>连续两次扫不动才降级为只读关键字段。为什么要两次：9002 不一定是设备不支持，
+     * 也可能只是它当时状态不对（正在重启、CWMP 模块忙）。只凭一次就把设备永久判成
+     * 「扫不动」，会让本该采到完整能力树的设备从此只剩十几条关键字段，
+     * 型号档案也跟着停更——这个代价太大，宁可多试一轮。</p>
+     */
+    private final Map<String, Integer> treeFailures = new ConcurrentHashMap<>();
+
+    /** 连续扫不动多少次才降级。 */
+    private static final int TREE_FAIL_THRESHOLD = 2;
+
+    /**
+     * 一轮采集的总时长上限（毫秒）。
+     *
+     * <p>设备不在下发窗口时（比如手动点采集，而设备的下一次上报要十几分钟后），
+     * 指令只会压在队列里，等响应的 future 就一直挂着。没有上限的话这个 future
+     * 永远不完成，{@link #inFlight} 也跟着不释放——这台设备从此再也采不了，
+     * 只能重启 ACS。到点就结束本轮，指令清掉或留到下一轮。</p>
+     */
+    @Value("${acs.capability.collect-timeout-ms:600000}")
+    private long collectTimeoutMillis;
+
+    /** 本轮采集的到期时刻（sn → 毫秒时间戳）。 */
+    private final Map<String, Long> deadlines = new ConcurrentHashMap<>();
+
+    /** 连接请求的默认账号（ACS -> CPE），配置里写 auto 或留空表示设备侧免认证。 */
+    @Value("${acs.auth.acs-to-cpe-username:}")
+    private String defaultAcsToCpeUser;
+
+    @Value("${acs.auth.acs-to-cpe-password:}")
+    private String defaultAcsToCpePassword;
+
+    private static final String AUTH_AUTO = "auto";
+
+    /**
+     * 是否在手动采集前主动唤醒设备（连接请求）。
+     *
+     * <p>不是每家的猫都吃这一套：有的设备对这个请求要求 HTTP 认证，ACS 手上没有凭据就
+     * 只能拿到 401，而它的采集本来靠周期上报也跑得好好的。现场确认不需要就整个关掉。</p>
+     */
+    @Value("${acs.capability.wakeup-enabled:true}")
+    private boolean wakeupEnabled;
+
+    /** 唤醒过但没凭据的设备（sn → 下次再试的时刻），免得每次采集都撞一次 401。 */
+    private final Map<String, Long> wakeupRetryAfter = new ConcurrentHashMap<>();
+
+    /** 无凭据唤醒失败后隔多久再试（毫秒）。 */
+    private static final long WAKEUP_RETRY_INTERVAL = 60 * 60 * 1000L;
+
+    /** 设备最近有通信就算还在下发窗口，不必叫它（秒）。 */
+    private static final long WAKEUP_SESSION_FRESH_SECONDS = 60L;
+
+    /**
+     * 从 Inform 上报参数预判出的运营商（sn → 运营商代码）。
+     *
+     * <p>只在这次 Inform 触发的采集里用：采集跑在台账入库之前，查库拿不到运营商，
+     * 靠它先顶上。台账入库后以库里的为准（人工申报过的也以申报为准）。</p>
+     */
+    private final Map<String, String> informIsp = new ConcurrentHashMap<>();
 
     /**
      * 队列关闭时退回会话内存 outbox，此时拿不到 rpc_record 主键，
@@ -221,6 +331,9 @@ public class DeviceCapabilityService {
         }
         String sn = session.getSn();
         try {
+            // 采集跑在入库之前（要抢空 POST 窗口），这时台账上还没有运营商，
+            // 只靠查库就会按通用档开跑。Inform 自带私有前缀，先记下来给采集用
+            rememberInformIsp(sn, inform);
             boolean bootstrap = hasBootstrap(inform);
             if (bootstrap && forceOnBootstrap) {
                 start(sn, resolveRoot(session, inform), "bootstrap");
@@ -233,6 +346,32 @@ public class DeviceCapabilityService {
             // 采集只是旁路能力，任何异常都不能影响 Inform 的正常应答
             log.warn("触发设备能力采集失败: sn={}, err={}", sn, e.getMessage());
         }
+    }
+
+    /**
+     * 从 Inform 上报的参数里认运营商，记下来给紧接着的这次采集用。
+     *
+     * <p>为什么不等查库：{@link #onInform} 必须在回复 InformResponse 之前跑完（要抢空 POST
+     * 窗口），而台账入库走队列消费者，晚 100ms 以上。所以第一次上报的设备，采集开跑时
+     * 台账上还没有运营商，只能按通用档走——电信设备就享受不到本档的策略
+     * （自适应降级、绕开 {@code X_CTC_}）。</p>
+     */
+    private void rememberInformIsp(String sn, InformRequest inform) {
+        if (inform == null || inform.getParameterList() == null) {
+            return;
+        }
+        List<String> paths = new ArrayList<>();
+        for (ParameterValueStruct p : inform.getParameterList()) {
+            if (p != null && p.getName() != null) {
+                paths.add(p.getName());
+            }
+        }
+        Isp detected = Isp.detect(paths);
+        if (detected == null || detected == Isp.STANDARD) {
+            return;
+        }
+        informIsp.put(sn, detected.getCode());
+        log.info("按 Inform 私有前缀预判采集标准: sn={}, isp={}", sn, detected.getCode());
     }
 
     /**
@@ -348,19 +487,44 @@ public class DeviceCapabilityService {
     private CollectStatus start(String sn, String root, String trigger) {
         CollectStatus current = statuses.get(sn);
         if (current != null && "running".equals(current.getStatus())) {
-            return current;
+            if (System.currentTimeMillis() - current.getStartTime() < collectTimeoutMillis) {
+                return current;
+            }
+            // 上一轮卡死了：设备不在下发窗口，指令压在队列里等不到回应，future 没个头。
+            // 不强制收尾的话 {inFlight} 永远占着，这台设备从此再也采不了，只能重启 ACS。
+            log.warn("上一轮采集超时未结束，强制收尾后重开: sn={}, 已运行={}ms",
+                    sn, System.currentTimeMillis() - current.getStartTime());
+            current.fail("上一轮采集超时未结束");
+            inFlight.remove(sn);
+            deadlines.remove(sn);
         }
         if (!inFlight.add(sn)) {
             return current != null ? current : new CollectStatus(sn, trigger);
         }
         CollectStatus status = new CollectStatus(sn, trigger);
         statuses.put(sn, status);
-        log.info("开始采集设备能力: sn={}, root={}, trigger={}, batch={}",
-                sn, root, trigger, status.getBatch());
+        log.info("开始采集设备能力: sn={}, root={}, trigger={}, batch={}, 时限={}ms",
+                sn, root, trigger, status.getBatch(), collectTimeoutMillis);
+        dropStaleRpc(sn, status.getBatch());
+        deadlines.put(sn, System.currentTimeMillis() + collectTimeoutMillis);
 
+        // 手动采集是「人点下去的那一刻」开跑的，设备多半不在下发窗口里——光猫十几分钟
+        // 才上报一次，不叫它一声就得干等。先叫再入队：设备收到连接请求到真正上报
+        // 有几百毫秒网络往返，足够第一批指令进队列
+        if ("manual".equals(trigger)) {
+            wakeUp(sn);
+        }
+        // 手动采集时设备多半不在线（下一次上报可能十几分钟后），指令只能排在队列里。
+        // 把这一点写进状态，界面上不至于看着像卡住了
+        CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
+        if (session == null || session.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
+            status.setPhase("等待设备上报");
+            log.info("设备当前不在下发窗口，指令已排队，将随它下一次上报下发: sn={}", sn);
+        }
         runCollect(sn, root, status.getBatch(), status)
                 .whenComplete((ignored, ex) -> {
                     inFlight.remove(sn);
+                    deadlines.remove(sn);
                     status.setFinishTime(System.currentTimeMillis());
                     if (ex != null) {
                         status.fail(String.valueOf(ex.getMessage()));
@@ -378,6 +542,13 @@ public class DeviceCapabilityService {
                     log.info("设备能力采集结束: sn={}, status={}, 路径={}, 读值={}, 耗时={}ms",
                             sn, status.getStatus(), status.getNameCount(), status.getValueCount(),
                             status.getFinishTime() - status.getStartTime());
+                    if (!"success".equals(status.getStatus())) {
+                        // 每棵子树试过哪些姿势、设备回了什么故障码，全在这一条里，
+                        // 不用去翻散落的单条日志
+                        log.warn("采集未成功，各环节明细: sn={}, 结论={}, 明细={}",
+                                sn, status.getMessage(),
+                                status.getErrors().isEmpty() ? "无" : String.join(" | ", status.getErrors()));
+                    }
                     if (exportModelTree && "success".equals(status.getStatus())) {
                         exportModelTreeAsync(sn);
                     }
@@ -394,7 +565,9 @@ public class DeviceCapabilityService {
         try {
             executor().execute(() -> {
                 try {
-                    modelTreeStore.export(sn, false);
+                    // 归档走统一入口：任何运营商的猫都先截到 models/standard/standard/，
+                    // 按运营商分目录是人工适配申报时才做的事
+                    modelTreeStore.exportCollected(sn);
                 } catch (Exception e) {
                     log.warn("导出型号能力树失败: sn={}, err={}", sn, e.getMessage());
                 }
@@ -413,17 +586,68 @@ public class DeviceCapabilityService {
         status.setPhase("names");
         status.setStartTime(System.currentTimeMillis());
 
-        CompletableFuture<List<Node>> names = collectNames(sn, root, status);
+        String isp = deviceIsp(sn);
+        if (isp == null || isp.isBlank()) {
+            // 台账还没登记（首次上报，入库走队列会比这次采集晚）：用 Inform 认出的那个
+            isp = informIsp.get(sn);
+        }
+        CapabilityProfiles.Profile profile = profileFor(isp);
+        log.info("本次采集采用的采集标准: sn={}, isp={}, 标准={}, 策略={}",
+                sn, isp, profileName(profile), strategyText(profile));
+
+        if (profile.isValuesOnly()
+                || (profile.isAdaptive() && treeFailures.getOrDefault(sn, 0) >= TREE_FAIL_THRESHOLD)) {
+            // 电信天翼网关这类设备：对象路径的 GPN 一律不答（连「只列下一层」都 9002），
+            // 与官方 ITMS 一致，不扫参数树，只按需读清单里的关键字段。
+            // 自适应档是上一轮刚撞过 9002 记住的，本次直接跳过，不再白等一个周期
+            return probeGlobalPaths(sn, root, profile, status).thenApply(probed -> {
+                if (probed) {
+                    status.setStatus(PARTIAL);
+                    status.setMessage("按采集标准只读关键字段，未扫参数树");
+                } else {
+                    status.fail("关键字段一个都没读到: " + String.join(", ", status.getErrors()));
+                }
+                return null;
+            });
+        }
+
+        CompletableFuture<List<Node>> names = collectNames(sn, root, profile, status);
 
         return names.thenComposeAsync(nodes -> {
             if (nodes.isEmpty()) {
-                status.fail("未能获取参数路径: " + (status.getErrors().isEmpty()
-                        ? "子树均未返回节点: " + String.join(", ", resolveSubtrees(root))
-                        : String.join("; ", status.getErrors())));
-                return CompletableFuture.completedFuture(null);
+                // 整棵树的 GPN 都没拿到：退到采集标准登记的已知路径直接读值，
+                // 至少把设备身份留下，别让这台设备在库里什么都不剩
+                if (profile.isAdaptive()) {
+                    // 记一次扫不动：连续两次才降级为只读关键字段，避免设备偶发 9002
+                    // （重启中、CWMP 模块忙）就被永久判成扫不动
+                    int fails = treeFailures.merge(sn, 1, Integer::sum);
+                    log.warn("参数树扫不动（连续 {} 次）: sn={}, 明细={}", fails, sn,
+                            status.getErrors().isEmpty() ? "子树均未返回节点"
+                                    : String.join("; ", status.getErrors()));
+                    if (fails >= TREE_FAIL_THRESHOLD) {
+                        log.warn("连续 {} 次扫不动参数树，后续采集改走只读关键字段: sn={}",
+                                fails, sn);
+                    }
+                }
+                return probeGlobalPaths(sn, root, profile, status).thenApply(probed -> {
+                    if (probed) {
+                        status.setStatus(PARTIAL);
+                        status.setMessage("参数树未采到，只读到已知路径参数（设备身份）");
+                    } else {
+                        status.fail("未能获取参数路径: " + (status.getErrors().isEmpty()
+                                ? "子树均未返回节点: " + String.join(", ", resolveSubtrees(root, profile))
+                                : String.join("; ", status.getErrors())));
+                    }
+                    return null;
+                });
             }
+            // 扫到了就清零：之前的失败只是偶发，别累积到降级阈值
+            treeFailures.remove(sn);
             List<Node> tree = completeTree(nodes, root);
             saveTree(sn, batch, tree);
+            if (autoDetectIsp) {
+                detectAndWriteIsp(sn, pathsOf(tree));
+            }
             status.setNameCount(tree.size());
             status.setObjectCount(countNodes(tree, true));
             status.setParamCount(countNodes(tree, false));
@@ -450,19 +674,95 @@ public class DeviceCapabilityService {
      *
      * <p>一个会话同时只允许一条未回应的下发，所以子树之间必须串行。</p>
      */
-    private CompletableFuture<List<Node>> collectNames(String sn, String root, CollectStatus status) {
-        List<String> paths = resolveSubtrees(root);
+    private CompletableFuture<List<Node>> collectNames(String sn, String root,
+                                                       CapabilityProfiles.Profile profile,
+                                                       CollectStatus status) {
+        List<String> paths = resolveSubtrees(root, profile);
         log.info("按子树采集设备能力: sn={}, 子树={}", sn, paths);
-        List<Node> sink = Collections.synchronizedList(new ArrayList<>());
         AtomicInteger rounds = new AtomicInteger();
-        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        // 各子树同时提交：设备一次只处理一条（MaxEnvelopes=1），但队列里要一直有货——
+        // 下发窗口是设备给的，队列一空我们就得回 204，华为这类固件收到 204 就结束会话，
+        // 后面每棵子树都得等它下一次上报（周期常常十几分钟）。各子树自带桶，
+        // 最后按声明顺序合并，结果与串行一致
+        List<List<Node>> buckets = new ArrayList<>();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (String path : paths) {
+            if (status.isAborted()) {
+                break;
+            }
+            List<Node> bucket = Collections.synchronizedList(new ArrayList<>());
+            buckets.add(bucket);
+            futures.add(collectSubtree(sn, path, profile, bucket, rounds, status));
+        }
+        CompletableFuture<List<Node>> done = CompletableFuture
+                .allOf(futures.toArray(new CompletableFuture[0]))
+                .thenApply(v -> {
+                    List<Node> sink = new ArrayList<>();
+                    buckets.forEach(sink::addAll);
+                    return sink;
+                });
+        if (root == null || root.isBlank()) {
+            return done;
+        }
+        return done.thenComposeAsync(sink -> {
+            if (!sink.isEmpty() || status.isAborted()) {
+                return CompletableFuture.completedFuture(sink);
+            }
+            return probeRoot(sn, root, profile, rounds, status).thenApply(rootNodes -> {
+                if (rootNodes.isEmpty()) {
+                    return sink;
+                }
+                List<Node> merged = new ArrayList<>(sink.size() + rootNodes.size());
+                merged.addAll(rootNodes);
+                merged.addAll(sink);
+                return merged;
+            });
+        }, executor());
+    }
+
+    /**
+     * 逐棵子树都问不出来时的最后一步：拿整棵树的根再问一遍。
+     *
+     * <p>子树全军覆没不一定是设备没这块能力，也可能是这固件压根不吃「子树路径」——
+     * 只知道 {@code InternetGatewayDevice.}，给个 {@code WANDevice.} 就回 9002。
+     * 根节点能出东西的话，{@code NextLevel=false} 一次就是整棵树。
+     * 这里把所有姿势过一遍（递归 / 逐层 × 带尾点 / 不带尾点），全落空才算这台拉不了参数树。</p>
+     */
+    private CompletableFuture<List<Node>> probeRoot(String sn, String root,
+                                                    CapabilityProfiles.Profile profile,
+                                                    AtomicInteger rounds, CollectStatus status) {
+        List<String> candidates = new ArrayList<>();
+        candidates.add(root);
+        // 少数老固件认「不带尾点」的写法
+        if (root.endsWith(".")) {
+            String trimmed = root.substring(0, root.length() - 1);
+            if (!trimmed.isBlank()) {
+                candidates.add(trimmed);
+            }
+        }
+        log.info("子树都问不出来，改从根节点试 GetParameterNames: sn={}, root={}", sn, root);
+        List<Node> sink = Collections.synchronizedList(new ArrayList<>());
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (String candidate : candidates) {
+            String path = candidate;
             chain = chain.thenComposeAsync(v -> {
-                if (status.isAborted()) {
+                if (!sink.isEmpty() || status.isAborted()) {
                     return CompletableFuture.<Void>completedFuture(null);
                 }
-                status.setPhase("names:" + path);
-                return collectSubtree(sn, path, sink, rounds, status);
+                return fetchRecursive(sn, path, sink, status).thenComposeAsync(hit -> {
+                    if (hit) {
+                        log.info("根节点成功取到参数树: sn={}, path={}, 节点={}", sn, path, sink.size());
+                        return CompletableFuture.<Void>completedFuture(null);
+                    }
+                    List<Node> level = Collections.synchronizedList(new ArrayList<>());
+                    return fetchLevel(sn, path, level, rounds, status, profile).thenApply(nodes -> {
+                        if (nodes != null && nodes.booleanValue()) {
+                            sink.addAll(level);
+                            log.info("根节点逐层取到参数树: sn={}, path={}, 节点={}", sn, path, sink.size());
+                        }
+                        return null;
+                    });
+                }, executor());
             }, executor());
         }
         return chain.thenApply(v -> sink);
@@ -475,46 +775,664 @@ public class DeviceCapabilityService {
      * 以及设备不吃 NextLevel=false。两者都往 {@link #expandLevel} 兜一次，宁可多一轮来回，
      * 也不误判成设备没有这块业务；会话级故障（离线、超时）才直接中止。</p>
      */
-    private CompletableFuture<Void> collectSubtree(String sn, String path, List<Node> sink,
+    private CompletableFuture<Void> collectSubtree(String sn, String path,
+                                                   CapabilityProfiles.Profile profile,
+                                                   List<Node> sink,
                                                    AtomicInteger rounds, CollectStatus status) {
-        return getParameterNames(sn, path, false).thenComposeAsync(resp -> {
-            if (resp != null && !resp.isFault()) {
-                List<Node> nodes = parseNodes(resp);
-                if (!nodes.isEmpty()) {
-                    sink.addAll(nodes);
-                    return CompletableFuture.<Void>completedFuture(null);
-                }
-                log.info("子树递归拉取为空，改用逐层展开: sn={}, subtree={}", sn, path);
-            } else {
-                if (isSessionFault(resp)) {
-                    status.addError("GetParameterNames(" + path + ") 失败: " + faultText(resp));
-                    // 单纯的指令超时≠会话没了：设备忙、单条响应慢时其它子树照样能采，
-                    // 一刀切 abort 会把「WAN 子树超时」放大成「整棵树采不到」；
-                    // 只有连接断开/会话关闭（设备真的不在了）才中止全部子树
-                    if (!isTimeoutFault(resp)) {
-                        status.abort();
-                        return CompletableFuture.<Void>completedFuture(null);
-                    }
-                } else {
-                    status.addError("GetParameterNames(" + path + ") 失败: " + faultText(resp));
-                }
+        boolean levelFirst = profile != null && profile.isLevelFirst();
+        CompletableFuture<Boolean> first = levelFirst
+                ? fetchLevel(sn, path, sink, rounds, status, profile)
+                : fetchRecursive(sn, path, sink, status);
+        return first.thenComposeAsync(hit -> {
+            if (hit || status.isAborted()) {
+                return CompletableFuture.<Void>completedFuture(null);
             }
             if (!fallbackNextLevel) {
                 return CompletableFuture.<Void>completedFuture(null);
             }
-            List<Node> branch = Collections.synchronizedList(new ArrayList<>());
-            return expandLevel(sn, path, branch, rounds, status)
-                    .thenAccept(ignored -> sink.addAll(branch));
+            // 第一种姿势没拿到就换另一种：递归不成改逐层，逐层不成改递归
+            CompletableFuture<Boolean> second = levelFirst
+                    ? fetchRecursive(sn, path, sink, status)
+                    : fetchLevel(sn, path, sink, rounds, status, profile);
+            return second.thenComposeAsync(again -> {
+                if (again || status.isAborted()) {
+                    return CompletableFuture.<Void>completedFuture(null);
+                }
+                // 整棵子树都问不出来：设备多半不吃「对象 + 待定实例号」的路径，
+                // 改按实例号 1..N 逐个探（电信定制机对 WANDevice. 回 9002，WANDevice.1. 正常）
+                return probeInstances(sn, path, profile, sink, rounds, status)
+                        .thenComposeAsync(probed -> {
+                            if (probed || status.isAborted()) {
+                                return CompletableFuture.<Void>completedFuture(null);
+                            }
+                            return probeKnownPaths(sn, path, profile, sink, status)
+                                    .<Void>thenApply(ignored -> null);
+                        }, executor());
+            }, executor());
         }, executor());
     }
 
     /**
-     * 待采集的子树绝对路径：把固定子树拼到设备的数据模型根节点下。
+     * 递归拉一棵子树：{@code NextLevel=false} 一次拿全量。
+     *
+     * @return 是否拿到了节点
+     */
+    private CompletableFuture<Boolean> fetchRecursive(String sn, String path, List<Node> sink,
+                                                      CollectStatus status) {
+        return getParameterNames(sn, path, false).thenApply(resp -> {
+            if (resp == null || resp.isFault()) {
+                status.addError("GetParameterNames(" + path + ") 递归失败: " + faultText(resp));
+                if (isSessionFault(resp) && !isTimeoutFault(resp)) {
+                    status.abort();
+                }
+                return false;
+            }
+            List<Node> nodes = parseNodes(resp);
+            if (nodes.isEmpty()) {
+                log.info("子树递归拉取为空: sn={}, subtree={}", sn, path);
+                return false;
+            }
+            sink.addAll(nodes);
+            return true;
+        });
+    }
+
+    /**
+     * 逐层展开一棵子树：{@code NextLevel=true} 拿到下一层，命中的对象继续往下钻。
+     *
+     * @return 是否拿到了节点
+     */
+    private CompletableFuture<Boolean> fetchLevel(String sn, String path, List<Node> sink,
+                                                  AtomicInteger rounds, CollectStatus status,
+                                                  CapabilityProfiles.Profile profile) {
+        List<Node> branch = Collections.synchronizedList(new ArrayList<>());
+        return expandLevel(sn, path, branch, rounds, status, profile).thenApply(nodes -> {
+            if (branch.isEmpty()) {
+                return false;
+            }
+            sink.addAll(branch);
+            return true;
+        });
+    }
+
+    /**
+     * 按实例号逐个探测：{@code WANDevice.} 问不出来时，改问 {@code WANDevice.1.} / {@code .2.} ……
+     *
+     * <p>设备对「对象后面没跟实例号」的路径回 9002 Internal error 时，这是唯一还能拿到树的办法。
+     * 代价是每个实例号要等设备一次上报周期，所以探到第一个不存在的实例号就停，
+     * 上限由采集标准的 {@code max-instances} 控制。</p>
+     */
+    private CompletableFuture<Boolean> probeInstances(String sn, String path,
+                                                      CapabilityProfiles.Profile profile,
+                                                      List<Node> sink, AtomicInteger rounds,
+                                                      CollectStatus status) {
+        if (profile == null || !profile.isInstanceProbe()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        int max = profile.getMaxInstances();
+        if (max <= 0) {
+            return CompletableFuture.completedFuture(false);
+        }
+        log.info("递归与逐层都没拿到，改按实例号探测: sn={}, subtree={}, 实例号 1..{}", sn, path, max);
+        AtomicBoolean alive = new AtomicBoolean(true);
+        AtomicBoolean hit = new AtomicBoolean(false);
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (int i = 1; i <= max; i++) {
+            String child = path + i + ".";
+            chain = chain.thenComposeAsync(v -> {
+                if (!alive.get() || status.isAborted()) {
+                    return CompletableFuture.<Void>completedFuture(null);
+                }
+                List<Node> branch = Collections.synchronizedList(new ArrayList<>());
+                return fetchRecursive(sn, child, branch, status)
+                        .thenComposeAsync(recursiveHit -> {
+                            if (recursiveHit) {
+                                sink.addAll(branch);
+                                hit.set(true);
+                                return CompletableFuture.completedFuture(true);
+                            }
+                            return fetchLevel(sn, child, branch, rounds, status, profile)
+                                    .thenApply(levelHit -> {
+                                        if (levelHit) {
+                                            sink.addAll(branch);
+                                            hit.set(true);
+                                        } else {
+                                            // 这个实例号不存在，后面更大的也不会有
+                                            alive.set(false);
+                                        }
+                                        return levelHit;
+                                    });
+                        }, executor())
+                        .thenAccept(ignored -> {
+                        });
+            }, executor());
+        }
+        return chain.thenApply(v -> {
+            if (hit.get()) {
+                log.info("子树按实例号探测成功: sn={}, subtree={}", sn, path);
+            } else {
+                log.warn("子树按实例号探测也没拿到: sn={}, subtree={}, 实例号 1..{}", sn, path, max);
+            }
+            return hit.get();
+        });
+    }
+
+    /**
+     * 最后一道兜底：GetParameterNames 各种姿势都不认时，按采集标准里登记的已知路径
+     * 直接发 GetParameterValues（一条一回），至少把业务参数读回来。
+     *
+     * <p>只在采集标准显式配了 {@code probe-paths} 时才走，默认不开。
+     * 清单只放真正用得上的路径：读不到的会被二分拆批剔掉，每剔除一轮就是一次来回。
+     * （早年间每条路径要等设备一个上报周期，所以清单刻意保持短；指令捎带打通之后，
+     * 一个会话里能连发几十条，这层顾虑没有了，但清单仍不宜膨胀。）</p>
+     */
+    private CompletableFuture<Boolean> probeKnownPaths(String sn, String path,
+                                                       CapabilityProfiles.Profile profile,
+                                                       List<Node> sink, CollectStatus status) {
+        if (profile == null || profile.getProbePaths() == null || profile.getProbePaths().isEmpty()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        String root = rootOf(path);
+        List<String> targets = new ArrayList<>();
+        for (String candidate : profile.getProbePaths()) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+            String relative = candidate.trim();
+            String absolute = relative.startsWith(root) ? relative : root + relative;
+            if (absolute.startsWith(path)) {
+                targets.add(absolute);
+            }
+        }
+        if (targets.isEmpty()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (String target : targets) {
+            chain = chain.thenComposeAsync(v -> {
+                if (status.isAborted()) {
+                    return CompletableFuture.<Void>completedFuture(null);
+                }
+                return getParameterValues(sn, List.of(target)).thenAccept(resp -> {
+                    if (resp == null || resp.isFault()) {
+                        status.addError("已知路径探测失败: " + target + " (" + faultText(resp) + ")");
+                        return;
+                    }
+                    List<CpeParameter> rows = parseValues(sn, resp);
+                    if (rows.isEmpty()) {
+                        return;
+                    }
+                    saveValues(sn, rows);
+                    sink.add(new Node(target, false, true));
+                });
+            }, executor());
+        }
+        return chain.thenComposeAsync(v -> expandInstances(sn, root, sink, status), executor())
+                .thenApply(v -> true);
+    }
+
+    /** 已做过实例扩展的「sn|root」，同一次采集里每棵子树的兜底不重复扩展。 */
+    private final Set<String> expandedRoots = ConcurrentHashMap.newKeySet();
+
+    /** 设备上报的条目数；解析不出来按 0 处理，也就是不扩实例。 */
+    private static int intOf(String value) {
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 按设备自报的条目数把实例 2..N 补采回来。
+     *
+     * <p>兜底清单只能写死一个实例号（{@code LANEthernetInterfaceConfig.1}），可设备报的
+     * {@code LANEthernetInterfaceNumberOfEntries} 才是真口数：MSG2100E 自报 4 口，
+     * 兜底清单只问了 1 口，采完页面就只能画出一个网口，申报 4 口也看不出依据。
+     * 这里先读三个条目数，再按它把 2..N 的开关、状态、速率、号码补上；读不到的路径
+     * 会被拆批剔掉，不影响已有的那一口。</p>
+     */
+    private CompletableFuture<Void> expandInstances(String sn, String root, List<Node> sink,
+                                                    CollectStatus status) {
+        if (root == null || root.isEmpty() || !expandedRoots.add(sn + "|" + root)) {
+            return CompletableFuture.completedFuture(null);
+        }
+        List<String> entries = List.of(
+                root + "LANDevice.1.LANEthernetInterfaceNumberOfEntries",
+                root + "Services.VoiceService.1.VoiceProfile.1.LineNumberOfEntries",
+                root + "Services.VoiceService.1.VoiceProfile.1.PhyInterfaceNumberOfEntries");
+        return getParameterValues(sn, entries).thenComposeAsync(resp -> {
+            if (resp == null || resp.isFault()) {
+                return CompletableFuture.completedFuture(null);
+            }
+            List<CpeParameter> rows = parseValues(sn, resp);
+            saveValues(sn, rows);
+            int lanPorts = 0;
+            int lines = 0;
+            for (CpeParameter row : rows) {
+                String leaf = nameOf(row.getParamPath());
+                if ("LANEthernetInterfaceNumberOfEntries".equals(leaf)) {
+                    lanPorts = Math.max(lanPorts, intOf(row.getParamValue()));
+                } else if ("LineNumberOfEntries".equals(leaf)) {
+                    lines = Math.max(lines, intOf(row.getParamValue()));
+                }
+            }
+            List<String> targets = new ArrayList<>();
+            // 最多认到 32，防止设备报个离谱的数把下发队列灌满
+            for (int i = 2; i <= Math.min(lanPorts, 32); i++) {
+                String base = root + "LANDevice.1.LANEthernetInterfaceConfig." + i + ".";
+                targets.add(base + "Enable");
+                targets.add(base + "Status");
+                targets.add(base + "MACAddress");
+                targets.add(base + "MaxBitRate");
+            }
+            for (int i = 2; i <= Math.min(lines, 32); i++) {
+                String base = root + "Services.VoiceService.1.VoiceProfile.1.Line." + i + ".";
+                targets.add(base + "Enable");
+                targets.add(base + "DirectoryNumber");
+            }
+            if (targets.isEmpty()) {
+                return CompletableFuture.completedFuture(null);
+            }
+            log.info("按条目数补采实例: sn={}, LAN 口数={}, Line 数={}, 追加路径 {} 条",
+                    sn, lanPorts, lines, targets.size());
+            CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+            for (List<String> batch : partition(targets, Math.max(1, valueBatchSize))) {
+                chain = chain.thenComposeAsync(v -> readValuesBatch(sn, batch, status, 0, 1),
+                        executor());
+            }
+            return chain.thenAccept(v -> {
+                for (String target : targets) {
+                    sink.add(new Node(target, false, true));
+                }
+            });
+        }, executor());
+    }
+
+    /**
+     * 这个对象是否在采集标准的「禁止展开」名单里：比对对象名（路径末段）的前缀。
+     *
+     * <p>电信定制机 {@code X_CTC_} 那一套（天翼插件、ITMS 探针、天翼管家、DPI 软探针、
+     * 业务虚拟对象）固件一遍历进去就抛 9002 Internal error，整棵子树连带报废；
+     * ITMS 自己也从不递归遍历，只按需读指定字段。展开时绕开这些分支，
+     * 标准子树才走得完。</p>
+     */
+    private static boolean isSkipped(String path, CapabilityProfiles.Profile profile) {
+        if (profile == null || profile.getSkipPrefixes() == null) {
+            return false;
+        }
+        String name = nameOf(path).toUpperCase(Locale.ROOT);
+        for (String prefix : profile.getSkipPrefixes()) {
+            if (prefix != null && !prefix.isBlank()
+                    && name.startsWith(prefix.trim().toUpperCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 最后一档兜底（整棵树级别）：GetParameterNames 一句都问不出来时，按采集标准登记的
+     * 已知路径直接发 GetParameterValues。
+     *
+     * <p>与 {@link #probeKnownPaths} 的分工：后者只在单棵子树内兜底，这里管的是
+     * 「设备连一句话都不答」的场景，路径不限于业务子树，主要是 DeviceInfo 那几个身份参数。</p>
+     *
+     * @return 是否读到了值
+     */
+    private CompletableFuture<Boolean> probeGlobalPaths(String sn, String root,
+                                                        CapabilityProfiles.Profile profile,
+                                                        CollectStatus status) {
+        if (profile == null || profile.getProbePaths() == null || profile.getProbePaths().isEmpty()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        List<String> paths = new ArrayList<>();
+        for (String candidate : profile.getProbePaths()) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+            String relative = candidate.trim();
+            paths.add(relative.startsWith(root) ? relative : root + relative);
+        }
+        if (paths.isEmpty()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        log.info("按已知路径直接读值（不扫参数树）: sn={}, 路径 {} 条", sn, paths.size());
+        status.setPhase("values");
+        return getParameterValues(sn, paths).thenCompose(resp -> {
+            if (resp != null && !resp.isFault()) {
+                List<CpeParameter> rows = parseValues(sn, resp);
+                if (!rows.isEmpty()) {
+                    saveValues(sn, rows);
+                    status.addValueCount(rows.size());
+                    // 读到 X_CT-COM_ / X_CTC_ 这类私有参数就认运营商：
+                    // 不走参数树采集这条路的设备，这是唯一的识别来源
+                    if (autoDetectIsp) {
+                        List<String> read = new ArrayList<>(rows.size());
+                        for (CpeParameter row : rows) {
+                            read.add(row.getParamPath());
+                        }
+                        detectAndWriteIsp(sn, read);
+                    }
+                    log.warn("只拿到已知路径参数，参数树未采到: sn={}, 读到 {} 条", sn, rows.size());
+                    return CompletableFuture.completedFuture(true);
+                }
+            }
+            // 整批被拒：多半是清单里混着这台设备不支持的路径（电信固件对 GPV 也挑食），
+            // 走二分拆批把能读的剔出来
+            return readValuesBatch(sn, paths, status, 0, 1).thenApply(v -> {
+                if (status.getValueCount() <= 0) {
+                    return false;
+                }
+                log.warn("只拿到已知路径参数，参数树未采到: sn={}, 读到 {} 条", sn, status.getValueCount());
+                return true;
+            });
+        });
+    }
+
+    /**
+     * 本次采集采用的采集标准：按设备台账的运营商取，台账没登记就走通用档。
+     */
+    private CapabilityProfiles.Profile profileFor(String isp) {
+        if (capabilityProfiles == null) {
+            return new CapabilityProfiles.Profile();
+        }
+        return capabilityProfiles.forIsp(Isp.of(isp));
+    }
+
+    /**
+     * 设备台账上的运营商，查不到返回 null（由 {@link Isp#of} 归到通用档）。
+     */
+    private String deviceIsp(String sn) {
+        try {
+            CpeDevice device = deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
+                    .eq(CpeDevice::getSn, sn)
+                    .last("LIMIT 1"));
+            return device == null ? null : device.getIsp();
+        } catch (Exception e) {
+            log.warn("查询设备运营商失败，按通用档采集: sn={}, err={}", sn, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 用设备的 ConnectionRequestURL 反连唤醒它，让它立刻来上报。
+     *
+     * <p>手动采集是人点下去的那一刻开跑的，可设备不一定在下发窗口里——光猫往往十几分钟
+     * 才上报一次，指令只能压在队列里干等，等到采集时限到了还是一场空。TR-069 允许 ACS
+     * 反向请求设备建会话（ConnectionRequest），设备收到就会立刻 Inform，
+     * 队列里的指令马上能发出去。</p>
+     *
+     * <p>唤醒失败一律忽略：URL 没上报过、设备侧端口不通、要求认证都可能，
+     * 这时只是退化成「等它自己上报」，不牵连采集本身。</p>
+     */
+    private void wakeUp(String sn) {
+        if (!wakeupEnabled) {
+            return;
+        }
+        Long retryAfter = wakeupRetryAfter.get(sn);
+        if (retryAfter != null && System.currentTimeMillis() < retryAfter) {
+            return;
+        }
+        // 设备刚上报过、还在下发窗口里的话直接下发就行，不必多此一举去叫它
+        CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
+        if (session != null && !session.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
+            return;
+        }
+        CpeDevice device = findDevice(sn);
+        if (device == null) {
+            return;
+        }
+        String url = device.getConnectionRequestUrl();
+        if (url == null || url.isBlank()) {
+            return;
+        }
+        // 台账上的设备级凭据优先，没有就用全局配置（电信现场多见 itms/itms）
+        String user = firstNonBlank(device.getAcsToCpeName(), defaultAcsToCpeUser);
+        String password = firstNonBlank(device.getAcsToCpePassword(), defaultAcsToCpePassword);
+        if (authDisabled(user)) {
+            // 台账和全局都没配：翻这台已经采集到的参数——采过完整树的设备，
+            // 凭据的值本来就在库里，不用为它再采一轮
+            user = paramValue(sn, "ManagementServer.ConnectionRequestUsername");
+            password = paramValue(sn, "ManagementServer.ConnectionRequestPassword");
+        }
+        boolean withCredentials = !authDisabled(user);
+        try {
+            HttpResponse<String> resp = sendConnectionRequest(url, user, password);
+            if (resp.statusCode() >= 400) {
+                if (!withCredentials && resp.statusCode() == 401) {
+                    // 手上没有凭据，这台又要求认证：短期内别再撞了。
+                    // 唤醒只是加速手段，拿不到就等它自己上报，不影响采集
+                    wakeupRetryAfter.put(sn, System.currentTimeMillis() + WAKEUP_RETRY_INTERVAL);
+                    log.info("设备要求认证且本机未配置连接请求凭据，跳过唤醒（等它自行上报）: "
+                            + "sn={}, url={}。需要唤醒就配 acs.auth.acs-to-cpe-username/password，"
+                            + "或让它采集一轮把 ManagementServer.ConnectionRequestUsername 读回来", sn, url);
+                } else {
+                    log.warn("连接请求被设备拒绝: sn={}, url={}, 响应码={}, 已带认证={}",
+                            sn, url, resp.statusCode(), withCredentials);
+                }
+            } else {
+                log.info("已发连接请求唤醒设备: sn={}, url={}, 响应码={}", sn, url, resp.statusCode());
+            }
+        } catch (Exception e) {
+            log.warn("连接请求唤醒失败，改为等待设备自行上报: sn={}, url={}, err={}",
+                    sn, url, e.getMessage());
+        }
+    }
+
+    /**
+     * 发连接请求；设备要认证就带上凭据重发一次。
+     *
+     * <p>TR-069 的连接请求认证普遍是 HTTP Digest，而 JDK 自带的 {@link HttpClient}
+     * 只支持 Basic，Digest 得自己算（HA1 / HA2 / response）。设备回 401 时不重试，
+     * 就只能眼看着唤醒失败。</p>
+     */
+    private HttpResponse<String> sendConnectionRequest(String url, String user, String password)
+            throws Exception {
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        URI uri = URI.create(url);
+        HttpResponse<String> resp = client.send(
+                HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 401 || authDisabled(user)) {
+            return resp;
+        }
+        String challenge = resp.headers().firstValue("WWW-Authenticate").orElse("");
+        String authorization = authorizationHeader(challenge, user, password, uri, "GET");
+        if (authorization == null) {
+            log.warn("设备要求认证但无法构造凭据: sn-url={}, challenge={}", url, challenge);
+            return resp;
+        }
+        return client.send(HttpRequest.newBuilder(uri)
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Authorization", authorization)
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** 按设备的 WWW-Authenticate 构造 Authorization 头，支持 Digest 与 Basic。 */
+    private static String authorizationHeader(String challenge, String user, String password,
+                                              URI uri, String method) {
+        if (challenge == null || challenge.isBlank()) {
+            return null;
+        }
+        String scheme = challenge.split("\\s+")[0];
+        Map<String, String> params = parseAuthParams(challenge.substring(scheme.length()));
+        if ("basic".equalsIgnoreCase(scheme)) {
+            return "Basic " + Base64.getEncoder().encodeToString(
+                    (user + ":" + password).getBytes(StandardCharsets.UTF_8));
+        }
+        if (!"digest".equalsIgnoreCase(scheme)) {
+            return null;
+        }
+        String realm = params.getOrDefault("realm", "");
+        String nonce = params.getOrDefault("nonce", "");
+        String qop = params.get("qop");
+        String uriPath = uri.getRawPath() == null || uri.getRawPath().isBlank()
+                ? "/" : uri.getRawPath();
+        if (uri.getRawQuery() != null && !uri.getRawQuery().isBlank()) {
+            uriPath = uriPath + "?" + uri.getRawQuery();
+        }
+        String ha1 = md5(user + ":" + realm + ":" + password);
+        String ha2 = md5(method + ":" + uriPath);
+        String digest;
+        StringBuilder header = new StringBuilder("Digest ")
+                .append("username=\"").append(user).append("\", ")
+                .append("realm=\"").append(realm).append("\", ")
+                .append("nonce=\"").append(nonce).append("\", ")
+                .append("uri=\"").append(uriPath).append("\", ");
+        if (qop != null && qop.contains("auth")) {
+            String cnonce = md5(user + nonce + System.nanoTime());
+            digest = md5(ha1 + ":" + nonce + ":00000001:" + cnonce + ":auth:" + ha2);
+            header.append("qop=auth, nc=00000001, cnonce=\"").append(cnonce).append("\", ");
+        } else {
+            digest = md5(ha1 + ":" + nonce + ":" + ha2);
+        }
+        header.append("response=\"").append(digest).append("\", algorithm=MD5");
+        if (params.get("opaque") != null) {
+            header.append(", opaque=\"").append(params.get("opaque")).append("\"");
+        }
+        return header.toString();
+    }
+
+    /** 解析 {@code realm="x", nonce="y"} 这类认证参数。 */
+    private static Map<String, String> parseAuthParams(String raw) {
+        Map<String, String> params = new LinkedHashMap<>();
+        for (String part : raw.split(",")) {
+            int eq = part.indexOf('=');
+            if (eq <= 0) {
+                continue;
+            }
+            String key = part.substring(0, eq).trim().toLowerCase(Locale.ROOT);
+            String value = part.substring(eq + 1).trim();
+            if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                value = value.substring(1, value.length() - 1);
+            }
+            params.put(key, value);
+        }
+        return params;
+    }
+
+    private static String md5(String raw) {
+        try {
+            byte[] bytes = MessageDigest.getInstance("MD5")
+                    .digest(raw.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : bytes) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException("MD5 不可用", e);
+        }
+    }
+
+    /** 凭据未配置（配置里写 auto 或留空 = 设备侧免认证）。 */
+    private static boolean authDisabled(String user) {
+        return user == null || user.isBlank() || AUTH_AUTO.equalsIgnoreCase(user.trim());
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        return preferred != null && !preferred.isBlank() ? preferred : fallback;
+    }
+
+    /** 从已采集到的参数里取某个路径的值，取不到返回 null。 */
+    private String paramValue(String sn, String pathSuffix) {
+        if (parameterMapper == null) {
+            return null;
+        }
+        try {
+            CpeParameter row = parameterMapper.selectOne(new LambdaQueryWrapper<CpeParameter>()
+                    .eq(CpeParameter::getSn, sn)
+                    .like(CpeParameter::getParamPath, pathSuffix)
+                    .last("LIMIT 1"));
+            return row == null ? null : row.getParamValue();
+        } catch (Exception e) {
+            log.warn("查询参数值失败: sn={}, path={}, err={}", sn, pathSuffix, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 台账上的设备记录，查不到返回 null。 */
+    private CpeDevice findDevice(String sn) {
+        try {
+            return deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
+                    .eq(CpeDevice::getSn, sn)
+                    .last("LIMIT 1"));
+        } catch (Exception e) {
+            log.warn("查询设备台账失败: sn={}, err={}", sn, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 按能力树里的厂商私有前缀认运营商，并回写台账。
+     *
+     * <p>只补「台账还没运营商」的设备：人工适配申报过的以申报为准，自动识别不去覆盖，
+     * 同型号硬件卖给多家运营商时以人的判断为准。</p>
+     */
+    private void detectAndWriteIsp(String sn, List<String> paths) {
+        Isp detected = Isp.detect(paths);
+        if (detected == null || detected == Isp.STANDARD) {
+            return;
+        }
+        if (Isp.of(deviceIsp(sn)) != Isp.STANDARD) {
+            return;
+        }
+        try {
+            deviceMapper.update(null, new LambdaUpdateWrapper<CpeDevice>()
+                    .eq(CpeDevice::getSn, sn)
+                    .set(CpeDevice::getIsp, detected.getCode()));
+            log.info("按能力树私有前缀登记设备运营商: sn={}, isp={}", sn, detected.getCode());
+        } catch (Exception e) {
+            log.warn("回写设备运营商失败: sn={}, isp={}, err={}", sn, detected.getCode(), e.getMessage());
+        }
+    }
+
+    private static String strategyText(CapabilityProfiles.Profile profile) {
+        if (profile == null) {
+            return "递归优先";
+        }
+        if (profile.isValuesOnly()) {
+            return "只读关键字段（不扫参数树）";
+        }
+        if (profile.isAdaptive()) {
+            return "自适应（先试参数树，扫不动则只读关键字段）";
+        }
+        return profile.isLevelFirst() ? "逐层优先" : "递归优先";
+    }
+
+    private static String profileName(CapabilityProfiles.Profile profile) {
+        if (profile == null) {
+            return "内置默认";
+        }
+        return profile.getName() == null || profile.getName().isBlank()
+                ? "内置默认" : profile.getName().trim();
+    }
+
+    /**
+     * 待采集的子树绝对路径：把采集标准的子树拼到设备的数据模型根节点下。
      */
     private static List<String> resolveSubtrees(String root) {
+        return resolveSubtrees(root, null);
+    }
+
+    private static List<String> resolveSubtrees(String root, CapabilityProfiles.Profile profile) {
         String base = root == null || root.isEmpty() ? DEFAULT_ROOT : root;
-        List<String> subtrees = DataModel.TR181.getRoot().equals(base)
-                ? SUBTREES_TR181 : SUBTREES_TR098;
+        boolean tr181 = DataModel.TR181.getRoot().equals(base);
+        List<String> subtrees = tr181 ? SUBTREES_TR181 : SUBTREES_TR098;
+        if (profile != null) {
+            List<String> custom = tr181 ? profile.getSubtreesTr181() : profile.getSubtrees();
+            if (custom != null && !custom.isEmpty()) {
+                subtrees = custom;
+            }
+        }
         List<String> paths = new ArrayList<>(subtrees.size());
         for (String subtree : subtrees) {
             paths.add(base + subtree);
@@ -523,10 +1441,30 @@ public class DeviceCapabilityService {
     }
 
     /**
+     * 路径所属的数据模型根：{@code InternetGatewayDevice.} 或 {@code Device.}。
+     */
+    private static String rootOf(String path) {
+        if (path == null || path.isEmpty()) {
+            return DEFAULT_ROOT;
+        }
+        return DataModel.TR181.getRoot().equals(path) || path.startsWith(DataModel.TR181.getRoot())
+                ? DataModel.TR181.getRoot() : DEFAULT_ROOT;
+    }
+
+    private static List<String> pathsOf(List<Node> tree) {
+        List<String> paths = new ArrayList<>(tree.size());
+        for (Node node : tree) {
+            paths.add(node.path);
+        }
+        return paths;
+    }
+
+    /**
      * 逐层展开：对 path 做 NextLevel=true 的 GetParameterNames，把命中的对象继续往下展开。
      */
     private CompletableFuture<List<Node>> expandLevel(String sn, String path, List<Node> sink,
-                                                      AtomicInteger rounds, CollectStatus status) {
+                                                      AtomicInteger rounds, CollectStatus status,
+                                                      CapabilityProfiles.Profile profile) {
         if (status.isAborted()) {
             return CompletableFuture.completedFuture(sink);
         }
@@ -554,9 +1492,15 @@ public class DeviceCapabilityService {
                 if (!node.object) {
                     continue;
                 }
+                if (isSkipped(node.path, profile)) {
+                    // 电信 X_CTC_ 那套私有分支：固件一展开就抛 9002，整棵子树跟着报废。
+                    // 节点本身留着（路径已拿到），但到此为止不再往下钻
+                    log.info("私有分支不再往下展开: sn={}, object={}", sn, node.path);
+                    continue;
+                }
                 String child = node.path;
                 chain = chain.thenComposeAsync(v ->
-                        expandLevel(sn, child, sink, rounds, status).thenAccept(x -> {
+                        expandLevel(sn, child, sink, rounds, status, profile).thenAccept(x -> {
                         }), executor());
             }
             return chain.thenApply(v -> sink);
@@ -650,23 +1594,69 @@ public class DeviceCapabilityService {
      * <p>队列开启时走 Redis；关闭时退回会话的内存 outbox，
      * 保证关掉队列后能力采集依然可用。</p>
      */
+
+    /** 当前这台设备正在进行的采集批次号，用于给指令打标。 */
+    private String currentBatch(String sn) {
+        CollectStatus status = statuses.get(sn);
+        return status == null ? null : status.getBatch();
+    }
+
+    /**
+     * 开新采集前先丢掉上一轮没发完的指令。
+     *
+     * <p>设备掉线、采集中断都会让指令留在队列里；不清的话新一轮会把它们逐条消费，
+     * 于是同一条 {@code GetParameterNames} 被反复下发，队列还可能被占满
+     * （每条设备有上限），导致这一轮的新指令根本入不了队。工单指令不属采集批次，不动。</p>
+     */
+    private void dropStaleRpc(String sn, String batch) {
+        if (!queueProperties.isEnabled()) {
+            return;
+        }
+        try {
+            int dropped = rpcDispatchService.dropStaleCollectTasks(sn, batch);
+            if (dropped > 0) {
+                log.warn("丢弃上一轮未发完的采集指令: sn={}, 条数={}, 本轮批次={}", sn, dropped, batch);
+            }
+        } catch (Exception e) {
+            log.warn("清理上一轮采集指令失败，继续本轮采集: sn={}, err={}", sn, e.getMessage());
+        }
+    }
     private CompletableFuture<SoapMessage> submit(String sn, String rpcName,
                                                   Map<String, Object> args) {
+        // 到点了就别再等：设备不在下发窗口时响应永远等不来，见 collectTimeoutMillis 的说明。
+        // 措辞里刻意不带「超时」——那会被当成单条指令超时而只放弃当前分支，
+        // 总时长到了是要中止整轮的
+        long remaining = deadlines.getOrDefault(sn, 0L) - System.currentTimeMillis();
+        if (deadlines.containsKey(sn) && remaining <= 0) {
+            log.warn("采集已到时限，不再等待响应: sn={}, rpc={}", sn, rpcName);
+            return CompletableFuture.completedFuture(sessionFault("采集总时长已到，未等到设备回应"));
+        }
+        CompletableFuture<SoapMessage> future;
         if (queueProperties.isEnabled()) {
+            // 带上批次号：新一轮采集开始时据此丢掉上一轮没发完的旧指令
             RpcDispatchService.DispatchHandle handle =
-                    rpcDispatchService.submitAsync(sn, rpcName, args, null);
+                    rpcDispatchService.submitAsync(sn, rpcName, args, null, currentBatch(sn));
             if (!handle.isQueued()) {
                 log.warn("采集指令未入队: sn={}, rpc={}, taskId={}", sn, rpcName, handle.getTaskId());
             }
-            return handle.getFuture();
+            future = handle.getFuture();
+        } else {
+            CpeSession session = sessionManager.find(sn);
+            if (session == null) {
+                log.warn("会话不存在，采集指令无法下发: sn={}, rpc={}", sn, rpcName);
+                return CompletableFuture.completedFuture(sessionFault("会话不存在"));
+            }
+            PendingRpc rpc = session.enqueue(-outboxSequence.incrementAndGet(), rpcName, args, null);
+            future = rpc.getResponse();
         }
-        CpeSession session = sessionManager.find(sn);
-        if (session == null) {
-            log.warn("会话不存在，采集指令无法下发: sn={}, rpc={}", sn, rpcName);
-            return CompletableFuture.completedFuture(sessionFault("会话不存在"));
+        if (!deadlines.containsKey(sn)) {
+            return future;
         }
-        PendingRpc rpc = session.enqueue(-outboxSequence.incrementAndGet(), rpcName, args, null);
-        return rpc.getResponse();
+        return future.orTimeout(Math.max(remaining, 1L), TimeUnit.MILLISECONDS)
+                .exceptionally(ex -> {
+                    log.warn("采集指令等待回应超时: sn={}, rpc={}", sn, rpcName);
+                    return sessionFault("采集总时长已到，未等到设备回应");
+                });
     }
 
     /**
@@ -725,20 +1715,39 @@ public class DeviceCapabilityService {
         List<List<String>> batches = partition(paths, Math.max(1, valueBatchSize));
         CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
         for (List<String> batch : batches) {
-            chain = chain.thenComposeAsync(v -> getParameterValues(sn, batch).thenAccept(resp -> {
-                if (resp == null || resp.isFault()) {
-                    log.warn("业务参数读取失败: sn={}, size={}, err={}",
-                            sn, batch.size(), faultText(resp));
-                    return;
-                }
+            chain = chain.thenComposeAsync(v -> readBatch(sn, batch, result), executor());
+        }
+        return chain.thenApply(v -> result);
+    }
+
+    /**
+     * 读一批参数；整批失败就二分拆批重读。
+     *
+     * <p>GetParameterValues 对参数名是「全对才成功」的语义：一批里只要有一条路径在该
+     * 型号上不存在，设备直接回 9005，其余本来读得到的值一起丢。MSG2100E 这类固件尤其
+     * 明显——猜的 {@code X_CT-COM-UpLineStatus} 四种拼法只要有一条不对，整批网口状态
+     * 就全空了。拆到单条为止，坏路径自己失败，好的照常回填。</p>
+     */
+    private CompletableFuture<Void> readBatch(String sn, List<String> batch,
+                                              Map<String, String> result) {
+        return getParameterValues(sn, batch).thenCompose(resp -> {
+            if (resp != null && !resp.isFault()) {
                 List<CpeParameter> rows = parseValues(sn, resp);
                 for (CpeParameter row : rows) {
                     result.put(row.getParamPath(), row.getParamValue());
                 }
                 saveValues(sn, rows);
-            }), executor());
-        }
-        return chain.thenApply(v -> result);
+                return CompletableFuture.completedFuture(null);
+            }
+            if (batch.size() > 1) {
+                int mid = batch.size() / 2;
+                return readBatch(sn, batch.subList(0, mid), result)
+                        .thenCompose(v -> readBatch(sn, batch.subList(mid, batch.size()), result));
+            }
+            log.debug("业务参数读取失败: sn={}, path={}, err={}",
+                    sn, batch.get(0), faultText(resp));
+            return CompletableFuture.completedFuture(null);
+        });
     }
 
     // ==================== 解析 ====================
@@ -761,6 +1770,9 @@ public class DeviceCapabilityService {
     /**
      * 解析 GetParameterValuesResponse 为待回填的行。
      */
+    /** 可写性未知：参数存在（GPV 读到了），但设备没告诉我们能不能写。 */
+    public static final int WRITABLE_UNKNOWN = -1;
+
     private List<CpeParameter> parseValues(String sn, SoapMessage resp) {
         List<CpeParameter> rows = new ArrayList<>();
         for (Map<String, Object> item : resp.listValue("ParameterList")) {
@@ -773,6 +1785,10 @@ public class DeviceCapabilityService {
             row.setParamPath(truncate(name, 400));
             row.setParamValue(truncate(str(item.get("Value")), MAX_VALUE_LENGTH));
             row.setValueType(truncate(str(item.get("Value_type")), 32));
+            // GetParameterValues 不回 Writable（那是 GetParameterNames 才有的字段），
+            // 记成「未知」而不是 0：MSG2100E 这类 GPN 一律 9002 的固件只能靠兜底
+            // 路径读参数，一律按只读处理会让适配试探连一个候选都挑不出来
+            row.setWritable(WRITABLE_UNKNOWN);
             rows.add(row);
         }
         return rows;
@@ -877,6 +1893,47 @@ public class DeviceCapabilityService {
             } catch (Exception e) {
                 log.error("参数值回填失败: sn={}, size={}, err={}", sn, chunk.size(), e.getMessage());
             }
+        }
+        rememberConnectionRequestCredentials(sn, rows);
+    }
+
+    /**
+     * 读到设备的连接请求凭据就记进台账，唤醒设备时用得上。
+     *
+     * <p>ACS 反连设备要做 HTTP 认证，而账号密码是设备侧生成的
+     * （{@code ManagementServer.ConnectionRequestUsername/Password}），全局配一个不一定对得上。
+     * 所以这里把设备自己报的凭据存下来，下次唤醒就能认证通过，不必靠人去猜。</p>
+     */
+    private void rememberConnectionRequestCredentials(String sn, List<CpeParameter> rows) {
+        String user = null;
+        String password = null;
+        for (CpeParameter row : rows) {
+            String path = row.getParamPath();
+            if (path == null) {
+                continue;
+            }
+            if (path.endsWith("ManagementServer.ConnectionRequestUsername")) {
+                user = row.getParamValue();
+            } else if (path.endsWith("ManagementServer.ConnectionRequestPassword")) {
+                password = row.getParamValue();
+            }
+        }
+        if ((user == null || user.isBlank()) && (password == null || password.isBlank())) {
+            return;
+        }
+        try {
+            CpeDevice device = new CpeDevice();
+            if (user != null && !user.isBlank()) {
+                device.setAcsToCpeName(user);
+            }
+            if (password != null && !password.isBlank()) {
+                device.setAcsToCpePassword(password);
+            }
+            deviceMapper.update(device,
+                    new LambdaUpdateWrapper<CpeDevice>().eq(CpeDevice::getSn, sn));
+            log.info("已登记设备连接请求凭据: sn={}, 账号={}", sn, user);
+        } catch (Exception e) {
+            log.warn("登记设备连接请求凭据失败: sn={}, err={}", sn, e.getMessage());
         }
     }
 

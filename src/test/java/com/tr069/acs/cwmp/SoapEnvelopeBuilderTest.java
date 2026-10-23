@@ -32,6 +32,19 @@ class SoapEnvelopeBuilderTest {
     }
 
     /**
+     * 响应的 {@code cwmp:ID} 必须回显设备报文里的 ID：华为电信固件（HS8145C5 / B866）
+     * 对不上就认为这次会话没被接受，会带递增的 RetryCount 重发 BOOTSTRAP，也不发空 POST，
+     * ACS 于是永远拿不到下发窗口。
+     */
+    @Test
+    void informResponse回显设备的会话ID() {
+        String xml = SoapEnvelopeBuilder.buildInformResponse("37", "cwmp-1-0");
+
+        assertTrue(xml.contains("<cwmp:ID SOAP-ENV:mustUnderstand=\"1\">37</cwmp:ID>"),
+                "InformResponse 必须原样回显设备的 cwmp:ID，不能用随机数");
+    }
+
+    /**
      * 指令经队列 JSON 往返后，ParameterValueStruct 退化成 Map，键名是字段名（小写开头）。
      * 构造时必须忽略大小写取值，否则下发的是一组空参数。
      */

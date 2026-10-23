@@ -10,6 +10,7 @@
             <el-option label="电信 CT" value="CT" />
             <el-option label="联通 CU" value="CU" />
             <el-option label="移动 CMCC" value="CMCC" />
+            <el-option label="广电 CBN" value="CBN" />
             <el-option label="通用 standard" value="standard" />
           </el-select>
         </el-form-item>
@@ -22,8 +23,12 @@
         </el-form-item>
       </el-form>
       <div class="online-bar">
+        设备总数：<b>{{ deviceStat.total }}</b> 台
+        <span class="stat-online">在线 <b>{{ deviceStat.online }}</b></span>
+        <span class="stat-offline">离线 <b>{{ deviceStat.offline }}</b></span>
+        <span class="online-bar-sep">|</span>
         当前在线会话：<b>{{ onlineCount }}</b> 台
-        <el-button type="text" icon="el-icon-refresh" @click="loadOnline">刷新</el-button>
+        <el-button type="text" icon="el-icon-refresh" @click="refreshOnlineBar">刷新</el-button>
         <el-button type="text" @click="onlineVisible = true">查看明细</el-button>
       </div>
     </el-card>
@@ -674,7 +679,7 @@
 import {
   fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch,
   fetchAdaptStatus, testAdaptation, saveAdaptation, updateDeviceRemark,
-  fetchAdminAccounts
+  fetchAdminAccounts, fetchDeviceStat
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
@@ -685,9 +690,13 @@ import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
 import DeviceRuntimeCell from '@/components/DeviceRuntimeCell.vue'
 import { ponTypeOf, opticStateOf } from '@/utils/deviceOptic'
+import { wifiBandOf } from '@/utils/wifi'
 
 // 业务概要自动回读间隔：与后端 LAN 网口状态自动刷新（5 分钟）同频
 const BIZ_AUTO_REFRESH_MS = 300000
+
+// 设备列表自动刷新间隔：在线状态、顶栏统计都靠它跟上，不用手动点刷新
+const LIST_AUTO_REFRESH_MS = 15000
 
 export default {
   name: 'DeviceList',
@@ -699,6 +708,7 @@ export default {
       total: 0,
       bizMap: {},
       bizTimer: null,
+      listTimer: null,
       // 机型适配状态：sn -> { adapted, configPath, ... }
       adaptMap: {},
       adaptVisible: false,
@@ -709,7 +719,8 @@ export default {
       adaptForm: { isp: 'standard', lanPorts: '1', lanSpeed: '自动', sipCount: '无', wifiSpec: '2.4G' },
       ispOptions: [
         { v: 'CT', t: '电信' }, { v: 'CU', t: '联通' },
-        { v: 'CMCC', t: '移动' }, { v: 'standard', t: '标准/通用' }
+        { v: 'CMCC', t: '移动' }, { v: 'CBN', t: '广电' },
+        { v: 'standard', t: '标准/通用' }
       ],
       portOptions: ['无', '1', '2', '3', '4', '8'],
       speedOptions: ['无', '自动', '100M', '1000M', '2500M'],
@@ -733,6 +744,8 @@ export default {
       sortKey: '',
       sortOrder: '',
       opticFilter: '',
+      // 台账统计：总数 / 在线 / 离线，口径与列表行上的在线标签一致
+      deviceStat: { total: 0, online: 0, offline: 0 },
       onlineCount: 0,
       onlineList: [],
       onlineVisible: false,
@@ -796,6 +809,7 @@ export default {
   created() {
     this.load()
     this.loadOnline()
+    this.loadStat()
     this.loadTemplates()
     // 后端每 5 分钟自动刷新一次 LAN 网口状态，这里同频回读当前页的业务概要，
     // 网口图标不用手动刷新就能跟上插拔变化
@@ -804,16 +818,47 @@ export default {
         this.reloadBiz()
       }
     }, BIZ_AUTO_REFRESH_MS)
+    // 列表每 15 秒自动刷新：在线状态、顶栏总数/在线/离线、业务概要一起跟上，
+    // 不用手动点刷新。弹窗开着或勾了行时不刷，免得顶掉正在填的表单和选中的设备
+    this.listTimer = setInterval(() => {
+      if (!document.hidden && !this.hasBlockingDialog()) {
+        this.load(true)
+        this.loadStat()
+        this.loadOnline()
+      }
+    }, LIST_AUTO_REFRESH_MS)
   },
   beforeDestroy() {
     if (this.bizTimer) {
       clearInterval(this.bizTimer)
       this.bizTimer = null
     }
+    if (this.listTimer) {
+      clearInterval(this.listTimer)
+      this.listTimer = null
+    }
+  },
+  /**
+   * 有没有正在进行的交互：有就先不自动刷新。
+   * 弹窗里的表单、勾好的设备行，都会被一次后台刷新冲掉。
+   */
+  hasBlockingDialog() {
+    return !!(this.adaptVisible || this.wanVisible || this.wifiEditVisible ||
+      this.detailVisible || this.onlineVisible || this.businessVisible ||
+      this.customParamVisible || this.debugVisible || this.adminPwdVisible ||
+      this.remarkVisible || this.selection.length)
   },
   methods: {
-    async load() {
-      this.loading = true
+    /**
+     * 拉设备分页数据。
+     *
+     * @param silent 后台自动刷新时传 true：不转 loading（否则每 15 秒整页闪一下），
+     *               请求失败也不清空列表（网络抖一下不该把列表清空）
+     */
+    async load(silent) {
+      if (!silent) {
+        this.loading = true
+      }
       try {
         const res = await fetchDevicePage(this.query)
         const data = res.data || {}
@@ -822,10 +867,14 @@ export default {
         this.loadBiz()
         this.loadAdaptStatus()
       } catch (e) {
-        this.list = []
-        this.total = 0
+        if (!silent) {
+          this.list = []
+          this.total = 0
+        }
       } finally {
-        this.loading = false
+        if (!silent) {
+          this.loading = false
+        }
       }
     },
     // 房间号 / 备注：弹窗编辑，保存成功后同步回列表行
@@ -949,21 +998,29 @@ export default {
       return this.wifiList(sn).filter(item => this.isWifiEnabled(item.params))
     },
     enabledWifi24(sn) {
-      return this.enabledWifiList(sn).filter(item => this.wifiBand(item.params) === '2.4G')
+      return this.enabledWifiList(sn).filter(item => wifiBandOf(item) === '2.4G')
     },
     enabledWifi58(sn) {
-      return this.enabledWifiList(sn).filter(item => this.wifiBand(item.params) === '5.8G')
+      return this.enabledWifiList(sn).filter(item => wifiBandOf(item) === '5.8G')
     },
-    // 判断 WiFi 是否启用：Status=Disabled/Down 或 Enable=false 都算禁用
+    // 判断 WiFi 是否启用：Status=Disabled/Down 或 Enable 为假都算禁用
     isWifiEnabled(params) {
       if (!params) return true
       const status = String(params.Status || '').toLowerCase()
       if (status === 'disabled' || status === 'down') return false
-      const enableFlag = params.Enable
-      if (enableFlag !== undefined && enableFlag !== null) {
-        return String(enableFlag).toLowerCase() === 'true' || enableFlag === true || enableFlag === 1
-      }
-      return true
+      return this.boolOf(params.Enable, true)
+    },
+    /**
+     * CWMP 的布尔参数回来是字符串 "1"/"0"，不是 JS 的 true/false。
+     * 早先只认 === true，Enable="1" 会被判成禁用，整条 WiFi 就从列表里消失了
+     * ——参数采到了、数据库里也有，页面上却只有一个「-」。
+     */
+    boolOf(value, fallback = true) {
+      if (value === undefined || value === null || value === '') return fallback
+      const s = String(value).trim().toLowerCase()
+      if (['0', 'false', 'no', 'off', 'disabled', 'down'].includes(s)) return false
+      if (['1', 'true', 'yes', 'on', 'enabled', 'up'].includes(s)) return true
+      return fallback
     },
     lanList(sn) {
       return this.bizOf(sn).lan || []
@@ -973,15 +1030,6 @@ export default {
       const state = item.connected ? '已连接' : '未连接'
       const mac = item.mac ? ' MAC: ' + item.mac : ''
       return 'LAN' + (item.instance || '') + ' ' + state + mac
-    },
-
-    /**
-     * 从业务快照的 WiFi 参数里识别频段。
-     * 后端只返回 params.Standard，a/ac/ax 归为 5G，其余为 2.4G。
-     */
-    wifiBandOf(params) {
-      const std = String(params && params.Standard || '').toLowerCase()
-      return /a|ac|ax/.test(std) ? '5.8G' : '2.4G'
     },
 
     /**
@@ -995,20 +1043,16 @@ export default {
 
     openWifiEdit(row, item) {
       const params = item && item.params || {}
-      const band = this.wifiBandOf(params)
+      const band = wifiBandOf(item)
       // 必须读 IEEE11iEncryptionModes：下发写的是这个参数，
       // 拿 BeaconType 的值（Basic / 11i / WPAand11i）填进去设备会回 9003
       const encryption = params.IEEE11iEncryptionModes ||
         params.BasicEncryptionModes || params.WPAEncryptionModes || ''
       const password = params.KeyPassphrase || params.PreSharedKey || params.WPA_PSK || ''
       const status = String(params.Status || '').toLowerCase()
-      const enableFlag = params.Enable
-      let enabled = true
-      if (status === 'disabled' || status === 'down') {
-        enabled = false
-      } else if (enableFlag !== undefined && enableFlag !== null) {
-        enabled = String(enableFlag).toLowerCase() === 'true' || enableFlag === true || enableFlag === 1
-      }
+      const enabled = status === 'disabled' || status === 'down'
+        ? false
+        : this.boolOf(params.Enable, true)
       this.wifiEditForm = {
         sn: row.sn,
         band,
@@ -1128,7 +1172,7 @@ export default {
       // yml profile 里的 isp 是申报时的原始值（如 CMCC）
       const ispNames = {
         CMCC: '中国移动', CM: '中国移动',
-        CT: '中国电信', CU: '中国联通',
+        CT: '中国电信', CU: '中国联通', CBN: '中国广电',
         standard: '标准/通用'
       }
       // 运营商单独一行：以设备台账登记值为准（适配时选定的运营商会写回台账），
@@ -1163,8 +1207,8 @@ export default {
     capabilityText(biz) {
       const parts = []
       const wifi = biz.wifi || []
-      if (wifi.some(w => this.wifiBand(w.params) === '2.4G')) parts.push('2.4G WiFi')
-      if (wifi.some(w => this.wifiBand(w.params) === '5.8G')) parts.push('5.8G WiFi')
+      if (wifi.some(w => wifiBandOf(w) === '2.4G')) parts.push('2.4G WiFi')
+      if (wifi.some(w => wifiBandOf(w) === '5.8G')) parts.push('5.8G WiFi')
       if ((biz.sip || []).length) parts.push('1电话')
       return parts.join('、') || null
     },
@@ -1210,10 +1254,6 @@ export default {
     showVal(value) {
       return value === undefined || value === null || value === '' ? '-' : value
     },
-    wifiBand(params) {
-      const std = String(params.Standard || '').toLowerCase()
-      return /a|ac|ax/.test(std) ? '5.8G' : '2.4G'
-    },
 
     sortVal(row, key) {
       if (key === 'pon') return ponTypeOf(row, this.bizOf(row.sn))
@@ -1246,6 +1286,25 @@ export default {
         this.onlineList = []
         this.onlineCount = 0
       }
+    },
+    /** 台账统计：总数 / 在线 / 离线。与列表行标签同一口径（cpe_device.status）。 */
+    async loadStat() {
+      try {
+        const res = await fetchDeviceStat()
+        const data = res.data || {}
+        this.deviceStat = {
+          total: data.total || 0,
+          online: data.online || 0,
+          offline: data.offline || 0
+        }
+      } catch (e) {
+        this.deviceStat = { total: 0, online: 0, offline: 0 }
+      }
+    },
+    // 顶栏「刷新」：设备数、在线会话一起拉，避免两个数字不同步
+    refreshOnlineBar() {
+      this.loadStat()
+      this.loadOnline()
     },
     handleSearch() {
       this.query.page = 1
@@ -1642,6 +1701,21 @@ export default {
 .online-bar {
   color: #606266;
   font-size: 13px;
+}
+.online-bar b {
+  padding: 0 2px;
+}
+.stat-online {
+  margin-left: 14px;
+  color: #67c23a;
+}
+.stat-offline {
+  margin-left: 14px;
+  color: #909399;
+}
+.online-bar-sep {
+  margin: 0 10px;
+  color: #dcdfe6;
 }
 .pager {
   margin-top: 16px;

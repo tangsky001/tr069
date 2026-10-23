@@ -3,7 +3,27 @@
     <div class="page-head">
       <el-button icon="el-icon-arrow-left" size="small" @click="goBack">返回</el-button>
       <span class="page-title">设备详情</span>
+      <el-button
+        v-if="loadError"
+        type="primary"
+        size="small"
+        icon="el-icon-refresh"
+        style="margin-left:12px"
+        @click="load"
+      >重新加载</el-button>
     </div>
+
+    <!-- 台账里没有这个 SN 时不要只留一句「设备不存在」：
+         清过档案、设备刚换机、URL 手敲错的 SN 都会走到这里，得告诉人下一步干什么 -->
+    <el-alert
+      v-if="loadError"
+      :title="loadError"
+      :description="errorHint"
+      type="error"
+      show-icon
+      :closable="false"
+      class="section"
+    />
 
     <el-card shadow="never" class="section">
       <div slot="header">基本信息</div>
@@ -92,6 +112,8 @@ export default {
     return {
       loading: false,
       rpcLoading: false,
+      // 台账里查不到该 SN 时记下原因，页面顶部给可读的提示而不是只弹一下红条
+      loadError: '',
       device: {},
       session: {},
       rpcMethods: RPC_METHODS,
@@ -107,6 +129,13 @@ export default {
   computed: {
     sn() {
       return this.$route.params.sn
+    },
+    /** 出错时的补充说明：清过档案、设备还没上报入库、或 SN 敲错，都会落到这里。 */
+    errorHint() {
+      return '当前 SN：' + (this.sn || '（空）') +
+        '。设备上报过一次 Inform 才会登记到台账；' +
+        '如果刚清过该型号的档案，等设备下一次上报后点「重新加载」，' +
+        '或核对序列号是否填错。'
     },
     rpcStatusText() {
       const text = { queued: '排队中', running: '执行中', success: '成功', fail: '失败' }
@@ -126,11 +155,16 @@ export default {
   methods: {
     async load() {
       this.loading = true
+      this.loadError = ''
       try {
         const res = await fetchDeviceDetail(this.sn)
         const data = res.data || {}
         this.device = data.device || {}
         this.session = data.session || { online: false }
+      } catch (e) {
+        this.device = {}
+        this.session = { online: false }
+        this.loadError = (e && (e.message || e.msg)) || '设备不存在'
       } finally {
         this.loading = false
       }

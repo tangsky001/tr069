@@ -84,6 +84,27 @@ public class RpcDispatchService {
      */
     public DispatchHandle submitAsync(String sn, String rpcName,
                                       Map<String, Object> args, String worklistId) {
+        return submitAsync(sn, rpcName, args, worklistId, null);
+    }
+
+    /**
+     * 丢弃上一轮采集压在队列里的旧指令（见 {@link RpcTaskQueue#dropStale}）。
+     *
+     * @param sn           设备序列号
+     * @param currentBatch 本次采集批次号
+     * @return 丢弃的指令条数
+     */
+    public int dropStaleCollectTasks(String sn, String currentBatch) {
+        return rpcTaskQueue.dropStale(sn, currentBatch);
+    }
+
+    /**
+     * 同 {@link #submitAsync(String, String, Map, String)}，多带一个采集批次号。
+     *
+     * @param batch 所属采集批次，用于新采集开始时丢弃上一轮压在队列里的旧指令；非采集指令传空
+     */
+    public DispatchHandle submitAsync(String sn, String rpcName,
+                                      Map<String, Object> args, String worklistId, String batch) {
         long taskId = insertRecord(sn, rpcName, args, worklistId);
         CompletableFuture<SoapMessage> future = rpcTaskRegistry.create(taskId);
 
@@ -104,6 +125,7 @@ public class RpcDispatchService {
         task.setRpcName(rpcName);
         task.setArgsJson(rpcTaskQueue.writeArgs(args));
         task.setWorklistId(worklistId);
+        task.setBatch(batch);
 
         boolean queued = rpcTaskQueue.enqueue(task);
         if (!queued) {

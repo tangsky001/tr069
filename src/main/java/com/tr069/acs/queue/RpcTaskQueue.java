@@ -100,6 +100,71 @@ public class RpcTaskQueue {
         memoryQueues.computeIfAbsent(task.getSn(), k -> new ConcurrentLinkedQueue<>()).offer(task);
     }
 
+    /**
+     * 丢弃上一轮采集压在队列里的旧指令。
+     *
+     * <p>只丢带批次号且不是当前批次的（也就是采集产生的）；工单指令没有批次号，
+     * 一律保留，避免把业务下发连带清掉。</p>
+     *
+     * @param sn           设备序列号
+     * @param currentBatch 本次采集批次号，为空表示不做清理
+     * @return 丢弃的指令条数
+     */
+    public int dropStale(String sn, String currentBatch) {
+        if (currentBatch == null || currentBatch.isBlank()) {
+            return 0;
+        }
+        int dropped = 0;
+        ConcurrentLinkedQueue<RpcTask> memory = memoryQueues.get(sn);
+        if (memory != null) {
+            int before = memory.size();
+            memory.removeIf(task -> isStale(task, currentBatch));
+            dropped += before - memory.size();
+        }
+        try {
+            String key = deviceKey(sn);
+            java.util.List<String> all = redis.opsForList().range(key, 0, -1);
+            if (all == null || all.isEmpty()) {
+                return dropped;
+            }
+            java.util.List<String> keep = new java.util.ArrayList<>();
+            int staleHere = 0;
+            for (Object raw : all) {
+                String json = String.valueOf(raw);
+                if (!isStale(parseTask(json), currentBatch)) {
+                    keep.add(json);
+                } else {
+                    staleHere++;
+                }
+            }
+            // 没有要丢的就别动队列：重写一遍 key 既多余，又会在并发下发时丢指令
+            if (staleHere == 0) {
+                return dropped;
+            }
+            dropped += staleHere;
+            redis.delete(key);
+            if (!keep.isEmpty()) {
+                redis.opsForList().rightPushAll(key, keep.toArray(new String[0]));
+                redis.expire(key, properties.getRpc().getQueueTtlSeconds(), TimeUnit.SECONDS);
+            }
+        } catch (Exception e) {
+            logFailure("清理过期采集指令", e);
+        }
+        return dropped;
+    }
+
+    private static boolean isStale(RpcTask task, String currentBatch) {
+        return task != null && task.getBatch() != null && !currentBatch.equals(task.getBatch());
+    }
+
+    private RpcTask parseTask(String json) {
+        try {
+            return objectMapper.readValue(json, RpcTask.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public long pendingCount(String sn) {
         long memory = 0;
         ConcurrentLinkedQueue<RpcTask> queue = memoryQueues.get(sn);
@@ -273,6 +338,15 @@ public class RpcTaskQueue {
         private String argsJson;
 
         private String worklistId;
+
+        /**
+         * 所属采集批次，只有能力采集产生的指令才有。
+         *
+         * <p>用来区分「上一轮采集没发完、压在队列里的旧指令」：设备掉线或采集中断时，
+         * 这些指令会一直留在队列里，下一轮采集开始后被逐条消费，于是同一条
+         * {@code GetParameterNames} 被反复下发，还会把设备队列占满导致新指令入不了队。</p>
+         */
+        private String batch;
 
         private long createdAt = System.currentTimeMillis();
     }

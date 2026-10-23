@@ -120,6 +120,73 @@ class ModelAdaptationServiceTest {
         assertThat(d.getWifiBands()).isEmpty();
     }
 
+    /**
+     * MSG2100E 这类固件：GetParameterNames 不可用，只靠已知路径读回参数，
+     * 既没有 OperatingFrequencyBand，SSID 也是 ChinaNet-xxxx 不带频段。
+     * 单射频若不按 2.4G 认定，适配页申报 2.4G 永远报「未检测到」。
+     */
+    @Test
+    void 单射频无频段参数时按2点4G认定() {
+        Detection d = service().detect(List.of(
+                param("InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Enable", "1"),
+                param("InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID", "ChinaNet-ABCD"),
+                param("InternetGatewayDevice.LANDevice.1.WLANConfigurationNumberOfEntries", "1")));
+        assertThat(d.getWifiBands()).containsExactly("2.4G");
+        assertThat(d.getRadioCount()).isEqualTo(1);
+        assertThat(service().compare(d, request("CT", "无", "自动", "无", "2.4G"))).isEmpty();
+    }
+
+    /**
+     * 不建 LANEthernetInterfaceConfig、只建一路 Line 的固件，靠数实例会把 4 口 8 路
+     * 误判成 0 口 1 路，申报值怎么填都比不过。设备自报的 NumberOfEntries 才是准的。
+     */
+    @Test
+    void 按设备自报条目数识别网口与语音() {
+        String r = "InternetGatewayDevice.";
+        Detection d = service().detect(List.of(
+                param(r + "LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress", "192.168.1.1"),
+                param(r + "LANDevice.1.LANEthernetInterfaceNumberOfEntries", "4"),
+                param(r + "LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate", "Auto"),
+                param(r + "LANDevice.1.WLANConfiguration.1.Enable", "1"),
+                param(r + "LANDevice.1.WLANConfiguration.1.SSID", "ChinaNet-ABCD"),
+                param(r + "LANDevice.1.WLANConfiguration.1.OperatingFrequencyBand", "2.4GHz"),
+                param(r + "LANDevice.1.WLANConfigurationNumberOfEntries", "1"),
+                param(r + "Services.VoiceService.1.VoiceProfileNumberOfEntries", "1"),
+                param(r + "Services.VoiceService.1.VoiceProfile.1.LineNumberOfEntries", "8"),
+                param(r + "Services.VoiceService.1.VoiceProfile.1.Line.1.DirectoryNumber", "8601")));
+        assertThat(d.getLanPortCount()).isEqualTo(4);
+        assertThat(d.getSipCount()).isEqualTo(8);
+        assertThat(d.getWifiBands()).containsExactly("2.4G");
+        // 申报 4 口 / 自动速率 / 8 路 SIP / 2.4G 应当全部通过
+        assertThat(service().compare(d, request("CT", "4", "自动", "8", "2.4G"))).isEmpty();
+    }
+
+    /** 8 路语音口的机器常常只建一条 Line，容量挂在物理口上，同样要认。 */
+    @Test
+    void 按语音物理口条目数识别路数() {
+        Detection d = service().detect(List.of(
+                param("InternetGatewayDevice.Services.VoiceService.1.PhyInterfaceNumberOfEntries", "8"),
+                param("InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.DirectoryNumber", "8601")));
+        assertThat(d.getSipCount()).isEqualTo(8);
+        assertThat(service().compare(d, request("CT", "无", "自动", "8", "无"))).isEmpty();
+    }
+
+    /**
+     * 只暴露一条 Line、容量参数（Line / PhyInterface / VoiceProfile 条目数）全不可读的固件，
+     * 实测 1 路只是下限。拿它否定「实物 8 个语音口」的申报，这类型号永远适不上。
+     */
+    @Test
+    void 语音容量不可读时不否定申报路数() {
+        ModelAdaptationService svc = service();
+        Detection d = svc.detect(List.of(
+                param("InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.DirectoryNumber", "8601")));
+        assertThat(d.getSipCount()).as("能看到的就一路").isEqualTo(1);
+        assertThat(d.isSipCapacityKnown()).as("没有任何容量证据").isFalse();
+        assertThat(svc.compare(d, request("CT", "无", "自动", "8", "无"))).isEmpty();
+        assertThat(svc.notes(d, request("CT", "无", "自动", "8", "无")))
+                .anyMatch(n -> n.contains("未上报语音容量"));
+    }
+
     @Test
     void compareAcceptsMatchingRequest() {
         ModelAdaptationService svc = service();
@@ -176,11 +243,13 @@ class ModelAdaptationServiceTest {
 
     @Test
     void probeReportsWhenNoWritableNode() {
-        // 树里没有可写节点：每组给出「无可写参数」，且不应真的下发
+        // 树里没有可写节点：每组给出「无可写参数」，且不应真的下发。
+        // 三组：网口 / SIP / WIFI。网口速率那组已去掉——MaxBitRate 的值域各厂商
+        // 各行其是（bps / Mbps / Auto /「1000M」），写回原值常被判 9003，不是可靠证据
         List<ModelAdaptationService.Probe> probes =
                 service().probeCapabilities("TEST", tr098Tree(),
                         request("CMCC", "4", "1000M", "2", "2.4G+5.8G"));
-        assertThat(probes).hasSize(4);
+        assertThat(probes).hasSize(3);
         assertThat(probes).allSatisfy(p -> {
             assertThat(p.getStatus()).isEqualTo("无可写参数");
             assertThat(p.isFailed()).isFalse();

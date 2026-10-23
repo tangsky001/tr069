@@ -87,8 +87,10 @@ public class InformService {
         session.setOnline(true);
 
         List<String> eventCodes = sortEventCodes(inform.getEventList());
-        // 台账落库：设备列表与离线判定都读这张表
-        deviceRegistry.upsertOnline(session);
+        // 台账落库：设备列表与离线判定都读这张表。
+        // 顺带把上报参数交出去认运营商（电信的 X_CT-COM_UserInfo 随 Inform 就来了），
+        // 采集一开始就能按这家运营商的标准走，不用等能力树采完
+        deviceRegistry.upsertOnline(session, paramPaths);
 
         log.info("收到 Inform: sn={}, events={}, sw={}, hw={}",
                 session.getSn(), eventCodes, session.getSoftwareVersion(), session.getHardwareVersion());

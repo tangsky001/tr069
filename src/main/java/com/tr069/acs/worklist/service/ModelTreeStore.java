@@ -91,6 +91,8 @@ public class ModelTreeStore {
     private final DeviceDao deviceDao;
     /** 型号档案更新后重生成下发模板，避免库里留着旧路径 */
     private final ModelTemplateService templateService;
+    /** 适配档（YML）读写：判断同型号是否已在某家运营商下适配过 */
+    private final ModelAdaptationProfileStore profileStore;
 
     // ==================== 导出 ====================
 
@@ -106,6 +108,38 @@ public class ModelTreeStore {
      */
     public ExportResult export(String sn, boolean force) {
         return export(sn, force, null);
+    }
+
+    /**
+     * 采集完成后的归档：不管哪家运营商的猫，先把能力树截到 standard 目录
+     * （{@code models/standard/standard/{型号}.xml}，与移动那台当初进来时一样），
+     * 型号行同时入库；按运营商分目录建档案留到人工适配申报时——
+     * {@code ModelAdaptationService#save} 会用申报的运营商重新导一次并写适配档。
+     *
+     * <p>型号已在某家运营商下适配过的继续归档到那一档：同一型号散出两份档案，
+     * 下发取路径时按台账运营商查到另一份，会报「该型号未适配」。</p>
+     *
+     * @param sn 设备序列号，能力树须已采集
+     */
+    public ExportResult exportCollected(String sn) {
+        return export(sn, false, archiveIsp(findDevice(sn)));
+    }
+
+    /**
+     * 归档运营商：未适配的型号一律 {@code standard}，已适配的维持已适配那一家。
+     *
+     * <p>设备台账上的运营商不能拿来归档：那可能是采集时按私有前缀猜的，也可能是同型号
+     * 卖给多家时的其中一家。档案目录只认「这一家是不是真的适配过」。</p>
+     */
+    String archiveIsp(CpeDevice device) {
+        return archiveIspOf(ModelMappingService.buildModelKey(
+                device == null ? null : device.getProductClass(),
+                device == null ? null : device.getSoftwareVersion()));
+    }
+
+    String archiveIspOf(String modelKey) {
+        String adapted = profileStore == null ? null : profileStore.findAdaptedIsp(modelKey);
+        return notBlank(adapted) ? adapted.trim() : "standard";
     }
 
     /**
@@ -225,10 +259,12 @@ public class ModelTreeStore {
      */
     public Map<String, Object> locate(String sn) {
         CpeDevice device = findDevice(sn);
-        String isp = device != null && notBlank(device.getIsp()) ? device.getIsp().trim() : "standard";
         String modelKey = ModelMappingService.buildModelKey(
                 device == null ? null : device.getProductClass(),
                 device == null ? null : device.getSoftwareVersion());
+        // 与归档同一套规则：没适配过的型号档案只可能在 standard 下，
+        // 拿台账运营商去查会查到「未登记」，与磁盘上真实存在的文件对不上
+        String isp = archiveIspOf(modelKey);
         // 型号档案改查 SQLite 模板库：下发前取路径这一步必须只看「适配数据」那一侧，
         // MySQL cpe_model 不再是数据源
         Device model = deviceDao.findByIspModelKey(isp, modelKey).orElse(null);
