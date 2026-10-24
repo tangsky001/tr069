@@ -11,7 +11,8 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 
 > 配置下发链路重构已**基本落地**：模板从「文件 + 步骤编排」改为**入库的意图模板**，
 > 下发由「意图 + 型号映射」在运行时生成真实 CWMP 参数（`exec/IntentDeliveryService`），
-> 工单与业务模板整包下发都跑在这条链路上。剩余待办见第 2 节（批量进度、意图字段扩展、OLT 真实数据等）。
+> 工单与业务模板整包下发都跑在这条链路上。OLT 融合管理已接真实 Telnet 采集（华为 MA5683T 实测），
+剩余待办见第 2 节（批量进度、意图字段扩展、OLT 剩余占位标签页等）。
 
 ---
 
@@ -75,14 +76,27 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 
 ![设备详情 - 业务面板](doc/Display/162116_423.png)
 
-### OLT 管理（演示数据）
+### OLT 管理（真实设备采集）
 
-OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据为前端模拟，
-真实采集见「待实现」#6：
+Telnet 登录 OLT 命令行采集，已经在华为 MA5683T 上实测通过：
 
-![OLT 管理 - 总览](doc/Display/170707_144.png)
+- **OLT 状态 / 配置信息**：型号、版本与补丁、背板、主控 MAC、运行时长、同步摘要；板卡卡片列出型号 / 运行状态 / 描述 / 温度 / 端口与 ONT 汇总；
+- **板卡示意图**：`P0`-`P7` 端口行直接钉在示意图对应物理口的高度上，点某一行展开该口下每条 ONT 的 ID / SN / 型号 / 在线-离线；
+- **ONT 配置 / 状态**：按板卡分表，端口 × ONT 总数 / 在线 / 离线；
+- **VLAN**：三层 VLAN 接口（VLAN ID / IP / 掩码）、上行 VLAN 透传（各上行口放通的 VLAN 与 Native VLAN）、VLAN 与二层互通（按类型合并成 `41、45-46`）、静态路由（目的网络 / 下一跳 / 出接口）；
+- **采集记录**：每次同步与诊断的连接耗时、摘要、原始回显。
 
-![OLT 管理 - PON 口明细](doc/Display/170715_182.png)
+尚为占位的标签页：DBA / 线路模板、业务 / TR069 / 流量模板、ONT 注册（autofind）、OLA、ONU 后板编辑面板、OLT 升级、主备、保护。
+
+![OLT 管理 - OLT 状态与板卡示意图](doc/Display/203905_835.png)
+
+OLT 状态页：3 块板卡（业务板 1 / 主控板 1 / 上联板 1）、背板与版本、每块板在示意图右侧按物理口高度列出
+`P0`-`P7` 与各自的 ONT 数。
+
+![OLT 管理 - VLAN（三层接口 / 上行透传 / 二层互通 / 静态路由）](doc/Display/203941_898.png)
+
+VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN 透传（`0/6/0`-`0/8/1` 放通
+`1、41、45-46`，Native VLAN 1）、VLAN 与二层互通（单层智能 VLAN）、静态路由（`0.0.0.0/0 → 10.172.10.1`）。
 
 ---
 
@@ -121,6 +135,7 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 数据模型适配 | TR-098（`InternetGatewayDevice.`）与 TR-181（`Device.`）双模型：Inform 参数多数判定根节点、业务前缀按双模型展开、型号档案与能力树 XML 记录数据模型并对账 | `acs/model/DataModel`、`InformService`、`DeviceBusinessService` |
 | **意图下发执行器** | 意图字段 + 型号语义映射 → CWMP 路径与值 → 按需 `AddObject` 再分批 `SetParameterValues`，全程写进 `device_task`；同 `taskNo` 幂等 | `exec/*`（`IntentDeliveryService`、`IntentPlanRenderer`） |
 | **北向接口** | 独立端口 8899 + `/openapi/v1/**：设备台账/在线/能力树/业务快照/工单结果查询、下发受理与结果查询、Webhook 事件推送（上下线、下发结束），复用管理端 JWT 鉴权 | `openapi/*` |
+| **OLT 命令行采集** | Telnet 登录 → 关分页 → `display board 0` / `display version` → `enable` → `config` → 温度 → 每块业务板一条 `display ont info 0 <槽位> all` → `display vlan all` → 上行/主控口逐个 `display port vlan 0/<槽位>/<端口>` → `display ip interface brief` / `display ip routing-table` → `quit`；板卡、端口 ONT（含每条 ONT 明细）、VLAN、三层接口、静态路由入库（`olt_device.vlan_json`、`olt_board.ports_json`）；启动后自动采一轮、之后每 5 分钟一轮，页面只拉最新数据不碰设备。华为 MA5683T 已实测 | `olt/*`（`telnet/OltCliSession`、`telnet/OltInfoParser`、`service/OltService`、`service/OltTelnetService`） |
 | 管理端鉴权 | JWT 登录、`sys_user` 查库、首次启动写入初始管理员、JWT 拦截器 | `api/controller/AuthController`、`config/AdminAuthInterceptor` |
 | 启动自检 | 各业务表补建/初始化、可选只读表存在性校验 | `common/startup/*` |
 
@@ -134,7 +149,7 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 设备管理 | `/device/list` | 已实现（列表/详情/业务信息/WAN 参数弹窗/在线明细 + **右下角批量工具条** + **LAN 网口图标** + **WIFI 按 2.4G/5.8G 上下分行** + **运行信息列**（运行时长/加入时间/最后汇报时间/汇报IP，可排序）+ **查询超管密码弹窗**） |
 | 设备详情 | `/device-detail/:sn` | 已实现（能力树、参数树、RPC 调试 + 业务面板：信息卡改为运行时长/注册时间/最近上报/上报IP、LAN 网口区块、WLAN 按频段分行、SIP 只列真实线路） |
 | 工单记录 | `/worklist/instances` | 已实现（工单与步骤查询；批量建单入口在设备列表工具条「一键工单 ▲」） |
-| OLT 管理 | `/olt/management` | **界面已实现，全量为前端模拟数据** |
+| OLT 管理 | `/olt/management` | 已实现（**真实 Telnet 采集**：OLT 状态 / 配置信息 / VLAN（三层接口·透传·二层互通·静态路由）/ ONT 配置与状态 / 采集记录；端口行钉在板卡示意图上；DBA 线路模板、业务 TR069 模板、ONT 注册等标签页仍为占位） |
 
 设备列表右下角工具条（`web/src/views/device/list.vue`，需先勾选设备）：
 
@@ -234,7 +249,7 @@ acs:
 | 3 | ~~业务模板整包下发~~ | **已实现** | `POST /api/biz-template/execute`：按成员顺序串行执行，执行记录写 `biz_template_execution`；成员失败按模板 `continueOnError` 决定停下还是继续，继续跑完且有失败记 `partial` |
 | 4 | ~~一键工单（开通 / 检修）~~ | **已实现** | 设备列表勾选后按台建单，每台一个独立流水号（`worklistDesc` 幂等），单台失败记录但继续其余设备，最后汇总失败清单 |
 | 5 | 设备批量运维指令后端 | 部分接通（**超管密码已接通**） | Telnet 开关与命令执行、WAN 侧访问、WiFi 开关、禁用 SIP、删除 WAN 连接、解除上网限制、SSID 前缀清理、配置文件导出/克隆、强制上报等需逐个按厂商/型号补齐参数路径（统一走型号映射，不写死路径）。超管账号查询已可用，但依赖设备在线且该型号把 `User.{i}.Username/Password` 暴露给 TR-069 |
-| 6 | OLT 融合管理真实数据 | 模拟数据 | `web/src/views/olt/management.vue` 全为前端 mock；需接 SNMP/Telnet 采集：OLT 资源、板卡、槽位、PON 口（Tx/Rx 光功率、MAC、VLAN、ONU 数），数据替换集中在页面顶部 `resources` / `olt` 两个对象 |
+| 6 | ~~OLT 融合管理真实数据~~ | **已实现（基本）** | Telnet 采集已接通（华为 MA5683T 实测）：台账、板卡与温度、端口与每条 ONT 明细、VLAN 与三层接口 / 静态路由均真实入库；页面「同步」与后台 5 分钟定时刷新。剩余占位：DBA / 线路模板、业务 / TR069 / 流量模板、ONT 注册（`display ont autofind all`）、OLA、ONU 后板编辑面板、OLT 升级、主备、保护。光功率（Tx/Rx）这一版设备的 `display port` 只支持 desc/mode/statistics/vlan，未采集 |
 | 7 | 存量数据迁移 | 未开始 | 存量 `biz_template_item.template_key` 仍是旧文件 key，`BizTemplateService.parseId` 会判定为“配置模板不存在”，需迁移脚本改为 `config_template.id` |
 | 8 | 意图字段扩展 | 进行中 | 现 WAN 类仅 IP 协议 / VLAN 使用与否 / 是否绑定端口；待补 WAN IP 获取方式、PPPoE 账号、SIP 服务器/账号、WiFi SSID/密码等意图（VLAN ID、具体端口仍不落库，由下发时决定） |
 | 9 | 旧机制彻底清理 | 基本完成 | 旧文件模板 / 向导编译 / 旧工单编排引擎已删，工单改走 `IntentDeliveryService`；`worklist` 包中保留档案、型号映射、能力树导出与工单建单/查询，收尾时可再审视命名。**UDP 连接请求（TR-111 打洞）已删**：内网部署下设备直连可达，用不到穿透，且它「发出即算成功」会顶掉 HTTP 那条，唤醒失败还看不出来 |
@@ -312,6 +327,7 @@ configuration/
 | `template` | **配置意图模板**：实体、Mapper、Service、Controller（意图字段定义集中在 `ConfigTemplateService#FIELD_DEFS`） |
 | `biz` | 业务模板：编排实体、成员视图、执行记录、下发前自检 |
 | `worklist` | 光猫档案（`loader`/`registry`/`model`）、型号语义映射（`ModelMappingService`）、能力树导出（`ModelTreeStore`）、机型适配（`ModelAdaptationService`）、工单建单与查询（`WorklistDeliveryService`、`controller/WorklistExecuteController`） |
+| `olt` | **OLT 管理**：Telnet 会话与命令编排（`telnet/OltCliSession`）、回显解析（`telnet/OltInfoParser`）、台账与同步（`service/OltService`）、定时刷新（`service/OltAutoRefreshService`）、Controller 与模型 |
 | `api` | 管理端接口：设备、能力、业务、RPC 任务、统计、登录及其 Service |
 | `exec` | **意图下发执行器**：下发计划渲染（`IntentPlanRenderer`）、执行与任务表（`IntentDeliveryService`、`DeviceTask`）、任务结束事件 |
 | `openapi` | **北向接口**：端口与路径隔离（`config`）、查询/下发/事件订阅三个 Controller、Webhook 推送与事件投递、设备上下线侦测（`watch`） |
@@ -329,7 +345,7 @@ web/src/
 │   ├── device/     设备列表 list.vue、设备详情 detail.vue
 │   ├── worklist/   templates.vue（意图模板）、instances.vue（工单记录）、profiles.vue（光猫适配）
 │   ├── biz/        业务模板 template.vue
-│   ├── olt/        OLT/ONU 管理 management.vue（模拟数据）
+│   ├── olt/        OLT/ONU 管理 management.vue（真实采集）、boardProfiles.js（板卡型号档案与示意图）
 │   └── login/ 404.vue
 ├── components/     DeviceBusinessPanel（业务面板）、DeviceIdentityCell（终端信息列）、DeviceRuntimeCell（运行信息列）等
 └── router/         菜单与路由
@@ -391,6 +407,10 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.device.lan.auto-refresh.max-devices-per-round` | `200` | 单轮最多刷新多少台 |
 | `acs.agent.rpc-timeout` | `510` | 单条 RPC 等待设备回应的超时（秒） |
 | `acs.exec.request-timeout-seconds` | `90` | 下发等待设备回应的超时（秒） |
+| `acs.olt.auto-create-table` | `true` | 启动时补建 `olt_device` / `olt_board` / `olt_sync_record`，并补齐后加的列（后台板、VLAN 快照等） |
+| `acs.olt.connect-timeout-ms` / `login-timeout-ms` | `8000` / `15000` | OLT 建连与登录超时（毫秒） |
+| `acs.olt.command-timeout-ms` | `20000` | OLT 单条命令等提示符的超时（毫秒）；老旧设备敲一条 `display board` 要十几秒，给小了会拿到半截回显 |
+| `acs.olt.max-raw-output-chars` | `60000` | 单次采集留档回显的字符上限，超出截断 |
 | `acs.openapi.port` | `8899` | 北向独立端口，置 0 则挂到管理端口下 |
 | `acs.openapi.path-prefix` | `/openapi/v1` | 北向路径前缀，鉴权与端口隔离都按它判定 |
 | `acs.openapi.webhook.max-attempts` | `5` | 事件推送最大重试次数 |

@@ -302,6 +302,21 @@ acs:
     # 这个时间其实是「等设备开一次心跳」的窗口
     request-timeout-seconds: 90
 
+  # ==================== OLT（Telnet 采集） ====================
+  # OLT 不跑 TR-069，靠登录设备命令行采集。超时按现场设备响应速度调：
+  # 老旧设备敲一条 display board 要十几秒，命令超时给小了会频繁拿到半截回显
+  olt:
+    # 启动时自动补建 olt_device / olt_board / olt_sync_record
+    auto-create-table: true
+    # 建连超时(毫秒)
+    connect-timeout-ms: 8000
+    # 登录超时(毫秒)，含等待账号/密码提示符
+    login-timeout-ms: 15000
+    # 单条命令等待提示符的超时(毫秒)
+    command-timeout-ms: 20000
+    # 单次采集留档的回显上限(字符)，超出截断
+    max-raw-output-chars: 60000
+
   # ==================== 北向接口 ====================
   openapi:
     # 独立端口：给上层系统的对接接口单独监听，防火墙只需向合作方放行这一个端口，

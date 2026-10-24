@@ -110,8 +110,9 @@
 | 配置意图模板 | `/api/config-templates` | §4.5 |
 | 业务模板 | `/api/biz-template` | §4.6 |
 | 型号语义映射 | `/api/models` | §4.7 |
-| 工单 / 光猫档案 | `/api/worklist` | §4.8 / §4.9 |
-| 首页概览 | `/api/dashboard` | §4.10 |
+| 工单 / 光猫档案 | `/api/worklist` | §4.8 |
+| 首页概览 | `/api/dashboard` | §4.9 |
+| OLT 管理（Telnet 采集） | `/api/olt` | §4.10 |
 
 ---
 
@@ -274,6 +275,195 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 
 `online` 按 `last_contact_time` 落在 `acs.dashboard.online-window-seconds`（默认 900 秒）内判定，
 与 §4.1 的会话实时在线口径不同——重启后会话表清空，前者不受影响。
+
+### 4.10 OLT 管理（Telnet 采集）
+
+基础路径 `/api/olt`。
+
+OLT 不走 TR-069：纳管方式是 Telnet 登录设备命令行执行查询。台账在 `olt_device`，
+同步结果在 `olt_board`，每次连接/同步的回显留档在 `olt_sync_record`（排查解析问题用）。
+
+| 方法 | 路径 | 参数 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/list` | `keyword`(名称/地址/型号模糊) | OLT 列表，密码不回显，只给 `hasPassword` |
+| GET | `/{id}` | — | 详情：`{device, boards, records}`，`records` 为最近 10 条 |
+| POST | `/save` | 见下 | 新增（`id` 为空）或修改（`id` 必填） |
+| POST | `/delete` | `{id}` | 删除台账，同时物理清理板卡 |
+| POST | `/test` | 保存入参 | 诊断测试，**未保存的表单也能测**；不覆盖已采集的板卡 |
+| POST | `/{id}/test` | — | 对已保存设备做诊断测试 |
+| POST | `/{id}/sync` | — | 登录采集版本与板卡，覆盖写 `olt_board` 并刷新台账，返回最新详情 |
+| GET | `/{id}/records` | `limit`(默认10，上限100) | 采集记录，`rawPreview` 为回显片段 |
+| GET | `/web-accounts` | — | 「允许访问的 Web 登录账号」候选，来自 `sys_user` 启用账号 |
+
+保存入参：
+
+```json
+{
+  "id": 12,
+  "name": "淮安SAS2108-核心机房03A",
+  "host": "10.10.19.44",
+  "protocol": "TELNET",
+  "username": "root",
+  "password": "",
+  "port": 23,
+  "charset": "AUTO",
+  "bindLocalIp": "10.10.19.2",
+  "webAccounts": ["admin", "operator01"],
+  "remark": "核心机房"
+}
+```
+
+约定：
+
+- `password` 为空：新增时表示使用设备默认口令 `admin`；修改时表示**沿用原密码**。
+- `username` 为空按 `root` 处理；`port` 为空按协议默认值（Telnet 23 / SSH 22）。
+- `charset` 取 `AUTO` / `UTF-8` / `GBK` / `GB18030`。`AUTO` 先按 UTF-8 登录，
+  回显出现替换符时自动用 GBK 重连一次。
+- `webAccounts` 为空表示不限制；落库为逗号分隔串。
+- `protocol=SSH` 当前返回失败：只实现了 Telnet，SSH 待后续接入。
+- 修改地址 / 协议 / 端口后，台账里的型号、厂商、板卡摘要会被清空（不再代表这台设备）。
+
+诊断测试返回（失败也是 HTTP 200，`success=false`）：
+
+```json
+{ "success": true, "message": "登录成功：华为 MA5600T V800R018C10，提示符 <HUAWEI>",
+  "vendor": "HUAWEI", "vendorLabel": "华为", "model": "MA5600T",
+  "softwareVersion": "V800R018C10", "prompt": "<HUAWEI>", "costMs": 1830,
+  "rawOutput": "Welcome...\n$ display version\n..." }
+```
+
+采集规则（`OltVendor` / `OltInfoParser`）：
+
+| 厂商 | 识别关键字 | 版本命令 | 板卡命令 | 温度命令 |
+| --- | --- | --- | --- | --- |
+| 华为 `HUAWEI` | huawei / vrp / ma5600 / ma5800 | `display version` | `display board 0` | `display temperature all` |
+| 中兴 `ZTE` | zte / zxan / c320 / c300 | `show version` | `show card` | — |
+| 烽火 `FIBERHOME` | fiberhome / an5516 / an6000 | `show version` | `show card` | — |
+| 通用 `GENERIC` | 兜底 | 两条都试 | `display board 0`、`show card` | — |
+
+采集顺序（现场要求）：登录成功 → 关分页 → **`display board 0`** → `display version` →
+`enable` → `config` → 温度（按槽位）→ 每块业务板一条 `display ont info 0 <槽位> all` →
+`display vlan all` → 上行口/主控口逐个 `display port vlan 0/<槽位>/<端口>` → `quit` 退到特权视图。
+板卡放在最前面，是因为版本命令在部分设备上很慢（甚至停在 `Parameter: FrameID/SlotID` 等输入），
+一旦超时，后面的板卡采集会跟着落空。某条命令超时后会先把残留回显读干净再继续，
+否则下一条命令会匹配到旧提示符，出现「同步成功却 0 块板卡」。
+
+现场这台 MA5683T（V800R015C00）有几处和通用写法不一样，都已按实际回显适配：
+
+| 现象 | 处理 |
+| --- | --- |
+| 用户视图下 `config` 也是 Unknown command | 先 `enable` 进特权视图，再 `config`；`quit` 只退一层，**不能再 quit**（那是 logout，设备会停下来问 y/n） |
+| `display temperature all` → `% Parameter error` | 退到按槽位 `display temperature 0/<槽位>`，回显 `The temperature of the board:  41C( 105F)` |
+| 这一版 `display port` 只有 desc/mode/statistics/vlan | **不发任何 display port 命令**，页面端口行只显示 ONT 数量 |
+| `display ont info 0 1 all` 只在 config 视图生效 | ONT 采集放在 config 视图里，参数是空格分隔；**按板查，不逐端口查**，一条命令带回整块板各端口的 ONT |
+| 空端口在整板回显里没有对应段落 | 按板卡端口数补齐，记成 0 个 ONT，端口仍然列出 |
+
+ONT 汇总行的实际写法带空格：`In port 0/ 1/0 , the total of ONTs are: 23, online: 22`，
+端口写成 `0/ 1/0`、逗号前有空格，正则按这个形态匹配；没有汇总行的版本退回数明细行，
+`Run state` 为 online（EPON 写 up）的算在线。
+
+MA5683T 的 `display version` 不给参数时会先回一条参数提示：
+```
+ { <cr>|backplane<K>|frameid/slotid<S><Length 1-15> }:
+```
+
+然后停在原地等输入。客户端识别到这类提示（`{ <cr>|... }:` 或 `Parameter: ...`）会自动补一个回车
+取默认参数 `<cr>`，再继续读正文——不补回车就只能等到命令超时，版本、背板、运行时长全空。
+
+另外提示符判定加了「静默 120ms 才算结束」：设备一行回显可能分几个 TCP 包到，
+只看 `>` 结尾会把 `|backplane<K>` 这种半行当成提示符，命令只拿到半截。
+
+同步摘要里会带上诊断：`display board 0 无回显（命令超时或连接被断开）`、
+`display board 0 回显无法解析：xxx`、`命令异常：xxx`；厂商与型号在版本命令失败时会从登录横幅兜底。
+
+华为这条链路解析出来的字段：
+
+| 来源 | 字段 |
+| --- | --- |
+| `display version` | `model`（MA5683T）、`softwareVersion`（MA5600V800R015C00）、`patchVersion`（SPC107）、`backplane`（H802MABO）、`macAddress`、`uptime`（转成 59天18小时21分11秒） |
+| `display board 0` | 每槽 `boardType` / `status`（Normal、Active_normal、Standby_normal、Auto_find、Failed…）、`boardKind`、`description`、`portMode`、`portCount` |
+| `display temperature all` | 每槽 `temperature`，一格多传感器取最高温 |
+| `display ont info 0 <槽位> all` | 该板各端口 ONT：`onuTotal` 总数、`onuOnline` 在线数、`onts[]` 每条 ONT 的明细（ID / SN / 在线 / 型号） |
+| `display vlan all` | VLAN 列表：`vlanId`、`type`（smart/standard/mux）、`attribute`、`stdPortNum`、`servPortNum`、`vlanConNum`（回显是 `-` 时为 null） |
+| `display port vlan 0/<槽位>/<端口>` | 上行口/主控口放通的 VLAN：`vlans[]`（升序）、`nativeVlan`（PON 口没有这一行） |
+| `display ip interface brief` | 三层 VLAN 接口：只取 `vlanif<N>` 行，`vlanId` / `ipAddress` / `prefixLength` / `mask`（点分十进制）/ `physical` / `protocol`；`meth0`、`null0` 不算 |
+| `display ip routing-table` | 静态路由：只取 `Proto=Static` 的行，`destination`（如 `0.0.0.0/0`）/ `nextHop` / `iface` / `preference` / `cost` |
+
+VLAN 快照（VLAN 列表 + 各上行口放通情况 + 三层接口 + 静态路由）按 JSON 存在 `olt_device.vlan_json`，
+`GET /api/olt/{id}` 响应里多一个 `vlan` 字段：
+`{ vlans:[], portVlans:[], ipInterfaces:[], staticRoutes:[], total, collectedAt }`。只对上联板和主控板的端口发
+`display port vlan`（现场是 0/6/0-3 与 0/8/0-1，共 6 条），**PON 业务口不逐个问**；
+某块板连着两个口没回显就收手，说明这版设备不认这条命令。整轮 VLAN 采集共 9 条命令
+（1 条 `display vlan all` + 6 条 `display port vlan` + 接口 + 路由表）。
+
+ONT 数量必须用**空格分隔**的参数（`display ont info 0 1 all`，不是 0/1），而且必须先 `config` 进配置视图，
+用户视图下设备不认这条命令。客户端流程是 `enable` → `config` → 每块业务板一条 → `quit` 退回；
+**不逐端口发命令**，8 口板省下 7 条，一轮采集快得多。
+在线数优先取每个端口末尾的汇总行 `In port 0/ 1/0 , the total of ONTs are: 23, online: 22`，
+没有汇总行的版本按明细行数，`Run state` 为 online（EPON 写 up）的算在线。
+
+端口列表以 JSON 存在 `olt_board.ports_json`（端口数不多，不单开表），详情接口按 `board.ports` 数组返回。
+每个端口带 `frameNo` / `slotNo` / `portNo`，页面显示成 `P0 0/1/0   23 ONT / 22 在线`——接口标识和
+命令行里的 F/S/P 一致，能直接对上物理口；回显里没出现的端口记 `0 ONT / 0 在线`，照常列出。
+不发 display port 命令，因此不采集光模块在位状态，页面也不画灯。
+
+点开某个端口会列出这个口下**每一条 ONT**（`onts[]`），在线和不在线都在，页面显示
+`#0  SN  型号  在线/离线`。字段：`ontId` / `sn`（GPON 是 SN，EPON 是 MAC） / `runState`
+（online / offline，EPON 写 up / down） / `online` / `description`（Description 段的型号，如 SK-D748S）。
+明细行解析用的正则**不锚定行首**：分页时设备会把 `( Press 'Q' to break ) ----` 直接打在行中间，
+后面跟着几条 ONT，锚定行首会漏掉它们（数量对、明细少几条）。
+
+`boardKind` 取值：`SERVICE`（业务板）/ `CONTROL`（主控板）/ `UPLINK`（上联板）/ `POWER`（电源板）/
+`INTERFACE`（通用接口板）/ `UNKNOWN`。型号认不出时按 MA5600T 槽位约定兜底（6/7 主控、8/9 上联、10/11 电源、12 通用，其余业务板）。
+
+板卡示意图：前端按 `public/olt/olt_<板卡型号大写>.png` 约定加载，
+`olt_H807GPBD.png`、`olt_H802SCUN.png` 已内置；新增型号只需按名字放图，缺图显示「暂无该型号示意图」。
+
+端口列表不再单独占一块：面板布局固定的型号，`P0`-`P7` 这 8 行直接**钉在示意图右侧对应物理口的高度上**
+（一行对一个箭头），连一条细线指向该口；`PORT_MARKERS` 里按百分比写死位置，H807GPBD 是上排 0-3、
+下排 4-7，中间那条是激光警告贴。点某一行展开的 ONT 明细显示在图下方，不会把其它行挤开。
+没配布局的型号（或没图）仍按普通列表排在示意图下面，不影响原来的展示。
+新增型号要钉的，量一下端口中心占图片高度的比例填进去即可。
+
+型号、版本、板卡均为宽松解析：解析不出就留空（页面显示 `-`），不阻断同步。
+解析不符合现场设备时，用 `GET /{id}/records` 拿到原始回显（前 8000 字符）再补正则。
+
+## OLT 自动采集（不用手点同步）
+
+后台定时任务 `OltAutoRefreshService`：**启动后 5 秒自动采一轮，之后每 5 分钟一轮**，
+每轮重新登录每台 OLT 走一遍上面的采集，重新写 `olt_board` 和台账字段。
+板卡插拔、端口 ONT 数、设备重启后的运行时长这些只能到设备上看的东西，页面上会自动跟上；
+页面不主动去「同步设备」，只读库里的最新数据。
+
+周期和相关参数写死在 `OltAutoRefreshService` 里，不放到配置文件——现场忘了配或配错成 0，
+数据就会停在过去某个时刻而没人发现：
+
+| 常量 | 值 | 说明 |
+| --- | --- | --- |
+| `INTERVAL_MILLIS` | 5 分钟 | 两轮之间的间隔，失败退避也按它的倍数算 |
+| `INITIAL_DELAY_MILLIS` | 5 秒 | 启动后跑第一轮，只留出建表和连接池初始化的时间 |
+| `maxRoundMillis` | 5 分钟 | 单轮耗时上限，超了剩下的设备留到下一轮 |
+| `MAX_BACKOFF` | 6 | 连续失败最多退避到 6 倍间隔 |
+
+几个保护：串行采集（OLT 的 Telnet 并发会话数很小）且上一轮没跑完本轮跳过；
+单台连不上时按连续失败次数把它的间隔逐步拉长（最多 6 倍），连好后恢复，不让一台掉线设备拖慢整轮；
+单台失败只记日志和采集记录（操作人写「自动刷新」），不影响其他 OLT。
+
+页面侧只有「自动刷新」开关和间隔下拉（5/10/30/60 秒），只轮询详情接口把最新数据显示出来，
+**不会因为数据旧而自己去登录设备**；「同步」按钮是唯一的手工入口，应急时才点。
+
+超时配置：`acs.olt.connect-timeout-ms` / `login-timeout-ms` / `command-timeout-ms`，
+建表开关 `acs.olt.auto-create-table`。
+
+```bash
+# 先测通再保存
+curl -X POST 'http://127.0.0.1:8888/api/olt/test' -H 'X-Token: <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"host":"10.10.19.44","protocol":"TELNET","username":"root","password":"admin","port":23}'
+
+# 保存后同步
+curl -X POST 'http://127.0.0.1:8888/api/olt/12/sync' -H 'X-Token: <token>'
+```
 
 ---
 
@@ -511,6 +701,10 @@ X-ACS-Signature: 8Z3k...（Base64）
 `GET /api/worklist/instances/device/{sn}`、`GET /api/worklist/instances/{id}/steps`
 
 **概览**：`GET /api/dashboard/overview`
+
+**OLT**：`GET /api/olt/list`、`GET /api/olt/{id}`、`POST /api/olt/save`、`POST /api/olt/delete`、
+`POST /api/olt/test`、`POST /api/olt/{id}/test`、`POST /api/olt/{id}/sync`、
+`GET /api/olt/{id}/records`、`GET /api/olt/web-accounts`
 
 **北向查询**：`GET /openapi/v1/devices`、`GET /openapi/v1/devices/{sn}`、
 `GET /openapi/v1/devices/{sn}/online`、`GET /openapi/v1/devices/{sn}/capability/tree`、
