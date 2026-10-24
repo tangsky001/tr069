@@ -38,6 +38,10 @@ public final class OltInfoParser {
     private static final Pattern MODEL_FIBERHOME = Pattern.compile(
             "(?i)\\b(AN5\\d{3}-\\d{2}|AN6000-\\d+|AN5516-\\d{2})\\b");
 
+    /** 鸿升光：HSGQ-E04（show version 的 Software Version 和 Product 行里都有） */
+    private static final Pattern MODEL_HSGQ = Pattern.compile(
+            "(?i)\\b(HSGQ-[A-Za-z0-9]{2,10})\\b");
+
     /** 型号常见写法：Model: xxx / Product name : xxx / 设备型号 */
     private static final Pattern MODEL_LINE = Pattern.compile(
             "(?im)^\\s*(?:model(?:\\s*name)?|product\\s*name|device\\s*type|equipment\\s*type|设备型号|产品名称)"
@@ -51,7 +55,7 @@ public final class OltInfoParser {
     private static final Pattern VERSION_VRP = Pattern.compile("\\bV\\d{3}R\\d{3}(?:C\\d{2,3})?[A-Z0-9]*\\b");
 
     private static final Pattern VERSION_SEMVER = Pattern.compile(
-            "(?i)\\b(?:software\\s+|main\\s+|patch\\s+)?version\\s*[:：]\\s*([A-Za-z0-9][A-Za-z0-9._()\\-]{1,40})");
+            "(?i)\\b(?:software\\s+|main\\s+|patch\\s+)?version\\s*[:：]\\s*([A-Za-z0-9][A-Za-z0-9._()\\-_]{1,40})");
 
     private static final Pattern VERSION_SEMVER_FALLBACK = Pattern.compile("\\bV\\d+\\.\\d+(?:\\.\\d+)+[A-Za-z0-9]*");
 
@@ -68,7 +72,7 @@ public final class OltInfoParser {
                     + "\\s*[:：]\\s*([A-Z][A-Z0-9]{3,19})\\b");
 
     private static final Pattern MAC_ADDRESS = Pattern.compile(
-            "(?im)^\\s*(?:main\\s+board\\s+)?mac(?:\\s*address)?\\s*[:：]\\s*"
+            "(?im)^\\s*(?:main\\s+board\\s+|base\\s+)?mac(?:\\s*address)?\\s*[:：]\\s*"
                     + "([0-9A-Fa-f]{2}(?:[-:][0-9A-Fa-f]{2}){5}|[0-9A-Fa-f]{4}(?:[-:][0-9A-Fa-f]{4}){2})\\b");
 
     /** 运行时长：MA5683T uptime is 59 day(s), 18 hour(s), ... */
@@ -150,8 +154,11 @@ public final class OltInfoParser {
             case FIBERHOME:
                 candidates = new Pattern[]{MODEL_FIBERHOME, MODEL_LINE};
                 break;
+            case HSGQ:
+                candidates = new Pattern[]{MODEL_HSGQ, MODEL_LINE};
+                break;
             default:
-                candidates = new Pattern[]{MODEL_HUAWEI, MODEL_ZTE, MODEL_FIBERHOME, MODEL_LINE};
+                candidates = new Pattern[]{MODEL_HUAWEI, MODEL_ZTE, MODEL_FIBERHOME, MODEL_HSGQ, MODEL_LINE};
                 break;
         }
         for (Pattern pattern : candidates) {
@@ -813,6 +820,35 @@ public final class OltInfoParser {
         }
         String state = runState.toLowerCase(Locale.ROOT);
         return state.contains("online") || "up".equals(state);
+    }
+
+    // ------------------------------------------------------------ 鸿升光 HSGQ
+
+    /**
+     * 鸿升光整机卡片：现场不需要采集板卡信息（{@code show pon-info} 在部分固件上
+     * 只回一声命令回显，采不到数据），识别出厂商后直接按型号生成——
+     * E04 固定 4 个 PON 口，端口只给名字，ONU 数量页面显示「-」，示意图按型号出。
+     */
+    public static OltBoard buildHsgqBoard(String model) {
+        OltBoard board = new OltBoard();
+        board.setSlotNo(0);
+        board.setBoardType(model == null || model.isBlank() ? "HSGQ-E04" : model);
+        board.setStatus("Up");
+        board.setPortCount(4);
+        board.setPortMode("EPON");
+        board.setBoardKind(BoardKind.SERVICE.name());
+        board.setDescription("整机（4 口 EPON）");
+        List<OltPort> ports = new ArrayList<>();
+        for (int no = 1; no <= 4; no++) {
+            OltPort port = new OltPort();
+            port.setFrameNo(0);
+            port.setSlotNo(0);
+            port.setPortNo(no);
+            port.setPortName(String.format("PON%02d", no));
+            ports.add(port);
+        }
+        board.setPorts(ports);
+        return board;
     }
 
     // ------------------------------------------------------------ VLAN

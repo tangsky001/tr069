@@ -15,6 +15,9 @@ public class OltSnapshot {
 
     private OltVendor vendor = OltVendor.GENERIC;
 
+    /** 命令风格：华为 display，第三方 show；没探测出来为 null */
+    private OltVendor.CliStyle cliStyle;
+
     /** 型号，解析不出时为 null */
     private String model;
 

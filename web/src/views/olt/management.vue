@@ -131,6 +131,7 @@
                     :src="slot.image"
                     :alt="slot.type"
                     class="board-img"
+                    loading="lazy"
                     title="点击查看板卡大图"
                     @error="markImageMissing(slot.type)"
                     @click="openBoardImage(slot)"
@@ -446,16 +447,28 @@
       @saved="handleSaved"
     />
 
-    <!-- 板卡示意图大图 -->
+    <!-- 板卡示意图大图：默认按屏幕高度缩放，点图片切到原始尺寸再看细节 -->
     <el-dialog
       :title="boardPreview ? boardPreview.label : '板卡示意图'"
       :visible.sync="boardPreviewVisible"
-      width="360px"
+      :width="boardPreviewZoomed ? '88%' : '68%'"
       append-to-body
+      @closed="boardPreviewZoomed = false"
     >
       <div v-if="boardPreview" class="board-preview-wrap">
-        <img :src="boardPreview.image" :alt="boardPreview.label" class="board-preview-img">
-        <div class="board-preview-tip">示意图仅用于区分板卡外观，端口状态以表格数据为准</div>
+        <img
+          :src="boardPreview.image"
+          :alt="boardPreview.label"
+          class="board-preview-img"
+          :class="{ 'board-preview-img-raw': boardPreviewZoomed }"
+          :title="boardPreviewZoomed ? '点击缩回屏幕大小' : '点击查看原始尺寸'"
+          @click="boardPreviewZoomed = !boardPreviewZoomed"
+        >
+        <div class="board-preview-tip">
+          {{ boardPreviewZoomed
+            ? '已按原始尺寸显示，点图片缩回；示意图仅用于区分外观，端口状态以表格数据为准'
+            : '点图片按原始尺寸查看；示意图仅用于区分外观，端口状态以表格数据为准' }}
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -498,6 +511,8 @@ export default {
       editing: null,
       boardPreview: null,
       boardPreviewVisible: false,
+      // 大图是否按原始尺寸显示（点图片切换）
+      boardPreviewZoomed: false,
       // 图片按型号约定命名，缺图时记下来退回占位，避免一堆 404
       missingImages: [],
       // 页面自动刷新：后台每 5 分钟自己去采，这里只按间隔把最新数据拉到页面上，不碰设备
@@ -1411,15 +1426,27 @@ export default {
 }
 .board-preview-wrap {
   text-align: center;
+  /* 原始尺寸比弹窗大时，在弹窗里滚动看，别把弹窗撑出屏幕 */
+  overflow: auto;
+  max-height: 76vh;
 }
 .board-preview-img {
-  height: 68vh;
+  /* 竖条板卡图按高度缩放、宽图按宽度缩放，取两者里先撞到的那个 */
+  max-height: 74vh;
   width: auto;
   max-width: 100%;
   background: #fafafa;
   border: 1px solid #ebeef5;
   border-radius: 4px;
   padding: 6px 4px;
+  cursor: zoom-in;
+  transition: max-height 0.15s;
+}
+/* 点一下按原始尺寸显示，超出弹窗就在弹窗里滚动看 */
+.board-preview-img-raw {
+  max-height: none;
+  max-width: none;
+  cursor: zoom-out;
 }
 .board-preview-tip {
   margin-top: 8px;

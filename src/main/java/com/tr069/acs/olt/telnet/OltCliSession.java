@@ -65,8 +65,17 @@ public class OltCliSession implements Closeable {
     /** 板卡探测顺序：华为 → 中兴/烽火。不用不带参数的 display board，那会停在 Parameter 提示上 */
     private static final List<String> BOARD_COMMANDS = List.of("display board 0", "show card", "show slot");
 
-    /** 版本探测顺序：华为 → 中兴/烽火 */
+    /** 版本探测顺序：华为 display → 第三方 show，谁回了内容就用谁的命令风格 */
     private static final List<String> VERSION_COMMANDS = List.of("display version", "show version");
+
+    /** 设备不认这条命令时的回显，说明风格发错了，换另一套再试 */
+    private static final Pattern COMMAND_REJECTED = Pattern.compile(
+            "(?i)(unknown\\s+command|unrecognized\\s+command|invalid\\s+(command|input)"
+                    + "|incorrect\\s+command|command\\s+not\\s+found"
+                    + "|错误的命令|命令不存在|不支持的命令)");
+
+    /** 单条版本命令的超时上限：认厂商要快，不能让它把后面板卡的时间吃掉 */
+    private static final int VERSION_PROBE_TIMEOUT_MS = 8000;
 
     private static final List<Pattern> LOGIN_STOPS = List.of(USERNAME_PROMPT, PASSWORD_PROMPT, SHELL_PROMPT);
 
@@ -131,9 +140,9 @@ public class OltCliSession implements Closeable {
     /**
      * 采集信息。
      *
-     * <p>顺序是现场定的：登录成功先敲 {@code display board 0} 把机框/板卡拿到手，
-     * 再取版本、补丁、背板，最后按槽位补温度。版本命令在部分设备上很慢（甚至要选机框），
-     * 放在前面一旦超时，后面的板卡采集会一起落空。</p>
+     * <p>顺序是：登录成功先用 {@code display version} / {@code show version} 定下
+     * 命令风格与厂商（华为 display、第三方 show），再按厂商的命令集采集板卡、温度、
+     * ONT、VLAN。风格定不下来时才两套命令都试一遍。</p>
      *
      * @param withBoards 是否一并采集板卡
      */
@@ -141,14 +150,24 @@ public class OltCliSession implements Closeable {
         OltSnapshot snapshot = new OltSnapshot();
         List<String> notes = new ArrayList<>();
 
-        // 先关分页，否则 display board / display version 都可能停在第一页
+        // 先关分页，否则版本/板卡回显都可能停在第一页
         prepareTerminal();
 
-        // 第一步：板卡。华为 display board 0，其次中兴/烽火的 show card / show slot
+        // 第一步：判定命令风格与厂商。display version 有回显就是华为，show version
+        // 有回显就是第三方；认出厂商后后面的命令只走这一套，不再发另一套去讨一句报错
+        VersionProbe probe = probeVersion();
+        OltVendor vendor = detectVendor(probe.style(), probe.text());
+        String versionText = probe.text();
+        if (versionText.isBlank()) {
+            notes.add("display version / show version 均无回显（命令超时或连接被断开）");
+        }
+
+        // 第二步：板卡。命令按上面定下的厂商/风格挑，只有风格完全没定下来才两套都试
         String boardText = "";
         List<OltBoard> boards = List.of();
-        if (withBoards) {
-            for (String command : BOARD_COMMANDS) {
+        List<String> boardCommands = boardCommands(vendor, probe.style());
+        if (withBoards && vendor != OltVendor.HSGQ) {
+            for (String command : boardCommands) {
                 String out = runCommand(command);
                 if (out != null && !out.isBlank()) {
                     boardText = out;
@@ -160,34 +179,26 @@ public class OltCliSession implements Closeable {
             }
             if (boards.isEmpty()) {
                 notes.add(boardText.isBlank()
-                        ? "display board 0 无回显（命令超时或连接被断开）"
-                        : "display board 0 回显无法解析：" + headLine(boardText));
+                        ? boardCommands.get(0) + " 无回显（命令超时或连接被断开）"
+                        : boardCommands.get(0) + " 回显无法解析：" + headLine(boardText));
             }
         }
 
-        // 第二步：版本
-        String versionText = "";
-        for (String command : VERSION_COMMANDS) {
-            String out = runCommand(command);
-            if (out != null && !out.isBlank()) {
-                versionText = out;
-                if (OltVendor.detect(out) != OltVendor.GENERIC) {
-                    break;
-                }
-            }
-        }
-        if (versionText.isBlank()) {
-            notes.add("display version 无回显（命令超时或连接被断开）");
-        }
-
-        OltVendor vendor = detectVendor(versionText, boardText);
+        vendor = detectVendor(probe.style(), versionText, boardText);
         String model = OltInfoParser.extractModel(vendor, versionText);
         if (model == null) {
             // 版本命令没回来时，登录横幅里通常也有型号（Huawei MA5683T ...）
             model = OltInfoParser.extractModel(vendor, banner.toString());
         }
+        if (withBoards && vendor == OltVendor.HSGQ) {
+            // 现场确认：鸿升光不需要采集板卡信息，识别出厂商后直接按型号生成整机卡片出图
+            // （E04 固定 4 个 PON 口；show pon-info 部分固件只回命令回显，采不到数据）
+            boards = List.of(OltInfoParser.buildHsgqBoard(model));
+            boardText = "";
+        }
 
         snapshot.setVendor(vendor);
+        snapshot.setCliStyle(cliStyleOf(vendor, probe.style()));
         snapshot.setModel(model);
         snapshot.setVersionText(versionText);
         snapshot.setBoardText(boardText);
@@ -393,22 +404,85 @@ public class OltCliSession implements Closeable {
 
     /**
      * 厂商判定：版本回显 → 板卡回显 → 登录横幅 → 提示符，前面的认不出再用后面的兜底。
+     *
+     * <p>过程中带上命令风格：{@code display} 有回显认作华为，{@code show} 有回显认作
+     * 第三方（厂商仍记通用，但命令走 show）。</p>
      */
-    private OltVendor detectVendor(String... texts) {
+    private OltVendor detectVendor(OltVendor.CliStyle style, String... texts) {
         for (String text : texts) {
             if (text == null || text.isBlank()) {
                 continue;
             }
-            OltVendor vendor = OltVendor.detect(text);
+            OltVendor vendor = OltVendor.detect(style, text);
             if (vendor != OltVendor.GENERIC) {
                 return vendor;
             }
         }
-        OltVendor fromBanner = OltVendor.detect(banner.toString());
+        OltVendor fromBanner = OltVendor.detect(style, banner.toString());
         if (fromBanner != OltVendor.GENERIC) {
             return fromBanner;
         }
-        return OltVendor.detect(prompt == null ? "" : prompt);
+        return OltVendor.detect(style, prompt == null ? "" : prompt);
+    }
+
+    /**
+     * 命令风格：认出厂商就用厂商自己的，认不出就用探测时那条版本命令的风格。
+     */
+    private static OltVendor.CliStyle cliStyleOf(OltVendor vendor, OltVendor.CliStyle probed) {
+        if (vendor != null && vendor.getCliStyle() != null) {
+            return vendor.getCliStyle();
+        }
+        return probed;
+    }
+
+    /**
+     * 板卡命令：按厂商/风格挑一套，只有风格完全没定下来才两套都试。
+     */
+    private static List<String> boardCommands(OltVendor vendor, OltVendor.CliStyle style) {
+        if (vendor != OltVendor.GENERIC) {
+            return vendor.getBoardCommands();
+        }
+        if (style == OltVendor.CliStyle.DISPLAY) {
+            return List.of("display board 0");
+        }
+        if (style == OltVendor.CliStyle.SHOW) {
+            return List.of("show card", "show slot");
+        }
+        return BOARD_COMMANDS;
+    }
+
+    /**
+     * 版本探测：{@code display version} → {@code show version}，谁回了内容就用谁的风格。
+     *
+     * <p>华为认 display、第三方认 show，发错了设备只回一句 Unknown command，那就换
+     * 下一套；两条都不认时风格为 null，后面两套命令都试。探测用较短的超时，免得
+     * 版本命令卡住把板卡采集的时间一起吃掉。</p>
+     */
+    private VersionProbe probeVersion() {
+        int timeout = Math.min(commandTimeoutMs, VERSION_PROBE_TIMEOUT_MS);
+        String versionText = "";
+        OltVendor.CliStyle style = null;
+        for (String command : VERSION_COMMANDS) {
+            String out = runCommand(command, timeout);
+            if (out == null || out.isBlank() || isRejected(out)) {
+                continue;
+            }
+            versionText = out;
+            style = OltVendor.CliStyle.ofCommand(command);
+            if (OltVendor.detect(out) != OltVendor.GENERIC) {
+                return new VersionProbe(out, style);
+            }
+        }
+        return new VersionProbe(versionText, style);
+    }
+
+    /** 设备不认这条命令（风格发错了） */
+    private static boolean isRejected(String text) {
+        return COMMAND_REJECTED.matcher(text).find();
+    }
+
+    /** 版本探测结果：回显 + 它对应的命令风格 */
+    private record VersionProbe(String text, OltVendor.CliStyle style) {
     }
 
     /** 报错时给页面看的第一行有效回显 */

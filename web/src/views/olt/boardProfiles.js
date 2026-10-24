@@ -20,6 +20,17 @@ const PROFILES = [
     keywords: ['SCUN']
   },
   {
+    // 鸿升光是一体机，没有独立板卡型号：整机上来的「板卡」用设备型号 HSGQ-E04 表示，
+    // 示意图文件名就是设备型号（public/olt/HSGQ-E04.png），所以必须在这里显式配 image
+    code: 'HSGQ-E04',
+    label: 'HSGQ-E04 EPON 整机（4 口 EPON）',
+    image: '/olt/HSGQ-E04.png',
+    portMode: 'EPON',
+    ports: 4,
+    controlBoard: false,
+    keywords: ['HSGQ-E04']
+  },
+  {
     code: 'H807GPBD',
     label: 'GPBD 8 口 GPON 业务板',
     image: '/olt/olt_H807GPBD.png',

@@ -290,6 +290,7 @@ public class OltService {
             OltTestResult result = OltTestResult.ok(message);
             result.setVendor(snapshot.getVendor() == null ? null : snapshot.getVendor().name());
             result.setVendorLabel(snapshot.getVendor() == null ? null : snapshot.getVendor().getLabel());
+            result.setCliStyle(snapshot.getCliStyle() == null ? null : snapshot.getCliStyle().name());
             result.setModel(snapshot.getModel());
             result.setSoftwareVersion(snapshot.getSoftwareVersion());
             result.setPrompt(snapshot.getPrompt());
@@ -555,6 +556,9 @@ public class OltService {
             if (snapshot.getPatchVersion() != null) {
                 message.append(" / ").append(snapshot.getPatchVersion());
             }
+        }
+        if (snapshot.getCliStyle() != null) {
+            message.append("，命令风格 ").append(snapshot.getCliStyle().getKeyword());
         }
         if (snapshot.getPrompt() != null && !snapshot.getPrompt().isBlank()) {
             message.append("，提示符 ").append(snapshot.getPrompt());
