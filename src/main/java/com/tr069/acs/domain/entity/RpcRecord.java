@@ -9,8 +9,6 @@ import java.time.LocalDateTime;
 
 /**
  * RPC 执行记录。
- *
- * <p>对应 Python 版 RPC 与 RPC_EX 的合并。</p>
  */
 @Data
 @TableName("rpc_record")

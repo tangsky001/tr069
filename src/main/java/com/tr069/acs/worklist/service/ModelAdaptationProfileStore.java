@@ -61,7 +61,12 @@ public class ModelAdaptationProfileStore {
     /** 适配档是否已标记为已适配。yml 缺失或 adapted 不为 true 都算未适配。 */
     public boolean isAdapted(CpeModel model) {
         Map<String, String> profile = read(model);
-        return "true".equalsIgnoreCase(profile.getOrDefault("adapted", "").trim());
+        return isAdaptedFlag(profile.get("adapted"));
+    }
+
+    /** yml 里 {@code adapted:} 后面什么都不写时解析出来值是 null，不能一概当作字符串处理。 */
+    private static boolean isAdaptedFlag(String value) {
+        return value != null && "true".equalsIgnoreCase(value.trim());
     }
 
     /** 读适配档内容，文件不存在返回空。 */
@@ -86,7 +91,7 @@ public class ModelAdaptationProfileStore {
                 if (!Files.isRegularFile(yml)) {
                     continue;
                 }
-                if ("true".equalsIgnoreCase(read(yml).getOrDefault("adapted", "").trim())) {
+                if (isAdaptedFlag(read(yml).get("adapted"))) {
                     return ispDir.getFileName().toString();
                 }
             }

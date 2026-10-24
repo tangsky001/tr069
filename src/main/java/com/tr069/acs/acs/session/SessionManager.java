@@ -1,6 +1,5 @@
 package com.tr069.acs.acs.session;
 
-import com.tr069.acs.acs.service.DeviceRegistryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,12 +8,11 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * CPE 会话注册表。
- *
- * <p>对应 Python 版 cpe.py 的 {@code m_dict_sn2cpe} 与 {@code m_dict_sessionno2cpe}。</p>
  */
 @Slf4j
 @Component
@@ -31,6 +29,14 @@ public class SessionManager {
      */
     private final Map<String, String> connectionToSn = new ConcurrentHashMap<>();
 
+    /**
+     * CWMP 会话标识 -> SN，来自 ACS 下发 Set-Cookie 的 session 值。
+     *
+     * <p>这是同一轮会话跨 TCP 连接续接的正道：设备的空 POST、RPC 响应常常从
+     * 另一个源端口过来，ip:端口 对不上，只有 Cookie 能认出来。</p>
+     */
+    private final Map<String, String> sessionIdToSn = new ConcurrentHashMap<>();
+
     @Value("${acs.device.online-check-interval:86400}")
     private long onlineCheckInterval;
 
@@ -45,8 +51,6 @@ public class SessionManager {
      */
     @Value("${acs.session.duplicate-grace-seconds:30}")
     private long duplicateGraceSeconds;
-
-    private final DeviceRegistryService deviceRegistry;
 
     /**
      * 获取或创建会话。
@@ -74,6 +78,16 @@ public class SessionManager {
                 session.failAwaiting("device reconnected on a new connection");
             }
         }
+        // 每轮 Inform 都是一次新的 CWMP 会话，换发新的会话号。旧号若不注销，
+        // 设备带着过期 Cookie 来还能蹭进下一轮会话，本轮的 state 就串了
+        String previousSessionId = session.getSessionId();
+        if (previousSessionId != null) {
+            sessionIdToSn.remove(previousSessionId);
+        }
+        String sessionId = UUID.randomUUID().toString().replace("-", "");
+        session.setSessionId(sessionId);
+        sessionIdToSn.put(sessionId, sn);
+
         session.setConnectionId(connId);
         session.touch();
         session.setOnline(true);
@@ -81,19 +95,47 @@ public class SessionManager {
         return session;
     }
 
+    /**
+     * 按 CWMP 会话号反查序列号，对应 Cookie 里那个 session 字段。
+     */
+    public String findSnBySessionId(String sessionId) {
+        return sessionId == null ? null : sessionIdToSn.get(sessionId);
+    }
+
+    /**
+     * 把会话重新绑到当前这条 TCP 连接上。
+     *
+     * <p>设备在会话中途换连接（NAT 换端口、或同一轮会话里空 POST 和 RPC 响应各开一条）
+     * 走到这里是正常的：会话没变，只是承载它的连接变了。旧连接的映射要清掉，
+     * 否则 connectionToSn 会随每次请求一直堆积。</p>
+     */
+    public void rebindConnection(String sn, String connId) {
+        CpeSession session = snToSession.get(sn);
+        if (session == null) {
+            return;
+        }
+        String previous = session.getConnectionId();
+        if (previous != null && !previous.equals(connId)) {
+            connectionToSn.remove(previous);
+            connectionToSn.put(connId, sn);
+            session.setConnectionId(connId);
+        }
+        session.touch();
+    }
+
     public CpeSession find(String sn) {
         return snToSession.get(sn);
     }
 
     /**
-     * 按 TCP 连接标识反查设备序列号，对应原版 sessionno -> CPE 的映射。
+     * 按 TCP 连接标识反查设备序列号。
      */
     public String findSnByConnection(String connId) {
         return connectionToSn.get(connId);
     }
 
     /**
-     * 原版 is_2session1cpe 的双会话检测。
+     * 双会话检测。
      *
      * <p><b>注意：连接标识不同不等于重复会话。</b>连接标识取自 {@code ip:源端口}，
      * 而 CPE 每次新建 TCP 连接都会换一个临时端口，周期上报（常见 60 秒）几乎每次都是新连接。
@@ -142,12 +184,15 @@ public class SessionManager {
         // 清空待下发队列，避免遗留到下一次会话
         session.getOutbox().clear();
         connectionToSn.remove(session.getConnectionId());
-        deviceRegistry.markOffline(sn);
+        sessionIdToSn.remove(session.getSessionId());
+        // 这里不标记台账离线：CWMP 是短连接，光猫报完一轮就把 TCP 断了，
+        // 连接结束不等于设备离线。台账是否在线只看最近上报时间，
+        // 由 DeviceRegistryService 按上报窗口统一判定
         log.info("会话关闭: sn={}, reason={}", sn, reason);
     }
 
     /**
-     * TCP 连接断开时的清理，对应原版 connectionLost。
+     * TCP 连接断开时的清理。
      */
     public void onConnectionLost(String connId) {
         String sn = connectionToSn.remove(connId);
@@ -168,7 +213,7 @@ public class SessionManager {
     }
 
     /**
-     * 周期性清理长期未通信的会话，对应原版设备离线判定。
+     * 周期性清理长期未通信的会话。
      */
     @Scheduled(fixedDelayString = "${acs.device.session-sweep-interval:300000}")
     public void sweepExpiredSessions() {
@@ -176,7 +221,7 @@ public class SessionManager {
         for (CpeSession session : snToSession.values()) {
             if (session.isExpired(onlineCheckInterval)) {
                 session.setOnline(false);
-                deviceRegistry.markOffline(session.getSn());
+                // 台账离线不在这里判：交给上报窗口那套规则，见 DeviceRegistryService
                 // 静默足够久才回收会话对象：只标离线不回收的话 snToSession 只增不减，
                 // 长期跑会越攒越多。设备下次上报会重新建会话，不影响业务
                 if (session.isExpired(onlineCheckInterval * SESSION_RECLAIM_FACTOR)) {

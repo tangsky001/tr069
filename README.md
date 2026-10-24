@@ -11,7 +11,8 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 
 > 配置下发链路重构已**基本落地**：模板从「文件 + 步骤编排」改为**入库的意图模板**，
 > 下发由「意图 + 型号映射」在运行时生成真实 CWMP 参数（`exec/IntentDeliveryService`），
-> 工单与业务模板整包下发都跑在这条链路上。剩余待办见第 2 节（批量进度、意图字段扩展、OLT 真实数据等）。
+> 工单与业务模板整包下发都跑在这条链路上。OLT 融合管理已接真实 Telnet 采集（华为 MA5683T 实测），
+剩余待办见第 2 节（批量进度、意图字段扩展、OLT 剩余占位标签页等）。
 
 ---
 
@@ -64,21 +65,38 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 业务状态（WAN 连接 + **LAN 网口图标**、**WIFI 按 2.4G / 5.8G 上下分行**、SIP 信息、设备状态）、
 **运行信息**（运行时长 / 加入时间 / 最后汇报时间 / 汇报 IP，表头可排序）、操作：
 
+<<<<<<< HEAD
+![设备列表](doc/Display/013530_034.png)
+=======
 ![设备列表](doc/Display/162046_560.png)
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 
 设备详情业务面板：信息卡（运行时长 / 注册时间 / 最近上报 / 上报 IP）、WAN 连接、LAN 网口（插线绿色、
 未插灰色，悬停看 MAC）、WLAN 按 2.4G / 5.8G 分行、SIP 语音（只列真实线路实例）：
 
 ![设备详情 - 业务面板](doc/Display/162116_423.png)
 
-### OLT 管理（演示数据）
+### OLT 管理（真实设备采集）
 
-OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据为前端模拟，
-真实采集见「待实现」#6：
+Telnet 登录 OLT 命令行采集，已经在华为 MA5683T 上实测通过：
 
-![OLT 管理 - 总览](doc/Display/170707_144.png)
+- **OLT 状态 / 配置信息**：型号、版本与补丁、背板、主控 MAC、运行时长、同步摘要；板卡卡片列出型号 / 运行状态 / 描述 / 温度 / 端口与 ONT 汇总；
+- **板卡示意图**：`P0`-`P7` 端口行直接钉在示意图对应物理口的高度上，点某一行展开该口下每条 ONT 的 ID / SN / 型号 / 在线-离线；
+- **ONT 配置 / 状态**：按板卡分表，端口 × ONT 总数 / 在线 / 离线；
+- **VLAN**：三层 VLAN 接口（VLAN ID / IP / 掩码）、上行 VLAN 透传（各上行口放通的 VLAN 与 Native VLAN）、VLAN 与二层互通（按类型合并成 `41、45-46`）、静态路由（目的网络 / 下一跳 / 出接口）；
+- **采集记录**：每次同步与诊断的连接耗时、摘要、原始回显。
 
-![OLT 管理 - PON 口明细](doc/Display/170715_182.png)
+尚为占位的标签页：DBA / 线路模板、业务 / TR069 / 流量模板、ONT 注册（autofind）、OLA、ONU 后板编辑面板、OLT 升级、主备、保护。
+
+![OLT 管理 - OLT 状态与板卡示意图](doc/Display/203905_835.png)
+
+OLT 状态页：3 块板卡（业务板 1 / 主控板 1 / 上联板 1）、背板与版本、每块板在示意图右侧按物理口高度列出
+`P0`-`P7` 与各自的 ONT 数。
+
+![OLT 管理 - VLAN（三层接口 / 上行透传 / 二层互通 / 静态路由）](doc/Display/203941_898.png)
+
+VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN 透传（`0/6/0`-`0/8/1` 放通
+`1、41、45-46`，Native VLAN 1）、VLAN 与二层互通（单层智能 VLAN）、静态路由（`0.0.0.0/0 → 10.172.10.1`）。
 
 ---
 
@@ -93,12 +111,21 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 会话管理 | 会话状态机、待回应 RPC、超时兜底；周期上报视为心跳与会话接管（CPE 换 TCP 连接不重建会话、不打离线、不清待下发队列），离线只按长期无通信判定，疑似双会话仅告警 | `acs/session/*` |
 | 设备管理 | 设备自动注册、在线状态、分页详情、在线会话明细 | `acs/service/DeviceRegistryService`、`api/controller/DeviceController` |
 | 能力树采集 | 只采集 WAN / WiFi / LAN 网口 / SIP 四类子树（代码内固定）：GetParameterNames 拉路径 + GetParameterValues 分批读值，Inform 后自动采集、BOOTSTRAP 强制重采、NextLevel 兜底 | `acs/service/DeviceCapabilityService` |
+<<<<<<< HEAD
+| **设备纳管** | Inform 后立刻下发一条 `SetParameterValues`，把 `ManagementServer.URL`（ACS 地址）、`PeriodicInformInterval`（上报间隔）、`ConnectionRequestUsername/Password`（连接请求凭据）写回设备；上报值已一致就跳过、24 小时内不重发、BOOTSTRAP 强制重发；凭据改写成功登记进台账供唤醒使用 | `acs/service/InformProvisionService` |
+| **下发前唤醒** | CWMP 是短连接，ACS 不能主动推数据：常规下发排队等设备下一次周期 Inform；人工触发的下发（工单 / 业务模板 / 手动采集）先发连接请求叫设备立刻上报，指令随这一轮带下去，叫不醒则退化成等上报；取凭据的顺序是台账 → 采集参数 → 全局配置 → `itms` 兜底 | `acs/service/DeviceCapabilityService#wakeUp`、`exec/IntentDeliveryService` |
+=======
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 | 参数树导出 | 按型号导出能力树到 `configuration/models/`，并可按设备定位模型文件 | `worklist/service/ModelTreeStore` |
 | 业务快照 | `device` / `wan` / `wifi` / `lan` / `sip` / `pon` 分区，支持单台与整页批量读；LAN 区补插线状态（`connected`）与 MAC、SIP 区只保留真实线路实例（剔除 `VoiceProfile.{n}.SIP.` 汇总对象）、台账的注册时间与最近上报时间一并返回 | `acs/service/DeviceBusinessService` |
 | **LAN 网口状态自动刷新** | 定时（默认 5 分钟）对在线设备重读网口状态叶子（`Enable/Status/X_CT-COM_*LineStatus/MAC/速率`），拔插网线后页面不必手动点「重新采集」；只刷在线设备、只读网口那几个叶子，等回值超时不判失败（指令仍在队列里） | `acs/service/LanStatusRefreshService`、`DeviceBusinessService#lanStatusPaths` |
 | **超管账号查询** | `GET /api/device/{sn}/admin-account`：对在线设备实时读 `User.{i}.Username/Password` 并明文返回；离线直接返回 `offline`；能力树没采到时按 TR-098 / TR-181 标准路径兜底；整批被拒时逐条重发，共用 30s 总预算；只认 `.User.{i}.` 下的账号，WAN 拨号账号不会被误收 | `acs/service/DeviceAccountService`、`api/controller/DeviceController` |
 | 型号语义映射 | `cpe_model` + `model_param_mapping` / `model_object_mapping`：业务字段 ↔ 型号真实 CWMP 路径，支持按 SN 推荐候选路径 | `worklist/controller/ModelMappingController`、`ModelMappingService` |
+<<<<<<< HEAD
+| 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示。**频段识别**按「频段字段 / 信道列表 / 802.11 制式 / SSID 字样」四条判据取并集，只标 5G 不标 2.4G 时按双频认定、一个频段都认不出时按射频数推断（判据清单见 [doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)） | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
+=======
 | 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示 | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 | RPC 下发（异步） | 下发返回任务号，按任务号轮询结果；超时统一收尾 | `agent/RpcDispatchService`、`queue/RpcTaskQueue`、`api/controller/RpcTaskController` |
 | 队列削峰 | 上报与下发走 Redis 队列，Redis 不可用时降级为进程内处理 | `queue/*` |
 | **配置意图模板** | 入库 `config_template`，只描述开通意图（不下发任何数据）：7 类（WAN DHCP / WAN PPPoE / WAN 静态IP / WAN 桥接 / 2.4G WiFi / 5.8G WiFi / SIP），各类自带意图字段；支持 `/meta` 字段定义、列表、详情、保存、删除 | `template/*`（`ConfigTemplateService`、`ConfigTemplateController`） |
@@ -108,6 +135,7 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 数据模型适配 | TR-098（`InternetGatewayDevice.`）与 TR-181（`Device.`）双模型：Inform 参数多数判定根节点、业务前缀按双模型展开、型号档案与能力树 XML 记录数据模型并对账 | `acs/model/DataModel`、`InformService`、`DeviceBusinessService` |
 | **意图下发执行器** | 意图字段 + 型号语义映射 → CWMP 路径与值 → 按需 `AddObject` 再分批 `SetParameterValues`，全程写进 `device_task`；同 `taskNo` 幂等 | `exec/*`（`IntentDeliveryService`、`IntentPlanRenderer`） |
 | **北向接口** | 独立端口 8899 + `/openapi/v1/**：设备台账/在线/能力树/业务快照/工单结果查询、下发受理与结果查询、Webhook 事件推送（上下线、下发结束），复用管理端 JWT 鉴权 | `openapi/*` |
+| **OLT 命令行采集** | Telnet 登录 → 关分页 → `display board 0` / `display version` → `enable` → `config` → 温度 → 每块业务板一条 `display ont info 0 <槽位> all` → `display vlan all` → 上行/主控口逐个 `display port vlan 0/<槽位>/<端口>` → `display ip interface brief` / `display ip routing-table` → `quit`；板卡、端口 ONT（含每条 ONT 明细）、VLAN、三层接口、静态路由入库（`olt_device.vlan_json`、`olt_board.ports_json`）；启动后自动采一轮、之后每 5 分钟一轮，页面只拉最新数据不碰设备。华为 MA5683T 已实测 | `olt/*`（`telnet/OltCliSession`、`telnet/OltInfoParser`、`service/OltService`、`service/OltTelnetService`） |
 | 管理端鉴权 | JWT 登录、`sys_user` 查库、首次启动写入初始管理员、JWT 拦截器 | `api/controller/AuthController`、`config/AdminAuthInterceptor` |
 | 启动自检 | 各业务表补建/初始化、可选只读表存在性校验 | `common/startup/*` |
 
@@ -121,7 +149,7 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 设备管理 | `/device/list` | 已实现（列表/详情/业务信息/WAN 参数弹窗/在线明细 + **右下角批量工具条** + **LAN 网口图标** + **WIFI 按 2.4G/5.8G 上下分行** + **运行信息列**（运行时长/加入时间/最后汇报时间/汇报IP，可排序）+ **查询超管密码弹窗**） |
 | 设备详情 | `/device-detail/:sn` | 已实现（能力树、参数树、RPC 调试 + 业务面板：信息卡改为运行时长/注册时间/最近上报/上报IP、LAN 网口区块、WLAN 按频段分行、SIP 只列真实线路） |
 | 工单记录 | `/worklist/instances` | 已实现（工单与步骤查询；批量建单入口在设备列表工具条「一键工单 ▲」） |
-| OLT 管理 | `/olt/management` | **界面已实现，全量为前端模拟数据** |
+| OLT 管理 | `/olt/management` | 已实现（**真实 Telnet 采集**：OLT 状态 / 配置信息 / VLAN（三层接口·透传·二层互通·静态路由）/ ONT 配置与状态 / 采集记录；端口行钉在板卡示意图上；DBA 线路模板、业务 TR069 模板、ONT 注册等标签页仍为占位） |
 
 设备列表右下角工具条（`web/src/views/device/list.vue`，需先勾选设备）：
 
@@ -140,6 +168,76 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 适配一台加一行）。适配档案本身在便携化 SQLite 模板库 `configuration/tr069_tpl.pack`
 （配置项 `acs.tr069tpl.db-path`），随仓库走，拷到部署机即识别为已适配，不必重新适配。
 
+<<<<<<< HEAD
+### 1.4 设备纳管与唤醒
+
+出厂的光猫上写着原厂平台的地址，不改的话它下一轮就报到别处去了。设备每次 Inform 上来，
+ACS 立刻下发一条 `SetParameterValues` 把它接管过来：
+
+| 下发项 | 值 | 不改的话 |
+| --- | --- | --- |
+| `ManagementServer.URL` | `acs-url`，留空按 `public-host` + 上报端口 + 上报路径拼 | 设备继续报给原厂平台，ACS 再也见不到它 |
+| `ManagementServer.PeriodicInformInterval` | `inform-interval-seconds`，默认 300 | 出厂值常是几十秒，设备一多就是无谓压力；太长则下发要干等 |
+| `ManagementServer.ConnectionRequestUsername` | `connection-request-username`，默认 `itms` | 各批次出厂密码不同，ACS 猜不出来就唤不醒设备 |
+| `ManagementServer.ConnectionRequestPassword` | `connection-request-password`，默认 `itms` | 同上 |
+
+TR-181 的设备自动换成 `Device.ManagementServer.*` 前缀（按会话的根节点拼）。
+
+写回的四项在设备后台的服务器配置页能直接看到（以 MSG2200C 为例，ACS 地址 / ACS 账号密码 /
+连接请求账号密码 / 周期上报时间都在这一页，纳管改的就是其中对应项）：
+
+![设备后台 - 平台服务器配置](doc/Display/013724_056.png)
+
+**为什么连账号密码一起改**：连接请求是 ACS 反向叫醒设备的凭据，写在设备侧。不同批次的光猫
+出厂值各不相同，ACS 拿不到正确的那对，唤醒就永远是 401，只能干等它周期上报。纳管时统一
+写成 ACS 认得的值，等于把凭据从"猜"变成"已知"。改写成功后会登记进台账，唤醒直接取用——
+采集读回来的是改写前的旧值，留着旧值等于拿一把设备已经不认的钥匙。
+
+不会每轮都写，三层判断：Inform 上报的值已经对得上就跳过；24 小时内不重发
+（`reprovision-interval-hours`，设 `0` 则每次都发）；**BOOTSTRAP 强制重发**——恢复出厂后
+设备里的地址会变回原厂平台，必须重写一遍。
+
+配置：
+
+```yaml
+acs:
+  auth:
+    # ACS 唤醒光猫用的凭据（与 cpe-to-acs-* 方向相反，别配混了）
+    acs-to-cpe-username: itms
+    acs-to-cpe-password: itms
+  public-host: 10.101.125.100        # 上线前必改：拼下发地址用
+  device:
+    provision:
+      enabled: true
+      acs-url:                       # 留空按 public-host 拼
+      inform-interval-seconds: 300   # 0 表示不改这一项
+      connection-request-username: ${acs.auth.acs-to-cpe-username}
+      connection-request-password: ${acs.auth.acs-to-cpe-password}
+      reprovision-interval-hours: 24
+      force-on-bootstrap: true
+```
+
+**唤醒（连接请求）**：CWMP 是短连接，ACS 不能主动给设备推数据，只能等它来建会话。所以
+常规下发（周期采集、LAN 状态刷新、纳管本身）就排在队列里等下一次周期 Inform，那是成本
+最低的路；只有「人点了就要它生效」的操作才反向叫一声——工单下发、业务模板下发、手动采集。
+叫不醒就退化成等上报，不影响正确性。取凭据的顺序是：台账 → 采集到的参数 → 全局配置 →
+`itms` 兜底。
+
+验证（设备上报一次后看日志）：
+
+```
+下发纳管参数: sn=CIOT29ABE539, 参数=...ManagementServer.URL=http://10.101.125.100:9090/ACS-server/ACS,
+  ...PeriodicInformInterval=300, ...ConnectionRequestUsername=itms, ...ConnectionRequestPassword=itms
+纳管参数下发完成: sn=...
+已登记设备连接请求凭据: sn=..., 账号=itms
+已发连接请求唤醒设备: sn=..., url=..., 响应码=200
+```
+
+设备不接受这几项（部分厂商设为只读）会回 fault，日志打 `纳管参数下发失败: sn=..., err=...`，
+此时台账不登记，按周期重试一次就停；要么改设备侧权限，要么把 `enabled` 关掉。
+
+=======
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 ---
 
 ## 2. 待实现 / 进行中
@@ -151,12 +249,15 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 | 3 | ~~业务模板整包下发~~ | **已实现** | `POST /api/biz-template/execute`：按成员顺序串行执行，执行记录写 `biz_template_execution`；成员失败按模板 `continueOnError` 决定停下还是继续，继续跑完且有失败记 `partial` |
 | 4 | ~~一键工单（开通 / 检修）~~ | **已实现** | 设备列表勾选后按台建单，每台一个独立流水号（`worklistDesc` 幂等），单台失败记录但继续其余设备，最后汇总失败清单 |
 | 5 | 设备批量运维指令后端 | 部分接通（**超管密码已接通**） | Telnet 开关与命令执行、WAN 侧访问、WiFi 开关、禁用 SIP、删除 WAN 连接、解除上网限制、SSID 前缀清理、配置文件导出/克隆、强制上报等需逐个按厂商/型号补齐参数路径（统一走型号映射，不写死路径）。超管账号查询已可用，但依赖设备在线且该型号把 `User.{i}.Username/Password` 暴露给 TR-069 |
-| 6 | OLT 融合管理真实数据 | 模拟数据 | `web/src/views/olt/management.vue` 全为前端 mock；需接 SNMP/Telnet 采集：OLT 资源、板卡、槽位、PON 口（Tx/Rx 光功率、MAC、VLAN、ONU 数），数据替换集中在页面顶部 `resources` / `olt` 两个对象 |
+| 6 | ~~OLT 融合管理真实数据~~ | **已实现（基本）** | Telnet 采集已接通（华为 MA5683T 实测）：台账、板卡与温度、端口与每条 ONT 明细、VLAN 与三层接口 / 静态路由均真实入库；页面「同步」与后台 5 分钟定时刷新。剩余占位：DBA / 线路模板、业务 / TR069 / 流量模板、ONT 注册（`display ont autofind all`）、OLA、ONU 后板编辑面板、OLT 升级、主备、保护。光功率（Tx/Rx）这一版设备的 `display port` 只支持 desc/mode/statistics/vlan，未采集 |
 | 7 | 存量数据迁移 | 未开始 | 存量 `biz_template_item.template_key` 仍是旧文件 key，`BizTemplateService.parseId` 会判定为“配置模板不存在”，需迁移脚本改为 `config_template.id` |
 | 8 | 意图字段扩展 | 进行中 | 现 WAN 类仅 IP 协议 / VLAN 使用与否 / 是否绑定端口；待补 WAN IP 获取方式、PPPoE 账号、SIP 服务器/账号、WiFi SSID/密码等意图（VLAN ID、具体端口仍不落库，由下发时决定） |
-| 9 | 旧机制彻底清理 | 基本完成 | 旧文件模板 / 向导编译 / 旧工单编排引擎已删，工单改走 `IntentDeliveryService`；`worklist` 包中保留档案、型号映射、能力树导出与工单建单/查询，收尾时可再审视命名 |
-| 10 | 其它 | 未开始 | 下发操作审计日志细化、权限角色细化、设备告警（光功率劣化、离线批量提醒）、离线判定阈值按设备实际周期上报间隔（`PeriodicInformInterval`）动态计算（当前固定 120 秒，周期不是 60 秒的型号需手调）等 |
+| 9 | 旧机制彻底清理 | 基本完成 | 旧文件模板 / 向导编译 / 旧工单编排引擎已删，工单改走 `IntentDeliveryService`；`worklist` 包中保留档案、型号映射、能力树导出与工单建单/查询，收尾时可再审视命名。**UDP 连接请求（TR-111 打洞）已删**：内网部署下设备直连可达，用不到穿透，且它「发出即算成功」会顶掉 HTTP 那条，唤醒失败还看不出来 |
+| 10 | 其它 | 未开始 | 下发操作审计日志细化、权限角色细化、设备告警（光功率劣化、离线批量提醒）、离线判定阈值按设备实际周期上报间隔（`PeriodicInformInterval`）动态计算（当前固定 120 秒）。纳管已把上报间隔统一下发为 300 秒，这条可以按台账读回的实际间隔算，不必再手调 |
 | 11 | 界面展示收尾 | 未开始 | ① 设备列表 LAN 网口超过 4 个时的折叠（`+N`）或横向滚动，当前会横向溢出；② 业务**采集**阶段跳过未启用的 SSID（现在只是展示层过滤，采集仍全量读）；③ 详情页未启用 SSID 的视觉区分，当前只靠状态列文案「已禁用」；④ 运行信息列的排序只作用于当前页（后端分页排序暂未打通） |
+| 12 | 唤醒覆盖批量运维 | 未开始 | 纳管、工单、业务模板与手动采集已接入唤醒；批量运维里的重启 / 恢复出厂 / 下发自定义 TR069 参数 / 查询超管密码同为人工操作，目前仍等周期上报（要点了就生效，需在对应入口各加一次 `wakeUp`） |
+| 13 | 纳管结果可见性 | 未开始 | 纳管只在日志里体现：下发成功、设备回 fault 的原因、上次纳管时间都在日志里，台账与页面都看不到。设备设为只读而不接受改写时，只能翻日志才发现 |
+| 14 | CR 凭据改写的兼容性 | 未开始 | 少数固件把 `ManagementServer.ConnectionRequestUsername/Password` 与设备登录账号共用，纳管改写后 Web 登录密码会跟着变。待按型号加白名单（跳过改写）或改写前先读一次登录账号比对 |
 
 ---
 
@@ -181,11 +282,16 @@ OLT 资源、板卡、PON 口与 ONU 在线统计。注意：页面当前数据�
 
 ```
 javaacs/
-├── README.md                 本文档
+├── README.md                 本文档（简体中文）
+├── README.en.md              English version
 ├── API.md                    接口文档（管理端 /api 与北向 /openapi/v1）
 ├── doc/
 │   ├── DEPLOYMENT.md         部署文档
 │   ├── ADAPTED_MODELS.md     已适配光猫型号清单（运营商 + 厂家型号）
+<<<<<<< HEAD
+│   ├── ADAPTED_MODELS.en.md  Adapted ONT models (English)
+=======
+>>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 │   └── Display/              界面截图（见「效果展示」）
 ├── pom.xml                   后端（Maven）
 ├── sql/schema.sql            全库唯一建表脚本（所有表）
@@ -221,6 +327,7 @@ configuration/
 | `template` | **配置意图模板**：实体、Mapper、Service、Controller（意图字段定义集中在 `ConfigTemplateService#FIELD_DEFS`） |
 | `biz` | 业务模板：编排实体、成员视图、执行记录、下发前自检 |
 | `worklist` | 光猫档案（`loader`/`registry`/`model`）、型号语义映射（`ModelMappingService`）、能力树导出（`ModelTreeStore`）、机型适配（`ModelAdaptationService`）、工单建单与查询（`WorklistDeliveryService`、`controller/WorklistExecuteController`） |
+| `olt` | **OLT 管理**：Telnet 会话与命令编排（`telnet/OltCliSession`）、回显解析（`telnet/OltInfoParser`）、台账与同步（`service/OltService`）、定时刷新（`service/OltAutoRefreshService`）、Controller 与模型 |
 | `api` | 管理端接口：设备、能力、业务、RPC 任务、统计、登录及其 Service |
 | `exec` | **意图下发执行器**：下发计划渲染（`IntentPlanRenderer`）、执行与任务表（`IntentDeliveryService`、`DeviceTask`）、任务结束事件 |
 | `openapi` | **北向接口**：端口与路径隔离（`config`）、查询/下发/事件订阅三个 Controller、Webhook 推送与事件投递、设备上下线侦测（`watch`） |
@@ -238,7 +345,7 @@ web/src/
 │   ├── device/     设备列表 list.vue、设备详情 detail.vue
 │   ├── worklist/   templates.vue（意图模板）、instances.vue（工单记录）、profiles.vue（光猫适配）
 │   ├── biz/        业务模板 template.vue
-│   ├── olt/        OLT/ONU 管理 management.vue（模拟数据）
+│   ├── olt/        OLT/ONU 管理 management.vue（真实采集）、boardProfiles.js（板卡型号档案与示意图）
 │   └── login/ 404.vue
 ├── components/     DeviceBusinessPanel（业务面板）、DeviceIdentityCell（终端信息列）、DeviceRuntimeCell（运行信息列）等
 └── router/         菜单与路由
@@ -280,6 +387,15 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.cwmp.cpe-path` | `/ACS-server/ACS` | 上报主路径 |
 | `acs.cwmp.extra-cpe-paths` | `/acs,/cwmp,/tr069,/` 等 | 兼容的上报路径，遇到 405 时在此追加 |
 | `acs.auth.cpe-to-acs-username/password` | `auto` | 光猫连 ACS 的账号；`auto`/留空即免认证，上线前改回真实账号 |
+| `acs.auth.acs-to-cpe-username/password` | `itms` | **ACS 唤醒光猫**用的连接请求凭据，与上一条方向相反；各批次出厂值不同，纳管时会把设备统一改成这个值 |
+| `acs.public-host` | `127.0.0.1` | ACS 对外地址，纳管下发 `ManagementServer.URL` 时按它拼；**上线前必须改成真实地址**，否则设备会往 127.0.0.1 上报 |
+| `acs.device.provision.enabled` | `true` | 设备纳管总开关：Inform 后下发 ACS 地址 / 上报间隔 / 连接请求凭据 |
+| `acs.device.provision.acs-url` | 留空 | 下发给设备的 ACS 地址；留空按 `http://{public-host}:{上报端口}{cpe-path}` 拼 |
+| `acs.device.provision.inform-interval-seconds` | `300` | 下发给设备的周期上报间隔（秒），`0` 表示不改这一项 |
+| `acs.device.provision.connection-request-username/password` | `itms` | 纳管时写进设备的连接请求凭据，写成功后登记进台账供唤醒使用 |
+| `acs.device.provision.reprovision-interval-hours` | `24` | 距上次纳管超过该小时数才重发，`0` 表示每次上报都发 |
+| `acs.device.provision.force-on-bootstrap` | `true` | BOOTSTRAP（恢复出厂）时强制重发纳管参数 |
+| `acs.device.capability.wakeup-enabled` | `true` | 唤醒总开关：人工触发的下发前先发连接请求叫设备上报 |
 | `acs.capability.enabled` / `collect-on-inform` | `true` | 能力树采集总开关与 Inform 后自动采集 |
 | `acs.config-template.auto-create-table` | `true` | 启动时补建 `config_template` |
 | `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`models/`）；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
@@ -291,6 +407,10 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.device.lan.auto-refresh.max-devices-per-round` | `200` | 单轮最多刷新多少台 |
 | `acs.agent.rpc-timeout` | `510` | 单条 RPC 等待设备回应的超时（秒） |
 | `acs.exec.request-timeout-seconds` | `90` | 下发等待设备回应的超时（秒） |
+| `acs.olt.auto-create-table` | `true` | 启动时补建 `olt_device` / `olt_board` / `olt_sync_record`，并补齐后加的列（后台板、VLAN 快照等） |
+| `acs.olt.connect-timeout-ms` / `login-timeout-ms` | `8000` / `15000` | OLT 建连与登录超时（毫秒） |
+| `acs.olt.command-timeout-ms` | `20000` | OLT 单条命令等提示符的超时（毫秒）；老旧设备敲一条 `display board` 要十几秒，给小了会拿到半截回显 |
+| `acs.olt.max-raw-output-chars` | `60000` | 单次采集留档回显的字符上限，超出截断 |
 | `acs.openapi.port` | `8899` | 北向独立端口，置 0 则挂到管理端口下 |
 | `acs.openapi.path-prefix` | `/openapi/v1` | 北向路径前缀，鉴权与端口隔离都按它判定 |
 | `acs.openapi.webhook.max-attempts` | `5` | 事件推送最大重试次数 |

@@ -6,6 +6,7 @@ import com.tr069.acs.queue.config.QueueProperties;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -16,13 +17,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 下发指令队列。
- *
- * <p>ACS 不主动连接设备，指令只能在 CPE 空 POST 的响应体里捎带。
- * 因此这里不是「消费者主动推送」，而是把指令先堆在 Redis 里，
- * CPE 每次空 POST 时按设备取一条捎带，设备慢或离线都不会占用线程。</p>
- *
- * <p>相比原来的内存 outbox，指令不再随会话关闭被清空，也不会无上限堆积。</p>
+ * 下发指令队列。ACS 不主动连接设备，指令先在 Redis 里排队，
+ * CPE 每次空 POST 时按设备取一条捎带，设备慢或离线都不占线程。
  */
 @Slf4j
 @Service
@@ -35,6 +31,13 @@ public class RpcTaskQueue {
 
     /** Redis 失败日志节流时间戳。 */
     private final AtomicLong lastFailureLog = new AtomicLong(0);
+
+    /**
+     * 入队唤醒器：把等着取指令的那一跳 HTTP 请求叫起来。缺席时指令等设备下次上报取走，
+     * 不影响下发正确性。
+     */
+    @Autowired(required = false)
+    private RpcDeliveryWaiter waiter;
 
     /** 内存兜底的结果缓存上限，超出即清理，防止 Redis 长时间不可用把内存吃满。 */
     private static final int MEMORY_RESULT_LIMIT = 10_000;
@@ -62,11 +65,32 @@ public class RpcTaskQueue {
             }
             redis.opsForList().rightPush(key, toJson(task));
             redis.expire(key, properties.getRpc().getQueueTtlSeconds(), TimeUnit.SECONDS);
+            signal(task.getSn());
             return true;
         } catch (Exception e) {
             // Redis 不可用时退回内存，保证下发功能不断，只是进程重启后丢失
             logFailure("指令入队", e);
-            return enqueueMemory(task);
+            boolean ok = enqueueMemory(task);
+            if (ok) {
+                signal(task.getSn());
+            }
+            return ok;
+        }
+    }
+
+    /**
+     * 通知等着取指令的那一跳：本实例直接叫醒，同时广播给其他实例——多实例部署时
+     * 入队可能发生在别的节点上。
+     */
+    private void signal(String sn) {
+        if (waiter == null) {
+            return;
+        }
+        waiter.wakeup(sn);
+        try {
+            redis.convertAndSend(waiter.signalChannel(sn), Long.toString(System.currentTimeMillis()));
+        } catch (Exception e) {
+            logFailure("下发唤醒广播", e);
         }
     }
 
@@ -93,18 +117,18 @@ public class RpcTaskQueue {
     public void pushBack(RpcTask task) {
         try {
             redis.opsForList().leftPush(deviceKey(task.getSn()), toJson(task));
+            signal(task.getSn());
             return;
         } catch (Exception e) {
             log.error("指令回退失败，改放内存队首: sn={}, err={}", task.getSn(), e.getMessage());
         }
         memoryQueues.computeIfAbsent(task.getSn(), k -> new ConcurrentLinkedQueue<>()).offer(task);
+        signal(task.getSn());
     }
 
     /**
-     * 丢弃上一轮采集压在队列里的旧指令。
-     *
-     * <p>只丢带批次号且不是当前批次的（也就是采集产生的）；工单指令没有批次号，
-     * 一律保留，避免把业务下发连带清掉。</p>
+     * 丢弃上一轮采集压在队列里的旧指令：只丢带批次号且不是当前批次的。
+     * 工单指令没有批次号，一律保留。
      *
      * @param sn           设备序列号
      * @param currentBatch 本次采集批次号，为空表示不做清理
@@ -127,26 +151,20 @@ public class RpcTaskQueue {
             if (all == null || all.isEmpty()) {
                 return dropped;
             }
-            java.util.List<String> keep = new java.util.ArrayList<>();
+            // 逐条 LREM 而不是「读全部 -> DEL -> 重写保留的」：后者不是原子操作，
+            // 清理期间入队的新指令会被重写抹掉
             int staleHere = 0;
             for (Object raw : all) {
                 String json = String.valueOf(raw);
                 if (!isStale(parseTask(json), currentBatch)) {
-                    keep.add(json);
-                } else {
+                    continue;
+                }
+                Long removed = redis.opsForList().remove(key, 0, json);
+                if (removed != null && removed > 0) {
                     staleHere++;
                 }
             }
-            // 没有要丢的就别动队列：重写一遍 key 既多余，又会在并发下发时丢指令
-            if (staleHere == 0) {
-                return dropped;
-            }
             dropped += staleHere;
-            redis.delete(key);
-            if (!keep.isEmpty()) {
-                redis.opsForList().rightPushAll(key, keep.toArray(new String[0]));
-                redis.expire(key, properties.getRpc().getQueueTtlSeconds(), TimeUnit.SECONDS);
-            }
         } catch (Exception e) {
             logFailure("清理过期采集指令", e);
         }
@@ -340,13 +358,16 @@ public class RpcTaskQueue {
         private String worklistId;
 
         /**
-         * 所属采集批次，只有能力采集产生的指令才有。
-         *
-         * <p>用来区分「上一轮采集没发完、压在队列里的旧指令」：设备掉线或采集中断时，
-         * 这些指令会一直留在队列里，下一轮采集开始后被逐条消费，于是同一条
-         * {@code GetParameterNames} 被反复下发，还会把设备队列占满导致新指令入不了队。</p>
+         * 所属采集批次，只有能力采集产生的指令才有，用于识别上一轮采集没发完的残留指令：
+         * 不清掉它们会被下一轮采集反复消费，还会占满设备队列。
          */
         private String batch;
+
+        /** 已尝试下发的次数。只在没收到回应时累加；设备回了 fault 不再重试。 */
+        private int attempts;
+
+        /** 到期才可以再下发的时间戳（毫秒），0 表示随到随发。重试按 delay * 2^n 递增。 */
+        private long notBefore;
 
         private long createdAt = System.currentTimeMillis();
     }

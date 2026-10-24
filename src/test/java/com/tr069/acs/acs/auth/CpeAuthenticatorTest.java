@@ -94,7 +94,7 @@ class CpeAuthenticatorTest {
     }
 
     /**
-     * 无 qop 的 Digest 头。沿用实现中 nonce 与 HA2 之间缺少冒号的原版写法。
+     * 无 qop 的 Digest 头（见实现注释：nonce 与 HA2 之间缺少冒号）。
      */
     private DigestAuth digest(String user, String password) {
         String ha1 = md5(user + ":" + REALM + ":" + password);

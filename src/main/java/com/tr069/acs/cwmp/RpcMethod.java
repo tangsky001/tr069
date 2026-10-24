@@ -8,7 +8,7 @@ import java.util.Map;
 /**
  * CWMP RPC 方法名常量。
  *
- * <p>对齐 Python 版 construct.py 中 {@code create_soap_body} 的各分支。</p>
+ * <p>各方法的取值既是放入请求的参数名，也是解析响应时识别方法用的名字。</p>
  */
 @Getter
 public enum RpcMethod {
@@ -33,9 +33,9 @@ public enum RpcMethod {
     SCHEDULE_DOWNLOAD("ScheduleDownload"),
     CANCEL_TRANSFER("CancelTransfer"),
     CHANGE_DU_STATE("ChangeDUState"),
-    /** 原版实现为空结构：create_soap_body 首个分支即命中，后序 elif 为死代码 */
+    /** 请求与响应均无参数的流失转移查询 */
     GET_QUEUED_TRANSFERS("GetQueuedTransfers"),
-    /** 原版实现为空结构，同 GET_QUEUED_TRANSFERS */
+    /** 请求与响应均无参数，同 GET_QUEUED_TRANSFERS */
     GET_ALL_QUEUED_TRANSFERS("GetAllQueuedTransfers"),
     SET_VOUCHERS("SetVouchers"),
     GET_OPTIONS("GetOptions"),

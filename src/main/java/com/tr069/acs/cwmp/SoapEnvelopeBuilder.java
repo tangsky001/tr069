@@ -15,8 +15,7 @@ import java.util.Map;
 /**
  * CWMP SOAP 报文构造器。
  *
- * <p>对应 Python 版 {@code lib/acss/xml/construct.py}。生成的 XML 严格遵循原版的
- * 子元素顺序、xsi:nil 判定与 arrayType 完全限定名写法。</p>
+ * <p>生成的 XML 遵循 CWMP 要求的子元素顺序、xsi:nil 判定与 arrayType 完全限定名写法。</p>
  */
 @Slf4j
 public final class SoapEnvelopeBuilder {
@@ -27,7 +26,7 @@ public final class SoapEnvelopeBuilder {
     public static final String DEFAULT_CWMP_VERSION = "cwmp-1-0";
 
     /**
-     * 默认 MaxEnvelopes，对应 Python 版 InformResponse 的默认值。
+     * InformResponse 的默认 MaxEnvelopes：一个 HTTP 事务只携带一条 SOAP 消息。
      */
     private static final int DEFAULT_MAX_ENVELOPES = 1;
 
@@ -60,7 +59,7 @@ public final class SoapEnvelopeBuilder {
 
         Element envelope = XmlUtils.element(doc, SoapNamespace.SOAP_ENV,
                 SoapNamespace.PREFIX_SOAP_ENV, "Envelope");
-        // 命名空间声明顺序对齐 Python ElementTree 的字典序输出
+        // 命名空间声明按字典序输出，保证同一份报文每次生成都一致
         envelope.setAttributeNS(javax.xml.XMLConstants.XMLNS_ATTRIBUTE_NS_URI,
                 "xmlns:" + SoapNamespace.PREFIX_SOAP_ENC, SoapNamespace.SOAP_ENC);
         envelope.setAttributeNS(javax.xml.XMLConstants.XMLNS_ATTRIBUTE_NS_URI,

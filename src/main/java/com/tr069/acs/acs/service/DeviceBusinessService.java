@@ -395,7 +395,8 @@ public class DeviceBusinessService {
                     ? (Map<String, String>) paramObj : Map.of();
             boolean connected = isLanConnected(params);
             item.put("connected", connected);
-            item.put("mac", params.getOrDefault("MACAddress", "").trim());
+            String mac = params.get("MACAddress");
+            item.put("mac", mac == null ? "" : mac.trim());
             String path = String.valueOf(item.getOrDefault("path", ""));
             Matcher m = LAN_INSTANCE.matcher(path);
             item.put("instance", m.find() ? m.group(1) : "");

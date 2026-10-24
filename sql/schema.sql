@@ -419,6 +419,77 @@ CREATE TABLE IF NOT EXISTS `openapi_webhook_delivery` (
     KEY `idx_delivery_retry` (`status`, `next_retry_at`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '北向事件投递记录';
 
+-- ---------------------------- OLT 设备 ----------------------------
+-- OLT 不走 TR-069，靠 Telnet/SSH 登录设备执行命令行采集，因此单独建台账。
+-- 地址与端口是连接参数，vendor/model/software 是登录成功后采集回填的结果。
+CREATE TABLE IF NOT EXISTS `olt_device` (
+    `id`               BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `name`             VARCHAR(128) NOT NULL COMMENT 'OLT 名称，留空时按地址生成',
+    `host`             VARCHAR(128) NOT NULL COMMENT 'OLT 地址：IP 或域名',
+    `protocol`         VARCHAR(16)  NOT NULL DEFAULT 'TELNET' COMMENT '登录类型：TELNET / SSH',
+    `username`         VARCHAR(64)  DEFAULT NULL COMMENT '登录账号，空则按厂商默认值',
+    `password`         VARCHAR(128) DEFAULT NULL COMMENT '登录密码，接口不回显',
+    `port`             INT          NOT NULL DEFAULT 23 COMMENT '登录端口，Telnet 默认 23，SSH 默认 22',
+    `charset`          VARCHAR(32)  NOT NULL DEFAULT 'AUTO' COMMENT '字符集编码：AUTO / UTF-8 / GBK / GB18030',
+    `bind_local_ip`    VARCHAR(64)  DEFAULT NULL COMMENT '绑定本地访问出口 IP，多网卡时指定源地址',
+    `web_accounts`     VARCHAR(255) DEFAULT NULL COMMENT '允许访问的 Web 登录账号，逗号分隔，空表示不限制',
+    `vendor`           VARCHAR(32)  DEFAULT NULL COMMENT '厂商：HUAWEI / ZTE / FIBERHOME / GENERIC',
+    `model`            VARCHAR(128) DEFAULT NULL COMMENT '型号，登录后采集',
+    `software_version` VARCHAR(128) DEFAULT NULL COMMENT '软件版本，登录后采集',
+    `patch_version`    VARCHAR(64)  DEFAULT NULL COMMENT '补丁版本，如 SPC107',
+    `backplane`        VARCHAR(64)  DEFAULT NULL COMMENT '背板/主板型号，如 H802MABO',
+    `mac_address`      VARCHAR(32)  DEFAULT NULL COMMENT '主控 MAC',
+    `uptime`           VARCHAR(64)  DEFAULT NULL COMMENT '运行时长，如 59天18小时21分11秒',
+    `status`           VARCHAR(16)  NOT NULL DEFAULT 'UNKNOWN' COMMENT '状态：UNKNOWN / ONLINE / OFFLINE',
+    `last_connect_at`  DATETIME     DEFAULT NULL COMMENT '最近一次连接成功时间',
+    `last_sync_at`     DATETIME     DEFAULT NULL COMMENT '最近一次同步时间',
+    `last_error`       VARCHAR(500) DEFAULT NULL COMMENT '最近一次失败原因',
+    `sync_summary`     VARCHAR(255) DEFAULT NULL COMMENT '最近一次同步摘要',
+    `remark`           VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `deleted`          TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    `created_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_olt_device_name` (`name`, `deleted`),
+    KEY `idx_olt_device_host` (`host`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT 设备台账';
+
+-- 板卡信息：每次同步按槽位覆盖写，槽位已拔出的板卡会被清掉
+CREATE TABLE IF NOT EXISTS `olt_board` (
+    `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `olt_id`      BIGINT      NOT NULL COMMENT 'olt_device.id',
+    `slot_no`     INT         NOT NULL COMMENT '槽位号',
+    `board_type`  VARCHAR(64) DEFAULT NULL COMMENT '板卡类型，如 H901GPHF / GTGO',
+    `status`      VARCHAR(32) DEFAULT NULL COMMENT '设备原始状态：Normal / Active_normal / inservice ...',
+    `board_kind`  VARCHAR(16) DEFAULT NULL COMMENT '板卡类别：SERVICE / CONTROL / UPLINK / POWER / INTERFACE / UNKNOWN',
+    `description` VARCHAR(128) DEFAULT NULL COMMENT '板卡描述，如 8口GPON（业务板）',
+    `port_mode`   VARCHAR(16) DEFAULT NULL COMMENT '端口类型：GPON / EPON / 10GE，解析不出时为空',
+    `port_count`  INT         NOT NULL DEFAULT 0 COMMENT '端口数量，设备未返回时为 0',
+    `temperature` INT         DEFAULT NULL COMMENT '温度(摄氏度)',
+    `cpu_usage`   VARCHAR(16) DEFAULT NULL COMMENT 'CPU 占用',
+    `mem_usage`   VARCHAR(16) DEFAULT NULL COMMENT '内存占用',
+    `remark`      VARCHAR(255) DEFAULT NULL,
+    `ports_json`  LONGTEXT     DEFAULT NULL COMMENT '端口光模块状态快照(JSON)：portNo / opticStatus / opticalPresent / rxPower',
+    `synced_at`   DATETIME    DEFAULT NULL COMMENT '本次同步时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_olt_board_slot` (`olt_id`, `slot_no`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT 板卡信息';
+
+-- 采集记录：诊断/同步的原始回显留档，型号解析不对时按它改正则
+CREATE TABLE IF NOT EXISTS `olt_sync_record` (
+    `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `olt_id`     BIGINT       DEFAULT NULL COMMENT 'olt_device.id，未保存的设备为 NULL',
+    `action`     VARCHAR(16)  NOT NULL COMMENT '动作：TEST 诊断测试 / SYNC 同步',
+    `success`    TINYINT      NOT NULL DEFAULT 0 COMMENT '是否成功',
+    `message`    VARCHAR(1000) DEFAULT NULL COMMENT '结果说明或失败原因',
+    `raw_output` MEDIUMTEXT   COMMENT '设备回显原文，超长截断',
+    `cost_ms`    INT          DEFAULT NULL COMMENT '耗时(毫秒)',
+    `operator`   VARCHAR(64)  DEFAULT NULL COMMENT '操作人',
+    `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_olt_sync_record` (`olt_id`, `id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT 连接与同步记录';
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ---------------------------- 初始化管理员 ----------------------------

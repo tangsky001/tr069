@@ -3,8 +3,10 @@ package com.tr069.acs.acs.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tr069.acs.acs.auth.CpeAuthenticator;
 import com.tr069.acs.acs.service.DeviceCapabilityService;
+import com.tr069.acs.acs.service.InformProvisionService;
 import com.tr069.acs.acs.service.InformService;
 import com.tr069.acs.acs.session.CpeSession;
+import com.tr069.acs.acs.session.CwmpSessionMutex;
 import com.tr069.acs.acs.session.PendingRpc;
 import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.acs.session.SessionState;
@@ -15,6 +17,7 @@ import com.tr069.acs.cwmp.SoapParser;
 import com.tr069.acs.cwmp.model.InformRequest;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.queue.ReportQueueService;
+import com.tr069.acs.queue.RpcDeliveryWaiter;
 import com.tr069.acs.queue.RpcTaskQueue;
 import com.tr069.acs.queue.config.QueueProperties;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +28,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.servlet.AsyncContext;
+import jakarta.servlet.AsyncEvent;
+import jakarta.servlet.AsyncListener;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -33,26 +39,15 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * CWMP 接入端点，设备侧 HTTP 入口。
+ * CWMP 接入端点，设备侧 HTTP 入口：接收 Inform、空 POST 与 RPC 响应。
  *
- * <p>对应 Python 版 webserver.py 的 {@code handle_soap}。遵循反向轮询模型：</p>
- * <ul>
- *   <li>Inform：回复 InformResponse，不能夹带下发</li>
- *   <li>空 POST：若有待下发 RPC 则在响应体捎带，否则返回 204</li>
- *   <li>RPC 响应：完成对应等待，回复 204</li>
- * </ul>
- *
- * <p>设备能力采集 ({@link DeviceCapabilityService}) 正是搭在这条链路上：Inform 阶段就把
- * {@code GetParameterNames} 排进下发队列，CPE 紧跟的空 POST 把它捎带下去，
- * 拿到路径后再用 {@code GetParameterValues} 分批读值。</p>
- *
- * <p>两条链路都接了 Redis 队列做削峰：</p>
- * <ul>
- *   <li>上报：只做解析、认证、建会话与回响应，参数处理交给 {@link ReportQueueService} 的消费者</li>
- *   <li>下发：指令从 {@link RpcTaskQueue} 取出捎带，不占用任何等待线程</li>
- * </ul>
+ * <p>上报只做解析、认证、建会话与回响应，参数处理交给 {@link ReportQueueService} 的消费者；
+ * 下发从 {@link RpcTaskQueue} 取指令，搭在响应里捎带给设备。</p>
  */
 @Slf4j
 @RestController
@@ -66,13 +61,13 @@ public class CwmpController {
     private final RpcTaskQueue rpcTaskQueue;
     private final RpcDispatchService rpcDispatchService;
     private final DeviceCapabilityService deviceCapabilityService;
+    private final InformProvisionService informProvisionService;
     private final QueueProperties queueProperties;
     private final ObjectMapper objectMapper;
+    private final RpcDeliveryWaiter deliveryWaiter;
+    private final CwmpSessionMutex sessionMutex;
 
-    /**
-     * 默认值刻意留空：配置里不写或写 auto 即免认证，任何设备凭据都放行。
-     * 需要认证时填真实账号密码即可，见 {@link CpeAuthenticator#isOpenAccess}。
-     */
+    /** 留空即免认证，任何设备凭据都放行；填真实账号才校验，见 {@link CpeAuthenticator#isOpenAccess}。 */
     @Value("${acs.auth.cpe-to-acs-username:}")
     private String defaultCpeUser;
 
@@ -86,16 +81,36 @@ public class CwmpController {
     private long waitRpcResponseTimeout;
 
     /**
-     * 队列空时还要等一会儿才回 204 的时长（毫秒）。
-     *
-     * <p>见 {@link #deliverNextRpcWithWait}：能力采集是一问一答编排出来的，
-     * 上一条的响应刚被处理完、下一条往往几十毫秒后才入队。此刻回 204 就等于掐断会话。</p>
+     * 队列空时把这一跳请求挂起多久再回 204（毫秒）。挂起期间不占 Tomcat 线程，
+     * 指令入队时按 SN 唤醒，见 {@link RpcDeliveryWaiter}。
      */
     @Value("${acs.session.piggyback-wait-ms:1500}")
     private long piggybackWaitMs;
 
-    /** 等下一条指令时的轮询间隔。 */
+    /**
+     * 会话 Cookie 的路径。留空则不写 Path 属性，部分固件对带 Path 的 Cookie 认不全。
+     */
+    @Value("${acs.cwmp.cookies-path:}")
+    private String cookiesPath;
+
+    /** 会话号 Cookie 的宽松解析，分隔符认逗号也认分号：部分设备不合规范。 */
+    private static final Pattern SESSION_COOKIE = Pattern.compile(
+            "\\s*([a-zA-Z0-9\\-_]+?)\\s*=\\s*\"?([a-zA-Z0-9\\-_]*?)\"?\\s*(,|;|$)");
+
+    /** 等下一条指令时的轮询间隔，仅在队列关闭（内存模式）时用得上。 */
     private static final long PIGGYBACK_POLL_INTERVAL_MS = 20L;
+
+    /** 单条指令最多尝试下发几次。只有没收到回应才重试；设备回了 fault 直接判失败。 */
+    @Value("${acs.session.max-delivery-attempts:2}")
+    private int maxDeliveryAttempts;
+
+    /** 重发前的基本等待（秒），每次按 2 的幂递增，取值参照设备上报周期。 */
+    @Value("${acs.session.retry-delay-seconds:60}")
+    private long retryDelaySeconds;
+
+    /** 报文顺序不对时是否直接回绝。默认 false，只记日志。 */
+    @Value("${acs.session.strict-state-check:false}")
+    private boolean strictStateCheck;
 
     private final ScheduledExecutorService timeoutScheduler =
             Executors.newScheduledThreadPool(4, r -> {
@@ -127,15 +142,11 @@ public class CwmpController {
 
     // ==================== 空 POST ====================
 
-    /**
-     * 处理 CPE 的空 POST：有任务则下发 RPC，否则 204。
-     *
-     * <p>指令来源是 Redis 队列而不是内存 outbox，这样设备离线或处理慢时
-     * 指令不会丢，也不会有线程挂在这里等。</p>
-     */
+    /** 处理 CPE 的空 POST：有指令则下发，否则回 204。 */
     private void handleEmptyPost(String connId, HttpServletRequest request, HttpServletResponse response)
             throws IOException {
-        String sn = resolveSn(connId);
+        // 请求来自哪台设备：优先按 Cookie 里的会话号，退而求其次才是 ip:端口
+        String sn = resolveSn(connId, request);
         if (sn == null) {
             log.warn("空 POST 无法定位设备, conn={}", connId);
             sendStatus(response, 400);
@@ -154,23 +165,77 @@ public class CwmpController {
             sendStatus(response, 204);
             return;
         }
-        if (!deliverNextRpcWithWait(sn, session, response)) {
-            log.debug("无待下发任务, 回复 204: sn={}", sn);
-            sendStatus(response, 204);
-        }
+        deliverOrSuspend(sn, session, request, response);
     }
 
     /**
-     * 取一条待下发指令捎带出去，队列暂时空时稍等一会儿。
+     * 捎带下一条指令；队列暂时是空的就把这一跳挂起来等入队信号。
      *
-     * <p>队列空<strong>不等于</strong>这一轮该结束了：能力采集是一问一答编排出来的，
-     * 上一条响应刚被处理、下一条往往几十毫秒后才入队（要拿上一轮的返回值拼出下一批）。
-     * 这时候回 204，华为电信这类固件就认为会话结束、不再发空 POST，剩下的指令只能等它
-     * 下一次上报——周期常常是十几分钟，采一棵树要拖上几个小时，设备多半中途掉线，
-     * 采集就停在半路了。所以先等一小会儿，等到就继续捎带，等不到再收尾。</p>
-     *
-     * <p>等的是 Tomcat 线程，时间很短（默认 1.5 秒），且只发生在会话末尾，
-     * 不会长期占用。</p>
+     * <p>队列关闭（内存 outbox）时没有入队信号，退回短轮询。</p>
+     */
+    private void deliverOrSuspend(String sn, CpeSession session,
+                                  HttpServletRequest request, HttpServletResponse response)
+            throws IOException {
+        if (deliverNextRpc(sn, session, response)) {
+            return;
+        }
+        if (!queueProperties.isEnabled()) {
+            if (!deliverNextRpcWithWait(sn, session, response)) {
+                log.debug("无待下发任务, 回复 204: sn={}", sn);
+                endSessionRound(sn, session, response);
+            }
+            return;
+        }
+        // 挂起等待：指令来得晚就可能要挂 1.5 秒，这段时间不该占着容器线程不放
+        suspendForNextRpc(sn, request, response);
+    }
+
+    /**
+     * 把这一跳请求挂起，等指令入队信号把它叫起来。
+     */
+    private void suspendForNextRpc(String sn, HttpServletRequest request, HttpServletResponse response) {
+        if (request == null || !request.isAsyncSupported()) {
+            // 拿不到原生请求（降级处理、内嵌调用）或容器不支持异步，
+            // 就按老办法收尾，不值得为等一条指令把链路搞复杂
+            log.debug("该请求不支持异步挂起，本轮直接结束: sn={}", sn);
+            endSessionRound(sn, sessionManager.find(sn), response);
+            return;
+        }
+        AsyncContext async;
+        try {
+            async = request.startAsync();
+        } catch (Exception e) {
+            log.warn("无法挂起等待指令，本轮直接结束: sn={}, err={}", sn, e.getMessage());
+            sendStatus(response, 204);
+            return;
+        }
+        async.setTimeout(piggybackWaitMs);
+        PendingDelivery delivery = new PendingDelivery(sn, async, response);
+        async.addListener(new AsyncListener() {
+            @Override
+            public void onTimeout(AsyncEvent event) {
+                deliveryWaiter.expire(sn);
+            }
+
+            @Override
+            public void onComplete(AsyncEvent event) {
+                deliveryWaiter.cancel(sn, delivery);
+            }
+
+            @Override
+            public void onError(AsyncEvent event) {
+                deliveryWaiter.expire(sn);
+            }
+
+            @Override
+            public void onStartAsync(AsyncEvent event) {
+            }
+        });
+        deliveryWaiter.register(sn, delivery);
+    }
+
+    /**
+     * 取一条待下发指令捎带出去，队列暂时空时轮询一小会儿（仅内存模式用）。
      */
     private boolean deliverNextRpcWithWait(String sn, CpeSession session, HttpServletResponse response)
             throws IOException {
@@ -200,45 +265,65 @@ public class CwmpController {
      */
     private boolean deliverNextRpc(String sn, CpeSession session, HttpServletResponse response)
             throws IOException {
-        PendingRpc rpc = null;
-        if (queueProperties.isEnabled()) {
-            RpcTaskQueue.RpcTask task = rpcTaskQueue.poll(sn);
-            if (task != null) {
-                Map<String, Object> args = rpcTaskQueue.parseArgs(task.getArgsJson());
-                rpc = new PendingRpc(task.getTaskId(), task.getRpcName(), args, task.getWorklistId());
-                markRunning(task);
-            }
-        }
-        // 队列关闭或没有待发指令时，退回内存 outbox
-        if (rpc == null) {
-            rpc = session.pollForSend();
-        }
-        if (rpc == null) {
+        // 「取指令 -> 标记在途 -> 写响应」必须整段串行：并发进来会互相覆盖在途那条
+        if (!session.getDeliveryLock().tryLock()) {
+            log.debug("该设备正在下发中，本次不捎带: sn={}", sn);
             return false;
         }
-
-        RpcMethod method = RpcMethod.of(rpc.getRpcName());
-        if (method == null) {
-            // 队列里可能残留方法名不合法的旧指令（如写成枚举名 GET_PARAMETER_NAMES），
-            // 不能让它把这次下发打成 500：判失败并丢弃，设备下次照常来取后面的指令
-            log.error("待下发指令的 CWMP 方法无法识别，丢弃该指令: sn={}, taskId={}, rpc={}",
-                    sn, rpc.getRpcId(), rpc.getRpcName());
-            if (rpc.getRpcId() > 0) {
-                rpcDispatchService.failTask(rpc.getRpcId(), "8005", "未知 CWMP 方法: " + rpc.getRpcName());
-            } else {
-                rpc.getResponse().complete(null);
+        try {
+            PendingRpc rpc = null;
+            if (queueProperties.isEnabled()) {
+                RpcTaskQueue.RpcTask task = rpcTaskQueue.poll(sn);
+                if (task != null) {
+                    if (task.getNotBefore() > System.currentTimeMillis()) {
+                        // 退避期未结束：放回队首，本跳不发给它
+                        rpcTaskQueue.pushBack(task);
+                        log.debug("指令尚在退避期: sn={}, rpc={}, 还需等待={}ms",
+                                sn, task.getRpcName(),
+                                task.getNotBefore() - System.currentTimeMillis());
+                        return false;
+                    }
+                    Map<String, Object> args = rpcTaskQueue.parseArgs(task.getArgsJson());
+                    rpc = new PendingRpc(task.getTaskId(), task.getRpcName(), args, task.getWorklistId());
+                    // 批次与重试轮次要带回，超时重排队列时用得上
+                    rpc.setBatch(task.getBatch());
+                    rpc.setAttempts(task.getAttempts());
+                    markRunning(task);
+                }
             }
-            return false;
-        }
-        String soap = SoapEnvelopeBuilder.build(method, rpc.getArgs(),
-                null, session.getCwmpVersion());
-        session.markAwaiting(rpc);
-        session.setState(SessionState.WAIT_RPC_RESPONSE);
-        armRpcResponseTimer(session);
+            // 队列关闭或没有待发指令时，退回内存 outbox
+            if (rpc == null) {
+                rpc = session.pollForSend();
+            }
+            if (rpc == null) {
+                return false;
+            }
 
-        log.info("下发 RPC: sn={}, rpc={}, taskId={}", sn, rpc.getRpcName(), rpc.getRpcId());
-        writeXml(response, soap);
-        return true;
+            RpcMethod method = RpcMethod.of(rpc.getRpcName());
+            if (method == null) {
+                // 方法名不合法的残留指令：判失败并丢弃，不让它把这次下发打成 500
+                log.error("待下发指令的 CWMP 方法无法识别，丢弃该指令: sn={}, taskId={}, rpc={}",
+                        sn, rpc.getRpcId(), rpc.getRpcName());
+                if (rpc.getRpcId() > 0) {
+                    rpcDispatchService.failTask(rpc.getRpcId(), "8005", "未知 CWMP 方法: " + rpc.getRpcName());
+                } else {
+                    rpc.getResponse().complete(null);
+                }
+                return false;
+            }
+            String soap = SoapEnvelopeBuilder.build(method, rpc.getArgs(),
+                    null, session.getCwmpVersion());
+            session.markAwaiting(rpc);
+            session.setState(SessionState.WAIT_RPC_RESPONSE);
+            armRpcResponseTimer(session);
+
+            log.info("下发 RPC: sn={}, rpc={}, taskId={}, attempts={}",
+                    sn, rpc.getRpcName(), rpc.getRpcId(), rpc.getAttempts());
+            writeXml(response, soap);
+            return true;
+        } finally {
+            session.getDeliveryLock().unlock();
+        }
     }
 
     // ==================== SOAP 报文 ====================
@@ -254,7 +339,7 @@ public class CwmpController {
         }
 
         // 其余均为 CPE 对我方下发的响应
-        String sn = resolveSn(connId);
+        String sn = resolveSn(connId, request);
         if (sn == null) {
             log.warn("响应报文无法定位设备, conn={}", connId);
             sendStatus(response, 400);
@@ -266,6 +351,18 @@ public class CwmpController {
             return;
         }
         session.touch();
+
+        // 会话顺序校验：没在等回应却来了响应，说明两边进度已不一致。
+        // 默认只告警，回绝只在 strictStateCheck 打开时做
+        if (session.getState() != SessionState.WAIT_RPC_RESPONSE) {
+            log.warn("会话状态与报文不匹配: sn={}, state={}, 收到={}",
+                    sn, session.getState(), methodName);
+            if (strictStateCheck) {
+                sendStatus(response, 400);
+                return;
+            }
+        }
+
         PendingRpc completed = session.completeAwaiting(message);
         if (completed != null) {
             log.info("收到 RPC 响应: sn={}, rpc={}, fault={}",
@@ -282,26 +379,38 @@ public class CwmpController {
             log.warn("收到未预期的 RPC 响应: sn={}, method={}", sn, methodName);
         }
         session.setState(SessionState.READY);
-        // 在同一个 HTTP 响应里直接带上下一条指令：这是 CWMP 允许的捎带方式，也几乎是
-        // 华为电信这类固件的唯一通路——它们收到 204 就认为会话结束，不会再发空 POST。
-        // 不捎带的话一条指令就要等一个上报周期，采一棵树得拖上几十分钟，
-        // 设备还常常就此掉线（采集卡在半路）
-        if (!deliverNextRpcWithWait(sn, session, response)) {
-            sendStatus(response, 204);
+        // 在同一响应里捎带下一条指令：设备收到 204 就认为本轮结束，不一定再发空 POST
+        deliverOrSuspend(sn, session, request, response);
+    }
+
+    /** 抢占这一轮会话的操作权；被别的实例抢到时回 400，让设备下次再来。 */
+    private boolean acquireSession(String sn, String sessionId, String previousSessionId,
+                                   HttpServletResponse response) throws IOException {
+        if (previousSessionId != null && !previousSessionId.equals(sessionId)) {
+            sessionMutex.release(sn, previousSessionId);
         }
+        if (sessionMutex.acquire(sn, sessionId)) {
+            return true;
+        }
+        log.warn("设备已在会话中，本次 Inform 不作处理: sn={}", sn);
+        sendStatus(response, 400);
+        return false;
     }
 
     /**
-     * 处理 Inform：认证、建会话、回复 InformResponse。
+     * 本轮会话到此为止：放开会话锁，之后设备的下一次请求落到哪个实例都能接住。
+     */
+    private void endSessionRound(String sn, CpeSession session, HttpServletResponse response) {
+        if (session != null) {
+            sessionMutex.release(sn, session.getSessionId());
+        }
+        sendStatus(response, 204);
+    }
+
+    /**
+     * 处理 Inform：认证、建会话、回复 InformResponse，参数入库与事件调度交给队列消费者。
      *
-     * <p>参数入库与事件调度交给队列消费者，这里只保留必须在响应前完成的动作，
-     * 让 Tomcat 线程尽快释放。</p>
-     *
-     * @param cwmpId 设备报文头里的会话 ID，必须原样回显：
-     *               CWMP 规定响应的 {@code cwmp:ID} 要与请求一致，华为电信固件
-     *               （HS8145C5 / B866 这类）对不上就认为这次会话没被接受，
-     *               会带着递增的 RetryCount 反复重发 BOOTSTRAP，也不发空 POST，
-     *               ACS 于是永远没有下发窗口
+     * @param cwmpId 设备报文头里的会话 ID，必须原样回显，否则设备判定本次未被接受
      */
     private void handleInform(String connId, String body, HttpServletRequest request,
                               HttpServletResponse response, String cwmpId) throws IOException {
@@ -336,23 +445,26 @@ public class CwmpController {
             return;
         }
 
-        // 疑似双会话检测，对应原版 is_2session1cpe。
-        // CWMP 里 CPE 是反向通道：每 60 秒周期上报一次，每次都可能是新的 TCP 连接
-        // （源端口不同），也可能关掉旧连接、另开一条把指令回应发回来。这些都是正常的
-        // 会话接管，会话还在，设备就还活着，只是"告知 ACS 我在线"。
-        // 这里只记日志供排查，不关闭会话：关掉会连带把设备打离线、清空待下发队列、
-        // 作废正在等待的指令，代价远大于收益。是否离线交给 sweepExpiredSessions
-        // 按无通信时长判定。
+        // 疑似双会话检测。连接变了属于正常的会话接管，因此只记日志：关掉会话会把
+        // 排队中的指令一并作废，是否离线交给 SessionManager 按无通信时长判定
         if (sessionManager.detectDuplicateSession(sn, connId)) {
             log.warn("疑似双会话，按会话接管处理: sn={}, connId={}", sn, connId);
         }
 
+        // 本轮会话先拿到互斥权；本进程上一轮握着的锁要先放开，免得把设备自己挡在门外
+        CpeSession previous = sessionManager.find(sn);
+        String previousSessionId = previous != null ? previous.getSessionId() : null;
+
         CpeSession session = sessionManager.getOrCreate(oui, sn, connId);
 
-        // 抢窗口：Inform 的响应体只能是 InformResponse，下发要等 CPE 紧接着的那次空 POST，
-        // 而那次空 POST 就走在本条 TCP 连接上。采集指令必须在回复之前排进下发队列，
-        // 空 POST 到达时才能被立刻取走，否则只能等设备下一次周期上报。
+        if (!acquireSession(sn, session.getSessionId(), previousSessionId, response)) {
+            return;
+        }
+
+        // 采集指令必须在回响应之前入队，紧接着的空 POST 才取得到
         deviceCapabilityService.onInform(session, inform);
+        // 纳管同样要抢这个窗口：把 ACS 地址与上报间隔写回设备，否则设备下轮还报去原厂平台
+        informProvisionService.onInform(session, inform);
 
         // 上报处理入队；队列不可用时就地处理，保证功能不中断
         boolean queued = false;
@@ -373,7 +485,9 @@ public class CwmpController {
             informService.handle(session, inform, body);
         }
 
+        // 会话号要先于响应体下发，设备后续请求才能凭 Cookie 续接这一轮会话
         String informResponse = SoapEnvelopeBuilder.buildInformResponse(cwmpId, session.getCwmpVersion());
+        writeSessionCookie(response, session);
         writeXml(response, informResponse);
 
         session.setState(SessionState.WAIT_POST_NULL);
@@ -385,15 +499,9 @@ public class CwmpController {
     // ==================== 超时控制 ====================
 
     /**
-     * 等待 CPE 空 POST 的定时器。
-     *
-     * <p>超时只意味着<strong>这一轮的下发窗口结束了</strong>，不等于设备离线：
-     * 相当一部分光猫 Inform 之后根本不发空 POST（ACS 没有待发请求时它们就直接挂起连接），
-     * 等到下一个周期再从新连接上报。以前这里直接关会话，于是设备每分钟被判一次离线，
-     * 刚排进队列的指令也跟着被作废。</p>
-     *
-     * <p>现在只结束窗口、作废这一轮没等到回应的指令，会话继续留着，
-     * 设备是否离线交给 {@code SessionManager#sweepExpiredSessions} 按无通信时长判定。</p>
+     * 等待 CPE 空 POST 的定时器。超时只结束本轮下发窗口、作废没等到回应的指令，
+     * 不判设备离线：部分光猫 Inform 后不发空 POST，是否离线由 SessionManager
+     * 按无通信时长判定。
      */
     private void armWaitPostNullTimer(CpeSession session) {
         session.setWaitPostNullTimer(timeoutScheduler.schedule(() -> {
@@ -404,10 +512,7 @@ public class CwmpController {
             if (pending != null) {
                 log.warn("下发窗口结束，指令未收到回应: sn={}, rpc={}",
                         session.getSn(), pending.getRpcName());
-                // 队列关闭时指令走内存 outbox，用的是负数序号，没有对应的任务记录
-                if (pending.getRpcId() > 0) {
-                    rpcDispatchService.failTask(pending.getRpcId(), "8002", "等待空 POST 超时，指令未送达");
-                }
+                settleUndelivered(session, pending, "等待空 POST 超时，指令未送达");
             }
             session.setState(SessionState.READY);
             log.info("下发窗口结束, 等待设备下一次上报: sn={}", session.getSn());
@@ -419,9 +524,44 @@ public class CwmpController {
             PendingRpc rpc = session.failAwaiting("wait rpc response timeout");
             if (rpc != null) {
                 log.warn("等待 RPC 响应超时: sn={}, rpc={}", session.getSn(), rpc.getRpcName());
-                rpcDispatchService.failTask(rpc.getRpcId(), "8002", "等待 RPC 响应超时");
+                settleUndelivered(session, rpc, "等待 RPC 响应超时");
             }
         }, waitRpcResponseTimeout, TimeUnit.SECONDS));
+    }
+
+    /**
+     * 没等到回应的指令怎么收场：还能再试的重排到队列队首，次数用尽则判失败。
+     *
+     * <p>只重排队列里的指令（taskId &gt; 0）：内存 outbox 的指令已随 failAwaiting 完成给
+     * 调用方，再塞回队列两边就对不上了。</p>
+     */
+    private void settleUndelivered(CpeSession session, PendingRpc rpc, String reason) {
+        String sn = session.getSn();
+        if (rpc.getRpcId() <= 0) {
+            // 队列关闭时指令走内存 outbox，用的是负数序号，没有对应的任务记录
+            log.warn("{}，本次不作处理: sn={}, rpc={}", reason, sn, rpc.getRpcName());
+            return;
+        }
+        if (!queueProperties.isEnabled() || rpc.getAttempts() >= maxDeliveryAttempts) {
+            rpcDispatchService.failTask(rpc.getRpcId(), "8002", reason);
+            return;
+        }
+        // 退避：下一次延迟是这一次的两倍
+        long delayMs = retryDelaySeconds * 1000L * (1L << Math.min(rpc.getAttempts(), 8));
+
+        RpcTaskQueue.RpcTask task = new RpcTaskQueue.RpcTask();
+        task.setTaskId(rpc.getRpcId());
+        task.setSn(sn);
+        task.setRpcName(rpc.getRpcName());
+        task.setArgsJson(rpcTaskQueue.writeArgs(rpc.getArgs()));
+        task.setWorklistId(rpc.getWorklistId());
+        task.setBatch(rpc.getBatch());
+        task.setAttempts(rpc.getAttempts() + 1);
+        task.setNotBefore(System.currentTimeMillis() + delayMs);
+        rpcTaskQueue.pushBack(task);
+        rpcTaskQueue.saveQueued(task);
+        log.warn("{}，已重排队列，{}秒后再试: sn={}, rpc={}, attempts={}/{}",
+                reason, delayMs / 1000, sn, rpc.getRpcName(), task.getAttempts(), maxDeliveryAttempts);
     }
 
     /**
@@ -437,6 +577,63 @@ public class CwmpController {
         rpcTaskQueue.saveResult(running);
     }
 
+    // ==================== 挂起的下发 ====================
+
+    /**
+     * 挂起来等着的那一跳下发请求。唤醒与超时可能同时到达，用 settled 保证只结算一次。
+     */
+    private final class PendingDelivery implements RpcDeliveryWaiter.Waiter {
+
+        private final String sn;
+
+        private final AsyncContext async;
+
+        private final HttpServletResponse response;
+
+        private final AtomicBoolean settled = new AtomicBoolean(false);
+
+        PendingDelivery(String sn, AsyncContext async, HttpServletResponse response) {
+            this.sn = sn;
+            this.async = async;
+            this.response = response;
+        }
+
+        @Override
+        public void onSignal() {
+            settle();
+        }
+
+        @Override
+        public void onTimeout() {
+            settle();
+        }
+
+        /** 再试着取一次指令：取到就捎带，取不到回 204 结束本轮。 */
+        private void settle() {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
+            boolean delivered = false;
+            try {
+                CpeSession session = sessionManager.find(sn);
+                if (session != null) {
+                    delivered = deliverNextRpc(sn, session, response);
+                }
+                if (!delivered) {
+                    endSessionRound(sn, session, response);
+                }
+            } catch (Exception e) {
+                log.warn("唤醒后下发失败: sn={}, err={}", sn, e.getMessage());
+            } finally {
+                try {
+                    async.complete();
+                } catch (Exception e) {
+                    log.debug("异步响应已结束: sn={}", sn);
+                }
+            }
+        }
+    }
+
     // ==================== 工具 ====================
 
     private String connectionId(HttpServletRequest request) {
@@ -447,9 +644,55 @@ public class CwmpController {
     }
 
     /**
-     * 按 TCP 连接定位设备，对应原版 sessionno -> CPE 的映射。
+     * 把本轮会话号写进 Set-Cookie 下发给设备。设备后续请求常从另一个源端口过来，
+     * 凭它续接会话；不认 Cookie 的设备由 {@link #resolveSn} 按 ip:端口 兜底。
      */
-    private String resolveSn(String connId) {
+    private void writeSessionCookie(HttpServletResponse response, CpeSession session) {
+        String sessionId = session.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        String cookie = "session=" + sessionId;
+        // Path 有时会被固件认死，配了才加；默认留空
+        if (cookiesPath != null && !cookiesPath.isBlank()) {
+            cookie += "; Path=" + cookiesPath;
+        }
+        response.setHeader("Set-Cookie", cookie);
+    }
+
+    /** 从请求头里取会话号。分隔符除分号还要认逗号：部分设备不合规范。 */
+    private String sessionCookie(HttpServletRequest request) {
+        if (request == null) {
+            return null;
+        }
+        String header = request.getHeader("Cookie");
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        Matcher matcher = SESSION_COOKIE.matcher(header);
+        while (matcher.find()) {
+            if ("session".equals(matcher.group(1))) {
+                String value = matcher.group(2);
+                return value == null || value.isEmpty() ? null : value;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 请求来自哪台设备：Cookie 里的会话号优先，退而求其次才是 TCP 连接标识。
+     */
+    private String resolveSn(String connId, HttpServletRequest request) {
+        String sessionId = sessionCookie(request);
+        if (sessionId != null) {
+            String sn = sessionManager.findSnBySessionId(sessionId);
+            if (sn != null) {
+                // 会话中途换连接是常态，把会话绑到当前这条连接上，保住后续按连接的定位
+                sessionManager.rebindConnection(sn, connId);
+                return sn;
+            }
+            log.debug("Cookie 里的会话号已失效，退回按连接定位: conn={}", connId);
+        }
         return sessionManager.findSnByConnection(connId);
     }
 

@@ -31,9 +31,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 设备管理接口。
- *
- * <p>对应 Python 版 web/itms 下的设备查询与 CWMP 方法手动下发。</p>
+ * 设备管理接口：设备台账查询与 CWMP 方法手动下发。
  */
 @Slf4j
 @RestController
@@ -227,7 +225,7 @@ public class DeviceController {
     }
 
     /**
-     * 手动下发一条 CWMP RPC，对应原版 web 端的 19 种 RPC 下发入口。
+     * 手动下发一条 CWMP RPC。
      */
     @PostMapping("/{sn}/rpc/{rpcName}")
     public Result<Map<String, Object>> rpc(@PathVariable String sn,

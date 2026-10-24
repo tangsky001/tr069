@@ -3,7 +3,6 @@ package com.tr069.acs.acs.session;
 /**
  * CPE 会话状态机。
  *
- * <p>对齐 Python 版 cpe.py 的状态流转：</p>
  * <pre>
  *   INIT --收到 Inform--> WAIT_POST_NULL --收到空 POST 且有任务--> WAIT_RPC_RESPONSE
  *                              ^                                            |

@@ -9,8 +9,6 @@ import java.time.LocalDateTime;
 
 /**
  * SOAP 报文日志。
- *
- * <p>对应 Python 版 SOAP 与 SOAP_EX 的合并。</p>
  */
 @Data
 @TableName("soap_message")

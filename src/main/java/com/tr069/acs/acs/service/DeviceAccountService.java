@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
@@ -42,9 +43,14 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class DeviceAccountService {
 
-    /** 叶子名：TR-069 标准里本地账号就是这两个节点。 */
+    /** 叶子名：TR-069 标准写 Username，华为私有节点里写 UserName。 */
     private static final String LEAF_USERNAME = "Username";
+    private static final String LEAF_USERNAME_HW = "UserName";
     private static final String LEAF_PASSWORD = "Password";
+
+    /** 展示字段名：两种叶子写法归一到这里，后面就不用区分了。 */
+    private static final String FIELD_USER = "username";
+    private static final String FIELD_PASSWORD = "password";
 
     /** User 实例探测上限：超管一般就在前两路，多试几路成本可控。 */
     private static final int MAX_USER_INSTANCE = 4;
@@ -52,7 +58,21 @@ public class DeviceAccountService {
     /** 整批被拒后逐条重试的单条等待时间（秒）。 */
     private static final long RETRY_TIMEOUT_SECONDS = 8;
 
-    private static final Pattern USER_INSTANCE = Pattern.compile("\\.User\\.(\\d+)\\.$");
+    /** 读正式参数前的探活等待时间（秒）：设备不回应时快速给结论。 */
+    private static final long PROBE_TIMEOUT_SECONDS = 6;
+
+    /**
+     * 本地账号所在的父路径形态。
+     *
+     * <p>{@code User.{i}} 是标准，华为/中兴 Web 管理账号在 {@code WebUserInfo.{i}}，
+     * 各运营商的超管节点 {@code X_*_TeleComAccount.} 没有实例号。WAN 连接的
+     * {@code WANPPPConnection.1.Username} 都不匹配，不会被当成超管显示出来。</p>
+     *
+     * <p>节点名前面那个分隔点是 {@code .} 还是 {@code _} 要看厂商怎么拼：华为写的是
+     * {@code X_HW_WebUserInfo}，用下划线连接私有前缀，只认点会把它整条漏掉。</p>
+     */
+    private static final Pattern LOCAL_ACCOUNT_PARENT =
+            Pattern.compile("[._](User|WebUserInfo|TeleComAccount)\\.(\\d+\\.)?$");
 
     private final CpeParameterMapper parameterMapper;
     private final CpeDeviceMapper deviceMapper;
@@ -85,8 +105,25 @@ public class DeviceAccountService {
             return data;
         }
 
-        List<String> candidates = candidatePaths(sn, root);
-        if (candidates.isEmpty()) {
+        // 会话在线不等于设备真会回应。先拿一条必定存在的参数探一下，探不动就
+        // 直接给结论——否则要干等到读取超时，页面上一分钟没反应
+        String probe = root + "DeviceInfo.SerialNumber";
+        try {
+            capabilityService.readPathValues(sn, List.of(probe))
+                    .get(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("设备未回应探活读取: sn={}, path={}, err={}",
+                    sn, probe, e.getMessage());
+            data.put("status", "timeout");
+            data.put("accounts", List.of());
+            data.put("message", "设备未回应参数读取请求，会话可能已失效，请稍候重试");
+            return data;
+        }
+
+        // 只按设备登记的根节点先读一轮：三种根节点一起拼会把候选翻到二十来条，
+        // 其中两种在这台设备上必然不存在，二分拆批的往返又把耗时吃掉了
+        List<String> primary = candidatePaths(sn, List.of(root));
+        if (primary.isEmpty()) {
             data.put("status", "empty");
             data.put("accounts", List.of());
             data.put("message", "设备上没有可用的本地账号参数路径");
@@ -97,17 +134,34 @@ public class DeviceAccountService {
         Map<String, String> values = new LinkedHashMap<>();
         try {
             CompletableFuture<Map<String, String>> future =
-                    capabilityService.readPathValues(sn, candidates);
+                    capabilityService.readPathValues(sn, primary);
             values.putAll(future.get(readTimeoutSeconds, TimeUnit.SECONDS));
         } catch (TimeoutException e) {
             status = "timeout";
-            log.warn("读取设备账号超时: sn={}, paths={}", sn, candidates.size());
+            log.warn("读取设备账号超时: sn={}, paths={}", sn, primary.size());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             status = "fail";
         } catch (Exception e) {
             status = "fail";
             log.warn("读取设备账号失败: sn={}, err={}", sn, e.getMessage());
+        }
+
+        // 登记的根节点读不到才换另外两种根节点。兜底里的兜底，放第二轮不拖慢主线
+        List<String> candidates = new ArrayList<>(primary);
+        if (values.isEmpty()) {
+            List<String> others = candidatePaths(sn, otherRoots(root));
+            for (String path : others) {
+                candidates.add(path);
+            }
+            if (!others.isEmpty()) {
+                try {
+                    values.putAll(capabilityService.readPathValues(sn, others)
+                            .get(readTimeoutSeconds, TimeUnit.SECONDS));
+                } catch (Exception e) {
+                    log.debug("备用根节点读取账号失败: sn={}, err={}", sn, e.getMessage());
+                }
+            }
         }
 
         // 整批被拒时逐条重试：有些设备只要批里有一个不认识的节点就整批回 fault，
@@ -146,11 +200,49 @@ public class DeviceAccountService {
     }
 
     /**
-     * 待读取的参数路径：优先用能力树快照里采到的真实路径，
-     * 快照里没有才按 TR-098 / TR-181 两种根各拼若干路标准路径兜底。
+     * 运营商定制固件的超管节点：叶子名与标准 User 实例一致。
+     *
+     * <p>本地 {@code User.1} 通常只是普通运维账号，真正的超管放在这里，而且这些节点
+     * 基本不对 GetParameterNames 暴露——能力树快照里根本采不到，必须显式按路径去
+     * GetParameterValues。设备不支持时被二分拆批单独剔掉，不影响其余路径。</p>
      */
-    private List<String> candidatePaths(String sn, String root) {
+    private static final Map<String, String> ADMIN_NODE_BY_ISP = Map.of(
+            "CT", "DeviceInfo.X_CT-COM_TeleComAccount.",    // 电信定制
+            "CMCC", "DeviceInfo.X_CMCC_TeleComAccount.",    // 移动定制
+            "CU", "DeviceInfo.X_CU_TeleComAccount.");       // 联通定制
+
+    /**
+     * 华为公开版（未做运营商定制）固件的 Web 管理账号节点。
+     *
+     * <p>定制版走 {@link #ADMIN_NODE_BY_ISP} 里那套，只有适配时没选运营商、
+     * 按通用型号建档的华为设备才用这条。超管常挂在实例 2，
+     * 叶子名是 {@code UserName}，不是标准的 {@code Username}。</p>
+     */
+    private static final String HUAWEI_WEB_USER_NODE = "UserInterface.X_HW_WebUserInfo.";
+
+    /**
+     * 待读取的参数路径：按设备登记的运营商挑对应的超管节点，能力树快照里采到的
+     * 账号路径补在后面，快照里一个都没有时再按 TR-098 / TR-181 两种根拼标准路径兜底。
+     */
+    private List<String> candidatePaths(String sn, List<String> roots) {
         LinkedHashSet<String> paths = new LinkedHashSet<>();
+        String isp = resolveIsp(sn).toUpperCase(Locale.ROOT);
+        String adminNode = ADMIN_NODE_BY_ISP.get(isp);
+        for (String r : roots) {
+            if (adminNode != null) {
+                paths.add(r + adminNode + LEAF_USERNAME);
+                paths.add(r + adminNode + LEAF_PASSWORD);
+                continue;
+            }
+            // 通用型号：华为公开版固件。两种叶子写法都试，各固件不一致
+            for (int i = 1; i <= MAX_USER_INSTANCE; i++) {
+                String base = r + HUAWEI_WEB_USER_NODE + i + ".";
+                paths.add(base + LEAF_USERNAME_HW);
+                paths.add(base + LEAF_USERNAME);
+                paths.add(base + LEAF_PASSWORD);
+            }
+        }
+        int fromSnapshot = 0;
         for (CpeParameter row : snapshotUserParams(sn)) {
             String leaf = DeviceBusinessService.normalizeLeaf(
                     DeviceCapabilityService.nameOf(row.getParamPath()));
@@ -162,14 +254,13 @@ public class DeviceAccountService {
             String parent = DeviceCapabilityService.parentOf(row.getParamPath());
             paths.add(parent + LEAF_USERNAME);
             paths.add(parent + LEAF_PASSWORD);
+            fromSnapshot++;
         }
-        if (!paths.isEmpty()) {
+        // 快照里采到真实账号路径就够了，不必再拼一堆标准 User 实例；
+        // 一条都没有说明这台不对外部暴露账号节点，才往下兜底
+        if (fromSnapshot > 0) {
             return new ArrayList<>(paths);
         }
-        LinkedHashSet<String> roots = new LinkedHashSet<>();
-        roots.add(root);
-        roots.add(DataModel.TR098.getRoot());
-        roots.add(DataModel.TR181.getRoot());
         for (String r : roots) {
             for (int i = 1; i <= MAX_USER_INSTANCE; i++) {
                 paths.add(r + "User." + i + "." + LEAF_USERNAME);
@@ -210,13 +301,14 @@ public class DeviceAccountService {
             String path = entry.getKey();
             String leaf = DeviceBusinessService.normalizeLeaf(
                     DeviceCapabilityService.nameOf(path));
-            if (!LEAF_USERNAME.equals(leaf) && !LEAF_PASSWORD.equals(leaf)) {
+            String field = fieldOf(leaf);
+            if (field == null) {
                 continue;
             }
-            // 只看 User.{i} 下的账号：WAN 连接的 Username 是拨号账号，
-            // 叶子名一模一样，不当本地账号过滤掉就会被当成超管显示出来
+            // 只看本地账号那几种父路径：WAN 连接的 Username 是拨号账号，
+            // 叶子名一模一样，不过滤就会被当成超管显示出来
             String parent = DeviceCapabilityService.parentOf(path);
-            if (!USER_INSTANCE.matcher(parent).find()) {
+            if (!LOCAL_ACCOUNT_PARENT.matcher(parent).find()) {
                 continue;
             }
             String value = entry.getValue();
@@ -224,7 +316,7 @@ public class DeviceAccountService {
                 continue;
             }
             grouped.computeIfAbsent(parent, k -> new LinkedHashMap<>())
-                    .putIfAbsent(leaf, value);
+                    .putIfAbsent(field, value);
         }
         List<Map<String, Object>> accounts = new ArrayList<>(grouped.size());
         for (Map.Entry<String, Map<String, String>> entry : grouped.entrySet()) {
@@ -232,17 +324,61 @@ public class DeviceAccountService {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("path", entry.getKey());
             item.put("instance", instanceOf(entry.getKey()));
-            item.put("username", fields.getOrDefault(LEAF_USERNAME, ""));
-            item.put("password", fields.getOrDefault(LEAF_PASSWORD, ""));
+            item.put("username", fields.getOrDefault(FIELD_USER, ""));
+            item.put("password", fields.getOrDefault(FIELD_PASSWORD, ""));
             accounts.add(item);
         }
         return accounts;
     }
 
+    /** 除指定根节点以外的标准根节点，用于第二轮兜底。 */
+    private static List<String> otherRoots(String root) {
+        List<String> others = new ArrayList<>();
+        for (String r : List.of(DataModel.TR098.getRoot(), DataModel.TR181.getRoot())) {
+            if (!r.equals(root)) {
+                others.add(r);
+            }
+        }
+        return others;
+    }
+
+    /**
+     * 设备台账登记的运营商。
+     *
+     * <p>适配时不选运营商就按通用型号建档，这类固件没有运营商定制节点，
+     * 超管走华为公开版那条路径；这里遇到 {@code standard} 一律当作没选。</p>
+     */
+    private String resolveIsp(String sn) {
+        try {
+            CpeDevice device = deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
+                    .eq(CpeDevice::getSn, sn)
+                    .last("LIMIT 1"));
+            if (device != null && device.getIsp() != null) {
+                String isp = device.getIsp().trim();
+                return "standard".equalsIgnoreCase(isp) ? "" : isp;
+            }
+        } catch (Exception e) {
+            log.warn("查询设备运营商失败: sn={}, err={}", sn, e.getMessage());
+        }
+        return "";
+    }
+
     /** 从 {@code ...User.2.} 里取实例号，取不到返回空串。 */
     private static String instanceOf(String parent) {
-        Matcher m = USER_INSTANCE.matcher(parent);
-        return m.find() ? m.group(1) : "";
+        Matcher m = LOCAL_ACCOUNT_PARENT.matcher(parent);
+        // TeleComAccount 这类节点没有实例号，返回空即可
+        return m.find() && m.group(2) != null ? m.group(2).replace(".", "") : "";
+    }
+
+    /** 账号叶子名 -> 展示字段；认不出来（比如 SSID 之类的同名叶子）返回 null。 */
+    private static String fieldOf(String leaf) {
+        if (LEAF_USERNAME.equals(leaf) || LEAF_USERNAME_HW.equals(leaf)) {
+            return FIELD_USER;
+        }
+        if (LEAF_PASSWORD.equals(leaf)) {
+            return FIELD_PASSWORD;
+        }
+        return null;
     }
 
     /** 设备台账里登记的根节点，没登记按 TR-098 处理。 */

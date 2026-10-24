@@ -24,7 +24,7 @@ class SessionManagerTest {
 
     @BeforeEach
     void setUp() {
-        manager = new SessionManager(Mockito.mock(DeviceRegistryService.class));
+        manager = new SessionManager();
         ReflectionTestUtils.setField(manager, "duplicateGraceSeconds", 30L);
     }
 

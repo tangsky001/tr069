@@ -11,9 +11,15 @@ import com.tr069.acs.worklist.service.ModelAdaptationService.Detection;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -109,6 +115,78 @@ class ModelAdaptationServiceTest {
         assertThat(d.getSipCount()).isEqualTo(2);
         // 频段叶子缺失时双射频兜底为双频
         assertThat(d.getWifiBands()).containsExactlyInAnyOrder("2.4G", "5.8G");
+    }
+
+    /**
+     * MSG2200C 这类移动定制固件：不实现 OperatingFrequencyBand，2.4G 的 SSID
+     * 也不带频段字样（CMCC-cTDt），只有 5G 那个带 -5G 后缀。以前只认频段字段和 SSID，
+     * 结果只识别出 5.8G，申报双频就报「未检测到 2.4G WIFI」。
+     * PossibleChannels 是标准参数，2.4G 只到 13、5G 从 36 起，据此能判准。
+     */
+    @Test
+    void 无频段参数时按信道列表识别双频() {
+        String r = "InternetGatewayDevice.LANDevice.1.WLANConfiguration.";
+        Detection d = service().detect(List.of(
+                param(r + "1.PossibleChannels", "1-13"),
+                param(r + "1.Standard", "bgn"),
+                param(r + "1.SSID", "CMCC-cTDt"),
+                param(r + "5.PossibleChannels", "36 40 44 48 52 56 60 64 149 153 157 161"),
+                param(r + "5.Standard", "anac"),
+                param(r + "5.SSID", "CMCC-cTDt-5G")));
+
+        assertThat(d.getWifiBands()).containsExactlyInAnyOrder("2.4G", "5.8G");
+        assertThat(service().compare(d, request("CMCC", "无", "自动", "无", "2.4G+5.8G")))
+                .as("申报双频不该被判不满足").isEmpty();
+    }
+
+    /**
+     * 用 MSG2200C 实际导出的档案跑一遍。这台设备不实现 OperatingFrequencyBand，
+     * 2.4G 的 SSID 也没有「2.4」字样（CMCC-cTDt），只有 PossibleChannels=1-13
+     * 与 Standard=bgn 能证明它是 2.4G 射频。
+     */
+    @Test
+    void 从真实型号档案识别双频() throws Exception {
+        Path xml = Path.of("configuration/models/standard/standard/msg2200c-up-4e4v_p370_431.xml");
+        assumeTrue(Files.exists(xml), "型号档案不在，跳过");
+        List<CpeParameter> params = new ArrayList<>();
+        Matcher m = Pattern.compile("<Param [^>]*path=\"([^\"]+)\"[^>]*value=\"([^\"]*)\"")
+                .matcher(Files.readString(xml));
+        while (m.find()) {
+            CpeParameter row = new CpeParameter();
+            row.setParamPath(m.group(1));
+            row.setParamValue(m.group(2));
+            params.add(row);
+        }
+
+        Detection d = service().detect(params);
+
+        assertThat(d.getWifiBands()).containsExactlyInAnyOrder("2.4G", "5.8G");
+    }
+
+    /**
+     * 只给 5G 那个 SSID 标频段、2.4G 那个什么都不标（CMCC-xxxx-5G 配 CMCC-xxxx），
+     * 是绝大多数厂家的做法，不能因为「2.4G 没标注」就认定设备没有 2.4G。
+     */
+    @Test
+    void 只标5G不标2点4G时按双频认定() {
+        Detection d = service().detect(List.of(
+                param("InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID", "CMCC-ABCD"),
+                param("InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID", "CMCC-ABCD-5G"),
+                param("InternetGatewayDevice.LANDevice.1.WLANConfigurationNumberOfEntries", "2")));
+
+        assertThat(d.getWifiBands()).containsExactlyInAnyOrder("2.4G", "5.8G");
+        assertThat(service().compare(d, request("CMCC", "无", "自动", "无", "2.4G+5.8G")))
+                .as("申报双频不该被判不满足").isEmpty();
+    }
+
+    /** 反过来不成立：只有一个射频且它标了 5G，就是纯 5G 设备，不该补 2.4G。 */
+    @Test
+    void 单射频标5G时不补2点4G() {
+        Detection d = service().detect(List.of(
+                param("InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID", "CMCC-5G"),
+                param("InternetGatewayDevice.LANDevice.1.WLANConfigurationNumberOfEntries", "1")));
+
+        assertThat(d.getWifiBands()).containsExactly("5.8G");
     }
 
     @Test

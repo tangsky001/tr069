@@ -163,6 +163,10 @@ public class IntentDeliveryService {
         // 计划已定稿，剩下的就是等设备取走指令——那可能要等它下一次周期上报，
         // 不能堵在调用方的 HTTP 线程上，丢给后台线程推进状态
         if (DeviceTask.STATUS_RUNNING.equals(task.getStatus())) {
+            // 工单与业务模板下发是「人点了就要它生效」，等周期上报要十几分钟。
+            // 先发连接请求叫设备上来，这一轮会话就把指令带下去；叫不醒也无所谓，
+            // 指令照旧排在队列里。唤醒是网络往返，与执行并行，不拖慢任务推进
+            EXECUTOR.execute(() -> capabilityService.wakeUp(request.sn()));
             EXECUTOR.execute(() -> execute(task));
         }
         return task;

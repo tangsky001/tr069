@@ -10,8 +10,6 @@ import java.time.LocalDateTime;
 
 /**
  * CPE 设备。
- *
- * <p>对应 Python 版 CPE 表。</p>
  */
 @Data
 @TableName("cpe_device")

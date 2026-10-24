@@ -11,8 +11,6 @@ import java.util.List;
 
 /**
  * CPE 上报的 Inform 请求。
- *
- * <p>对应 Python 版 rpcstruct.py 中的 Inform 结构。</p>
  */
 @Data
 @Builder

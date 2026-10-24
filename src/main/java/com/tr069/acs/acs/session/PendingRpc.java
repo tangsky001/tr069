@@ -7,43 +7,30 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 待下发给 CPE 的一条 CWMP RPC。
- *
- * <p>ACS 采用反向轮询模型：一个 HTTP 事务只携带一条 SOAP 消息，
- * 且只能在 CPE 主动发起的 POST 的响应体中捎带下发。</p>
+ * 待下发给 CPE 的一条 CWMP RPC。ACS 只能在 CPE 主动 POST 的响应体里捎带下发，
+ * 一个 HTTP 事务只带一条 SOAP 消息。
  */
 @Data
 public class PendingRpc {
 
-    /**
-     * CWMP 方法名
-     */
     private final String rpcName;
 
-    /**
-     * 方法参数
-     */
     private final Map<String, Object> args;
 
-    /**
-     * 关联的工单，便于审计
-     */
     private final String worklistId;
 
-    /**
-     * 下发顺序号，用于 RPC 审计
-     */
     private final long rpcId;
 
-    /**
-     * 等待 CPE 回应的凭据，超时或收到响应时完成
-     */
+    /** 等待 CPE 回应的凭据，超时或收到响应时完成。 */
     private final CompletableFuture<SoapMessage> response = new CompletableFuture<>();
 
-    /**
-     * 下发时刻
-     */
     private final long startTime = System.currentTimeMillis();
+
+    /** 所属采集批次，超时重排队列时要带回，否则重发的这条会被当作上一轮残留清掉。 */
+    private String batch;
+
+    /** 已尝试下发的次数。只有没等到回应才重试。 */
+    private int attempts;
 
     public PendingRpc(long rpcId, String rpcName, Map<String, Object> args, String worklistId) {
         this.rpcId = rpcId;

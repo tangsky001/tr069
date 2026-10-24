@@ -25,9 +25,8 @@ import java.util.Map;
 /**
  * CWMP 报文解析器。
  *
- * <p>对应 Python 版 lib/acss/xml/parse.py 的 DOM 遍历，以及
- * cpe.py:convert_result 对结果的整形。各 RPC 响应转换为
- * {@code dict_data} 结构，字段名与原版完全一致。</p>
+ * <p>遍历 DOM 取各 RPC 响应的字段，统一整形为 {@code dict_data} 结构，
+ * 字段名与各 RPC 的 SOAP 定义一致，供上层按一套取值方式处理。</p>
  */
 @Slf4j
 public final class SoapParser {
@@ -234,7 +233,7 @@ public final class SoapParser {
             }
             case "SetParameterValuesResponse" -> dict.put("Status", textOfChild(root, "Status"));
             case "SetParameterAttributesResponse" -> {
-                // 原版为 {}
+                // 响应体无有效字段，保持空结构
             }
             case "GetParameterAttributesResponse" -> {
                 List<Map<String, Object>> entries = new ArrayList<>();
@@ -258,7 +257,7 @@ public final class SoapParser {
             case "RebootResponse", "FactoryResetResponse", "ScheduleInformResponse",
                     "ScheduleDownloadResponse", "SetVouchersResponse", "CancelTransferResponse",
                     "ChangeDUStateResponse" -> {
-                // 原版为 {}
+                // 响应体无有效字段，保持空结构
             }
             case "DownloadResponse", "UploadResponse" -> {
                 dict.put("Status", textOfChild(root, "Status"));
@@ -343,7 +342,7 @@ public final class SoapParser {
     }
 
     /**
-     * 生成可读的结果描述，对应原版 str_result。
+     * 生成可读的结果描述，用于日志与结果展示。
      */
     private static String buildStrResult(Element root, String methodName) {
         StringBuilder sb = new StringBuilder();

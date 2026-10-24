@@ -281,12 +281,24 @@ public class DeviceCapabilityService {
     private static final String AUTH_AUTO = "auto";
 
     /**
+     * 连接请求凭据的最后兜底（电信 ITMS 现场通用 itms/itms）。
+     *
+     * <p>各批次光猫出厂的 CR 密码互不相同，台账、采集参数与全局配置都拿不到时，
+     * 按纳管写进设备的那个默认值试一次。</p>
+     */
+    private static final String DEFAULT_CR_USER = "itms";
+
+    private static final String DEFAULT_CR_PASSWORD = "itms";
+
+    /**
      * 是否在手动采集前主动唤醒设备（连接请求）。
      *
      * <p>不是每家的猫都吃这一套：有的设备对这个请求要求 HTTP 认证，ACS 手上没有凭据就
      * 只能拿到 401，而它的采集本来靠周期上报也跑得好好的。现场确认不需要就整个关掉。</p>
      */
-    @Value("${acs.capability.wakeup-enabled:true}")
+    // 键名与 application.yml 里的 acs.device.capability.wakeup-enabled 对齐：
+    // 之前写的是 acs.capability.*，yml 里改了不生效，关也关不掉
+    @Value("${acs.device.capability.wakeup-enabled:true}")
     private boolean wakeupEnabled;
 
     /** 唤醒过但没凭据的设备（sn → 下次再试的时刻），免得每次采集都撞一次 401。 */
@@ -1161,15 +1173,18 @@ public class DeviceCapabilityService {
     /**
      * 用设备的 ConnectionRequestURL 反连唤醒它，让它立刻来上报。
      *
-     * <p>手动采集是人点下去的那一刻开跑的，可设备不一定在下发窗口里——光猫往往十几分钟
-     * 才上报一次，指令只能压在队列里干等，等到采集时限到了还是一场空。TR-069 允许 ACS
-     * 反向请求设备建会话（ConnectionRequest），设备收到就会立刻 Inform，
-     * 队列里的指令马上能发出去。</p>
+     * <p>CWMP 是短连接，ACS 不能主动给设备推数据，只能等设备来建会话。常规下发就排在
+     * 队列里等它下一次周期 Inform，那是成本最低的路；但人在页面上点了「下发/采集」时
+     * 等不起——光猫十几分钟才上报一次。这时按 TR-069 的连接请求（ConnectionRequest）
+     * 反向叫一声，设备收到就立刻 Inform，队列里的指令随即带下去。</p>
+     *
+     * <p>所以只有「人点了就要生效」的场景才调它：手动采集、工单下发、业务模板下发。
+     * 定时任务（LAN 状态刷新、周期采集）仍走周期上报那条路，不无谓叫醒设备。</p>
      *
      * <p>唤醒失败一律忽略：URL 没上报过、设备侧端口不通、要求认证都可能，
-     * 这时只是退化成「等它自己上报」，不牵连采集本身。</p>
+     * 这时只是退化成「等它自己上报」，不牵连调用方的流程。</p>
      */
-    private void wakeUp(String sn) {
+    public void wakeUp(String sn) {
         if (!wakeupEnabled) {
             return;
         }
@@ -1190,14 +1205,24 @@ public class DeviceCapabilityService {
         if (url == null || url.isBlank()) {
             return;
         }
-        // 台账上的设备级凭据优先，没有就用全局配置（电信现场多见 itms/itms）
-        String user = firstNonBlank(device.getAcsToCpeName(), defaultAcsToCpeUser);
-        String password = firstNonBlank(device.getAcsToCpePassword(), defaultAcsToCpePassword);
+        // 台账上的设备级凭据优先（纳管改写过 CR 凭据时会登记在这里），
+        // 没有就翻这台已经采集到的参数——采过完整树的设备，凭据的值本来就在库里，
+        // 不用为它再采一轮。全局配置排在设备自己的值之后：各批次出厂密码并不一样
+        String user = device.getAcsToCpeName();
+        String password = device.getAcsToCpePassword();
         if (authDisabled(user)) {
-            // 台账和全局都没配：翻这台已经采集到的参数——采过完整树的设备，
-            // 凭据的值本来就在库里，不用为它再采一轮
             user = paramValue(sn, "ManagementServer.ConnectionRequestUsername");
             password = paramValue(sn, "ManagementServer.ConnectionRequestPassword");
+        }
+        if (authDisabled(user)) {
+            user = defaultAcsToCpeUser;
+            password = defaultAcsToCpePassword;
+        }
+        if (authDisabled(user)) {
+            // 三处都没有：按纳管写进设备的默认值试。设备已被纳管改写过 CR 凭据，
+            // 猜不出来就只能用这个默认值，试不过也只是退化成等它自己上报
+            user = DEFAULT_CR_USER;
+            password = DEFAULT_CR_PASSWORD;
         }
         boolean withCredentials = !authDisabled(user);
         try {
