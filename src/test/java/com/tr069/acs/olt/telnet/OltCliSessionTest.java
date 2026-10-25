@@ -1,5 +1,6 @@
 package com.tr069.acs.olt.telnet;
 
+import com.tr069.acs.olt.entity.OltBoard;
 import com.tr069.acs.olt.entity.OltDevice;
 import com.tr069.acs.olt.model.OltOnt;
 import com.tr069.acs.olt.model.OltPort;
@@ -74,6 +75,98 @@ class OltCliSessionTest {
             assertTrue(onts.get(0).getOnline());
             assertFalse(onts.get(1).getOnline());
             assertTrue(snapshot.getTranscript().contains("display ont info 0 0 all"));
+        }
+    }
+
+    /**
+     * 第三方 OLT（中兴/烽火）用 show 系列：display version 只会回一句 Unknown command，
+     * 认出 show 风格后板卡也走 show card，不再发 display board 0 去讨一句报错。
+     */
+    @Test
+    void shouldUseShowCommandsForThirdPartyOlt() throws Exception {
+        try (FakeOltServer server = new FakeOltServer()) {
+            server.setShowStyle(true);
+            OltDevice device = new OltDevice();
+            device.setHost("127.0.0.1");
+            device.setPort(server.getPort());
+            device.setProtocol("TELNET");
+            device.setUsername("root");
+            device.setPassword("admin");
+
+            OltSnapshot snapshot;
+            try (OltCliSession session = OltCliSession.open(
+                    device, StandardCharsets.UTF_8, 3000, 5000, 4000)) {
+                snapshot = session.collect(true);
+            }
+            server.await();
+
+            assertEquals(OltVendor.ZTE, snapshot.getVendor());
+            assertEquals(OltVendor.CliStyle.SHOW, snapshot.getCliStyle());
+            assertEquals(2, snapshot.getBoards().size());
+            // 两套版本命令都发了（先 display 后 show），但板卡只发 show 这一套
+            assertTrue(snapshot.getTranscript().contains("display version"));
+            assertTrue(snapshot.getTranscript().contains("show version"));
+            assertTrue(snapshot.getTranscript().contains("show card"));
+            assertFalse(snapshot.getTranscript().contains("display board 0"));
+        }
+    }
+
+    /**
+     * 鸿升光 HSGQ-E04（EPON 一体机）：show version 认出厂商后就够了——
+     * 现场不需要采集板卡信息（show pon-info 只回命令回显），直接按型号生成整机卡片出图。
+     */
+    @Test
+    void shouldShowImageOnlyForHsgq() throws Exception {
+        try (FakeOltServer server = new FakeOltServer()) {
+            server.setHsgq(true);
+            OltDevice device = new OltDevice();
+            device.setHost("127.0.0.1");
+            device.setPort(server.getPort());
+            device.setProtocol("TELNET");
+            device.setUsername("root");
+            device.setPassword("admin");
+
+            OltSnapshot snapshot;
+            try (OltCliSession session = OltCliSession.open(
+                    device, StandardCharsets.UTF_8, 3000, 5000, 4000)) {
+                snapshot = session.collect(true);
+            }
+            server.await();
+
+            assertEquals(OltVendor.HSGQ, snapshot.getVendor());
+            assertEquals(OltVendor.CliStyle.SHOW, snapshot.getCliStyle());
+            assertEquals("HSGQ-E04", snapshot.getModel());
+            assertEquals("HSGQ-E04_I_V3.5.14C_Rel", snapshot.getSoftwareVersion());
+            assertEquals("38:3A:21:2C:79:14", snapshot.getMacAddress());
+
+            // 整机没有板卡概念：只发版本命令 + 配置视图下的 PON/ONU 两条，不发板卡/VLAN 命令
+            assertTrue(snapshot.getTranscript().contains("show version"));
+            assertTrue(snapshot.getTranscript().contains("show pon-info"));
+            assertTrue(snapshot.getTranscript().contains("show onu-info all"));
+            assertFalse(snapshot.getTranscript().contains("show vlan all"));
+            assertTrue(snapshot.getNotes().isEmpty());
+
+            // 整机卡片：型号即板卡型号（页面按它找示意图），4 个 PON 口
+            assertEquals(1, snapshot.getBoards().size());
+            OltBoard board = snapshot.getBoards().get(0);
+            assertEquals("HSGQ-E04", board.getBoardType());
+            assertEquals(4, board.getPortCount());
+            assertEquals(4, board.getPorts().size());
+            assertEquals("PON01", board.getPorts().get(0).getPortName());
+            assertEquals("PON04", board.getPorts().get(3).getPortName());
+
+            // show pon-info：PON01 5/5、PON02 2/3、PON03/PON04 0/0
+            assertEquals(Integer.valueOf(5), board.getPorts().get(0).getOnuOnline());
+            assertEquals(Integer.valueOf(5), board.getPorts().get(0).getOnuTotal());
+            assertEquals(Integer.valueOf(2), board.getPorts().get(1).getOnuOnline());
+            assertEquals(Integer.valueOf(3), board.getPorts().get(1).getOnuTotal());
+            assertEquals(Integer.valueOf(0), board.getPorts().get(3).getOnuTotal());
+
+            // show onu-info all：1/1、1/2 挂在 PON01 下，MAC 即 EPON 的 SN
+            assertEquals(2, board.getPorts().get(0).getOnts().size());
+            assertEquals("C8:21:DA:F8:2F:70", board.getPorts().get(0).getOnts().get(0).getSn());
+            assertTrue(board.getPorts().get(0).getOnts().get(0).getOnline());
+            assertFalse(board.getPorts().get(1).getOnts().get(1).getOnline());
         }
     }
 
@@ -257,6 +350,12 @@ class OltCliSessionTest {
         /** 板卡型号，H807GPBD 这类能在没有 display board 端口数时兜底出 8 个端口 */
         private volatile String boardType = "H901GPHF";
 
+        /** 模拟第三方 OLT（中兴 C320）：只认 show 系列，display 一律 Unknown command */
+        private volatile boolean showStyle;
+
+        /** 模拟鸿升光 HSGQ-E04：OLT> 提示符，show version / pon-info / onu-info all */
+        private volatile boolean hsgq;
+
         /** 额外插一块上联板（H801X2CS），用来验证上行口 VLAN 采集 */
         private volatile String uplinkBoard;
 
@@ -285,6 +384,14 @@ class OltCliSessionTest {
 
         void setBoardType(String boardType) {
             this.boardType = boardType;
+        }
+
+        void setShowStyle(boolean showStyle) {
+            this.showStyle = showStyle;
+        }
+
+        void setHsgq(boolean hsgq) {
+            this.hsgq = hsgq;
         }
 
         void setUplinkBoard(String uplinkBoard) {
@@ -322,7 +429,7 @@ class OltCliSessionTest {
                     return;
                 }
                 assertEquals("admin", password);
-                write(out, "\r\n<HUAWEI>");
+                write(out, showStyle ? "\r\nZXAN#" : hsgq ? "\r\nOLT>" : "\r\n<HUAWEI>");
 
                 // display version 停在参数提示上时，等客户端补回车再吐正文
                 boolean pendingVersion = false;
@@ -339,6 +446,80 @@ class OltCliSessionTest {
                                     + "  PRODUCT : MA5683T\r\n"
                                     + "  Uptime is 59 day(s), 18 hour(s), 35 minute(s), 50 second(s)\r\n"
                                     + "<HUAWEI>");
+                        }
+                        continue;
+                    }
+                    if (hsgq) {
+                        if ("show version".equals(command)) {
+                            write(out, "Copyright 2016-2025 by HSGQ\r\n"
+                                    + " Software Version          : HSGQ-E04_I_V3.5.14C_Rel\r\n"
+                                    + " System Version            : HSGQ-E04_I_V1.5.0_Rel\r\n"
+                                    + " Hardware Version          : HSGQ-E04-hw-version-v3.0\r\n"
+                                    + " Base Mac Address          : 38:3a:21:2c:79:14\r\n"
+                                    + " Product                   : HSGQ-E04\r\n"
+                                    + "OLT>");
+                        } else if ("show pon-info".equals(command)) {
+                            write(out, "PON Device 1 :\r\n"
+                                    + " Device Status     : UP\r\n"
+                                    + " Port    Status    Online/Total ONUs\r\n"
+                                    + " PON01   Up        5/5\r\n"
+                                    + " PON02   Up        2/3\r\n"
+                                    + " PON03   Down      0/0\r\n"
+                                    + " PON04   Down      0/0\r\n"
+                                    + "OLT>");
+                        } else if ("show onu-info all".equals(command)) {
+                            write(out, "PON/ONU   Mac-Address          Status    Auth   Cfg"
+                                    + "   Reg-time               ONU-Name    ONU-Desc\r\n"
+                                    + " 1/1   c8:21:da:f8:2f:70   Online   TRUE   TRUE"
+                                    + "   2026/10/25 00:46:10   ONU01/01   NO-DESCRIPTI\r\n"
+                                    + " 1/2   c8:21:da:f8:2f:0e   Online   TRUE   TRUE"
+                                    + "   2026/10/25 00:46:10   ONU01/02   NO-DESCRIPTI\r\n"
+                                    + " 2/1   c8:21:da:f8:30:82   Online   TRUE   TRUE"
+                                    + "   2026/10/25 00:46:10   ONU02/01   NO-DESCRIPTI\r\n"
+                                    + " 2/2   c8:21:da:f8:30:96   Offline  TRUE   TRUE"
+                                    + "   2026/10/25 00:46:11   ONU02/02   NO-DESCRIPTI\r\n"
+                                    + " Total: 8  Online:7  Offline:1\r\n"
+                                    + "OLT>");
+                        } else if ("show vlan all".equals(command)) {
+                            write(out, "----------------------------------------\r\n"
+                                    + " VLAN ID            : 1\r\n"
+                                    + " Name               : VLAN1\r\n"
+                                    + " Description        : VLAN1\r\n"
+                                    + " Tagged Ports       :\r\n"
+                                    + " Untagged Ports     :\r\n"
+                                    + " Default Vlan Ports : PON01-PON04,GE01-GE08\r\n"
+                                    + "----------------------------------------\r\n"
+                                    + "----------------------------------------\r\n"
+                                    + " VLAN ID            : 41\r\n"
+                                    + " Name               : VLAN41\r\n"
+                                    + " Description        : uplink\r\n"
+                                    + " Tagged Ports       : GE01-GE02\r\n"
+                                    + " Untagged Ports     :\r\n"
+                                    + " Default Vlan Ports :\r\n"
+                                    + "----------------------------------------\r\n"
+                                    + "OLT(config)#");
+                        } else if ("enable".equals(command)) {
+                            write(out, "OLT#");
+                        } else if ("configure".equals(command)) {
+                            write(out, "OLT(config)#");
+                        } else {
+                            write(out, "% Unknown command\r\nOLT>");
+                        }
+                        continue;
+                    }
+                    if (showStyle) {
+                        // 第三方 OLT：display 系列一律不认，只有 show 系列有内容
+                        if ("display version".equals(command) || "display board 0".equals(command)) {
+                            write(out, "% Unknown command\r\nZXAN#");
+                        } else if ("show version".equals(command)) {
+                            write(out, "ZTE ZXA10 C320 Software, Version V2.0.1\r\nZXAN#");
+                        } else if ("show card".equals(command)) {
+                            write(out, "Rack Shelf Slot Cpu BoardType PortNum Status\r\n"
+                                    + "  1    1     1    1   GTXO        8      online\r\n"
+                                    + "  1    1     2    1   GTXO        8      online\r\n"
+                                    + "ZXAN#");
+                        } else {
+                            write(out, "ZXAN#");
                         }
                         continue;
                     }

@@ -1,6 +1,7 @@
 package com.tr069.acs.olt.telnet;
 
 import com.tr069.acs.olt.entity.OltBoard;
+import com.tr069.acs.olt.model.OltTemplateInfo;
 import com.tr069.acs.olt.model.OltVlanInfo;
 import lombok.Data;
 
@@ -14,6 +15,9 @@ import java.util.List;
 public class OltSnapshot {
 
     private OltVendor vendor = OltVendor.GENERIC;
+
+    /** 命令风格：华为 display，第三方 show；没探测出来为 null */
+    private OltVendor.CliStyle cliStyle;
 
     /** 型号，解析不出时为 null */
     private String model;
@@ -47,6 +51,9 @@ public class OltSnapshot {
 
     /** VLAN 快照（VLAN 列表 + 上行口放通情况），没采到为 null */
     private OltVlanInfo vlanInfo;
+
+    /** DBA 模板与线路模板快照，没采到为 null */
+    private OltTemplateInfo templateInfo;
 
     /** 本次交互的完整回显，落库留档 */
     private String transcript;

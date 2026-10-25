@@ -14,10 +14,16 @@ import com.tr069.acs.olt.mapper.OltBoardMapper;
 import com.tr069.acs.olt.mapper.OltDeviceMapper;
 import com.tr069.acs.olt.mapper.OltSyncRecordMapper;
 import com.tr069.acs.olt.model.OltDetail;
+import com.tr069.acs.olt.model.OltDbaProfileRequest;
+import com.tr069.acs.olt.model.OltOntQueryRequest;
+import com.tr069.acs.olt.model.OltOntInfo;
+import com.tr069.acs.olt.model.OltOntQueryResult;
+import com.tr069.acs.olt.model.OltServicePort;
 import com.tr069.acs.olt.model.OltDeviceView;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltSaveRequest;
 import com.tr069.acs.olt.model.OltSyncRecordView;
+import com.tr069.acs.olt.model.OltTemplateInfo;
 import com.tr069.acs.olt.model.OltTestResult;
 import com.tr069.acs.olt.model.OltVlanInfo;
 import com.tr069.acs.olt.telnet.OltInfoParser;
@@ -29,6 +35,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -105,7 +112,33 @@ public class OltService {
         detail.setBoards(boards);
         detail.setRecords(records(id, 10));
         detail.setVlan(readVlan(device.getVlanJson()));
+        detail.setTemplate(readTemplate(device.getTemplateJson()));
         return detail;
+    }
+
+    /** DBA / 线路模板快照同样是 JSON 存在 device 行上，解析失败就当没采过 */
+    private OltTemplateInfo readTemplate(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, OltTemplateInfo.class);
+        } catch (JsonProcessingException e) {
+            log.warn("DBA/线路模板快照解析失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String writeTemplate(OltTemplateInfo template) {
+        if (template == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(template);
+        } catch (JsonProcessingException e) {
+            log.warn("DBA/线路模板快照序列化失败: {}", e.getMessage());
+            return null;
+        }
     }
 
     /** VLAN 快照按 JSON 存 device 行上，读出来时反序列化，解析失败就当没采过 */
@@ -213,6 +246,8 @@ public class OltService {
             device.setWebAccounts(webAccounts);
             device.setRemark(remark);
             device.setStatus(STATUS_UNKNOWN);
+            // 页面测试连接时识别出来的厂商，直接带上，添加完就能按厂商进对应页面
+            device.setVendor(normalizeVendor(request.getVendor()));
             deviceMapper.insert(device);
             return OltDeviceView.from(deviceMapper.selectById(device.getId()));
         }
@@ -251,8 +286,28 @@ public class OltService {
                     .set(OltDevice::getLastError, null)
                     .set(OltDevice::getSyncSummary, null);
         }
+        // 换了一台设备（地址/协议/端口变了），页面带过来的厂商是旧设备的，作废
+        String vendor = normalizeVendor(request.getVendor());
+        if (vendor != null && !endpointChanged) {
+            update.set(OltDevice::getVendor, vendor);
+        }
         deviceMapper.update(null, update);
         return OltDeviceView.from(deviceMapper.selectById(id));
+    }
+
+    /**
+     * 厂商码归一：留空或不在枚举内都当没传，避免把脏值写进台账后页面分发出错。
+     */
+    private String normalizeVendor(String vendor) {
+        if (vendor == null || vendor.isBlank()) {
+            return null;
+        }
+        try {
+            return OltVendor.valueOf(vendor.trim().toUpperCase(Locale.ROOT)).name();
+        } catch (IllegalArgumentException e) {
+            log.warn("未知的 OLT 厂商码：{}", vendor);
+            return null;
+        }
     }
 
     public void delete(Long id) {
@@ -290,6 +345,7 @@ public class OltService {
             OltTestResult result = OltTestResult.ok(message);
             result.setVendor(snapshot.getVendor() == null ? null : snapshot.getVendor().name());
             result.setVendorLabel(snapshot.getVendor() == null ? null : snapshot.getVendor().getLabel());
+            result.setCliStyle(snapshot.getCliStyle() == null ? null : snapshot.getCliStyle().name());
             result.setModel(snapshot.getModel());
             result.setSoftwareVersion(snapshot.getSoftwareVersion());
             result.setPrompt(snapshot.getPrompt());
@@ -316,7 +372,22 @@ public class OltService {
      * 同步：登录采集版本与板卡，覆盖写板卡表并刷新台账。
      */
     public OltDetail sync(Long id, String operator) {
-        OltDevice device = requireDevice(id);
+        return collectAndPersist(id, operator, "同步");
+    }
+
+    /**
+     * 实时刷新：直连 OLT 采最新数据，写库后把最新那份返回给页面。
+     *
+     * <p>板卡、端口 ONT、VLAN、DBA 这些的唯一权威就是 OLT 自己，库里那份只是快照——
+     * 页面打开时、对 OLT 做过操作之后都走这里拿最新的，顺手把库里的快照刷新成同一份，
+     * 这样设备离线或连不上时页面还能拿最后一次的实时数据兜底。与 sync 的差别只是动作名。</p>
+     */
+    public OltDetail refresh(Long id, String operator) {
+        return collectAndPersist(id, operator, "实时刷新");
+    }
+
+    /** 采集并落库的公共实现：返回落库后的最新详情 */
+    private OltDetail collectAndPersist(Long id, String operator, String actionLabel) {        OltDevice device = requireDevice(id);
         long start = System.currentTimeMillis();
         try {
             OltSnapshot snapshot = telnetService.collect(device, true);
@@ -339,25 +410,270 @@ public class OltService {
                 summary = summary + "，VLAN " + (vlan.getTotal() == null ? vlan.getVlans().size() : vlan.getTotal())
                         + " 个（上行口 " + vlan.getPortVlans().size() + " 个已采放通）";
             }
+            OltTemplateInfo template = snapshot.getTemplateInfo();
+            if (template != null) {
+                summary = summary + "，DBA 模板 " + template.getDbaProfiles().size()
+                        + " 条 / 线路模板 " + template.getLineProfiles().size() + " 条";
+            }
             // 命令没回显 / 回显解析不了时把原因带出来，页面不用去翻回显才知道为什么是 0 块
             if (snapshot.getNotes() != null && !snapshot.getNotes().isEmpty()) {
                 summary = summary + "；" + String.join("；", snapshot.getNotes());
             }
             updateAfterConnect(id, snapshot, true, summary);
             saveRecord(id, OltSyncRecord.ACTION_SYNC, true,
-                    describe(snapshot) + "；" + summary, snapshot.getTranscript(), cost, operator);
+                    actionLabel + "：" + describe(snapshot) + "；" + summary,
+                    snapshot.getTranscript(), cost, operator);
             return detail(id);
         } catch (Exception e) {
             long cost = System.currentTimeMillis() - start;
             String message = rootMessage(e);
-            log.warn("OLT 同步失败 id={}: {}", id, message);
-            saveRecord(id, OltSyncRecord.ACTION_SYNC, false, message, null, cost, operator);
+            log.warn("OLT {} 失败 id={}: {}", actionLabel, id, message);
+            saveRecord(id, OltSyncRecord.ACTION_SYNC, false, actionLabel + "失败：" + message,
+                    null, cost, operator);
             markOffline(id, message);
-            throw new IllegalStateException("同步失败：" + message, e);
+            throw new IllegalStateException(actionLabel + "失败：" + message, e);
         }
     }
 
     // ---------------------------------------------------------------- 内部
+
+    /** 单条 ONT 按需查询的动作 → 实际命令子串 */
+    private static final Map<String, String> ONT_QUERY_ACTIONS = Map.of(
+            "optical", "optical-info",
+            "version", "version",
+            "register", "register-info",
+            "info", "info",
+            "capability", "capability");
+
+    /**
+     * 单条 ONT 按需查询：配置摘录 / 详情 / 光信息 / 版本 / 注册历史。
+     *
+     * <p>这类明细几百条 ONT 逐个采不现实，只在页面上点某条的图标时按需登录查一次，
+     * 回显块状解析后连原始回显一起返回；查询动作写一条采集记录留档。</p>
+     */
+    public OltOntQueryResult queryOnt(Long id, OltOntQueryRequest request, String operator) {
+        OltDevice device = requireDevice(id);
+        String action = request == null || request.getAction() == null ? "" : request.getAction().trim();
+        if (request == null || request.getSlotNo() == null
+                || request.getPortNo() == null || request.getOntId() == null) {
+            throw new IllegalArgumentException("槽位、端口和 ONT ID 都不能为空");
+        }
+        long start = System.currentTimeMillis();
+        try {
+            OltOntQueryResult result;
+            if ("config".equals(action)) {
+                // 点序列号一次会话三条命令：配置摘录（授权行）+ 业务流表格 + 详情（管理 IP 在这里）
+                String command = "display current-configuration ont 0/" + request.getSlotNo() + "/"
+                        + request.getPortNo() + " " + request.getOntId()
+                        + "；display service-port port 0/" + request.getSlotNo() + "/"
+                        + request.getPortNo() + " ont " + request.getOntId()
+                        + "；display ont info 0 " + request.getSlotNo() + " "
+                        + request.getPortNo() + " " + request.getOntId();
+                String[] outs = telnetService.queryOntConfigAndServicePorts(device,
+                        request.getSlotNo(), request.getPortNo(), request.getOntId());
+                String configRaw = outs[0];
+                String portsRaw = outs[1];
+                String infoRaw = outs[2];
+                // 业务流优先表格回显（带 VLAN 属性 / 用户侧 VLAN / 状态），
+                // 表格解不出再退回配置摘录里的 service-port 行；老版本整口查询按 VPI 筛本 ONT
+                List<OltServicePort> servicePorts = new ArrayList<>(OltInfoParser.parseServicePorts(portsRaw));
+                if (servicePorts.isEmpty()) {
+                    servicePorts = OltInfoParser.parseServicePortsFromConfig(configRaw);
+                }
+                servicePorts.removeIf(port -> port.getOntId() != null
+                        && !request.getOntId().equals(port.getOntId()));
+                servicePorts.sort(Comparator.comparing(port -> port.getIndex() == null ? 0 : port.getIndex()));
+                // 授权行给 SN/模板/描述，详情补管理 IP 等整板表没有的字段
+                OltOntInfo ontInfo = OltInfoParser.parseOntBindInfo(configRaw);
+                OltOntInfo detail = OltInfoParser.parseOntInfoDetail(infoRaw);
+                if (ontInfo.getIp() == null) {
+                    ontInfo.setIp(detail.getIp());
+                }
+                if (ontInfo.getSn() == null) {
+                    ontInfo.setSn(detail.getSn());
+                }
+                if (ontInfo.getDesc() == null) {
+                    ontInfo.setDesc(detail.getDesc());
+                }
+                result = new OltOntQueryResult();
+                result.setCommand(command);
+                result.setRaw(configRaw);
+                result.setOntInfo(ontInfo);
+                result.setServicePorts(servicePorts);
+            } else if ("service-port".equals(action)) {
+                // 业务流列「查看」：只查业务流表格，不带配置摘录
+                String command = "display service-port port 0/" + request.getSlotNo() + "/"
+                        + request.getPortNo() + " ont " + request.getOntId();
+                String raw = telnetService.queryOntServicePorts(device,
+                        request.getSlotNo(), request.getPortNo(), request.getOntId());
+                List<OltServicePort> servicePorts = new ArrayList<>(OltInfoParser.parseServicePorts(raw));
+                if (servicePorts.isEmpty()) {
+                    servicePorts = OltInfoParser.parseServicePortsFromConfig(raw);
+                }
+                servicePorts.removeIf(port -> port.getOntId() != null
+                        && !request.getOntId().equals(port.getOntId()));
+                servicePorts.sort(Comparator.comparing(port -> port.getIndex() == null ? 0 : port.getIndex()));
+                result = new OltOntQueryResult();
+                result.setCommand(command);
+                result.setRaw(raw);
+                result.setServicePorts(servicePorts);
+            } else {
+                String subcommand = ONT_QUERY_ACTIONS.get(action);
+                if (subcommand == null) {
+                    throw new IllegalArgumentException("不支持的查询类型：" + action);
+                }
+                // info 用全坐标（display ont info 0 1 0 1）；capability 是 0/<槽位> <端口> <ONT ID>；
+                // 光信息/版本/注册历史现场是在端口视图敲的
+                String command;
+                if ("info".equals(action)) {
+                    command = "display ont info 0 " + request.getSlotNo()
+                            + " " + request.getPortNo() + " " + request.getOntId();
+                } else if ("capability".equals(action)) {
+                    command = "display ont capability 0/" + request.getSlotNo()
+                            + " " + request.getPortNo() + " " + request.getOntId();
+                } else {
+                    command = "display ont " + subcommand + " "
+                            + request.getPortNo() + " " + request.getOntId();
+                }
+                String raw = telnetService.queryOnt(device,
+                        request.getSlotNo(), request.getPortNo(), request.getOntId(), subcommand);
+                result = new OltOntQueryResult();
+                result.setCommand(command);
+                result.setRaw(raw);
+                List<LinkedHashMap<String, String>> blocks = OltInfoParser.parseOntKeyValueBlocks(raw);
+                // optical-info 这类是表格式回显（一行列名 + 一行数据），key-value 解不出时按表格切
+                if (blocks.isEmpty()) {
+                    blocks = OltInfoParser.parseOntTableBlocks(raw);
+                }
+                result.setBlocks(blocks);
+                // 详情里有线路/业务模板、IP、掉线原因这些整板表给不了的字段，单独结构化一份
+                if ("info".equals(action)) {
+                    result.setOntInfo(OltInfoParser.parseOntInfoDetail(raw));
+                }
+            }
+            saveRecord(id, OltSyncRecord.ACTION_TEST, true,
+                    "ONT查询：" + result.getCommand(), result.getRaw(),
+                    System.currentTimeMillis() - start, operator);
+            return result;
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_TEST, false,
+                    "ONT查询失败：" + action + "：" + message, null,
+                    System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException("ONT 查询失败：" + message, e);
+        }
+    }
+
+    /**
+     * 新增 DBA 模板：构造 {@code dba-profile add ...} 下发，成功后自动重采写库。
+     *
+     * <p>校验规则与网管一致：ID 10-512 且不重复、模板名数字字母下划线、
+     * 五类模板各取所需（type1 只要固定、type4 只要最大、type5 三个都要）。</p>
+     */
+    public OltDetail createDbaProfile(Long id, OltDbaProfileRequest request, String operator) {
+        requireDevice(id);
+        Integer profileId = request.getProfileId();
+        if (profileId == null || profileId < 10 || profileId > 512) {
+            throw new IllegalArgumentException("模板 ID 必须在 10-512 之间");
+        }
+        String name = request.getName() == null ? "" : request.getName().trim();
+        if (!name.matches("[A-Za-z0-9_]{1,32}")) {
+            throw new IllegalArgumentException("模板名只能由数字、字母及下划线组成，最长 32 位");
+        }
+        String type = request.getType() == null ? "" : request.getType().trim().toLowerCase();
+        if (!type.matches("type[1-5]")) {
+            throw new IllegalArgumentException("DBA 类型必须是 type1~type5");
+        }
+        Integer fix = positive(request.getFixKbps(), "固定带宽");
+        Integer assure = positive(request.getAssureKbps(), "保证带宽");
+        Integer max = positive(request.getMaxKbps(), "最大带宽");
+        String command = switch (type) {
+            case "type1" -> {
+                requireNotNull(fix, "type1（固定带宽）需要填写固定带宽");
+                yield "dba-profile add profile-id " + profileId + " profile-name \"" + name
+                        + "\" type1 fix " + fix;
+            }
+            case "type2" -> {
+                requireNotNull(assure, "type2（保证带宽）需要填写保证带宽");
+                yield "dba-profile add profile-id " + profileId + " profile-name " + name
+                        + "\" type2 assure " + assure;
+            }
+            case "type3" -> {
+                requireNotNull(assure, "type3（保证带宽+最大带宽）需要填写保证带宽");
+                requireNotNull(max, "type3（保证带宽+最大带宽）需要填写最大带宽");
+                yield "dba-profile add profile-id " + profileId + " profile-name " + name
+                        + "\" type3 assure " + assure + " max " + max;
+            }
+            case "type4" -> {
+                requireNotNull(max, "type4（最大带宽）需要填写最大带宽");
+                yield "dba-profile add profile-id " + profileId + " profile-name " + name
+                        + "\" type4 max " + max;
+            }
+            default -> {
+                requireNotNull(fix, "type5（固定+保证+最大带宽）需要填写固定带宽");
+                requireNotNull(assure, "type5（固定+保证+最大带宽）需要填写保证带宽");
+                requireNotNull(max, "type5（固定+保证+最大带宽）需要填写最大带宽");
+                yield "dba-profile add profile-id " + profileId + " profile-name " + name
+                        + "\" type5 fix " + fix + " assure " + assure + " max " + max;
+            }
+        };
+        // 库里快照已有同 ID 就提前拦下（OLT 端才是最终裁决，这里只是友好提示）
+        OltTemplateInfo template = readTemplate(requireDevice(id).getTemplateJson());
+        if (template != null && template.getDbaProfiles().stream()
+                .anyMatch(profile -> profileId.equals(profile.getProfileId()))) {
+            throw new IllegalArgumentException("模板 ID " + profileId + " 已存在（如果刚在 OLT 上建过，先同步一次再操作）");
+        }
+        return dispatchConfig(id, List.of(command), operator, "新增DBA模板");
+    }
+
+    /** 删除 DBA 模板：逐条 {@code dba-profile delete profile-id X}，成功后自动重采写库 */
+    public OltDetail deleteDbaProfiles(Long id, List<Integer> profileIds, String operator) {
+        requireDevice(id);
+        if (profileIds == null || profileIds.isEmpty()) {
+            throw new IllegalArgumentException("先勾选要删除的模板");
+        }
+        List<String> commands = profileIds.stream()
+                .map(profileId -> "dba-profile delete profile-id " + profileId)
+                .toList();
+        return dispatchConfig(id, commands, operator, "删除DBA模板");
+    }
+
+    /** 下发配置的公共流程：连设备执行 → 写采集记录（带回显）→ 自动重采刷新库和页面 */
+    private OltDetail dispatchConfig(Long id, List<String> commands, String operator, String label) {
+        OltDevice device = requireDevice(id);
+        long start = System.currentTimeMillis();
+        try {
+            List<String> outputs = telnetService.sendConfig(device, commands);
+            String transcript = String.join("\n", outputs);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+                    label + "：" + String.join("；", commands), transcript,
+                    System.currentTimeMillis() - start, operator);
+            // 采集到的最新数据既写库又直接返回，页面不用再拉一次
+            return collectAndPersist(id, operator, label + "后重采");
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    label + "失败：" + String.join("；", commands) + "：" + message, null,
+                    System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException(message, e);
+        }
+    }
+
+    private Integer positive(Integer value, String label) {
+        if (value == null) {
+            return null;
+        }
+        if (value <= 0) {
+            throw new IllegalArgumentException(label + "必须是正整数（单位 kbps）");
+        }
+        return value;
+    }
+
+    private void requireNotNull(Integer value, String message) {
+        if (value == null) {
+            throw new IllegalArgumentException(message);
+        }
+    }
 
     private OltDevice requireDevice(Long id) {
         if (id == null) {
@@ -460,6 +776,10 @@ public class OltService {
             if (snapshot.getVlanInfo() != null) {
                 update.set(OltDevice::getVlanJson, writeVlan(snapshot.getVlanInfo()));
             }
+            // DBA / 线路模板快照同 VLAN 一个套路：采到了就整体覆盖，没采到保留上一次
+            if (snapshot.getTemplateInfo() != null) {
+                update.set(OltDevice::getTemplateJson, writeTemplate(snapshot.getTemplateInfo()));
+            }
         }
         deviceMapper.update(null, update);
     }
@@ -555,6 +875,9 @@ public class OltService {
             if (snapshot.getPatchVersion() != null) {
                 message.append(" / ").append(snapshot.getPatchVersion());
             }
+        }
+        if (snapshot.getCliStyle() != null) {
+            message.append("，命令风格 ").append(snapshot.getCliStyle().getKeyword());
         }
         if (snapshot.getPrompt() != null && !snapshot.getPrompt().isBlank()) {
             message.append("，提示符 ").append(snapshot.getPrompt());

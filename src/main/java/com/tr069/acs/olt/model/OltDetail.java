@@ -20,4 +20,7 @@ public class OltDetail {
 
     /** VLAN 快照，还没采过为 null */
     private OltVlanInfo vlan;
+
+    /** DBA 模板与线路模板快照，还没采过为 null */
+    private OltTemplateInfo template;
 }

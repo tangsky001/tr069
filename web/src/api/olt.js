@@ -66,6 +66,55 @@ export function syncOlt(id) {
   })
 }
 
+/**
+ * 实时刷新：直连 OLT 采最新数据并写库，返回最新那份。
+ * 页面打开、对 OLT 做过操作之后都走它，数据以设备为准。
+ */
+export function refreshOlt(id) {
+  return request({
+    url: '/olt/' + id + '/refresh',
+    method: 'post',
+    timeout: 180000
+  })
+}
+
+/**
+ * 单条 ONT 按需查询：光信息 / 版本 / 注册历史。
+ * 点列表里某条的图标时才登录设备查一次，data: { action, slotNo, portNo, ontId }
+ */
+export function queryOnt(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-query',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 新增 DBA 模板：下发 dba-profile add，成功后自动重采，data 为表单。
+ */
+export function createDbaProfile(id, data) {
+  return request({
+    url: '/olt/' + id + '/dba-profile',
+    method: 'post',
+    data,
+    timeout: 180000
+  })
+}
+
+/**
+ * 删除 DBA 模板：逐条下发 dba-profile delete，成功后自动重采。
+ */
+export function deleteDbaProfiles(id, profileIds) {
+  return request({
+    url: '/olt/' + id + '/dba-profile',
+    method: 'delete',
+    data: profileIds,
+    timeout: 180000
+  })
+}
+
 /** 采集记录 */
 export function fetchOltRecords(id, limit) {
   return request({

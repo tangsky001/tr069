@@ -12,12 +12,45 @@
 const PROFILES = [
   {
     code: 'H802SCUN',
-    label: 'SCUN 主控板',
+    label: 'SCUN 主控板（4 个管理/上行 GE 口）',
     image: '/olt/olt_H802SCUN.png',
     portMode: 'GE',
-    ports: 0,
+    // 现场确认 SCUN 板有 4 个 GE 口（P0 0/6/0 .. P3 0/6/3），不是没有端口
+    ports: 4,
     controlBoard: true,
     keywords: ['SCUN']
+  },
+  {
+    code: 'H801X2CS',
+    label: 'X2CS 上联板（2 路 10GE 光口）',
+    image: '/olt/olt_H801X2CS.png',
+    portMode: '10GE',
+    ports: 2,
+    controlBoard: false,
+    keywords: ['X2CS']
+  },
+  {
+    // 鸿升光是一体机，没有独立板卡型号：整机上来的「板卡」用设备型号 HSGQ-E04 表示，
+    // 示意图文件名就是设备型号（public/olt/HSGQ-E04.png），所以必须在这里显式配 image
+    code: 'HSGQ-E04',
+    label: 'HSGQ-E04 EPON 整机（4 口 EPON）',
+    image: '/olt/HSGQ-E04.png',
+    // 整机面板照是横向的（770x125），跟竖条板卡图不是一个摆法，横着按原尺寸铺开
+    wide: true,
+    portMode: 'EPON',
+    ports: 4,
+    controlBoard: false,
+    keywords: ['HSGQ-E04']
+  },
+  {
+    // XGBD 必须排在 GPBD 之前：'GPBD' 关键字同样能命中 H801XGBD，先用精确的 XGBD 匹配
+    code: 'H801XGBD',
+    label: 'XGBD 8 口 GPON 业务板（10GE 上联）',
+    image: '/olt/olt_H801XGBD.png',
+    portMode: 'GPON',
+    ports: 8,
+    controlBoard: false,
+    keywords: ['XGBD']
   },
   {
     code: 'H807GPBD',

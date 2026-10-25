@@ -120,11 +120,35 @@ export const constantRoutes = [
     path: '/olt',
     component: Layout,
     redirect: '/olt/management',
+    meta: { title: 'OLT管理', icon: 'el-icon-s-platform' },
     children: [{
+      // 台账入口：增删改、诊断、同步，再按厂商把人送到下面的厂商详情页
       path: 'management',
       name: 'OltManagement',
       component: () => import('@/views/olt/management'),
       meta: { title: 'OLT管理', icon: 'el-icon-s-platform' }
+    },
+    // 厂商详情页：各厂商命令不同，页面按厂商分开写，由 vendors.js 的映射分发过来
+    {
+      path: 'huawei/:id',
+      name: 'OltHuawei',
+      component: () => import('@/views/olt/huawei'),
+      meta: { title: '华为面板', activeMenu: '/olt/management' },
+      hidden: true
+    },
+    {
+      path: 'hsgq/:id',
+      name: 'OltHsgq',
+      component: () => import('@/views/olt/hsgq'),
+      meta: { title: '鸿升光面板', activeMenu: '/olt/management' },
+      hidden: true
+    },
+    {
+      path: 'generic/:id',
+      name: 'OltGeneric',
+      component: () => import('@/views/olt/generic'),
+      meta: { title: 'OLT面板', activeMenu: '/olt/management' },
+      hidden: true
     }]
   },
 

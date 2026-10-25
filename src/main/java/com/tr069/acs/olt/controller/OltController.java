@@ -3,6 +3,9 @@ package com.tr069.acs.olt.controller;
 import com.tr069.acs.common.Result;
 import com.tr069.acs.config.AdminAuthInterceptor;
 import com.tr069.acs.olt.model.OltDetail;
+import com.tr069.acs.olt.model.OltDbaProfileRequest;
+import com.tr069.acs.olt.model.OltOntQueryRequest;
+import com.tr069.acs.olt.model.OltOntQueryResult;
 import com.tr069.acs.olt.model.OltDeviceView;
 import com.tr069.acs.olt.model.OltSaveRequest;
 import com.tr069.acs.olt.model.OltSyncRecordView;
@@ -12,6 +15,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -148,6 +152,81 @@ public class OltController {
         } catch (Exception e) {
             log.error("OLT 同步异常 id={}", id, e);
             return Result.failure("同步失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 实时刷新：直连 OLT 采最新数据并入库，页面打开或对 OLT 做过操作后调用。
+     * 数据以设备为准，库里那份快照只是连不上设备时的兜底。
+     */
+    @PostMapping("/{id}/refresh")
+    public Result<OltDetail> refresh(@PathVariable Long id, HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.refresh(id, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("OLT 实时刷新异常 id={}", id, e);
+            return Result.failure("实时刷新失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 单条 ONT 按需查询：光信息 / 版本 / 注册历史，点列表里某条的图标时触发。
+     */
+    @PostMapping("/{id}/ont-query")
+    public Result<OltOntQueryResult> queryOnt(@PathVariable Long id,
+                                              @RequestBody OltOntQueryRequest request,
+                                              HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.queryOnt(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("ONT 按需查询异常 id={}", id, e);
+            return Result.failure("ONT 查询失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 新增 DBA 模板：下发 dba-profile add，成功后自动重采返回最新数据。
+     */
+    @PostMapping("/{id}/dba-profile")
+    public Result<OltDetail> createDbaProfile(@PathVariable Long id,
+                                              @RequestBody OltDbaProfileRequest request,
+                                              HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.createDbaProfile(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("新增 DBA 模板异常 id={}", id, e);
+            return Result.failure("新增 DBA 模板失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 删除勾选的 DBA 模板：逐条下发 dba-profile delete，成功后自动重采。
+     */
+    @DeleteMapping("/{id}/dba-profile")
+    public Result<OltDetail> deleteDbaProfiles(@PathVariable Long id,
+                                               @RequestBody List<Integer> profileIds,
+                                               HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.deleteDbaProfiles(id, profileIds, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("删除 DBA 模板异常 id={}", id, e);
+            return Result.failure("删除 DBA 模板失败：" + e.getMessage());
         }
     }
 

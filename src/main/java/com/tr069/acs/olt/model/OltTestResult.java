@@ -19,6 +19,9 @@ public class OltTestResult {
 
     private String vendorLabel;
 
+    /** 命令风格：DISPLAY（华为）/ SHOW（第三方），探测不出来为 null */
+    private String cliStyle;
+
     private String model;
 
     private String softwareVersion;

@@ -1,0 +1,567 @@
+.olt-top-card {
+  margin-bottom: 16px;
+}
+.olt-top-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.olt-title {
+  font-weight: 600;
+  color: #303133;
+}
+.olt-empty {
+  color: #909399;
+  font-size: 13px;
+  line-height: 1.9;
+  padding: 6px 0;
+}
+.olt-error {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #fef0f0;
+  border-radius: 4px;
+  color: #f56c6c;
+  font-size: 12px;
+  word-break: break-all;
+}
+.olt-res-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.olt-auto {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+}
+.olt-auto-label {
+  margin-left: 4px;
+  font-size: 13px;
+  color: #606266;
+}
+.olt-auto-tip {
+  font-size: 12px;
+  color: #909399;
+}
+.olt-label {
+  color: #606266;
+  font-size: 13px;
+}
+.olt-meta-row {
+  margin-top: 12px;
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  color: #606266;
+  font-size: 13px;
+}
+.olt-main-card {
+  margin-bottom: 24px;
+}
+/* VLAN 面板的编辑工具行：按钮靠右，本地修改提示占左 */
+.vlan-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.vlan-edit-tip {
+  color: #e6a23c;
+  font-size: 12px;
+}
+.vlan-edit-tip-hint {
+  color: #909399;
+}
+/* 按条编辑：每个区块标题一行放「新增」按钮 */
+.vlan-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  .olt-section-title {
+    margin: 0;
+  }
+}
+.vlan-edit-banner {
+  color: #e6a23c;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+/* 行内「删除」文字按钮用红色，跟「编辑」区分开 */
+.vlan-row-danger {
+  color: #f56c6c !important;
+}
+/* 单条编辑对话框 */
+.vlan-dialog-tip {
+  color: #606266;
+  font-size: 13px;
+}
+.vlan-form-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.vlan-form-label {
+  width: 120px;
+  flex: none;
+  color: #606266;
+  font-size: 13px;
+  margin-right: 12px;
+}
+.vlan-dialog-foot {
+  text-align: right;
+}
+.olt-section-title {
+  font-weight: 600;
+  color: #303133;
+  margin: 16px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.board-summary {
+  font-weight: 400;
+  color: #909399;
+  font-size: 12px;
+}
+/* 概要里那行「数据是哪来的」：实时采到的灰字，采不到退回快照时标橙 */
+.olt-live {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.olt-live-error {
+  color: #e6a23c;
+}
+.olt-summary {
+  background: #f5f7fa;
+  border-radius: 4px;
+  padding: 10px 14px;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.9;
+  margin-bottom: 16px;
+}
+/* ---- 板卡卡片：插槽 / 型号 / 状态 / 描述 / 温度 / 示意图 ---- */
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+.board-card {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 12px 14px;
+  background: #fff;
+}
+.board-row {
+  display: flex;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 13px;
+  color: #303133;
+  border-bottom: 1px dashed #f0f2f5;
+}
+.board-row.no-border {
+  border-bottom: none;
+}
+.board-row .k {
+  width: 76px;
+  flex-shrink: 0;
+  color: #909399;
+}
+.board-row .v {
+  word-break: break-all;
+}
+.board-status-success {
+  color: #67c23a;
+}
+.board-status-danger {
+  color: #f56c6c;
+}
+.board-status-warning {
+  color: #e6a23c;
+}
+.board-status-info {
+  color: #909399;
+}
+.board-status-success i,
+.board-status-danger i,
+.board-status-warning i,
+.board-status-info i {
+  margin-right: 4px;
+}
+/* ---- 端口光模块指示灯 ---- */
+.port-list {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 6px;
+}
+.port-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: #606266;
+}
+.port-name {
+  width: 28px;
+  color: #303133;
+}
+/* 接口标识 0/1/0：和设备命令行里的 F/S/P 一致，一眼能对上物理口 */
+.port-iface {
+  color: #909399;
+  font-family: Consolas, Monaco, monospace;
+}
+.port-lamp {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #dcdfe6;
+  flex-shrink: 0;
+}
+/* 在位：亮绿灯 + 一圈光晕，一眼能看出亮了 */
+.port-lamp.lamp-on {
+  background: #67c23a;
+  box-shadow: 0 0 6px rgba(103, 194, 58, 0.85);
+}
+/* 不在位：灰灯 */
+.port-lamp.lamp-off {
+  background: #c0c4cc;
+}
+.port-lamp.lamp-warn {
+  background: #e6a23c;
+  box-shadow: 0 0 6px rgba(230, 162, 60, 0.85);
+}
+.port-lamp.lamp-unknown {
+  background: #f5f7fa;
+  border: 1px solid #dcdfe6;
+}
+.port-rx {
+  width: 62px;
+  text-align: right;
+  color: #909399;
+  font-family: Consolas, Monaco, monospace;
+}
+/* ONT 数量：没有光模块数据时它就是这一行唯一的信息，所以靠右对齐 */
+.port-ont {
+  margin-left: auto;
+  text-align: right;
+  color: #606266;
+}
+/* ---- 展开后逐个显示 ONT（ONU）---- */
+.port-row-clickable {
+  cursor: pointer;
+}
+.port-row-clickable:hover {
+  background: #f5f7fa;
+}
+.port-caret {
+  width: 10px;
+  color: #c0c4cc;
+}
+.ont-list {
+  padding: 2px 0 6px 18px;
+}
+.ont-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+  color: #606266;
+}
+.ont-id {
+  width: 34px;
+  color: #303133;
+}
+.ont-sn {
+  font-family: Consolas, Monaco, monospace;
+  color: #909399;
+}
+.ont-desc {
+  color: #909399;
+}
+.ont-state {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ont-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #dcdfe6;
+}
+.ont-online .ont-dot {
+  background: #67c23a;
+}
+.ont-offline {
+  color: #909399;
+}
+.ont-offline .ont-dot {
+  background: #c0c4cc;
+}
+/* ---- VLAN：透传 VLAN 按「41、45-46」的写法显示，和命令行回显一致 ---- */
+.vlan-text {
+  color: #303133;
+  word-break: break-all;
+}
+.vlan-empty-row {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #909399;
+  background: #fafafa;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+.vlan-tip-inline {
+  font-size: 12px;
+  color: #c0c4cc;
+}
+/* ---- ONT 配置/状态：按板卡分表，展开端口看每条 ONT ---- */
+.ont-board {
+  margin-bottom: 18px;
+}
+.ont-board-title {
+  display: flex;
+  align-items: center;
+  margin: 0 0 8px;
+  padding-left: 8px;
+  border-left: 3px solid #409eff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+}
+.ont-board-sum {
+  margin-left: 10px;
+  font-weight: 400;
+  font-size: 12px;
+  color: #909399;
+}
+.ont-sub-table {
+  margin: 4px 0 4px 24px;
+  width: calc(100% - 48px);
+}
+.ont-sub-empty {
+  padding: 6px 0 6px 24px;
+  font-size: 12px;
+  color: #c0c4cc;
+}
+.board-photo-box {
+  padding: 8px 0 2px;
+  text-align: left;
+}
+.board-photo-wrap {
+  position: relative;
+  display: inline-block;
+}
+/* 端口行钉在图的右侧，整块往左让出位置（连接线 12 + 行宽 210） */
+.board-photo-rows {
+  margin-right: 240px;
+}
+.port-overlay {
+  position: absolute;
+  left: calc(100% + 12px);
+  width: 210px;
+  transform: translateY(-50%);
+  gap: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #fff;
+  z-index: 2;
+  white-space: nowrap;
+}
+/* 连到物理口的那条小横线 */
+.port-overlay::before {
+  content: '';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  width: 12px;
+  height: 1px;
+  background: #dcdfe6;
+}
+.port-overlay.port-row-active::before {
+  background: #409eff;
+}
+.port-row-active {
+  background: #ecf5ff;
+}
+/* ---- 横向整机图（鸿升光那类面板照）：端口行在图的下方，跑马线折上去连到 PON 口 ---- */
+.board-photo-box-wide {
+  /* 钉行和走线都是 absolute，不占流式空间，图下面要留出这一排行的高度 */
+  padding-bottom: 82px;
+}
+/* 跑马线：横段从行的中心走到口的正下方 */
+.port-lead-h {
+  position: absolute;
+  top: calc(100% + 22px);
+  height: 1px;
+  background: #dcdfe6;
+  z-index: 1;
+}
+/* 跑马线：竖段从横段那头往上折，插到物理口上 */
+.port-lead-v {
+  position: absolute;
+  top: 100%;
+  height: 22px;
+  width: 1px;
+  background: #dcdfe6;
+  transform: translateX(-50%);
+  z-index: 1;
+}
+.port-lead-active {
+  background: #409eff;
+}
+.port-overlay-x {
+  position: absolute;
+  top: calc(100% + 26px);
+  transform: translateX(-50%);
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 10px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background: #fff;
+  z-index: 2;
+  white-space: nowrap;
+}
+.port-overlay-x.port-row-active {
+  border-color: #409eff;
+}
+/* 横向图下的钉行窄一些，字号也小一号，免得盖住相邻口 */
+.port-overlay-x .port-name {
+  font-size: 12px;
+}
+.port-overlay-x .port-iface {
+  font-size: 11px;
+}
+.port-overlay-x .port-ont {
+  font-size: 11px;
+}
+/* ---- 点开端口后的 ONT 明细面板 ---- */
+.ont-panel {
+  margin-top: 10px;
+  padding: 6px 8px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background: #fafcff;
+  text-align: left;
+}
+.ont-panel-title {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: #303133;
+  margin-bottom: 4px;
+}
+.ont-panel-close {
+  margin-left: auto;
+  color: #409eff;
+  cursor: pointer;
+}
+.ont-panel .ont-list {
+  padding-left: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+/* 端口行的链路状态（display board 的 Link 列）：在线绿字、离线灰字 */
+.port-link {
+  font-size: 11px;
+}
+.port-link-online {
+  color: #67c23a;
+}
+.port-link-offline {
+  color: #c0c4cc;
+}
+/* 示意图是窄长条（约 42x719），按高度缩放，宽度交给原图比例；换成高清图后自动变宽 */
+.board-img {
+  height: 400px;
+  width: auto;
+  max-width: 92px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background: #fafafa;
+  padding: 4px 3px;
+}
+/* 横向示意图（整机的面板照片，如鸿升光 HSGQ-E04 的 770x125）：
+   按原图尺寸横向铺开，最多铺到原图宽度，不让小图被拉花 */
+.board-img-wide {
+  height: auto;
+  width: 100%;
+  max-width: none;
+}
+/* 横向图的 wrap 要收缩到图片宽度：钉行的 left 百分比是按图宽量的，
+   wrap 撑满整卡的话坐标就全偏了 */
+.board-photo-wide {
+  display: inline-block;
+  max-width: 100%;
+}
+/* 有横向示意图时卡片独占整行，横向图才铺得开 */
+.board-grid-single {
+  grid-template-columns: 1fr;
+}
+.board-no-image {
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #dcdfe6;
+  border-radius: 4px;
+  color: #c0c4cc;
+  font-size: 12px;
+}
+.olt-placeholder {
+  color: #909399;
+  font-size: 13px;
+  line-height: 2;
+  padding: 8px 0;
+}
+/* ---- 详情 ---- */
+.detail-row {
+  display: flex;
+  padding: 6px 0;
+  border-bottom: 1px dashed #ebeef5;
+  font-size: 13px;
+  max-width: 720px;
+}
+.detail-row .k {
+  width: 140px;
+  flex-shrink: 0;
+  color: #909399;
+}
+.detail-row .v {
+  color: #303133;
+  word-break: break-all;
+}
+/* ---- 采集记录 ---- */
+.record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 10px;
+}
+.raw-output {
+  margin: 0;
+  padding: 10px 14px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 360px;
+  overflow: auto;
+}
