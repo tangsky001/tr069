@@ -50,7 +50,10 @@ public class TelnetClient implements Closeable {
             "(?:-{2,}\\s*More\\s*(?:\\(\\s*Press\\s*'?[Qq]'?\\s*to\\s*break\\s*\\))?\\s*-{0,}"
                     + "|<---\\s*More\\s*--->"
                     + "|--More--"
-                    + "|----\\s*More\\s*\\(\\s*[^)]*\\)\\s*----)",
+                    + "|----\\s*More\\s*\\(\\s*[^)]*\\)\\s*----"
+                    // 华为 OLT 的写法：提示打在行首或行中，破折号在后面，如
+                    // "( Press 'Q' to break ) ----  0/ 1/0  32  534B..."（后面紧跟下一页内容）
+                    + "|\\(\\s*Press\\s*'[Qq]'\\s*to\\s*break\\s*\\)\\s*-{0,})",
             Pattern.CASE_INSENSITIVE);
 
     /** 启动分页的默认字节上限，超出后只保留末尾，防止异常设备把内存打满 */
@@ -322,11 +325,16 @@ public class TelnetClient implements Closeable {
                 start = matcher.start();
                 end = matcher.end();
             }
-            if (start < 0 || !window.substring(end).trim().isEmpty()) {
+            if (start < 0) {
                 return;
             }
-            // 分页提示不是正文，删掉后再送一个空格要求继续
+            boolean atTail = window.substring(end).trim().isEmpty();
+            // 分页提示不是正文，先删掉；华为 OLT 的提示常和下一页内容挤在同一行，
+            // 那种情况设备已经在继续输出，只清提示不送空格
             text.delete(from + start, from + end);
+            if (!atTail) {
+                continue;
+            }
             sendRaw(" ");
         }
     }

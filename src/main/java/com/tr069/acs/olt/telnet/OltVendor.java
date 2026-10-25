@@ -18,8 +18,9 @@ public enum OltVendor {
             // 只跑带机框号的 display board 0：不带参数时设备会回 "Parameter: FrameID/SlotID"
             // 停下来等输入，命令就一直等到超时
             List.of("display board 0"),
-            // 只关分页；undo smart 在部分版本会弹交互确认，反而拖慢采集
-            List.of("screen-length 0 temporary")),
+            // MA5600 系列关分页是 scroll（screen-length 是 VRP 交换机的，OLT 不认）；
+            // undo smart 在部分版本会弹交互确认，反而拖慢采集，不发
+            List.of("scroll", "screen-length 0 temporary")),
 
     /** 中兴 ZXA10 C300 / C320 / C350 */
     ZTE("中兴", CliStyle.SHOW,

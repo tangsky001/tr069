@@ -139,14 +139,14 @@ class OltCliSessionTest {
             assertEquals("HSGQ-E04_I_V3.5.14C_Rel", snapshot.getSoftwareVersion());
             assertEquals("38:3A:21:2C:79:14", snapshot.getMacAddress());
 
-            // 不发板卡/ONU/VLAN 采集命令，也就不会有解析失败的备注
+            // 整机没有板卡概念：只发版本命令 + 配置视图下的 PON/ONU 两条，不发板卡/VLAN 命令
             assertTrue(snapshot.getTranscript().contains("show version"));
-            assertFalse(snapshot.getTranscript().contains("show pon-info"));
-            assertFalse(snapshot.getTranscript().contains("show onu-info all"));
+            assertTrue(snapshot.getTranscript().contains("show pon-info"));
+            assertTrue(snapshot.getTranscript().contains("show onu-info all"));
             assertFalse(snapshot.getTranscript().contains("show vlan all"));
             assertTrue(snapshot.getNotes().isEmpty());
 
-            // 整机卡片：型号即板卡型号（页面按它找示意图），4 个 PON 口只有名字
+            // 整机卡片：型号即板卡型号（页面按它找示意图），4 个 PON 口
             assertEquals(1, snapshot.getBoards().size());
             OltBoard board = snapshot.getBoards().get(0);
             assertEquals("HSGQ-E04", board.getBoardType());
@@ -154,6 +154,19 @@ class OltCliSessionTest {
             assertEquals(4, board.getPorts().size());
             assertEquals("PON01", board.getPorts().get(0).getPortName());
             assertEquals("PON04", board.getPorts().get(3).getPortName());
+
+            // show pon-info：PON01 5/5、PON02 2/3、PON03/PON04 0/0
+            assertEquals(Integer.valueOf(5), board.getPorts().get(0).getOnuOnline());
+            assertEquals(Integer.valueOf(5), board.getPorts().get(0).getOnuTotal());
+            assertEquals(Integer.valueOf(2), board.getPorts().get(1).getOnuOnline());
+            assertEquals(Integer.valueOf(3), board.getPorts().get(1).getOnuTotal());
+            assertEquals(Integer.valueOf(0), board.getPorts().get(3).getOnuTotal());
+
+            // show onu-info all：1/1、1/2 挂在 PON01 下，MAC 即 EPON 的 SN
+            assertEquals(2, board.getPorts().get(0).getOnts().size());
+            assertEquals("C8:21:DA:F8:2F:70", board.getPorts().get(0).getOnts().get(0).getSn());
+            assertTrue(board.getPorts().get(0).getOnts().get(0).getOnline());
+            assertFalse(board.getPorts().get(1).getOnts().get(1).getOnline());
         }
     }
 

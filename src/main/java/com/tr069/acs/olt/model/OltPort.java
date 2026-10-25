@@ -35,6 +35,9 @@ public class OltPort {
     /** 收光功率，如 -8.12 dBm；不在位时为空 */
     private String rxPower;
 
+    /** 链路状态，来自 display board 0/<槽位> 的 Link 列：online / offline；未采到为 null */
+    private String linkStatus;
+
     /** 该端口下的 ONT 总数，来自 config 视图的 display ont info 0 <槽位> all */
     private Integer onuTotal;
 

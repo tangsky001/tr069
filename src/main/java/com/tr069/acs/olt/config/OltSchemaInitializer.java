@@ -32,6 +32,7 @@ public class OltSchemaInitializer implements InitializingBean {
             {"olt_device", "mac_address", "VARCHAR(32) DEFAULT NULL COMMENT '主控 MAC'"},
             {"olt_device", "uptime", "VARCHAR(64) DEFAULT NULL COMMENT '运行时长'"},
             {"olt_device", "vlan_json", "LONGTEXT DEFAULT NULL COMMENT 'VLAN 快照(JSON)'"},
+            {"olt_device", "template_json", "LONGTEXT DEFAULT NULL COMMENT 'DBA/线路模板快照(JSON)'"},
             {"olt_board", "board_kind", "VARCHAR(16) DEFAULT NULL COMMENT '板卡类别'"},
             {"olt_board", "description", "VARCHAR(128) DEFAULT NULL COMMENT '板卡描述'"},
             {"olt_board", "ports_json", "LONGTEXT DEFAULT NULL COMMENT '端口光模块状态快照(JSON)'"}

@@ -40,6 +40,15 @@ public class OltSaveRequest {
     /** 允许访问的 Web 登录账号；空列表表示不限制 */
     private List<String> webAccounts;
 
+    /**
+     * 厂商：HUAWEI / ZTE / FIBERHOME / HSGQ / GENERIC。
+     *
+     * <p>页面「测试连接」后用 {@code display version} / {@code show version} 的回显识别出厂商，
+     * 保存时一起带上来，添加完就能按厂商进对应的页面，不必等第一次同步。
+     * 留空表示还没识别，仍由后续同步补。</p>
+     */
+    private String vendor;
+
     /** 备注 */
     private String remark;
 }

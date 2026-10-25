@@ -1,7 +1,16 @@
 package com.tr069.acs.olt.telnet;
 
 import com.tr069.acs.olt.entity.OltBoard;
+import com.tr069.acs.olt.model.OltDbaProfile;
+import com.tr069.acs.olt.model.OltGemMapping;
+import com.tr069.acs.olt.model.OltGemport;
+import com.tr069.acs.olt.model.OltLineProfile;
+import com.tr069.acs.olt.model.OltServicePort;
+import com.tr069.acs.olt.model.OltSrvProfile;
+import com.tr069.acs.olt.model.OltTrafficTable;
+import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltOnt;
+import com.tr069.acs.olt.model.OltTcont;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltIpInterface;
 import com.tr069.acs.olt.model.OltPortVlan;
@@ -813,6 +822,33 @@ public final class OltInfoParser {
         return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
     }
 
+    /**
+     * {@code display board 0/<槽位>} 的端口状态表：
+     * {@code 0  GE  absence  1  auto  auto  auto  off  active  offline}
+     * 端口号 / 端口类型 / 光模块状态 / ... / 链路状态（online / offline）。
+     * 光模块不在位（absence）、链路离线（offline）的口也照记——同步就要把空口的状态记进去。
+     */
+    private static final Pattern BOARD_PORT_STATE = Pattern.compile(
+            "(?im)^\\s*(\\d{1,2})\\s+(?:GE|10GE|XGE|ETH)\\s+"
+                    + "(normal|absence|abnormal|mismatch)\\b.*?(online|offline)\\s*$");
+
+    /**
+     * 解析 display board 0/<槽位> 回显：端口号 → {光模块状态, 链路状态}。
+     * 表头行（Port Port Optic ...）不含类型词，不会误命中。
+     */
+    public static Map<Integer, String[]> parseBoardPortStates(String text) {
+        Map<Integer, String[]> result = new LinkedHashMap<>();
+        if (text == null || text.isBlank()) {
+            return result;
+        }
+        Matcher matcher = BOARD_PORT_STATE.matcher(text);
+        while (matcher.find()) {
+            int portNo = Integer.parseInt(matcher.group(1));
+            result.put(portNo, new String[]{matcher.group(2), matcher.group(3)});
+        }
+        return result;
+    }
+
     /** GPON 写 online/offline，EPON 写 up/down */
     private static boolean isOnline(String runState) {
         if (runState == null) {
@@ -849,6 +885,65 @@ public final class OltInfoParser {
         }
         board.setPorts(ports);
         return board;
+    }
+
+    /**
+     * {@code show pon-info} 的端口行：
+     * {@code PON01   Up        5/5}（端口名 / 状态 / 在线数/总数）。
+     */
+    private static final Pattern HSGQ_PON_PORT = Pattern.compile(
+            "(?im)^\\s*PON(\\d{1,2})\\s+(Up|Down)\\s+(\\d{1,3})\\s*/\\s*(\\d{1,3})\\s*$");
+
+    /**
+     * {@code show onu-info all} 的数据行：
+     * {@code 1/1   c8:21:da:f8:2f:70   Online   TRUE   TRUE   2026/10/25 00:46:10   ONU01/01   NO-DESCRIPTI}。
+     * 前面的 1/1 是「PON 口号/ONU 号」，后面跟着 MAC 与在线状态；末行 {@code Total: 8  Online:7  Offline:1}。
+     */
+    private static final Pattern HSGQ_ONU_ROW = Pattern.compile(
+            "(?im)^\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})\\s+"
+                    + "([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\\s+"
+                    + "(Online|Offline)\\b(?:.*?\\b(ONU[0-9]{2}/[0-9]{2})\\b)?");
+
+    /**
+     * 鸿升光 {@code show pon-info}：PON 口号 → {在线数, 总数}。
+     * 采不到就返回空表，页面上 ONU 列照旧显示「-」，不会把没采到的数据当成 0。
+     */
+    public static Map<Integer, int[]> parseHsgqPonInfo(String text) {
+        Map<Integer, int[]> result = new LinkedHashMap<>();
+        if (text == null || text.isBlank()) {
+            return result;
+        }
+        Matcher matcher = HSGQ_PON_PORT.matcher(text);
+        while (matcher.find()) {
+            int ponNo = Integer.parseInt(matcher.group(1));
+            int online = Integer.parseInt(matcher.group(3));
+            int total = Integer.parseInt(matcher.group(4));
+            result.put(ponNo, new int[]{online, total});
+        }
+        return result;
+    }
+
+    /**
+     * 鸿升光 {@code show onu-info all}：PON 口号 → 这条 PON 口下的 ONU 列表。
+     * EPON 没有 GPON 的 SN，唯一标识就是 MAC，所以 MAC 放在 sn 上（页面显示「SN/MAC」那列）。
+     */
+    public static Map<Integer, List<OltOnt>> parseHsgqOnuInfo(String text) {
+        Map<Integer, List<OltOnt>> result = new LinkedHashMap<>();
+        if (text == null || text.isBlank()) {
+            return result;
+        }
+        Matcher matcher = HSGQ_ONU_ROW.matcher(text);
+        while (matcher.find()) {
+            int ponNo = Integer.parseInt(matcher.group(1));
+            OltOnt ont = new OltOnt();
+            ont.setOntId(Integer.parseInt(matcher.group(2)));
+            ont.setSn(matcher.group(3).toUpperCase(Locale.ROOT));
+            ont.setRunState(matcher.group(4));
+            ont.setOnline("online".equalsIgnoreCase(matcher.group(4)));
+            ont.setDescription(matcher.group(5));
+            result.computeIfAbsent(ponNo, key -> new ArrayList<>()).add(ont);
+        }
+        return result;
     }
 
     // ------------------------------------------------------------ VLAN
@@ -1008,6 +1103,727 @@ public final class OltInfoParser {
             routes.add(route);
         }
         return routes;
+    }
+
+    // ------------------------------------------------------------ DBA / 线路模板
+
+    /**
+     * {@code display dba-profile all} 的数据行，三种回显写法都认：
+     * 现网 MA5683T 的 {@code 0  3  No  0  8192  20480  1}——列是
+     * Profile-ID / type(纯数字) / Bandwidth compensation / Fix / Assure / Max / Bind times，
+     * <strong>总表里没有模板名</strong>（名字要靠 {@code profile-id} 详情的块状回显补）；
+     * 还有带名字的表格式 {@code 1  DBA-1  type3  1024  2048  102400}，
+     * 和老版本的一行式 {@code 1  DBA-1  type3  fix 1024 assure 2048 max 102400}。
+     */
+    private static final Pattern DBA_ROW_MA5600 = Pattern.compile(
+            "(?im)^\\s*(\\d{1,4})\\s+(\\d)\\s+(\\S+)\\s+(\\d{1,9})\\s+(\\d{1,9})\\s+(\\d{1,9})(?:\\s+\\d{1,4})?\\s*$");
+
+    private static final Pattern DBA_ROW_TABULAR = Pattern.compile(
+            "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(type\\d)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s*$");
+
+    private static final Pattern DBA_ROW_INLINE = Pattern.compile(
+            "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(type\\d)\\s+fix\\s+(\\d+)\\s+assure\\s+(\\d+)\\s+max\\s+(\\d+)\\s*$");
+
+    /**
+     * {@code display ont-lineprofile gpon all} 的模板行：{@code 1  line-1  ONT  dFEC  OMCI}。
+     * 前面三列是 ID / 名字 / 类型（ONT），后面 FEC、OMCI 这些列各版本多少不一，不参与解析。
+     */
+    private static final Pattern LINE_PROFILE_ROW = Pattern.compile(
+            "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(\\S+)(?:\\s+.*)?$");
+
+    /**
+     * T-CONT 行，两种写法都认：display 回显 {@code T-CONT  1  DBA-profile  1}
+     * 与配置脚本 {@code tcont 1 dba-profile-id 100}。
+     */
+    private static final Pattern LINE_TCONT_ROW = Pattern.compile(
+            "(?i)t-?cont\\s+(\\d{1,4})\\s+DBA-profile(?:-id)?\\s+(\\d{1,4})");
+
+    /**
+     * {@code GEM port 1  T-CONT 1  Mapping mode VLAN  41}。
+     * 各字段分头取：整行里有没有这几段都不一定（有的版本只给 GEM port 编号），
+     * 用一个正则带一串可选组会因为惰性匹配全部取到 null，所以拆成四条单独找。
+     */
+    /** GEM port 行：回显 {@code GEM port 1 ...} 与配置脚本 {@code gem add 0 eth tcont 1} */
+    private static final Pattern LINE_GEM_ROW = Pattern.compile(
+            "(?i)^\\s*(?:GEM\\s+port\\s+|gem\\s+add\\s+)(\\d{1,4})\\b");
+
+    private static final Pattern LINE_GEM_TCONT = Pattern.compile("(?i)t-?cont\\s+(\\d{1,4})");
+
+    private static final Pattern LINE_GEM_MODE = Pattern.compile("(?i)mapping\\s+mode\\s+(\\S+)");
+
+    /**
+     * GEM 映射行（配置脚本）：{@code gem mapping 0 0 vlan 46}——
+     * GEM port 号、GEM 内映射序号、映射的 VLAN，页面「GEM 映射ID」那一列就是第二个数字。
+     */
+    /** 配置脚本里的模板概要：{@code ont-lineprofile gpon profile-id 100 profile-name "FTTH-GPON-100"} */
+    private static final Pattern LINE_PROFILE_CONFIG = Pattern.compile(
+            "(?i)ont-lineprofile\\s+gpon\\s+profile-id\\s+(\\d{1,4})\\s+profile-name\\s+\"?([^\"\\s]+)\"?");
+
+    /**
+     * 明细回显的 T-CONT 块头：{@code <T-CONT  0>       DBA Profile-ID:1}（注意双空格与冒号）。
+     */
+    private static final Pattern LINE_TCONT_BLOCK = Pattern.compile(
+            "(?i)^\\s*<T-CONT\\s+(\\d{1,4})>\\s+DBA\\s*Profile-ID:\\s*(\\d{1,4})");
+
+    /**
+     * 明细回显的 GEM 块头：{@code <Gem Index:0>}（冒号后空格、尖括号缺失都容忍），
+     * 后面的映射表格行都归它。
+     */
+    private static final Pattern LINE_GEM_BLOCK = Pattern.compile(
+            "(?i)^\\s*<?Gem\\s+Index\\s*:\\s*(\\d{1,4})\\s*>?");
+
+    /**
+     * GEM 块内的映射数据行：{@code 0    45   -    -    -    -    -    -}——
+     * 映射序号 + VLAN + 后面的列（"-" 或具体值都行）。要求至少三列且当前处于
+     * GEM 块内，避免吞掉概要行。
+     */
+    private static final Pattern LINE_GEM_MAP_DATA = Pattern.compile(
+            "^\\s*(\\d{1,4})\\s+(\\d{1,4})(\\s+\\S+)+\\s*$");
+
+    /** 明细回显的块状键值行：{@code Profile-ID        :100} */
+    private static final Pattern LINE_KV = Pattern.compile(
+            "^([^:：]{2,40})[:：]\\s*(.*)$");
+
+    private static final Pattern LINE_GEM_MAPPING = Pattern.compile(
+            "(?i)^\\s*gem\\s+mapping\\s+(\\d{1,4})\\s+(\\d{1,4})(?:\\s+(\\S+)\\s+(\\d{1,4}))?");
+
+    private static final Pattern LINE_GEM_VLAN = Pattern.compile("(?i)vlan\\s+(\\d{1,4})");
+
+    private static final Pattern LINE_TCONT_COUNT = Pattern.compile(
+            "(?i)Number\\s+of\\s+T-CONT\\s*[:：]\\s*(\\d{1,4})");
+
+    private static final Pattern LINE_GEM_COUNT = Pattern.compile(
+            "(?i)Number\\s+of\\s+GEM\\s*port\\s*[:：]\\s*(\\d{1,4})");
+
+    private static final Pattern[] DBA_ROWS = {DBA_ROW_MA5600, DBA_ROW_TABULAR, DBA_ROW_INLINE};
+
+    /** 解析 DBA 模板列表：模板 ID、名字、type1~5、三个带宽值（kbps） */
+    public static List<OltDbaProfile> parseDbaProfiles(String text) {
+        List<OltDbaProfile> profiles = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return profiles;
+        }
+        for (Pattern pattern : DBA_ROWS) {
+            Matcher matcher = pattern.matcher(text);
+            while (matcher.find()) {
+                OltDbaProfile profile = new OltDbaProfile();
+                profile.setProfileId(Integer.parseInt(matcher.group(1)));
+                // MA5600 总表没有名字列，type 在第 2 列；带名字的表格式第 2 列才是名字
+                if (pattern == DBA_ROW_MA5600) {
+                    profile.setType("type" + matcher.group(2));
+                } else {
+                    profile.setName(matcher.group(2));
+                    profile.setType(matcher.group(3));
+                }
+                profile.setFixKbps(Integer.parseInt(matcher.group(4)));
+                profile.setAssureKbps(Integer.parseInt(matcher.group(5)));
+                profile.setMaxKbps(Integer.parseInt(matcher.group(6)));
+                profiles.add(profile);
+            }
+            if (!profiles.isEmpty()) {
+                break;
+            }
+        }
+        return profiles;
+    }
+
+    /**
+     * {@code display dba-profile all detail} 的块状详情：一块一条模板，
+     * 含 Profile-name / Profile-ID / type / Fix / Assure / Max / bind-times。
+     *
+     * <p>总表（display dba-profile all）没有名字列，名字只能从这里按 ID 对回去；
+     * detail 解析成功时也能单独当数据源（总表行式对不上时兜底）。</p>
+     */
+    public static List<OltDbaProfile> parseDbaDetails(String text) {
+        List<OltDbaProfile> profiles = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return profiles;
+        }
+        for (LinkedHashMap<String, String> block : parseOntKeyValueBlocks(text)) {
+            OltDbaProfile profile = new OltDbaProfile();
+            boolean hasId = false;
+            for (Map.Entry<String, String> entry : block.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                if (key.contains("Profile-ID")) {
+                    Integer id = toInt(value);
+                    if (id != null) {
+                        profile.setProfileId(id);
+                        hasId = true;
+                    }
+                } else if (key.contains("Profile-name")) {
+                    profile.setName(value);
+                } else if (key.equalsIgnoreCase("type")) {
+                    profile.setType("type" + value.replaceAll("\\D", ""));
+                } else if (key.contains("Fix")) {
+                    profile.setFixKbps(toInt(value));
+                } else if (key.contains("Assure")) {
+                    profile.setAssureKbps(toInt(value));
+                } else if (key.contains("Max")) {
+                    profile.setMaxKbps(toInt(value));
+                }
+            }
+            if (hasId) {
+                profiles.add(profile);
+            }
+        }
+        return profiles;
+    }
+
+    /**
+     * 解析线路模板列表：模板行之后跟着的 T-CONT / GEM port 行归到这条模板下，
+     * 一行一行扫下去（回显就是先模板概要、再逐个 T-CONT 与 GEM port 这么排的）。
+     */
+    public static List<OltLineProfile> parseLineProfiles(String text) {
+        List<OltLineProfile> profiles = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return profiles;
+        }
+        OltLineProfile current = null;
+        OltGemport currentGem = null;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("-")) {
+                continue;
+            }
+            // 概要表头（Profile-ID Profile-name Binding times）与统计行跳过；
+            // 明细回显的 "Profile-ID :100" 带冒号，是块头，不能跳
+            String lowerLine = line.toLowerCase(Locale.ROOT);
+            if ((lowerLine.startsWith("profile") && !line.contains(":"))
+                    || lowerLine.startsWith("total") || lowerLine.startsWith("notes:")) {
+                continue;
+            }
+            // 明细回显的 T-CONT 块头：<T-CONT  0>  DBA Profile-ID:1
+            Matcher tcontBlock = LINE_TCONT_BLOCK.matcher(line);
+            if (tcontBlock.find()) {
+                if (current == null) {
+                    current = new OltLineProfile();
+                    profiles.add(current);
+                }
+                OltTcont item = new OltTcont();
+                item.setTcontId(Integer.parseInt(tcontBlock.group(1)));
+                item.setDbaProfileId(Integer.parseInt(tcontBlock.group(2)));
+                current.getTconts().add(item);
+                continue;
+            }
+            // 明细回显的 GEM 块头：<Gem Index:0>，之后的映射行都归它
+            Matcher gemBlock = LINE_GEM_BLOCK.matcher(line);
+            if (gemBlock.find()) {
+                if (current == null) {
+                    current = new OltLineProfile();
+                    profiles.add(current);
+                }
+                int gemportId = Integer.parseInt(gemBlock.group(1));
+                final OltLineProfile owner = current;
+                currentGem = owner.getGemports().stream()
+                        .filter(g -> gemportId == g.getGemportId())
+                        .findFirst()
+                        .orElseGet(() -> {
+                            OltGemport created = new OltGemport();
+                            created.setGemportId(gemportId);
+                            owner.getGemports().add(created);
+                            return created;
+                        });
+                continue;
+            }
+            // 块状键值行（明细回显开头的 Profile-ID / Profile-name）
+            Matcher kv = LINE_KV.matcher(line);
+            if (kv.matches()) {
+                String key = kv.group(1).trim();
+                String value = kv.group(2).trim();
+                if (key.equalsIgnoreCase("Profile-ID")) {
+                    Integer id = toInt(value);
+                    if (id != null) {
+                        current = new OltLineProfile();
+                        current.setProfileId(id);
+                        profiles.add(current);
+                    }
+                } else if (key.equalsIgnoreCase("Profile-name")) {
+                    if (current == null) {
+                        current = new OltLineProfile();
+                        profiles.add(current);
+                    }
+                    current.setName(value);
+                }
+                continue;
+            }
+            Matcher tcontCount = LINE_TCONT_COUNT.matcher(line);
+            if (tcontCount.find()) {
+                if (current != null) {
+                    current.setTcontCount(Integer.parseInt(tcontCount.group(1)));
+                }
+                continue;
+            }
+            Matcher gemCount = LINE_GEM_COUNT.matcher(line);
+            if (gemCount.find()) {
+                if (current != null) {
+                    current.setGemportCount(Integer.parseInt(gemCount.group(1)));
+                }
+                continue;
+            }
+            Matcher tcont = LINE_TCONT_ROW.matcher(line);
+            if (tcont.find()) {
+                if (current == null) {
+                    current = new OltLineProfile();
+                    profiles.add(current);
+                }
+                OltTcont item = new OltTcont();
+                item.setTcontId(Integer.parseInt(tcont.group(1)));
+                item.setDbaProfileId(Integer.parseInt(tcont.group(2)));
+                current.getTconts().add(item);
+                continue;
+            }
+            Matcher gemMapping = LINE_GEM_MAPPING.matcher(line);
+            if (gemMapping.find()) {
+                if (current == null) {
+                    current = new OltLineProfile();
+                    profiles.add(current);
+                }
+                int gemportId = Integer.parseInt(gemMapping.group(1));
+                final OltLineProfile owner = current;
+                OltGemport item = owner.getGemports().stream()
+                        .filter(g -> gemportId == g.getGemportId())
+                        .findFirst()
+                        .orElseGet(() -> {
+                            OltGemport created = new OltGemport();
+                            created.setGemportId(gemportId);
+                            owner.getGemports().add(created);
+                            return created;
+                        });
+                item.setMappingId(Integer.parseInt(gemMapping.group(2)));
+                if (gemMapping.group(3) != null) {
+                    item.setMappingMode(gemMapping.group(3));
+                }
+                if (gemMapping.group(4) != null) {
+                    item.setVlan(gemMapping.group(4));
+                }
+                OltGemMapping mapping = new OltGemMapping();
+                mapping.setIndex(item.getMappingId());
+                mapping.setVlan(item.getVlan());
+                item.getMappings().add(mapping);
+                currentGem = item;
+                continue;
+            }
+            Matcher gem = LINE_GEM_ROW.matcher(line);
+            if (gem.find()) {
+                if (current == null) {
+                    current = new OltLineProfile();
+                    profiles.add(current);
+                }
+                OltGemport item = new OltGemport();
+                item.setGemportId(Integer.parseInt(gem.group(1)));
+                Matcher gemTcont = LINE_GEM_TCONT.matcher(line);
+                if (gemTcont.find()) {
+                    item.setTcontId(Integer.parseInt(gemTcont.group(1)));
+                }
+                Matcher gemMode = LINE_GEM_MODE.matcher(line);
+                if (gemMode.find()) {
+                    item.setMappingMode(gemMode.group(1));
+                }
+                Matcher gemVlan = LINE_GEM_VLAN.matcher(line);
+                if (gemVlan.find()) {
+                    item.setVlan(gemVlan.group(1));
+                }
+                current.getGemports().add(item);
+                currentGem = item;
+                continue;
+            }
+            // GEM 块内的映射数据行：0    45   -    -    -    -（映射序号 + VLAN + 一串 "-" 列）
+            Matcher mapData = LINE_GEM_MAP_DATA.matcher(line);
+            if (mapData.matches() && currentGem != null) {
+                OltGemMapping mapping = new OltGemMapping();
+                mapping.setIndex(Integer.parseInt(mapData.group(1)));
+                mapping.setVlan(mapData.group(2));
+                currentGem.getMappings().add(mapping);
+                continue;
+            }
+            // 配置脚本里的模板概要行：ID + 名字（类型固定 gpon）
+            Matcher headConfig = LINE_PROFILE_CONFIG.matcher(line);
+            if (headConfig.find()) {
+                OltLineProfile profile = new OltLineProfile();
+                profile.setProfileId(Integer.parseInt(headConfig.group(1)));
+                profile.setName(headConfig.group(2));
+                profile.setType("gpon");
+                profiles.add(profile);
+                current = profile;
+                continue;
+            }
+            // 模板概要行：ID + 名字 + 类型
+            Matcher head = LINE_PROFILE_ROW.matcher(line);
+            if (head.find()) {
+                OltLineProfile profile = new OltLineProfile();
+                profile.setProfileId(Integer.parseInt(head.group(1)));
+                profile.setName(head.group(2));
+                profile.setType(head.group(3));
+                profiles.add(profile);
+                current = profile;
+            }
+        }
+        // 回显给了个数但没逐条列出时（简略版）也别留空：按个数给个占位编号
+        for (OltLineProfile profile : profiles) {
+            if (profile.getTcontCount() == null && !profile.getTconts().isEmpty()) {
+                profile.setTcontCount(profile.getTconts().size());
+            }
+            if (profile.getGemportCount() == null && !profile.getGemports().isEmpty()) {
+                profile.setGemportCount(profile.getGemports().size());
+            }
+            // 映射列表里的第一条回填到 mappingId/vlan，页面单值列直接能用
+            for (OltGemport gemport : profile.getGemports()) {
+                if (gemport.getMappingId() == null && !gemport.getMappings().isEmpty()) {
+                    OltGemMapping first = gemport.getMappings().get(0);
+                    gemport.setMappingId(first.getIndex());
+                    gemport.setVlan(first.getVlan());
+                }
+            }
+        }
+        return profiles;
+    }
+
+    // ------------------------------------------------------------ 业务流 / ONT 能力模板
+
+    /**
+     * 业务流行：{@code INDEX VLAN VLAN PORT F/S/P ONT GEM ...}。
+     *
+     * <pre>{@code
+     * INDEX  VLAN  VLAN  PORT  F/S/P    VPI  VCI  FLOW  FLOW  RX  TX  STATE
+     *        ID    ATTR  TYPE
+     *   0    45    45    gpon  0/ 1/0   1    0    -     -     -   -   -
+     * }</pre>
+     *
+     * <p>不同版本列数不一样，这里只抓前面固定那几列（索引、VLAN、端口、F/S/P），
+     * 后面的 ONT ID / GEM port 按出现顺序取，取不到就留空——页面宁可少一列，
+     * 也不能把 VPI/VCI 当 ONT ID。</p>
+     */
+    /**
+     * 配置脚本里的 service-port 行（{@code display current-configuration}）：
+     * {@code service-port 0 vlan 41 gpon 0/1/1 ont 21 gemport 1 multi-service user-vlan 41 tag-transform translate}。
+     *
+     * <p>这一行比表格回显规整，字段含义不会随版本变；回显会被终端宽度折断
+     * （tag-transform 常被挤到下一行），所以 user-vlan 之后的部分一律不解析。</p>
+     */
+    private static final Pattern SERVICE_PORT_CONFIG = Pattern.compile(
+            "(?im)^\\s*service-port\\s+(\\d{1,4})\\s+vlan\\s+(\\d{1,4})\\s+gpon\\s+(\\d{1,2})/(\\d{1,2})/(\\d{1,3})"
+                    + "\\s+ont\\s+(\\d{1,3})\\s+gemport\\s+(\\d{1,4})(?:\\s+.*?user-vlan\\s+(\\d{1,4}))?");
+
+    /** 解析配置脚本里的 service-port 段 */
+    public static List<OltServicePort> parseServicePortsFromConfig(String text) {
+        List<OltServicePort> ports = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return ports;
+        }
+        Matcher matcher = SERVICE_PORT_CONFIG.matcher(text);
+        while (matcher.find()) {
+            OltServicePort port = new OltServicePort();
+            port.setIndex(Integer.parseInt(matcher.group(1)));
+            port.setVlanId(Integer.parseInt(matcher.group(2)));
+            port.setFrameNo(Integer.parseInt(matcher.group(3)));
+            port.setSlotNo(Integer.parseInt(matcher.group(4)));
+            port.setPortNo(Integer.parseInt(matcher.group(5)));
+            port.setOntId(Integer.parseInt(matcher.group(6)));
+            port.setGemport(Integer.parseInt(matcher.group(7)));
+            ports.add(port);
+        }
+        return ports;
+    }
+
+    /**
+     * TR069 服务器模板（{@code display ont tr069-server-profile all}）。
+     *
+     * <p>两种回显都认：总表行式 {@code 10  TR069_ACS  http://10.172.10.1:9090/  acs123}（靠 URL 认行），
+     * 以及 {@code profile-id} 详情的块状 {@code URL : http://...}。</p>
+     */
+    private static final Pattern TR069_ROW = Pattern.compile(
+            "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(https?://\\S+)(?:\\s+(\\S+))?");
+
+    /**
+     * 配置脚本写法：{@code ont tr069-server-profile add profile-id 10 profile-name "TR069_ACS"
+     * url "http://10.172.10.1:9090/" user "acs123" "<密文>"}。
+     */
+    private static final Pattern TR069_CONFIG = Pattern.compile(
+            "(?i)ont\\s+tr069-server-profile\\s+add\\s+profile-id\\s+(\\d{1,4})\\s+profile-name\\s+\"?([^\"\\s]+)\"?"
+                    + ".*?url\\s+\"?([^\\s\"]+)\"?(?:\\s+user\\s+\"?([^\\s\"]+)\"?)?");
+
+    public static List<OltTr069Profile> parseTr069Profiles(String text) {
+        List<OltTr069Profile> profiles = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return profiles;
+        }
+        Matcher config = TR069_CONFIG.matcher(text);
+        while (config.find()) {
+            OltTr069Profile profile = new OltTr069Profile();
+            profile.setProfileId(Integer.parseInt(config.group(1)));
+            profile.setName(config.group(2));
+            profile.setUrl(config.group(3));
+            profile.setUser(config.group(4));
+            profiles.add(profile);
+        }
+        if (!profiles.isEmpty()) {
+            return profiles;
+        }
+        Matcher matcher = TR069_ROW.matcher(text);
+        while (matcher.find()) {
+            OltTr069Profile profile = new OltTr069Profile();
+            profile.setProfileId(Integer.parseInt(matcher.group(1)));
+            profile.setName(matcher.group(2));
+            profile.setUrl(matcher.group(3));
+            profile.setUser(matcher.group(4));
+            profiles.add(profile);
+        }
+        if (!profiles.isEmpty()) {
+            return profiles;
+        }
+        // 回退：块状详情里按键名取值
+        for (LinkedHashMap<String, String> block : parseOntKeyValueBlocks(text)) {
+            OltTr069Profile profile = new OltTr069Profile();
+            boolean hasId = false;
+            for (Map.Entry<String, String> entry : block.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                if (key.contains("Profile-ID")) {
+                    Integer id = toInt(value);
+                    if (id != null) {
+                        profile.setProfileId(id);
+                        hasId = true;
+                    }
+                } else if (key.contains("Profile-name")) {
+                    profile.setName(value);
+                } else if (key.toLowerCase(Locale.ROOT).contains("url")) {
+                    profile.setUrl(value);
+                } else if (key.toLowerCase(Locale.ROOT).contains("user")) {
+                    profile.setUser(value);
+                }
+            }
+            if (hasId) {
+                profiles.add(profile);
+            }
+        }
+        return profiles;
+    }
+
+    private static final Pattern SERVICE_PORT_ROW = Pattern.compile(
+            "^\\s*(\\d{1,4})\\s+(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})"
+                    + "(?:\\s+(\\d{1,4}))?(?:\\s+(\\d{1,4}))?");
+
+    public static List<OltServicePort> parseServicePorts(String text) {
+        List<OltServicePort> ports = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return ports;
+        }
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("-") || line.contains("INDEX") || line.contains("display")) {
+                continue;
+            }
+            Matcher row = SERVICE_PORT_ROW.matcher(line);
+            if (!row.find()) {
+                continue;
+            }
+            OltServicePort port = new OltServicePort();
+            port.setIndex(Integer.parseInt(row.group(1)));
+            port.setVlanId(Integer.parseInt(row.group(2)));
+            port.setVlanAttr(row.group(3));
+            port.setPortType(row.group(4));
+            port.setFrameNo(Integer.parseInt(row.group(5)));
+            port.setSlotNo(Integer.parseInt(row.group(6)));
+            port.setPortNo(Integer.parseInt(row.group(7)));
+            port.setOntId(toInt(row.group(8)));
+            port.setGemport(toInt(row.group(9)));
+            ports.add(port);
+        }
+        return ports;
+    }
+
+    /**
+     * ONT 能力模板（{@code display ont-srvprofile gpon all}）：回显是块状 key-value，
+     * 一块一条模板，按 Profile-ID / Profile-name 定字段，其余按原样收进 items；
+     * TR069 相关的键另收一份，页面单独展示管理参数。
+     */
+    private static final Pattern TR069_KEY = Pattern.compile("(?i)tr069|acs");
+
+    /** 配置脚本里的能力模板概要：{@code ont-srvprofile gpon profile-id 100 profile-name "100"} */
+    private static final Pattern SRV_PROFILE_CONFIG = Pattern.compile(
+            "(?i)ont-srvprofile\\s+gpon\\s+profile-id\\s+(\\d{1,4})\\s+profile-name\\s+\"?([^\"\\s]+)\"?");
+
+    /** {@code ont-port pots adaptive 32 eth adaptive 8}：能力协商的端口上限 */
+    private static final Pattern SRV_POTS_PORTS = Pattern.compile("(?i)pots\\s+adaptive\\s+(\\d{1,3})");
+
+    private static final Pattern SRV_ETH_PORTS = Pattern.compile("(?i)eth\\s+adaptive\\s+(\\d{1,3})");
+
+    public static List<OltSrvProfile> parseSrvProfiles(String text) {
+        List<OltSrvProfile> profiles = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return profiles;
+        }
+        OltSrvProfile current = null;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("-") || line.contains("display")) {
+                continue;
+            }
+            // 配置脚本里的模板开头，也可能是 display 回显里的一块新模板
+            Matcher head = SRV_PROFILE_CONFIG.matcher(line);
+            if (head.find()) {
+                current = new OltSrvProfile();
+                current.setProfileId(Integer.parseInt(head.group(1)));
+                current.setName(head.group(2));
+                profiles.add(current);
+                continue;
+            }
+            Matcher pots = SRV_POTS_PORTS.matcher(line);
+            Matcher eth = SRV_ETH_PORTS.matcher(line);
+            // find() 会推进匹配位置，先各判一次再取值，别重复 find
+            boolean hasPots = pots.find();
+            boolean hasEth = eth.find();
+            if (hasPots || hasEth) {
+                if (current == null) {
+                    current = new OltSrvProfile();
+                    profiles.add(current);
+                }
+                if (hasPots) {
+                    current.setPotsPorts(Integer.parseInt(pots.group(1)));
+                }
+                if (hasEth) {
+                    current.setEthPorts(Integer.parseInt(eth.group(1)));
+                }
+                continue;
+            }
+            Matcher row = ONT_KV_ROW.matcher(line);
+            if (!row.matches()) {
+                continue;
+            }
+            String key = row.group(1).trim();
+            String value = row.group(2).trim();
+            // Profile-ID 出现即视为新的一块（display 回显按块给，配置脚本按行给）
+            if (key.contains("Profile-ID")) {
+                Integer id = toInt(value);
+                if (id != null) {
+                    current = new OltSrvProfile();
+                    current.setProfileId(id);
+                    profiles.add(current);
+                }
+                continue;
+            }
+            if (current == null) {
+                current = new OltSrvProfile();
+                profiles.add(current);
+            }
+            if (key.contains("Profile-name")) {
+                current.setName(value);
+            } else if (TR069_KEY.matcher(key).find()) {
+                current.getTr069().put(key, value);
+            } else {
+                current.getItems().put(key, value);
+            }
+        }
+        // 没有 Profile-ID 的（解析不出来的）整段丢掉，页面宁可显示「没有模板」也不拿空壳充数
+        profiles.removeIf(profile -> profile.getProfileId() == null);
+        return profiles;
+    }
+
+    private static Integer toInt(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        if (text.isEmpty() || "-".equals(text)) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(text.replaceAll("\\D", ""));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 流量限速模板（{@code display traffic table ip all}）：
+     * {@code 0  traffic_table_0  -  1024000 ...}（索引 / 名称 / CIR / PIR，后面还有
+     * CBS/PBS/优先级列，只抓前四列；CIR 为 - 表示没有承诺速率）。
+     */
+    private static final Pattern TRAFFIC_ROW = Pattern.compile(
+            "^\\s*(\\d{1,4})\\s+(\\S+)\\s+(\\d{1,9}|-)\\s+(\\d{1,9}|-)\\s");
+
+    public static List<OltTrafficTable> parseTrafficTables(String text) {
+        List<OltTrafficTable> tables = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return tables;
+        }
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("-") || line.contains("display")
+                    || line.toLowerCase().startsWith("index") || line.toLowerCase().startsWith("total")) {
+                continue;
+            }
+            Matcher row = TRAFFIC_ROW.matcher(line);
+            if (!row.find()) {
+                continue;
+            }
+            OltTrafficTable table = new OltTrafficTable();
+            table.setIndex(Integer.parseInt(row.group(1)));
+            table.setName(row.group(2));
+            table.setCir(toInt(row.group(3)));
+            table.setPir(toInt(row.group(4)));
+            tables.add(table);
+        }
+        return tables;
+    }
+
+    // ------------------------------------------------------------ ONT 按需查询
+
+    /**
+     * ONT 按需查询的块状回显（{@code display ont optical-info / version / register-info}）：
+     *
+     * <pre>{@code
+     * ------------------------------
+     * 索引编号          : 2
+     * 认证方式          : SN认证
+     * ...
+     * ------------------------------
+     * 索引编号          : 1
+     * ...
+     * ------------------------------
+     * }</pre>
+     *
+     * <p>分隔线之间是一块（一条 ONT 的一段信息，注册历史有多块），块内一行「键 : 值」。
+     * 命令回显行与提示符行不进结果。</p>
+     */
+    private static final Pattern ONT_KV_ROW = Pattern.compile(
+            "^([^:：]{2,30})[:：]\\s*(.*)$");
+
+    public static List<LinkedHashMap<String, String>> parseOntKeyValueBlocks(String text) {
+        List<LinkedHashMap<String, String>> blocks = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return blocks;
+        }
+        LinkedHashMap<String, String> current = null;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("$ ") || line.contains("display ont ")
+                    || line.contains("(config")) {
+                continue;
+            }
+            // 分隔线结束当前块：register-info 用它分段，optical-info / version 的头尾各一条
+            if (line.matches("-{8,}\\s*")) {
+                current = null;
+                continue;
+            }
+            Matcher row = ONT_KV_ROW.matcher(line);
+            if (!row.matches()) {
+                continue;
+            }
+            String key = row.group(1).trim();
+            if (key.isEmpty()) {
+                continue;
+            }
+            if (current == null) {
+                current = new LinkedHashMap<>();
+                blocks.add(current);
+            }
+            current.put(key, row.group(2).trim());
+        }
+        // 空块（只有分隔线没内容）别返回去
+        blocks.removeIf(Map::isEmpty);
+        return blocks;
     }
 
     /** 24 → 255.255.255.0 */

@@ -23,6 +23,9 @@ public class OltSyncRecord {
     /** 动作：同步 */
     public static final String ACTION_SYNC = "SYNC";
 
+    /** 配置下发（DBA 模板增删这类写操作，带回显留档） */
+    public static final String ACTION_CONFIG = "CONFIG";
+
     @TableId(type = IdType.AUTO)
     private Long id;
 

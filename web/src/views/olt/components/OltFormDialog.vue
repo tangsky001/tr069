@@ -89,6 +89,17 @@
       <el-form-item label="备注">
         <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="选填" maxlength="200" show-word-limit />
       </el-form-item>
+
+      <el-form-item label="识别厂商">
+        <span v-if="form.vendor" class="detected-row">
+          <el-tag size="mini" type="success">{{ vendorLabel }}</el-tag>
+          <span v-if="form.model" class="detected-model">{{ form.model }}</span>
+          <span class="form-tip">由「测试连接」自动识别，保存后按厂商进入对应页面</span>
+        </span>
+        <span v-else class="form-tip">
+          未识别。点下方「测试连接」自动识别；未识别的保存在同步后会补齐，暂时走通用视图
+        </span>
+      </el-form-item>
     </el-form>
 
     <el-alert
@@ -113,11 +124,24 @@
 <script>
 import { saveOlt, testOlt, fetchOltWebAccounts } from '@/api/olt'
 
+/** 厂商码 → 中文名，与后端 OltVendor 一致 */
+const VENDOR_LABELS = {
+  HUAWEI: '华为',
+  ZTE: '中兴',
+  FIBERHOME: '烽火',
+  HSGQ: '鸿升光',
+  GENERIC: '通用'
+}
+
 /**
  * 添加 / 编辑 OLT 弹窗。
  *
  * 保存前后端都会校验；「测试连接」直接用当前表单里的参数连一次设备，
  * 未保存也能验证账号密码是否正确。
+ *
+ * 「测试连接」顺带把厂商识别出来（`display version` / `show version` 的回显），
+ * 结果写进 form.vendor 随保存一起落库——添加完就知道该进哪个厂商页面，
+ * 不用等第一次同步。
  */
 export default {
   name: 'OltFormDialog',
@@ -177,6 +201,9 @@ export default {
     },
     passwordPlaceholder() {
       return this.isEdit ? '留空表示不修改（默认 admin）' : '默认为 admin'
+    },
+    vendorLabel() {
+      return VENDOR_LABELS[this.form.vendor] || this.form.vendor
     }
   },
   methods: {
@@ -192,7 +219,10 @@ export default {
         charset: 'AUTO',
         bindLocalIp: '',
         webAccounts: [],
-        remark: ''
+        remark: '',
+        // 厂商/型号：测试连接时由回显自动识别，保存时一并落库，决定进哪个厂商页面
+        vendor: '',
+        model: ''
       }
     },
     handleOpen() {
@@ -210,6 +240,8 @@ export default {
         this.form.bindLocalIp = this.olt.bindLocalIp || ''
         this.form.webAccounts = (this.olt.webAccounts || []).slice()
         this.form.remark = this.olt.remark || ''
+        this.form.vendor = this.olt.vendor || ''
+        this.form.model = this.olt.model || ''
       }
       this.$nextTick(() => {
         if (this.$refs.form) this.$refs.form.clearValidate()
@@ -245,6 +277,11 @@ export default {
         testOlt(this.form)
           .then(res => {
             const data = res.data || {}
+            // 认出厂商就回填，后面即使改了地址也跟随这次的识别结果
+            if (data.success && data.vendor) {
+              this.form.vendor = data.vendor
+              this.form.model = data.model || this.form.model
+            }
             this.testResult = {
               success: !!data.success,
               title: data.success ? '连接成功' : '连接失败',
@@ -336,6 +373,15 @@ export default {
 }
 .test-result {
   margin: 0 12px 4px 12px;
+}
+.detected-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detected-model {
+  color: #303133;
+  font-size: 13px;
 }
 .test-result ::v-deep .el-alert__description {
   white-space: pre-wrap;

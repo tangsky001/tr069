@@ -445,6 +445,8 @@ CREATE TABLE IF NOT EXISTS `olt_device` (
     `last_sync_at`     DATETIME     DEFAULT NULL COMMENT '最近一次同步时间',
     `last_error`       VARCHAR(500) DEFAULT NULL COMMENT '最近一次失败原因',
     `sync_summary`     VARCHAR(255) DEFAULT NULL COMMENT '最近一次同步摘要',
+    `vlan_json`        LONGTEXT     DEFAULT NULL COMMENT 'VLAN 快照(JSON)',
+    `template_json`    LONGTEXT     DEFAULT NULL COMMENT 'DBA/线路模板快照(JSON)',
     `remark`           VARCHAR(255) DEFAULT NULL COMMENT '备注',
     `deleted`          TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     `created_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,

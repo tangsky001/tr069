@@ -2,7 +2,14 @@ package com.tr069.acs.olt.telnet;
 
 import com.tr069.acs.olt.entity.OltBoard;
 import com.tr069.acs.olt.entity.OltDevice;
+import com.tr069.acs.olt.model.OltDbaProfile;
+import com.tr069.acs.olt.model.OltLineProfile;
+import com.tr069.acs.olt.model.OltServicePort;
+import com.tr069.acs.olt.model.OltSrvProfile;
+import com.tr069.acs.olt.model.OltTrafficTable;
+import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltOnt;
+import com.tr069.acs.olt.model.OltTemplateInfo;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltPortVlan;
 import com.tr069.acs.olt.model.OltVlan;
@@ -18,6 +25,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -49,8 +57,11 @@ public class OltCliSession implements Closeable {
      * {@code { <cr>|backplane<K>|frameid/slotid<S><Length 1-15> };}。
      * 设备停在这里等输入，不回提示符，不处理就只能等到超时。
      */
-    private static final Pattern PARAM_PROMPT = Pattern.compile(
-            "(?m)(?:[^\\r\\n]*\\{\\s*<cr>[^\\r\\n]*\\}|[^\\r\\n]*param(?:eter)?s?\\s*[:：][^\\r\\n]*)\\s*[:：]?\\s*$",
+    static final Pattern PARAM_PROMPT = Pattern.compile(
+            "(?m)(?:[^\\r\\n]*\\{\\s*<cr>[^\\r\\n]*\\}"
+                    // 参数补全提示后面带冒号的（如 { all<K>|bound-info<K>|... }:），回车即执行
+                    + "|[^\\r\\n]*\\{[^{}]*\\}\\s*[:：]\\s*$"
+                    + "|[^\\r\\n]*param(?:eter)?s?\\s*[:：][^\\r\\n]*)\\s*[:：]?\\s*$",
             Pattern.CASE_INSENSITIVE);
 
     /** 参数提示最多回几次车，防止设备反复要参数时死循环 */
@@ -213,6 +224,18 @@ public class OltCliSession implements Closeable {
             if (vendor == OltVendor.HUAWEI && !boards.isEmpty()) {
                 collectFromConfigView(boards, notes, snapshot);
             }
+            if (vendor == OltVendor.HSGQ && !boards.isEmpty()) {
+                collectHsgq(boards.get(0), notes);
+            }
+            if (snapshot.getBackplane() == null && vendor == OltVendor.HUAWEI) {
+                // MA5683T 这类设备的 display version 不带 PCB/Backplane 段，
+                // display board 0 的回显里也没有背板行，背板型号要单独问：
+                // display version backplane 0 →「Backplane: H802MAB0」
+                String backplaneText = runCommand("display version backplane 0");
+                if (backplaneText != null && !backplaneText.isBlank()) {
+                    snapshot.setBackplane(OltInfoParser.extractBackplane(backplaneText));
+                }
+            }
             if (snapshot.getBackplane() == null) {
                 snapshot.setBackplane(OltInfoParser.extractBackplaneBoard(boardText));
             }
@@ -244,8 +267,11 @@ public class OltCliSession implements Closeable {
         boolean ontOk;
         try {
             applyTemperatures(boards, timeout);
+            // 先把每块板的端口（含光模块不在位、链路离线的空口）建出来，ONT 再往上面挂
+            collectBoardPortStates(boards, timeout);
             ontOk = collectOnts(boards, timeout);
             collectVlans(boards, snapshot, timeout);
+            collectTemplates(snapshot, timeout);
         } finally {
             // 只退到特权视图：再 quit 一次就是 logout，设备会停下来问 y/n
             runQuietly("quit", timeout);
@@ -253,6 +279,54 @@ public class OltCliSession implements Closeable {
         if (!ontOk) {
             notes.add("ONT 数量未采到：display ont info 0 <槽位> all 无有效回显");
         }
+    }
+
+    /**
+     * 逐板发 {@code display board 0/<槽位>}，把端口表采回来：光模块在位状态
+     * （absence = 不在位）与链路状态（offline = 离线）一起入档。
+     *
+     * <p>之前只从 {@code display ont info} 的回显建端口，回显里只有配了 ONT 的口，
+     * 空口（业务板 P3-P7、主控/上联板全部）就没有端口数据；这条命令把每块板的
+     * 全部端口连同状态补齐，空口也记录为「不在位/离线」而不是缺失。</p>
+     */
+    private void collectBoardPortStates(List<OltBoard> boards, int timeout) {
+        for (OltBoard board : boards) {
+            if (board.getSlotNo() == null) {
+                continue;
+            }
+            String text = runCommand("display board 0/" + board.getSlotNo(), timeout);
+            Map<Integer, String[]> states = OltInfoParser.parseBoardPortStates(text);
+            if (states.isEmpty()) {
+                continue;
+            }
+            for (Map.Entry<Integer, String[]> entry : states.entrySet()) {
+                String optic = entry.getValue()[0];
+                applyPortState(board, entry.getKey(), optic,
+                        !"absence".equalsIgnoreCase(optic), entry.getValue()[1]);
+            }
+        }
+    }
+
+    /** 端口状态挂到端口上：已有就更新，没有就新建一条（空口也要有端口记录） */
+    private static void applyPortState(OltBoard board, int portNo, String optic, boolean present, String link) {
+        List<OltPort> ports = board.getPorts();
+        if (ports == null) {
+            ports = new ArrayList<>();
+            board.setPorts(ports);
+        }
+        OltPort port = findPort(ports, portNo);
+        if (port == null) {
+            port = new OltPort();
+            port.setFrameNo(0);
+            port.setSlotNo(board.getSlotNo());
+            port.setPortNo(portNo);
+            port.setPortName("P" + portNo);
+            ports.add(port);
+        }
+        port.setOpticStatus(optic);
+        port.setOpticalPresent(present);
+        port.setLinkStatus(link);
+        ports.sort(Comparator.comparing(item -> item.getPortNo() == null ? 0 : item.getPortNo()));
     }
 
     /**
@@ -305,6 +379,156 @@ public class OltCliSession implements Closeable {
         }
     }
 
+    /**
+     * DBA 模板与线路模板：{@code display dba-profile all} +
+     * {@code display ont-lineprofile gpon all}，两条都在 config 视图下认。
+     *
+     * <p>看的就是「这条线路模板用了哪档带宽」——线路模板挂 T-CONT、T-CONT 引用 DBA 模板，
+     * 所以两份一起采，页面上按 T-CONT 把两边对起来。采不到就整份不写，页面提示未采集。</p>
+     */
+    private void collectTemplates(OltSnapshot snapshot, int timeout) {
+        // 总表没有模板名，先拿块状详情（含 Profile-name），名字按 ID 对回总表；
+        // 版本不支持 detail 参数时命令报错、解析为空，就只靠总表
+        List<OltDbaProfile> dbaDetails = OltInfoParser.parseDbaDetails(
+                runCommand("display dba-profile all detail", timeout));
+        List<OltDbaProfile> dbaProfiles = OltInfoParser.parseDbaProfiles(
+                runCommand("display dba-profile all", timeout));
+        for (OltDbaProfile profile : dbaProfiles) {
+            if (profile.getName() == null || profile.getName().isBlank()) {
+                dbaDetails.stream()
+                        .filter(detail -> detail.getProfileId() != null
+                                && detail.getProfileId().equals(profile.getProfileId()))
+                        .findFirst()
+                        .ifPresent(detail -> profile.setName(detail.getName()));
+            }
+        }
+        // 总表行式对不上（老/新版本列又变了）就退回块状详情当数据源
+        if (dbaProfiles.isEmpty() && !dbaDetails.isEmpty()) {
+            dbaProfiles = dbaDetails;
+        }
+        // 模板命令里的 gpon/epon 跟着 PON 板类型走（epon 板要用 epon）：先按 gpon 采，采不到换 epon
+        List<OltLineProfile> lineProfiles = OltInfoParser.parseLineProfiles(
+                runCommand("display ont-lineprofile gpon all", timeout));
+        String linePonType = "gpon";
+        if (lineProfiles.isEmpty()) {
+            linePonType = "epon";
+            lineProfiles = OltInfoParser.parseLineProfiles(
+                    runCommand("display ont-lineprofile epon all", timeout));
+        }
+        final String lineType = linePonType;
+        final List<OltLineProfile> finalLineProfiles = lineProfiles;
+        finalLineProfiles.forEach(profile -> {
+            if (profile.getType() == null || profile.getType().isBlank()) {
+                profile.setType(lineType);
+            }
+        });
+        // all 只给模板概要，T-CONT / GEM 映射明细在 profile-id 详情里：逐条取回补齐
+        // 0 号是系统内置默认模板（line-profile_default_0），页面不展示
+        lineProfiles.removeIf(profile -> Integer.valueOf(0).equals(profile.getProfileId()));
+        for (OltLineProfile profile : lineProfiles) {
+            if (profile.getProfileId() == null) {
+                continue;
+            }
+            String detail = runCommand("display ont-lineprofile " + linePonType
+                    + " profile-id " + profile.getProfileId(), timeout);
+            OltInfoParser.parseLineProfiles(detail).stream()
+                    .filter(d -> profile.getProfileId().equals(d.getProfileId()))
+                    .findFirst()
+                    .ifPresent(d -> mergeLineProfile(profile, d));
+        }
+        // 业务流与 ONT 能力模板同在 config 视图下认，顺这两条一起采（采不到就留空）
+        // service-port 主用配置脚本段：字段含义固定（表格回显各版本列序不一，端口列老对不上）
+        List<OltServicePort> servicePorts = OltInfoParser.parseServicePortsFromConfig(
+                runCommand("display current-configuration section service-port", timeout));
+        if (servicePorts.isEmpty()) {
+            servicePorts = OltInfoParser.parseServicePorts(
+                    runCommand("display service-port all", timeout));
+        }
+        // 能力模板同样分 gpon/epon
+        List<OltSrvProfile> srvProfiles = OltInfoParser.parseSrvProfiles(
+                runCommand("display ont-srvprofile gpon all", timeout));
+        String srvPonType = "gpon";
+        if (srvProfiles.isEmpty()) {
+            srvPonType = "epon";
+            srvProfiles = OltInfoParser.parseSrvProfiles(
+                    runCommand("display ont-srvprofile epon all", timeout));
+        }
+        final String srvType = srvPonType;
+        srvProfiles.forEach(profile -> profile.setPonType(srvType));
+        // all 同样只有概要：ont-port / 能力项明细在 profile-id 详情里，逐条取回补齐
+        for (OltSrvProfile profile : srvProfiles) {
+            if (profile.getProfileId() == null) {
+                continue;
+            }
+            String detail = runCommand("display ont-srvprofile " + srvPonType
+                    + " profile-id " + profile.getProfileId(), timeout);
+            OltInfoParser.parseSrvProfiles(detail).stream()
+                    .filter(d -> profile.getProfileId().equals(d.getProfileId()))
+                    .findFirst()
+                    .ifPresent(d -> mergeSrvProfile(profile, d));
+        }
+        // TR069 服务器模板是独立的一类模板，ACS 地址与账号都在它上面
+        List<OltTr069Profile> tr069Profiles = OltInfoParser.parseTr069Profiles(
+                runCommand("display ont tr069-server-profile all", timeout));
+        if (tr069Profiles.isEmpty()) {
+            // 有的版本不认 all，去掉再试（不支持也只是多一个来回）
+            tr069Profiles = OltInfoParser.parseTr069Profiles(
+                    runCommand("display ont tr069-server-profile", timeout));
+        }
+        List<OltTrafficTable> trafficTables = OltInfoParser.parseTrafficTables(
+                runCommand("display traffic table ip all", timeout));
+        if (trafficTables.isEmpty()) {
+            trafficTables = OltInfoParser.parseTrafficTables(
+                    runCommand("display traffic table all", timeout));
+        }
+        if (dbaProfiles.isEmpty() && lineProfiles.isEmpty()
+                && servicePorts.isEmpty() && srvProfiles.isEmpty()
+                && tr069Profiles.isEmpty() && trafficTables.isEmpty()) {
+            return;
+        }
+        OltTemplateInfo info = new OltTemplateInfo();
+        info.setDbaProfiles(dbaProfiles);
+        info.setLineProfiles(lineProfiles);
+        info.setServicePorts(servicePorts);
+        info.setSrvProfiles(srvProfiles);
+        info.setTr069Profiles(tr069Profiles);
+        info.setTrafficTables(trafficTables);
+        info.stamp();
+        snapshot.setTemplateInfo(info);
+    }
+
+    /** 概要行只带模板 ID / 名字，映射明细以 profile-id 详情为准，有才覆盖 */
+    private void mergeLineProfile(OltLineProfile target, OltLineProfile detail) {
+        if (detail.getTcontCount() != null) {
+            target.setTcontCount(detail.getTcontCount());
+        }
+        if (detail.getGemportCount() != null) {
+            target.setGemportCount(detail.getGemportCount());
+        }
+        if (detail.getTconts() != null && !detail.getTconts().isEmpty()) {
+            target.setTconts(detail.getTconts());
+        }
+        if (detail.getGemports() != null && !detail.getGemports().isEmpty()) {
+            target.setGemports(detail.getGemports());
+        }
+    }
+
+    /** 能力模板概要只有 ID / 名字：ont-port 数量、能力项以 profile-id 详情为准 */
+    private void mergeSrvProfile(OltSrvProfile target, OltSrvProfile detail) {
+        if (detail.getEthPorts() != null) {
+            target.setEthPorts(detail.getEthPorts());
+        }
+        if (detail.getPotsPorts() != null) {
+            target.setPotsPorts(detail.getPotsPorts());
+        }
+        if (detail.getItems() != null && !detail.getItems().isEmpty()) {
+            target.setItems(detail.getItems());
+        }
+        if (detail.getTr069() != null && !detail.getTr069().isEmpty()) {
+            target.setTr069(detail.getTr069());
+        }
+    }
+
     /** 上联口才算「上行 VLAN 透传」，主控板的网口也一起算（现场 0/6/x 就是主控口） */
     private static boolean isUplinkKind(String boardKind) {
         return OltInfoParser.BoardKind.UPLINK.name().equals(boardKind)
@@ -315,7 +539,137 @@ public class OltCliSession implements Closeable {
     private boolean enterConfigView(int timeout) {
         runQuietly("enable", timeout);
         String out = runQuietly("config", timeout);
+        if (out == null || !out.contains("(config)#")) {
+            return false;
+        }
+        // scroll 在特权视图才生效（登录后的用户视图发了也不认），进 config 后补一次，
+        // 后面 display ont info / service-port 这类长回显就不分页了
+        runQuietly("scroll", timeout);
+        return true;
+    }
+
+    /**
+     * 单条 ONT 详情查询（光信息 / 版本 / 注册历史），返回原始回显。
+     *
+     * <p>这类命令只能在 GPON 端口视图下发：config 视图 → {@code interface gpon 0/<槽位>}
+     * → {@code display ont <子命令> <端口> <ONT ID>}，查完退回两级（端口视图 → config → enable）。
+     * 每次查询都新开一次登录，按需点才触发，不进轮询采集。</p>
+     */
+    public String queryOntDetail(int slot, int port, int ontId, String subcommand) {
+        prepareTerminal();
+        enterConfigView(commandTimeoutMs);
+        runCommand("interface gpon 0/" + slot, commandTimeoutMs);
+        String command = "display ont " + subcommand + " " + port + " " + ontId;
+        String out = runCommand(command, commandTimeoutMs);
+        runQuietly("quit", commandTimeoutMs);
+        runQuietly("quit", commandTimeoutMs);
+        return out;
+    }
+
+    /**
+     * 在 config 视图下逐条下发配置命令（DBA 模板增删这类写操作）。
+     *
+     * <p>某条被 OLT 拒绝（回显含 Error / 错误）立即中断并抛出，把 OLT 的拒绝原因带给页面；
+     * 全部成功返回每条的回显。</p>
+     */
+    public List<String> sendConfigCommands(List<String> commands) {
+        prepareTerminal();
+        if (!enterConfigView(commandTimeoutMs)) {
+            throw new IllegalStateException("进不了 config 视图，无法下发配置");
+        }
+        List<String> outputs = new ArrayList<>();
+        for (String command : commands) {
+            String out = runCommand(command, commandTimeoutMs);
+            outputs.add(out);
+            String reason = commandRejected(out);
+            if (reason != null) {
+                throw new IllegalStateException("OLT 拒绝命令「" + command + "」：" + reason);
+            }
+        }
+        return outputs;
+    }
+
+    /** OLT 拒绝命令时的回显特征，返回拒绝原因那一行，没拒绝返回 null */
+    private static final Pattern REJECT_ROW = Pattern.compile("(?im)^.*(Error:|错误[:：]|无效|非法|existed|not exist).*$");
+
+    private String commandRejected(String out) {
+        if (out == null || out.isBlank()) {
+            return null;
+        }
+        Matcher matcher = REJECT_ROW.matcher(out);
+        // 命令本身（回显里的 "Error:" 提示才算拒绝，提示符/参数提示不算）
+        while (matcher.find()) {
+            String row = matcher.group().trim();
+            if (!row.startsWith("$") && !row.contains("(config")) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 鸿升光进配置视图：{@code enable} → {@code config}，有的固件只认 {@code configure}，
+     * 所以两条都试（不支持的那条只回一句报错，代价是一个来回）。
+     * 判据是提示符变成 {@code OLT(config)#}。
+     */
+    private boolean enterHsgqConfigView(int timeout) {
+        runQuietly("enable", timeout);
+        String out = runQuietly("config", timeout);
+        if (out != null && out.contains("(config)#")) {
+            return true;
+        }
+        out = runQuietly("configure", timeout);
         return out != null && out.contains("(config)#");
+    }
+
+    /**
+     * 鸿升光整机采集：配置视图下 {@code show onu-info all}（每条 ONU 的 MAC 与在线状态）
+     * 与 {@code show pon-info}（每口在线/总数），按 PON 号挂到对应端口上。
+     *
+     * <p>整机没有板卡概念，卡片是按型号生成的（{@link OltInfoParser#buildHsgqBoard}），
+     * 这里只把这两条命令带回来的真实数据补进去；采不到就留空，页面显示「-」，
+     * 不会把没采到当成 0，也不会打乱按型号生成的端口。</p>
+     */
+    private void collectHsgq(OltBoard board, List<String> notes) {
+        int timeout = Math.min(commandTimeoutMs, 8000);
+        if (!enterHsgqConfigView(timeout)) {
+            notes.add("进不了配置视图（enable → config/configure），PON 口与 ONU 未采到");
+            return;
+        }
+        try {
+            String ponText = runCommand("show pon-info", timeout);
+            String onuText = runCommand("show onu-info all", timeout);
+            Map<Integer, int[]> counts = OltInfoParser.parseHsgqPonInfo(ponText);
+            Map<Integer, List<OltOnt>> onts = OltInfoParser.parseHsgqOnuInfo(onuText);
+            if (counts.isEmpty() && onts.isEmpty()) {
+                notes.add("ONU 数量未采到：show pon-info / show onu-info all 无有效回显");
+                return;
+            }
+            List<OltPort> ports = board.getPorts();
+            if (ports == null) {
+                ports = new ArrayList<>();
+                board.setPorts(ports);
+            }
+            for (OltPort port : ports) {
+                Integer ponNo = port.getPortNo();
+                if (ponNo == null) {
+                    continue;
+                }
+                int[] stat = counts.get(ponNo);
+                if (stat != null) {
+                    port.setOnuOnline(stat[0]);
+                    port.setOnuTotal(stat[1]);
+                }
+                // 明细优先用 onu-info 的列表；只有 pon-info 时留空，免得列表和计数对不上
+                List<OltOnt> list = onts.get(ponNo);
+                if (list != null) {
+                    port.setOnts(list);
+                }
+            }
+        } finally {
+            // 只退到特权视图：再 quit 一次就是 logout，设备会停下来问 y/n
+            runQuietly("quit", timeout);
+        }
     }
 
     /**

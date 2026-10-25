@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.util.List;
 
 /**
  * OLT 命令行采集入口。
@@ -62,6 +63,49 @@ public class OltTelnetService {
         try (OltCliSession session = OltCliSession.open(
                 device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
             return session.collect(withBoards);
+        }
+    }
+
+    /**
+     * 单条 ONT 详情查询（光信息 / 版本 / 注册历史）：登录一次、进 GPON 端口视图发命令。
+     * 页面上点「光信息」「注册历史」这类图标时才触发，不进定时采集。
+     */
+    public String queryOnt(OltDevice device, int slot, int port, int ontId, String subcommand) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        String out = doQueryOnt(device, charset, slot, port, ontId, subcommand);
+        // 「自动」编码：回显里出现替换符说明按 UTF-8 解错了，用 GBK 再连一次
+        if (OltCharset.isAuto(device.getCharset()) && out.indexOf('\uFFFD') >= 0) {
+            return doQueryOnt(device, OltCharset.fallback(), slot, port, ontId, subcommand);
+        }
+        return out;
+    }
+
+    private String doQueryOnt(OltDevice device, Charset charset, int slot, int port,
+                              int ontId, String subcommand) throws IOException {
+        try (OltCliSession session = OltCliSession.open(
+                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
+            return session.queryOntDetail(slot, port, ontId, subcommand);
+        }
+    }
+
+    /**
+     * 下发配置命令（DBA 模板增删这类写操作）：登录 → config 视图逐条执行。
+     * 「自动」编码时回显解出替换符就用备用编码重发一遍，避免中文错误提示读不懂。
+     */
+    public List<String> sendConfig(OltDevice device, List<String> commands) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        List<String> outputs = doSendConfig(device, charset, commands);
+        if (OltCharset.isAuto(device.getCharset())
+                && outputs.stream().anyMatch(out -> out != null && out.indexOf('\uFFFD') >= 0)) {
+            return doSendConfig(device, OltCharset.fallback(), commands);
+        }
+        return outputs;
+    }
+
+    private List<String> doSendConfig(OltDevice device, Charset charset, List<String> commands) throws IOException {
+        try (OltCliSession session = OltCliSession.open(
+                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
+            return session.sendConfigCommands(commands);
         }
     }
 

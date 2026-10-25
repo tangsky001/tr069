@@ -85,6 +85,9 @@ public class OltDevice {
     /** VLAN 快照（JSON）：VLAN 列表 + 上行口放通情况，随同步整体覆盖 */
     private String vlanJson;
 
+    /** DBA 模板与线路模板快照（JSON）：display dba-profile all / display ont-lineprofile gpon all */
+    private String templateJson;
+
     private String remark;
 
     @TableLogic
