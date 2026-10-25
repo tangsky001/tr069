@@ -5,10 +5,12 @@
 TR069 ACS (Java edition) — a CWMP/TR-069 based remote management platform for ONTs,
 built with Spring Boot 3 + Vue 2.
 
+- **Repositories: [Gitee](https://gitee.com/kangweft/tr069) (mainland China) ｜ [GitHub](https://github.com/tangsky001/tr069) (elsewhere)** — kept in sync, pick whichever your network reaches; if screenshots do not load in mainland China, read this file on Gitee
 - Deployment: **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
 - Adapted ONT models: **[doc/ADAPTED_MODELS.en.md](./doc/ADAPTED_MODELS.en.md)**
 - Frontend project: [web/](./web)
 - Screenshots: [doc/Display/](./doc/Display) (see "Screenshots" below)
+- Want to help? See **[section 11 Repository and contributing](#11-repository-and-contributing)**
 
 > The configuration delivery chain has been **largely reworked**: templates moved from
 > "file + step orchestration" to **intent templates stored in the database**, and delivery now
@@ -583,3 +585,42 @@ does not lose them.
 
 > The above is only an index. **Full API documentation (all admin `/api` endpoints, request/response
 > samples, error reason table) is in [`API.md`](API.md)**.
+
+---
+
+## 11. Repository and contributing
+
+Both repositories are kept in sync — pick the one your network reaches:
+
+| Region | Address |
+| --- | --- |
+| **China (mainland)** | https://gitee.com/kangweft/tr069 |
+| **Outside China** | https://github.com/tangsky001/tr069 |
+
+Screenshots live in [`doc/Display/`](./doc/Display); if they do not load in mainland China, read this
+README on **Gitee** instead (same content, no VPN needed). Relative image paths render fine on both
+platforms.
+
+**Contributions are very welcome.** This project was built command by command against real devices
+(Huawei MA5683T, assorted ONTs) and there is far more left than one person can chew through. Good
+places to start (full list in section 2):
+
+| Area | Detail |
+| --- | --- |
+| **OLT write operations** (#15) | Today only `display` / `show` is sent: command allowlist with parameter validation, dry-run before writing, output-based success judgement, operation auditing |
+| **Batch device ops** (#5) | Telnet switch, WiFi switch, disable SIP, config export/clone and more are largely placeholders; they need parameter paths filled in per vendor/model (through model mapping, never hardcoded) |
+| **Intent field expansion** (#8) | PPPoE account, SIP server/account, WiFi SSID/password and other intent fields |
+| **Model adaptation** | One row per adapted model in [doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md); records live in the portable library `configuration/tr069_tpl.pack` — send yours back so others do not have to redo it |
+| **Raw output samples** | `display` output differs subtly per vendor/version (spacing, completion prompts, paging prompts): **pasting raw text helps far more than a screenshot**, because parsing matches text and screenshots hide the spaces |
+
+How to join in: issues and PRs on either repository are seen; PRs are preferred on GitHub (Gitee is
+synced from it). When reporting a parsing bug, include the **raw text output** plus the device model
+and version; if you change command or parsing behaviour, please add a case under
+`src/test/java/com/tr069/acs/olt/telnet/` (the existing cases are built from real output samples).
+
+The remaining items (#7 legacy data migration, #10 alarms and finer permissions, #11 UI polish,
+#12 wake-up coverage for batch ops, #13 provisioning visibility, #14 CR credential rewrite
+compatibility) are open for anyone to pick up — just open an issue and say so.
+
+> This project is meant for managing **devices you are authorized to manage**: get permission before
+> pointing it at someone else's network or devices, and follow local laws and your operator's rules.
