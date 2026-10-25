@@ -3,6 +3,7 @@ package com.tr069.acs.olt.telnet;
 import com.tr069.acs.olt.entity.OltBoard;
 import com.tr069.acs.olt.entity.OltDevice;
 import com.tr069.acs.olt.model.OltDbaProfile;
+import com.tr069.acs.olt.model.OltGemport;
 import com.tr069.acs.olt.model.OltLineProfile;
 import com.tr069.acs.olt.model.OltServicePort;
 import com.tr069.acs.olt.model.OltSrvProfile;
@@ -436,6 +437,36 @@ public class OltCliSession implements Closeable {
                     .findFirst()
                     .ifPresent(d -> mergeLineProfile(profile, d));
         }
+        // 配置脚本兜底：部分版本 display ont-lineprofile profile-id 的明细回显认不出
+        // GEM 映射（页面映射关系一列全是「-」），而 current-configuration 的脚本行
+        // （tcont / gem add / gem mapping）字段含义固定不随版本变，缺什么从这补
+        String configScript = runCommand("display current-configuration section global-config", timeout);
+        if (OltInfoParser.looksUnsupported(configScript)) {
+            configScript = runCommand("display current-configuration", timeout);
+        }
+        List<OltLineProfile> configLineProfiles = configScript.isBlank()
+                ? new ArrayList<>() : OltInfoParser.parseLineProfiles(configScript);
+        for (OltLineProfile profile : lineProfiles) {
+            if (profile.getProfileId() == null) {
+                continue;
+            }
+            configLineProfiles.stream()
+                    .filter(c -> profile.getProfileId().equals(c.getProfileId()))
+                    .findFirst()
+                    .ifPresent(c -> mergeLineProfileFromConfig(profile, c));
+        }
+        // 概要命令连一条模板都没认出来（回显格式又变了）时，脚本里的就是全部线路模板
+        for (OltLineProfile fromConfig : configLineProfiles) {
+            Integer id = fromConfig.getProfileId();
+            if (id == null || id == 0 || fromConfig.getName() == null) {
+                continue;
+            }
+            boolean exists = lineProfiles.stream().anyMatch(p -> id.equals(p.getProfileId()));
+            if (!exists) {
+                fromConfig.setType(lineType);
+                lineProfiles.add(fromConfig);
+            }
+        }
         // 业务流与 ONT 能力模板同在 config 视图下认，顺这两条一起采（采不到就留空）
         // service-port 主用配置脚本段：字段含义固定（表格回显各版本列序不一，端口列老对不上）
         List<OltServicePort> servicePorts = OltInfoParser.parseServicePortsFromConfig(
@@ -467,6 +498,35 @@ public class OltCliSession implements Closeable {
                     .findFirst()
                     .ifPresent(d -> mergeSrvProfile(profile, d));
         }
+        // 配置脚本兜底：all 概要表行没认出来（回显格式变了）时，脚本里的
+        // ont-srvprofile 行就是全部能力模板；已有的补齐网口/电话口数量与名字
+        for (OltSrvProfile from : configScript.isBlank()
+                ? new ArrayList<OltSrvProfile>() : OltInfoParser.parseSrvProfiles(configScript)) {
+            if (from.getProfileId() == null) {
+                continue;
+            }
+            OltSrvProfile target = null;
+            for (OltSrvProfile p : srvProfiles) {
+                if (from.getProfileId().equals(p.getProfileId())) {
+                    target = p;
+                    break;
+                }
+            }
+            if (target == null) {
+                target = from;
+                srvProfiles.add(from);
+            }
+            target.setPonType(srvType);
+            if (target.getPotsPorts() == null) {
+                target.setPotsPorts(from.getPotsPorts());
+            }
+            if (target.getEthPorts() == null) {
+                target.setEthPorts(from.getEthPorts());
+            }
+            if ((target.getName() == null || target.getName().isBlank()) && from.getName() != null) {
+                target.setName(from.getName());
+            }
+        }
         // TR069 服务器模板是独立的一类模板，ACS 地址与账号都在它上面
         List<OltTr069Profile> tr069Profiles = OltInfoParser.parseTr069Profiles(
                 runCommand("display ont tr069-server-profile all", timeout));
@@ -474,6 +534,10 @@ public class OltCliSession implements Closeable {
             // 有的版本不认 all，去掉再试（不支持也只是多一个来回）
             tr069Profiles = OltInfoParser.parseTr069Profiles(
                     runCommand("display ont tr069-server-profile", timeout));
+        }
+        if (tr069Profiles.isEmpty() && !configScript.isBlank()) {
+            // 脚本兜底：ont tr069-server-profile add profile-id ... url ... user ...
+            tr069Profiles = OltInfoParser.parseTr069Profiles(configScript);
         }
         List<OltTrafficTable> trafficTables = OltInfoParser.parseTrafficTables(
                 runCommand("display traffic table ip all", timeout));
@@ -513,6 +577,49 @@ public class OltCliSession implements Closeable {
         }
     }
 
+    /**
+     * 配置脚本补漏：明细回显缺 T-CONT / GEM 映射时，从 current-configuration
+     * 的脚本行（tcont / gem add / gem mapping）按模板 ID 对回补齐。
+     * 只补空缺，不覆盖明细回显里已经认出来的数据。
+     */
+    private void mergeLineProfileFromConfig(OltLineProfile target, OltLineProfile from) {
+        if ((target.getTconts() == null || target.getTconts().isEmpty())
+                && from.getTconts() != null && !from.getTconts().isEmpty()) {
+            target.setTconts(from.getTconts());
+            if (target.getTcontCount() == null) {
+                target.setTcontCount(from.getTconts().size());
+            }
+        }
+        if (from.getGemports() != null && !from.getGemports().isEmpty()) {
+            if (target.getGemports() == null || target.getGemports().isEmpty()) {
+                target.setGemports(from.getGemports());
+            } else {
+                for (OltGemport configGem : from.getGemports()) {
+                    if (configGem.getGemportId() == null) {
+                        continue;
+                    }
+                    target.getGemports().stream()
+                            .filter(g -> configGem.getGemportId().equals(g.getGemportId()))
+                            .findFirst()
+                            .ifPresent(existing -> {
+                                if (existing.getTcontId() == null) {
+                                    existing.setTcontId(configGem.getTcontId());
+                                }
+                                if (existing.getMappingId() == null) {
+                                    existing.setMappingId(configGem.getMappingId());
+                                }
+                                if (existing.getVlan() == null || existing.getVlan().isBlank()) {
+                                    existing.setVlan(configGem.getVlan());
+                                }
+                            });
+                }
+            }
+            if (target.getGemportCount() == null && !target.getGemports().isEmpty()) {
+                target.setGemportCount(target.getGemports().size());
+            }
+        }
+    }
+
     /** 能力模板概要只有 ID / 名字：ont-port 数量、能力项以 profile-id 详情为准 */
     private void mergeSrvProfile(OltSrvProfile target, OltSrvProfile detail) {
         if (detail.getEthPorts() != null) {
@@ -549,21 +656,101 @@ public class OltCliSession implements Closeable {
     }
 
     /**
-     * 单条 ONT 详情查询（光信息 / 版本 / 注册历史），返回原始回显。
+     * 单条 ONT 详情查询（详情 / 光信息 / 版本 / 注册历史），返回原始回显。
      *
-     * <p>这类命令只能在 GPON 端口视图下发：config 视图 → {@code interface gpon 0/<槽位>}
-     * → {@code display ont <子命令> <端口> <ONT ID>}，查完退回两级（端口视图 → config → enable）。
-     * 每次查询都新开一次登录，按需点才触发，不进轮询采集。</p>
+     * <p>详情（info）在 config 视图用全坐标写法：{@code display ont info 0 <槽位> <端口> <ONT ID>}，
+     * 也就是现场习惯的 {@code display ont info 0 1 0 1}（机框 0、槽位 1、端口 0、ONT 1）；
+     * 光信息 / 版本 / 注册历史按现场习惯进 GPON 端口视图：
+     * {@code interface gpon 0/<槽位>} → {@code display ont <子命令> <端口> <ONT ID>}，
+     * 命令报错时两种写法互为兜底。每次查询都新开一次登录，按需点才触发，不进轮询采集。</p>
      */
     public String queryOntDetail(int slot, int port, int ontId, String subcommand) {
         prepareTerminal();
-        enterConfigView(commandTimeoutMs);
-        runCommand("interface gpon 0/" + slot, commandTimeoutMs);
-        String command = "display ont " + subcommand + " " + port + " " + ontId;
-        String out = runCommand(command, commandTimeoutMs);
-        runQuietly("quit", commandTimeoutMs);
-        runQuietly("quit", commandTimeoutMs);
+        int timeout = commandTimeoutMs;
+        if (!enterConfigView(timeout)) {
+            // config 都进不去（权限不够之类）：直接试端口视图
+            runCommand("interface gpon 0/" + slot, timeout);
+            String out = runCommand("display ont " + subcommand + " " + port + " " + ontId, timeout);
+            runQuietly("quit", timeout);
+            return out;
+        }
+        String fullCoordinates = "display ont " + subcommand + " 0 " + slot + " " + port + " " + ontId;
+        String portView = "display ont " + subcommand + " " + port + " " + ontId;
+        String out;
+        if ("capability".equals(subcommand)) {
+            // 硬件能力现场写法：display ont capability 0/<槽位> <端口> <ONT ID>（config 视图，注意是 0/1 不是 0 1）
+            out = runCommand("display ont " + subcommand + " 0/" + slot + " " + port + " " + ontId, timeout);
+            if (OltInfoParser.looksUnsupported(out)) {
+                runCommand("interface gpon 0/" + slot, timeout);
+                out = runCommand(portView, timeout);
+                runQuietly("quit", timeout);
+            }
+        } else if ("info".equals(subcommand)) {
+            out = runCommand(fullCoordinates, timeout);
+            if (OltInfoParser.looksUnsupported(out)) {
+                runCommand("interface gpon 0/" + slot, timeout);
+                out = runCommand(portView, timeout);
+                runQuietly("quit", timeout);
+            }
+        } else {
+            // 光信息 / 版本 / 注册历史：现场是在端口视图敲的
+            runCommand("interface gpon 0/" + slot, timeout);
+            out = runCommand(portView, timeout);
+            if (OltInfoParser.looksUnsupported(out)) {
+                runQuietly("quit", timeout);
+                out = runCommand(fullCoordinates, timeout);
+            } else {
+                runQuietly("quit", timeout);
+            }
+        }
+        runQuietly("quit", timeout);
         return out;
+    }
+
+    /**
+     * 单条 ONT 的配置摘录 + 业务流表格 + 详情，返回 {配置摘录, 业务流回显, 详情回显}。
+     *
+     * <p>配置摘录 {@code display current-configuration ont 0/<槽位>/<端口> <ONT ID>} 带回
+     * 授权行（{@code ont add ... sn-auth "..." ont-lineprofile-id 100 ont-srvprofile-id 100}）；
+     * 业务流用现场习惯的 {@code display service-port port 0/<槽位>/<端口> ont <ONT ID>}，
+     * 表格回显的 INDEX / VLAN ID / VLAN ATTR / VCI / FLOW PARA / STATE 对应页面上的
+     * 业务流ID / OLT侧VLAN / VLAN类型 / GEM Port / 用户侧VLAN / 状态；
+     * 详情 {@code display ont info 0 <槽位> <端口> <ONT ID>} 里的 ONT IP 是管理地址，
+     * 点序列号时顺带取回来填「管理IP」列。
+     * 老版本不认 {@code ont} 过滤时退回整口查询，由上层按 VPI（ONT ID）筛。</p>
+     */
+    public String[] queryOntConfigAndServicePorts(int slot, int port, int ontId) {
+        prepareTerminal();
+        int timeout = commandTimeoutMs;
+        if (!enterConfigView(timeout)) {
+            throw new IllegalStateException("进不了 config 视图，查不到 ONT 配置");
+        }
+        String config = runCommand("display current-configuration ont 0/" + slot + "/" + port + " " + ontId, timeout);
+        String ports = runServicePortQuery(slot, port, ontId, timeout);
+        String info = runCommand("display ont info 0 " + slot + " " + port + " " + ontId, timeout);
+        return new String[]{config, ports, info};
+    }
+
+    /**
+     * 单条 ONT 的业务流表格：{@code display service-port port 0/<槽位>/<端口> ont <ONT ID>}。
+     *
+     * <p>老版本不认 {@code ont} 过滤时退回整口查询，由上层按 VPI（ONT ID）筛。</p>
+     */
+    public String queryServicePorts(int slot, int port, int ontId) {
+        prepareTerminal();
+        int timeout = commandTimeoutMs;
+        if (!enterConfigView(timeout)) {
+            throw new IllegalStateException("进不了 config 视图，查不到业务流");
+        }
+        return runServicePortQuery(slot, port, ontId, timeout);
+    }
+
+    private String runServicePortQuery(int slot, int port, int ontId, int timeout) {
+        String ports = runCommand("display service-port port 0/" + slot + "/" + port + " ont " + ontId, timeout);
+        if (OltInfoParser.looksUnsupported(ports) || OltInfoParser.parseServicePorts(ports).isEmpty()) {
+            ports = runCommand("display service-port port 0/" + slot + "/" + port, timeout);
+        }
+        return ports;
     }
 
     /**

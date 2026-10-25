@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div v-if="!srvProfiles.length && !trafficTables.length && !servicePorts.length" class="olt-empty">
+    <div v-if="!srvProfiles.length && !trafficTables.length" class="olt-empty">
       {{ emptyText }}
     </div>
 
@@ -134,43 +134,18 @@
           />
         </span>
       </div>
-
-      <!-- 业务流明细：服务模板没有直接给，这里按 service-port 单独列出 -->
-      <template v-if="servicePorts.length">
-        <div class="svc-title svc-title-line">
-          业务流明细（display service-port all）
-          <el-tooltip content="一条流就是「某个 PON 口的某台 ONT，VLAN 走哪个 GEM port 上行」" placement="top">
-            <i class="el-icon-info svc-info" />
-          </el-tooltip>
-        </div>
-        <el-table :data="servicePorts" size="small" border>
-          <el-table-column label="#索引" prop="index" width="80" align="center" />
-          <el-table-column label="ONT ID" width="90" align="center">
-            <template slot-scope="{ row }">{{ row.ontId == null ? '-' : row.ontId }}</template>
-          </el-table-column>
-          <el-table-column label="用户侧 VLAN" width="110" align="center">
-            <template slot-scope="{ row }">{{ row.vlanId == null ? '-' : row.vlanId }}</template>
-          </el-table-column>
-          <el-table-column label="VLAN 属性" prop="vlanAttr" width="100" align="center" />
-          <el-table-column label="GEM Port" width="100" align="center">
-            <template slot-scope="{ row }">{{ row.gemport == null ? '-' : row.gemport }}</template>
-          </el-table-column>
-          <el-table-column label="端口 (F/S/P)" width="120" align="center">
-            <template slot-scope="{ row }">{{ row.iface || '-' }}</template>
-          </el-table-column>
-        </el-table>
-      </template>
     </template>
   </div>
 </template>
 
 <script>
 /**
- * 业务 / TR069 / 流量模板面板（对齐网管的三张表）。
+ * 业务 / TR069 / 流量模板面板（对齐网管的表）。
  *
  * ONT 业务模板来自 display ont-srvprofile gpon all（模板 ID、名称、网口/电话口上限）；
  * TR069 管理模板是里面带 TR069/ACS 参数的那几条，ACS 地址与账号从参数里挑出来；
  * 流量限速模板来自 display traffic table ip all（CIR 承诺 / PIR 峰值）。
+ * 业务流明细不在这里展示（映射关系在 DBA / 线路模板面板里）。
  * 「新增 / 删除」是下发动作的占位，下发能力稍后接入。
  */
 export default {
@@ -191,14 +166,9 @@ export default {
       type: Array,
       default: () => []
     },
-    /** display service-port all 解析结果，业务流明细 */
-    servicePorts: {
-      type: Array,
-      default: () => []
-    },
     emptyText: {
       type: String,
-      default: '尚未采集到模板。同步时会跑 display ont-srvprofile gpon all、display traffic table ip all 与 display service-port all。'
+      default: '尚未采集到模板。同步时会跑 display ont-srvprofile gpon all 与 display traffic table ip all。'
     }
   },
   data() {

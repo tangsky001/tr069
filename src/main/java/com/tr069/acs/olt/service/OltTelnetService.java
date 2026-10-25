@@ -89,6 +89,48 @@ public class OltTelnetService {
     }
 
     /**
+     * 单条 ONT 的配置摘录 + 业务流表格 + 详情，返回 {配置摘录, 业务流回显, 详情回显}，点序列号时触发。
+     */
+    public String[] queryOntConfigAndServicePorts(OltDevice device, int slot, int port, int ontId) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        String[] outs = doQueryOntConfig(device, charset, slot, port, ontId);
+        if (OltCharset.isAuto(device.getCharset())
+                && (outs[0].indexOf('\uFFFD') >= 0 || outs[1].indexOf('\uFFFD') >= 0
+                        || outs[2].indexOf('\uFFFD') >= 0)) {
+            return doQueryOntConfig(device, OltCharset.fallback(), slot, port, ontId);
+        }
+        return outs;
+    }
+
+    private String[] doQueryOntConfig(OltDevice device, Charset charset, int slot, int port, int ontId)
+            throws IOException {
+        try (OltCliSession session = OltCliSession.open(
+                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
+            return session.queryOntConfigAndServicePorts(slot, port, ontId);
+        }
+    }
+
+    /**
+     * 单条 ONT 的业务流表格（display service-port port 0/x/x ont n），点业务流列「查看」时触发。
+     */
+    public String queryOntServicePorts(OltDevice device, int slot, int port, int ontId) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        String out = doQueryOntServicePorts(device, charset, slot, port, ontId);
+        if (OltCharset.isAuto(device.getCharset()) && out.indexOf('\uFFFD') >= 0) {
+            return doQueryOntServicePorts(device, OltCharset.fallback(), slot, port, ontId);
+        }
+        return out;
+    }
+
+    private String doQueryOntServicePorts(OltDevice device, Charset charset, int slot, int port, int ontId)
+            throws IOException {
+        try (OltCliSession session = OltCliSession.open(
+                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
+            return session.queryServicePorts(slot, port, ontId);
+        }
+    }
+
+    /**
      * 下发配置命令（DBA 模板增删这类写操作）：登录 → config 视图逐条执行。
      * 「自动」编码时回显解出替换符就用备用编码重发一遍，避免中文错误提示读不懂。
      */

@@ -16,7 +16,9 @@ import com.tr069.acs.olt.mapper.OltSyncRecordMapper;
 import com.tr069.acs.olt.model.OltDetail;
 import com.tr069.acs.olt.model.OltDbaProfileRequest;
 import com.tr069.acs.olt.model.OltOntQueryRequest;
+import com.tr069.acs.olt.model.OltOntInfo;
 import com.tr069.acs.olt.model.OltOntQueryResult;
+import com.tr069.acs.olt.model.OltServicePort;
 import com.tr069.acs.olt.model.OltDeviceView;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltSaveRequest;
@@ -33,6 +35,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -435,11 +438,15 @@ public class OltService {
     // ---------------------------------------------------------------- 内部
 
     /** 单条 ONT 按需查询的动作 → 实际命令子串 */
-    private static final Map<String, String> ONT_QUERY_ACTIONS =
-            Map.of("optical", "optical-info", "version", "version", "register", "register-info");
+    private static final Map<String, String> ONT_QUERY_ACTIONS = Map.of(
+            "optical", "optical-info",
+            "version", "version",
+            "register", "register-info",
+            "info", "info",
+            "capability", "capability");
 
     /**
-     * 单条 ONT 按需查询：光信息 / 版本 / 注册历史。
+     * 单条 ONT 按需查询：配置摘录 / 详情 / 光信息 / 版本 / 注册历史。
      *
      * <p>这类明细几百条 ONT 逐个采不现实，只在页面上点某条的图标时按需登录查一次，
      * 回显块状解析后连原始回显一起返回；查询动作写一条采集记录留档。</p>
@@ -447,30 +454,111 @@ public class OltService {
     public OltOntQueryResult queryOnt(Long id, OltOntQueryRequest request, String operator) {
         OltDevice device = requireDevice(id);
         String action = request == null || request.getAction() == null ? "" : request.getAction().trim();
-        String subcommand = ONT_QUERY_ACTIONS.get(action);
-        if (subcommand == null) {
-            throw new IllegalArgumentException("不支持的查询类型：" + action);
-        }
-        if (request.getSlotNo() == null || request.getPortNo() == null || request.getOntId() == null) {
+        if (request == null || request.getSlotNo() == null
+                || request.getPortNo() == null || request.getOntId() == null) {
             throw new IllegalArgumentException("槽位、端口和 ONT ID 都不能为空");
         }
         long start = System.currentTimeMillis();
-        String command = "display ont " + subcommand
-                + " " + request.getPortNo() + " " + request.getOntId();
         try {
-            String raw = telnetService.queryOnt(device,
-                    request.getSlotNo(), request.getPortNo(), request.getOntId(), subcommand);
-            OltOntQueryResult result = new OltOntQueryResult();
-            result.setCommand(command);
-            result.setRaw(raw);
-            result.setBlocks(OltInfoParser.parseOntKeyValueBlocks(raw));
+            OltOntQueryResult result;
+            if ("config".equals(action)) {
+                // 点序列号一次会话三条命令：配置摘录（授权行）+ 业务流表格 + 详情（管理 IP 在这里）
+                String command = "display current-configuration ont 0/" + request.getSlotNo() + "/"
+                        + request.getPortNo() + " " + request.getOntId()
+                        + "；display service-port port 0/" + request.getSlotNo() + "/"
+                        + request.getPortNo() + " ont " + request.getOntId()
+                        + "；display ont info 0 " + request.getSlotNo() + " "
+                        + request.getPortNo() + " " + request.getOntId();
+                String[] outs = telnetService.queryOntConfigAndServicePorts(device,
+                        request.getSlotNo(), request.getPortNo(), request.getOntId());
+                String configRaw = outs[0];
+                String portsRaw = outs[1];
+                String infoRaw = outs[2];
+                // 业务流优先表格回显（带 VLAN 属性 / 用户侧 VLAN / 状态），
+                // 表格解不出再退回配置摘录里的 service-port 行；老版本整口查询按 VPI 筛本 ONT
+                List<OltServicePort> servicePorts = new ArrayList<>(OltInfoParser.parseServicePorts(portsRaw));
+                if (servicePorts.isEmpty()) {
+                    servicePorts = OltInfoParser.parseServicePortsFromConfig(configRaw);
+                }
+                servicePorts.removeIf(port -> port.getOntId() != null
+                        && !request.getOntId().equals(port.getOntId()));
+                servicePorts.sort(Comparator.comparing(port -> port.getIndex() == null ? 0 : port.getIndex()));
+                // 授权行给 SN/模板/描述，详情补管理 IP 等整板表没有的字段
+                OltOntInfo ontInfo = OltInfoParser.parseOntBindInfo(configRaw);
+                OltOntInfo detail = OltInfoParser.parseOntInfoDetail(infoRaw);
+                if (ontInfo.getIp() == null) {
+                    ontInfo.setIp(detail.getIp());
+                }
+                if (ontInfo.getSn() == null) {
+                    ontInfo.setSn(detail.getSn());
+                }
+                if (ontInfo.getDesc() == null) {
+                    ontInfo.setDesc(detail.getDesc());
+                }
+                result = new OltOntQueryResult();
+                result.setCommand(command);
+                result.setRaw(configRaw);
+                result.setOntInfo(ontInfo);
+                result.setServicePorts(servicePorts);
+            } else if ("service-port".equals(action)) {
+                // 业务流列「查看」：只查业务流表格，不带配置摘录
+                String command = "display service-port port 0/" + request.getSlotNo() + "/"
+                        + request.getPortNo() + " ont " + request.getOntId();
+                String raw = telnetService.queryOntServicePorts(device,
+                        request.getSlotNo(), request.getPortNo(), request.getOntId());
+                List<OltServicePort> servicePorts = new ArrayList<>(OltInfoParser.parseServicePorts(raw));
+                if (servicePorts.isEmpty()) {
+                    servicePorts = OltInfoParser.parseServicePortsFromConfig(raw);
+                }
+                servicePorts.removeIf(port -> port.getOntId() != null
+                        && !request.getOntId().equals(port.getOntId()));
+                servicePorts.sort(Comparator.comparing(port -> port.getIndex() == null ? 0 : port.getIndex()));
+                result = new OltOntQueryResult();
+                result.setCommand(command);
+                result.setRaw(raw);
+                result.setServicePorts(servicePorts);
+            } else {
+                String subcommand = ONT_QUERY_ACTIONS.get(action);
+                if (subcommand == null) {
+                    throw new IllegalArgumentException("不支持的查询类型：" + action);
+                }
+                // info 用全坐标（display ont info 0 1 0 1）；capability 是 0/<槽位> <端口> <ONT ID>；
+                // 光信息/版本/注册历史现场是在端口视图敲的
+                String command;
+                if ("info".equals(action)) {
+                    command = "display ont info 0 " + request.getSlotNo()
+                            + " " + request.getPortNo() + " " + request.getOntId();
+                } else if ("capability".equals(action)) {
+                    command = "display ont capability 0/" + request.getSlotNo()
+                            + " " + request.getPortNo() + " " + request.getOntId();
+                } else {
+                    command = "display ont " + subcommand + " "
+                            + request.getPortNo() + " " + request.getOntId();
+                }
+                String raw = telnetService.queryOnt(device,
+                        request.getSlotNo(), request.getPortNo(), request.getOntId(), subcommand);
+                result = new OltOntQueryResult();
+                result.setCommand(command);
+                result.setRaw(raw);
+                List<LinkedHashMap<String, String>> blocks = OltInfoParser.parseOntKeyValueBlocks(raw);
+                // optical-info 这类是表格式回显（一行列名 + 一行数据），key-value 解不出时按表格切
+                if (blocks.isEmpty()) {
+                    blocks = OltInfoParser.parseOntTableBlocks(raw);
+                }
+                result.setBlocks(blocks);
+                // 详情里有线路/业务模板、IP、掉线原因这些整板表给不了的字段，单独结构化一份
+                if ("info".equals(action)) {
+                    result.setOntInfo(OltInfoParser.parseOntInfoDetail(raw));
+                }
+            }
             saveRecord(id, OltSyncRecord.ACTION_TEST, true,
-                    "ONT查询：" + command, raw, System.currentTimeMillis() - start, operator);
+                    "ONT查询：" + result.getCommand(), result.getRaw(),
+                    System.currentTimeMillis() - start, operator);
             return result;
         } catch (Exception e) {
             String message = rootMessage(e);
             saveRecord(id, OltSyncRecord.ACTION_TEST, false,
-                    "ONT查询失败：" + command + "：" + message, null,
+                    "ONT查询失败：" + action + "：" + message, null,
                     System.currentTimeMillis() - start, operator);
             throw new IllegalStateException("ONT 查询失败：" + message, e);
         }

@@ -17,6 +17,12 @@ public class OltServicePort {
     /** 用户侧 VLAN ID */
     private Integer vlanId;
 
+    /** 用户侧 VLAN（GPON 表格回显 FLOW TYPE=vlan 时的 FLOW PARA，配置脚本里的 user-vlan） */
+    private Integer userVlan;
+
+    /** 流状态，表格回显最后一列：up / down */
+    private String state;
+
     /** VLAN 属性，回显里的第二列（常见 common / smart / qinq） */
     private String vlanAttr;
 

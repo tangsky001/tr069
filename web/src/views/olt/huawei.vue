@@ -104,7 +104,6 @@
             :srv-profiles="srvProfiles"
             :tr069-profiles="tr069Profiles"
             :traffic-tables="trafficTables"
-            :service-ports="servicePorts"
           />
         </el-tab-pane>
 
@@ -116,8 +115,9 @@
             </div>
             <div>
               列表数据来自每块业务板一条 <code>display ont info 0 &lt;槽位&gt; all</code>；
-              行上的「光信息 / 版本 / 注册历史」图标点开时才登录设备查一次
-              （<code>display ont optical-info / version / register-info</code>）。
+              行上的「详情 / 光信息 / 版本 / 注册历史」图标点开时才登录设备查一次
+              （<code>display ont info / optical-info / version / register-info</code>）；
+              点 SN 或「线路/业务模板」列还能看到这条 ONT 的 IP、绑定的模板与业务流。
             </div>
           </div>
 

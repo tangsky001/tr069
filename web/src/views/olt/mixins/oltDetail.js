@@ -152,10 +152,6 @@ export const oltDetailMixin = {
     lineProfiles() {
       return (this.templateInfo && this.templateInfo.lineProfiles) || []
     },
-    /** 业务流：display service-port all（ONT 用户侧 VLAN ↔ 端口 ↔ GEM port） */
-    servicePorts() {
-      return (this.templateInfo && this.templateInfo.servicePorts) || []
-    },
     /** ONT 能力模板：display ont-srvprofile gpon all（含 TR069 管理参数） */
     srvProfiles() {
       return (this.templateInfo && this.templateInfo.srvProfiles) || []

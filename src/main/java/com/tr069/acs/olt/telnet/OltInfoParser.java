@@ -10,6 +10,7 @@ import com.tr069.acs.olt.model.OltSrvProfile;
 import com.tr069.acs.olt.model.OltTrafficTable;
 import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltOnt;
+import com.tr069.acs.olt.model.OltOntInfo;
 import com.tr069.acs.olt.model.OltTcont;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltIpInterface;
@@ -18,6 +19,7 @@ import com.tr069.acs.olt.model.OltStaticRoute;
 import com.tr069.acs.olt.model.OltVlan;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1521,6 +1523,7 @@ public final class OltInfoParser {
             port.setPortNo(Integer.parseInt(matcher.group(5)));
             port.setOntId(Integer.parseInt(matcher.group(6)));
             port.setGemport(Integer.parseInt(matcher.group(7)));
+            port.setUserVlan(toInt(matcher.group(8)));
             ports.add(port);
         }
         return ports;
@@ -1604,6 +1607,15 @@ public final class OltInfoParser {
             "^\\s*(\\d{1,4})\\s+(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})"
                     + "(?:\\s+(\\d{1,4}))?(?:\\s+(\\d{1,4}))?");
 
+    /**
+     * 业务流表格整行：INDEX VLAN-ID VLAN-ATTR PORT-TYPE F/S/P VPI VCI FLOW-TYPE FLOW-PARA RX TX STATE。
+     * VPI 是 ONT ID、VCI 是 GEM index（回显 Note 里写明），FLOW TYPE=vlan 时 FLOW PARA
+     * 就是用户侧 VLAN，行尾 STATE 是 up/down。
+     */
+    private static final Pattern SERVICE_PORT_FULL_ROW = Pattern.compile(
+            "^\\s*(\\d{1,4})\\s+(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})"
+                    + "\\s+(\\d{1,3})\\s+(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+\\S+\\s+\\S+\\s+([Uu]p|[Dd]own)\\b.*$");
+
     public static List<OltServicePort> parseServicePorts(String text) {
         List<OltServicePort> ports = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -1614,20 +1626,38 @@ public final class OltInfoParser {
             if (line.isEmpty() || line.startsWith("-") || line.contains("INDEX") || line.contains("display")) {
                 continue;
             }
-            Matcher row = SERVICE_PORT_ROW.matcher(line);
-            if (!row.find()) {
-                continue;
-            }
             OltServicePort port = new OltServicePort();
-            port.setIndex(Integer.parseInt(row.group(1)));
-            port.setVlanId(Integer.parseInt(row.group(2)));
-            port.setVlanAttr(row.group(3));
-            port.setPortType(row.group(4));
-            port.setFrameNo(Integer.parseInt(row.group(5)));
-            port.setSlotNo(Integer.parseInt(row.group(6)));
-            port.setPortNo(Integer.parseInt(row.group(7)));
-            port.setOntId(toInt(row.group(8)));
-            port.setGemport(toInt(row.group(9)));
+            Matcher full = SERVICE_PORT_FULL_ROW.matcher(line);
+            if (full.matches()) {
+                port.setIndex(Integer.parseInt(full.group(1)));
+                port.setVlanId(Integer.parseInt(full.group(2)));
+                port.setVlanAttr(full.group(3));
+                port.setPortType(full.group(4));
+                port.setFrameNo(Integer.parseInt(full.group(5)));
+                port.setSlotNo(Integer.parseInt(full.group(6)));
+                port.setPortNo(Integer.parseInt(full.group(7)));
+                port.setOntId(Integer.parseInt(full.group(8)));
+                port.setGemport(Integer.parseInt(full.group(9)));
+                // FLOW TYPE=vlan 时 FLOW PARA 就是用户侧 VLAN
+                if ("vlan".equalsIgnoreCase(full.group(10))) {
+                    port.setUserVlan(toInt(full.group(11)));
+                }
+                port.setState(full.group(12).toLowerCase());
+            } else {
+                Matcher row = SERVICE_PORT_ROW.matcher(line);
+                if (!row.find()) {
+                    continue;
+                }
+                port.setIndex(Integer.parseInt(row.group(1)));
+                port.setVlanId(Integer.parseInt(row.group(2)));
+                port.setVlanAttr(row.group(3));
+                port.setPortType(row.group(4));
+                port.setFrameNo(Integer.parseInt(row.group(5)));
+                port.setSlotNo(Integer.parseInt(row.group(6)));
+                port.setPortNo(Integer.parseInt(row.group(7)));
+                port.setOntId(toInt(row.group(8)));
+                port.setGemport(toInt(row.group(9)));
+            }
             ports.add(port);
         }
         return ports;
@@ -1648,6 +1678,13 @@ public final class OltInfoParser {
     private static final Pattern SRV_POTS_PORTS = Pattern.compile("(?i)pots\\s+adaptive\\s+(\\d{1,3})");
 
     private static final Pattern SRV_ETH_PORTS = Pattern.compile("(?i)eth\\s+adaptive\\s+(\\d{1,3})");
+
+    /**
+     * {@code display ont-srvprofile gpon all} 的概要表行：{@code 100  100  0}——
+     * ID / 名字 / 绑定次数（绑定次数列有的版本没有，可有可无）。
+     */
+    private static final Pattern SRV_PROFILE_ROW = Pattern.compile(
+            "^\\s*(\\d{1,4})\\s+([A-Za-z0-9_.\\-]+)\\s*(\\d{1,8})?\\s*$");
 
     public static List<OltSrvProfile> parseSrvProfiles(String text) {
         List<OltSrvProfile> profiles = new ArrayList<>();
@@ -1684,6 +1721,27 @@ public final class OltInfoParser {
                 }
                 if (hasEth) {
                     current.setEthPorts(Integer.parseInt(eth.group(1)));
+                }
+                continue;
+            }
+            // 概要表行（display all 的表格）：ID / 名字 / 绑定次数
+            Matcher summary = SRV_PROFILE_ROW.matcher(line);
+            if (summary.matches()) {
+                Integer id = Integer.parseInt(summary.group(1));
+                OltSrvProfile existing = profiles.stream()
+                        .filter(p -> id.equals(p.getProfileId()))
+                        .findFirst()
+                        .orElse(null);
+                if (existing == null) {
+                    current = new OltSrvProfile();
+                    current.setProfileId(id);
+                    current.setName(summary.group(2));
+                    profiles.add(current);
+                } else {
+                    current = existing;
+                    if (existing.getName() == null || existing.getName().isBlank()) {
+                        existing.setName(summary.group(2));
+                    }
                 }
                 continue;
             }
@@ -1788,7 +1846,8 @@ public final class OltInfoParser {
      * 命令回显行与提示符行不进结果。</p>
      */
     private static final Pattern ONT_KV_ROW = Pattern.compile(
-            "^([^:：]{2,30})[:：]\\s*(.*)$");
+            // 标签最长给到 64：英文回显的标签会被设备填到 40 多列才放冒号（如 Supply voltage alarm threshold(V)）
+            "^([^:：]{2,64})[:：]\\s*(.*)$");
 
     public static List<LinkedHashMap<String, String>> parseOntKeyValueBlocks(String text) {
         List<LinkedHashMap<String, String>> blocks = new ArrayList<>();
@@ -1796,6 +1855,10 @@ public final class OltInfoParser {
             return blocks;
         }
         LinkedHashMap<String, String> current = null;
+        // 没冒号的行暂存：可能是折断的标签前半段（"ONT optical module power" +
+        // 下一行 "control capability: ..."），也可能是值的续行（"the TX and RX power can be"
+        // + 下一行 "controlled separately"），等下一行到了再判断归谁。
+        StringBuilder carry = new StringBuilder();
         for (String rawLine : text.split("\\R")) {
             String line = rawLine.trim();
             if (line.isEmpty() || line.startsWith("$ ") || line.contains("display ont ")
@@ -1804,11 +1867,16 @@ public final class OltInfoParser {
             }
             // 分隔线结束当前块：register-info 用它分段，optical-info / version 的头尾各一条
             if (line.matches("-{8,}\\s*")) {
+                flushCarry(current, carry);
                 current = null;
                 continue;
             }
             Matcher row = ONT_KV_ROW.matcher(line);
             if (!row.matches()) {
+                if (carry.length() > 0) {
+                    carry.append(' ');
+                }
+                carry.append(line);
                 continue;
             }
             String key = row.group(1).trim();
@@ -1819,10 +1887,189 @@ public final class OltInfoParser {
                 current = new LinkedHashMap<>();
                 blocks.add(current);
             }
+            if (carry.length() > 0) {
+                String fragment = carry.toString().trim();
+                carry.setLength(0);
+                String lastKey = lastKeyOf(current);
+                if (lastKey == null) {
+                    // 块的第一行就是标签前半段：拼给当前键
+                    key = fragment + ' ' + key;
+                } else if (current.get(lastKey).isEmpty()) {
+                    // 上一条键的值是空的：暂存行是它的值
+                    current.put(lastKey, fragment);
+                } else if (current.get(lastKey).endsWith(fragment)) {
+                    // 已经拼过，别重复
+                } else {
+                    // 上一条键的值有内容：暂存行要么是值的续行（贴回去），
+                    // 要么是下一条键的前半段（拼回键名）。值续行的特征是当前键值非空且
+                    // 暂存行以小写字母开头（英文回显的标签都以大写/数字开头）
+                    if (Character.isLowerCase(fragment.charAt(0))) {
+                        current.put(lastKey, current.get(lastKey) + ' ' + fragment);
+                    } else {
+                        key = fragment + ' ' + key;
+                    }
+                }
+            }
             current.put(key, row.group(2).trim());
         }
+        flushCarry(current, carry);
         // 空块（只有分隔线没内容）别返回去
         blocks.removeIf(Map::isEmpty);
+        return blocks;
+    }
+
+    /** LinkedHashMap 最后插入的键（保持回显顺序用） */
+    private static String lastKeyOf(LinkedHashMap<String, String> map) {
+        String last = null;
+        for (String key : map.keySet()) {
+            last = key;
+        }
+        return last;
+    }
+
+    /** 块结束（分隔线/回显结束）时把暂存的续行归给块里最后一条空值键 */
+    private static void flushCarry(LinkedHashMap<String, String> current, StringBuilder carry) {
+        if (current == null || current.isEmpty() || carry.length() == 0) {
+            carry.setLength(0);
+            return;
+        }
+        String lastKey = lastKeyOf(current);
+        if (current.get(lastKey).isEmpty()) {
+            current.put(lastKey, carry.toString().trim());
+        }
+        carry.setLength(0);
+    }
+
+    /**
+     * 单条 ONT 详情里的关键字段：{@code display ont info 0 <槽位> <端口> <ONT ID>}。
+     *
+     * <p>整板的 {@code all} 表只给 ID / SN / 在线状态，线路模板、业务模板、IP、
+     * 最后一次掉线原因只有详单里有，这里按「标签 : 值」逐项挑出来给页面直接显示。
+     * 同一台设备中英文回显都见过（language-mode 切换），标签两套都认，
+     * 以现场真实回显为准：SN / Line profile ID / Service profile ID / Last down cause…。</p>
+     */
+    public static OltOntInfo parseOntInfoDetail(String text) {
+        OltOntInfo info = new OltOntInfo();
+        if (text == null || text.isBlank()) {
+            return info;
+        }
+        info.setOntId(toInt(ontField(text, "ONT-ID", "ONT编号", "ONT ID")));
+        info.setSn(ontField(text, "SN", "序列号"));
+        info.setDesc(ontField(text, "Description", "描述"));
+        info.setIp(ontField(text,
+                "ONT IP 0 address/mask",
+                "ONT IP 0 地址/掩码", "ONT IP 0地址/掩码"));
+        info.setLastDownReason(ontField(text, "Last down cause", "最后一次下线原因"));
+        info.setLastUpTime(ontField(text, "Last up time", "最后一次上线时间"));
+        info.setLastDownTime(ontField(text, "Last down time", "最后一次下线时间"));
+        info.setOnlineDuration(ontField(text, "ONT online duration", "ONT在线时长", "ONT 在线时长"));
+        info.setRunState(ontField(text, "Run state", "运行标志"));
+        info.setConfigState(ontField(text, "Config state", "配置状态"));
+        info.setMatchState(ontField(text, "Match state", "匹配状态"));
+        info.setLineProfileId(toInt(ontField(text, "Line profile ID", "线路模板编号")));
+        info.setLineProfileName(ontField(text, "Line profile name", "线路模板名称"));
+        info.setSrvProfileId(toInt(ontField(text, "Service profile ID", "业务模板编号")));
+        info.setSrvProfileName(ontField(text, "Service profile name", "业务模板名称"));
+        return info;
+    }
+
+    /** 按标签取值：回显里标签后带一串空格再跟冒号，取第一个命中的值 */
+    private static String ontField(String text, String... labels) {
+        for (String label : labels) {
+            Matcher matcher = Pattern.compile("(?m)^\\s*" + Pattern.quote(label) + "\\s*[:：]\\s*(.*?)\\s*$")
+                    .matcher(text);
+            if (matcher.find() && !matcher.group(1).isEmpty()) {
+                return matcher.group(1).trim();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 配置脚本里的 ONT 授权行（{@code display current-configuration ont 0/1/0 1}）：
+     * {@code ont add 0 1 sn-auth "4648545474095C80" omci ont-lineprofile-id 100
+     * ont-srvprofile-id 100 desc "HG5145F"}。
+     *
+     * <p>终端宽度会把行折断（ont-srvprofile-id 经常掉到下一行），所以各段之间用
+     * 跨行匹配；EPON 的 mac-auth、password-auth 也顺带认。</p>
+     */
+    private static final Pattern ONT_ADD_CONFIG = Pattern.compile(
+            "(?is)ont\\s+add\\s+\\d+\\s+\\d+\\s+(sn-auth|mac-auth|password-auth)\\s+\"?([^\"\\s]+)\"?"
+                    + "[\\s\\S]*?ont-lineprofile-id\\s+(\\d{1,4})"
+                    + "[\\s\\S]*?ont-srvprofile-id\\s+(\\d{1,4})(?:[\\s\\S]{0,200}?desc\\s+\"([^\"]*)\")?");
+
+    /**
+     * 从配置摘录里解析授权信息：SN / 线路模板 ID / 业务模板 ID / 描述。
+     * 解不出时字段留空，页面还有原始回显可看。
+     */
+    public static OltOntInfo parseOntBindInfo(String text) {
+        OltOntInfo info = new OltOntInfo();
+        if (text == null || text.isBlank()) {
+            return info;
+        }
+        Matcher matcher = ONT_ADD_CONFIG.matcher(text);
+        if (matcher.find()) {
+            info.setSn(matcher.group(2));
+            info.setLineProfileId(toInt(matcher.group(3)));
+            info.setSrvProfileId(toInt(matcher.group(4)));
+            info.setDesc(matcher.group(5));
+        }
+        return info;
+    }
+
+    /**
+     * 表格式回显（{@code display ont optical-info} 单台查询给的是一行表格，不是 key-value 块）：
+     *
+     * <pre>{@code
+     *  ------------------------------------------------------------------
+     *  ONT  Rx power(dBm)  Tx power(dBm)  OLT Rx ONT power(dBm)  Temperature(°C)  Voltage(V)
+     *  ------------------------------------------------------------------
+     *   0    -22.14          2.15           -25.31                 41.20            3.25
+     *  ------------------------------------------------------------------
+     * }</pre>
+     *
+     * <p>列名与数据按连续两个以上空格切开对上；表头认「含字母（含中文）」的行，
+     * 数据行认「首列是纯数字」的行（单台查询首列就是 ONT ID）。key-value 块
+     * 解析不出时（{@link #parseOntKeyValueBlocks} 返回空）用它兜底。</p>
+     */
+    public static List<LinkedHashMap<String, String>> parseOntTableBlocks(String text) {
+        List<LinkedHashMap<String, String>> blocks = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return blocks;
+        }
+        List<String> headers = null;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("$ ") || line.startsWith("-")
+                    || line.contains("display ont ") || line.contains("(config")) {
+                continue;
+            }
+            String[] cells = line.split("\\s{2,}");
+            if (cells.length < 2) {
+                headers = null;
+                continue;
+            }
+            if (cells[0].matches("\\d{1,4}")) {
+                // 数据行：和最近的表头对上；表头被终端切行认不出时整行放弃
+                if (headers == null) {
+                    continue;
+                }
+                LinkedHashMap<String, String> block = new LinkedHashMap<>();
+                for (int i = 0; i < headers.size(); i++) {
+                    block.put(headers.get(i), i < cells.length ? cells[i] : "");
+                }
+                blocks.add(block);
+            } else {
+                boolean hasLetters = false;
+                for (String cell : cells) {
+                    if (cell.matches(".*\\p{L}.*")) {
+                        hasLetters = true;
+                        break;
+                    }
+                }
+                headers = cells.length >= 3 && hasLetters ? Arrays.asList(cells) : null;
+            }
+        }
         return blocks;
     }
 
