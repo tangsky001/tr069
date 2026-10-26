@@ -100,9 +100,12 @@ public final class SoapEnvelopeBuilder {
         }
 
         String soap = XmlUtils.toXml(doc);
-        if (log.isDebugEnabled()) {
-            log.debug("构造 CWMP 报文 [{}]: {}", method.getValue(), soap);
-        }
+        // 临时关闭：完整 SOAP 报文太长，采集/下发一轮就刷屏，掩盖了真正要看的日志。
+        // 需要排查报文内容时再打开，或改用配置开关：
+        // logging.level.com.tr069.acs.cwmp.SoapEnvelopeBuilder: debug
+        // if (log.isDebugEnabled()) {
+        //     log.debug("构造 CWMP 报文 [{}]: {}", method.getValue(), soap);
+        // }
         return soap;
     }
 

@@ -149,6 +149,9 @@ public class DeviceBusinessService {
         log.info("采集设备业务参数: sn={}, pathCount={}", sn, paths.size());
         // PON/光模块参数不在业务分区实例下，单独补进采集清单
         paths.addAll(ponParams(sn).keySet());
+        // 点刷新要的是「现在的值」：先把它叫上来建立会话，不然指令只能在队列里
+        // 等它下一次周期上报，等满 collect-timeout-seconds 拿到的还是库里的旧值
+        capabilityService.wakeUpAndAwait(sn);
         CompletableFuture<Map<String, String>> future =
                 capabilityService.readPathValues(sn, paths);
         String status;

@@ -25,7 +25,8 @@ module.exports = {
    * Detail: https://cli.vuejs.org/config/#publicpath
    */
   publicPath: '/',
-  outputDir: 'dist',
+  // 构建产物直接输出到后端 resources，随 jar 一起打包（classpath:static）
+  outputDir: '../src/main/resources/static',
   assetsDir: 'static',
   lintOnSave: process.env.NODE_ENV === 'development',
   productionSourceMap: false,

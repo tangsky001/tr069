@@ -81,17 +81,69 @@ public class SqlitePlanRenderer {
             case "WiFi_2G" -> wifi(device, values, instance, items, errors, true, overrides);
             case "WiFi_5G" -> wifi(device, values, instance, items, errors, false, overrides);
             case "Voice_Service" -> voice(device, values, instance, items, errors, overrides);
-            case "Internet_WAN" -> wan(category, device, values, items, objectsToAdd, errors, overrides);
+            case "Internet_WAN" -> wan(category, device, values, items, objectsToAdd, errors, overrides, instance);
+            case "Device_Mgmt" -> deviceMgmt(values, overrides, errors);
             default -> errors.add("该业务还没有适配模板，请先对该型号做适配: " + bizObject);
         }
 
-        if (items.isEmpty() && errors.isEmpty()) {
+        // Device_Mgmt 的重启计划本来就是空的，动作在执行收尾时发，不能当「没适配」报错
+        if (items.isEmpty() && errors.isEmpty() && !"Device_Mgmt".equals(bizObject)) {
             errors.add("该型号没有可下发的适配结果: bizObject=" + bizObject
                     + "，请重新发起适配");
         }
         log.debug("SQLite 渲染: model={}, bizObject={}, instance={}, 参数={}, 新建对象={}",
-                device.getModelKey(), bizObject, instance, items.size(), objectsToAdd.size());
+                device == null ? null : device.getModelKey(), bizObject, instance,
+                items.size(), objectsToAdd.size());
         return new IntentPlan(bizObject, instance, objectsToAdd, items, errors);
+    }
+
+    /**
+     * 设备管理类意图（OTHER / Device_Mgmt）。
+     *
+     * <p>重启是标准 TR-069 RPC，不依赖任何型号适配：模板勾了
+     * 「下发业务完成后重启光猫」，这张计划就是合法的空计划——参数一条不用写，
+     * 执行器收尾时按 {@code intentFields} 里的 {@code reboot_after} 发 Reboot。</p>
+     *
+     * <p>其余字段（Telnet、超管、LOID、IGMP 等）是厂商私有节点，没有按型号映射过，
+     * 照抄路径发只会回 9003/9005——明确报出来，比静默丢掉强。</p>
+     */
+    private void deviceMgmt(Map<String, Object> values, Map<String, String> overrides,
+                            List<String> errors) {
+        if (on(values == null ? null : values.get("reboot_after"))
+                || on(overrides == null ? null : overrides.get("reboot_after"))) {
+            return;
+        }
+        List<String> active = new ArrayList<>();
+        if (values != null) {
+            values.forEach((k, v) -> {
+                if (!"reboot_after".equals(k) && !"instance".equals(k) && on(v)) {
+                    active.add(k);
+                }
+            });
+        }
+        if (overrides != null) {
+            overrides.forEach((k, v) -> {
+                if (!"reboot_after".equals(k) && !"instance".equals(k) && on(v) && !active.contains(k)) {
+                    active.add(k);
+                }
+            });
+        }
+        if (active.isEmpty()) {
+            errors.add("该模板没有启用任何动作：请把「下发业务完成后重启光猫」设为是");
+        } else {
+            errors.add("设备管理字段要按型号适配映射后才能下发: " + String.join(", ", active)
+                    + "。只想重启设备的话，单独建一张只勾「下发业务完成后重启光猫」的模板即可");
+        }
+    }
+
+    /** 开关类取值：非空且不是「否/关/忽略」就算启用。 */
+    private static boolean on(Object value) {
+        if (value == null) {
+            return false;
+        }
+        String s = String.valueOf(value).trim();
+        return !s.isEmpty() && !"false".equalsIgnoreCase(s) && !"0".equals(s)
+                && !"否".equals(s) && !"ignore".equalsIgnoreCase(s);
     }
 
     // ==================== 各业务 ====================
@@ -183,7 +235,7 @@ public class SqlitePlanRenderer {
      */
     private void wan(String category, Device device, Map<String, Object> values,
                        List<PlanItem> items, List<String> objectsToAdd, List<String> errors,
-                       Map<String, String> overrides) {
+                       Map<String, String> overrides, int instance) {
         int slot = wanSlot(category, errors);
         if (slot <= 0) {
             return;
@@ -198,23 +250,26 @@ public class SqlitePlanRenderer {
                 && !row.getObjectPath().isBlank()) {
             objectsToAdd.add(row.getObjectPath());
         }
-        put(items, errors, "Internet_WAN", "enable", row.getPathEnable(), row.getValEnable(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "conn_type", row.getPathConnType(), row.getValConnType(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "addr_type", row.getPathAddrType(), row.getValAddrType(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "nat", row.getPathNat(), row.getValNat(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "bind_port", row.getPathBindPort(), row.getValBindPort(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "pppoe_user", row.getPathUsername(), row.getValUsername(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "pppoe_pwd", row.getPathPassword(), row.getValPassword(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "wan_ip", row.getPathIp(), row.getValIp(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "wan_mask", row.getPathMask(), row.getValMask(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "wan_gw", row.getPathGw(), row.getValGw(), values, 1, overrides);
-        put(items, errors, "Internet_WAN", "wan_dns", row.getPathDns(), row.getValDns(), values, 1, overrides);
+        // 实例号必须用渲染时定的那个（plan.instance()），不能写死 1：
+        // AddObject 返回的实例号是设备分配的，下发前还要按它回填参数路径，
+        // 两处对不上就会把参数写到别的连接上去
+        put(items, errors, "Internet_WAN", "enable", row.getPathEnable(), row.getValEnable(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "conn_type", row.getPathConnType(), row.getValConnType(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "addr_type", row.getPathAddrType(), row.getValAddrType(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "nat", row.getPathNat(), row.getValNat(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "bind_port", row.getPathBindPort(), row.getValBindPort(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "pppoe_user", row.getPathUsername(), row.getValUsername(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "pppoe_pwd", row.getPathPassword(), row.getValPassword(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "wan_ip", row.getPathIp(), row.getValIp(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "wan_mask", row.getPathMask(), row.getValMask(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "wan_gw", row.getPathGw(), row.getValGw(), values, instance, overrides);
+        put(items, errors, "Internet_WAN", "wan_dns", row.getPathDns(), row.getValDns(), values, instance, overrides);
 
         Vlan vlan = vlanDao.findOne(device.getId(), slot).orElse(null);
         if (vlan != null) {
-            put(items, errors, "Internet_WAN", "vlan_id", vlan.getPathVlanId(), vlan.getValVlanId(), values, 1, overrides);
-            put(items, errors, "Internet_WAN", "vlan_8021p", vlan.getPath8021p(), vlan.getVal8021p(), values, 1, overrides);
-            put(items, errors, "Internet_WAN", "vlan_mode", vlan.getPathVlanMode(), vlan.getValVlanMode(), values, 1, overrides);
+            put(items, errors, "Internet_WAN", "vlan_id", vlan.getPathVlanId(), vlan.getValVlanId(), values, instance, overrides);
+            put(items, errors, "Internet_WAN", "vlan_8021p", vlan.getPath8021p(), vlan.getVal8021p(), values, instance, overrides);
+            put(items, errors, "Internet_WAN", "vlan_mode", vlan.getPathVlanMode(), vlan.getValVlanMode(), values, instance, overrides);
         }
     }
 

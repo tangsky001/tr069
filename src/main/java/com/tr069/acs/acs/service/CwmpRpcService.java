@@ -127,6 +127,20 @@ public class CwmpRpcService {
     }
 
     /**
+     * 设备是否正处在这一轮会话里：有会话、在线、且最近 {@code seconds} 秒内有通信。
+     *
+     * <p>只看 {@link #isOnline} 不够：CWMP 是短连接，设备报完一轮就把 TCP 断了，
+     * 会话对象还在、在线标志要等扫描才清掉，此时提交指令只能等它下一次上报。
+     * 下发前先等到「刚通信过」的会话，指令才会被设备紧接着的空 POST 取走。</p>
+     */
+    public boolean isSessionFresh(String sn, long seconds) {
+        CpeSession session = sessionManager.find(sn);
+        return session != null && session.isOnline() && !session.isExpired(seconds);
+    }
+
+
+
+    /**
      * 会话级故障：设备离线、超时、队列不可用。这类故障重试没有意义，直接判失败。
      */
     public static boolean isSessionFault(SoapMessage resp) {

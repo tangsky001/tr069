@@ -301,6 +301,14 @@ public class DeviceCapabilityService {
     @Value("${acs.device.capability.wakeup-enabled:true}")
     private boolean wakeupEnabled;
 
+    /**
+     * 唤醒后最多等多少秒设备建链（手动采集、业务刷新等场景）。
+     *
+     * <p>下发场景各有一个独立的同名键，见 {@code acs.exec.wakeup-wait-seconds}。</p>
+     */
+    @Value("${acs.exec.wakeup-wait-seconds:30}")
+    private long wakeupWaitSeconds;
+
     /** 唤醒过但没凭据的设备（sn → 下次再试的时刻），免得每次采集都撞一次 401。 */
     private final Map<String, Long> wakeupRetryAfter = new ConcurrentHashMap<>();
 
@@ -521,10 +529,10 @@ public class DeviceCapabilityService {
         deadlines.put(sn, System.currentTimeMillis() + collectTimeoutMillis);
 
         // 手动采集是「人点下去的那一刻」开跑的，设备多半不在下发窗口里——光猫十几分钟
-        // 才上报一次，不叫它一声就得干等。先叫再入队：设备收到连接请求到真正上报
-        // 有几百毫秒网络往返，足够第一批指令进队列
+        // 才上报一次。光发个连接请求不够：请求发出去到设备真来 Inform 有网络往返，
+        // 不等它建链就把指令入队，还是得等下一次周期上报。这里叫完一直等到会话建立
         if ("manual".equals(trigger)) {
-            wakeUp(sn);
+            wakeUpAndAwait(sn, wakeupWaitSeconds);
         }
         // 手动采集时设备多半不在线（下一次上报可能十几分钟后），指令只能排在队列里。
         // 把这一点写进状态，界面上不至于看着像卡住了
@@ -1184,26 +1192,69 @@ public class DeviceCapabilityService {
      * <p>唤醒失败一律忽略：URL 没上报过、设备侧端口不通、要求认证都可能，
      * 这时只是退化成「等它自己上报」，不牵连调用方的流程。</p>
      */
-    public void wakeUp(String sn) {
+    /**
+     * 反向唤醒的结果。
+     *
+     * <p>唤醒失败原本是静默退化的：叫不到就退化成「等它自己上报」，不抛异常也不报错。
+     * 现场只看得到下发超时，分不清是「叫了设备没来」还是「压根没叫出去」。
+     * 把结果回给调用方，让它把原因写进下发日志，一眼就能定位。</p>
+     */
+    public enum WakeUpResult {
+        /** 已发出连接请求 */
+        SENT,
+        /** 反向唤醒未启用 */
+        DISABLED,
+        /** 近期失败过，退避期内不再尝试 */
+        THROTTLED,
+        /** 设备刚通信过，按常规判断不必叫（只有非强制时才可能出现） */
+        FRESH,
+        /** 台账里没有这台设备 */
+        NO_DEVICE,
+        /** 没登记 ConnectionRequestURL，叫不了 */
+        NO_URL,
+        /** 发出去了，但被拒绝或异常 */
+        FAILED
+    }
+
+    public WakeUpResult wakeUp(String sn) {
+        return wakeUp(sn, false);
+    }
+
+    /**
+     * 反向唤醒设备。
+     *
+     * @param force true 时跳过「会话刚通信过」的判断，无论如何都叫一次。
+     *      <strong>连续下发多条业务时必须为 true</strong>：第一条跑完设备已经把 TCP 断了，
+     *      但会话对象还在 60 秒新鲜窗口里，按常规判断不会去叫它，
+     *      第二条指令就只能在队列里干等下一次周期上报——现场看到的就是「第一条成功、第二条超时」
+     */
+    public WakeUpResult wakeUp(String sn, boolean force) {
         if (!wakeupEnabled) {
-            return;
+            return WakeUpResult.DISABLED;
         }
         Long retryAfter = wakeupRetryAfter.get(sn);
         if (retryAfter != null && System.currentTimeMillis() < retryAfter) {
-            return;
+            return WakeUpResult.THROTTLED;
         }
-        // 设备刚上报过、还在下发窗口里的话直接下发就行，不必多此一举去叫它
-        CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
-        if (session != null && !session.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
-            return;
+        // 设备刚上报过、还在下发窗口里的话直接下发就行，不必多此一举去叫它。
+        // 强制唤醒时跳过：这时要的是「它重新上来一轮」，旧会话对象说明不了它还连着
+        if (!force) {
+            CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
+            if (session != null && !session.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
+                return WakeUpResult.FRESH;
+            }
         }
         CpeDevice device = findDevice(sn);
         if (device == null) {
-            return;
+            return WakeUpResult.NO_DEVICE;
         }
         String url = device.getConnectionRequestUrl();
         if (url == null || url.isBlank()) {
-            return;
+            // 最常见的「有反向唤醒却用不上」：设备没把 ConnectionRequestURL 报上来，
+            // 纳管时也没改写成功。叫不了就只能等周期上报
+            log.warn("设备未登记连接请求地址，无法反向唤醒: sn={}。"
+                    + "检查 acs.public-host 是否为真实地址（写成 127.0.0.1 时唤醒的是 ACS 自己）", sn);
+            return WakeUpResult.NO_URL;
         }
         // 台账上的设备级凭据优先（纳管改写过 CR 凭据时会登记在这里），
         // 没有就翻这台已经采集到的参数——采过完整树的设备，凭据的值本来就在库里，
@@ -1239,13 +1290,76 @@ public class DeviceCapabilityService {
                     log.warn("连接请求被设备拒绝: sn={}, url={}, 响应码={}, 已带认证={}",
                             sn, url, resp.statusCode(), withCredentials);
                 }
-            } else {
-                log.info("已发连接请求唤醒设备: sn={}, url={}, 响应码={}", sn, url, resp.statusCode());
+                return WakeUpResult.FAILED;
             }
+            log.info("已发连接请求唤醒设备: sn={}, url={}, 响应码={}", sn, url, resp.statusCode());
+            return WakeUpResult.SENT;
         } catch (Exception e) {
             log.warn("连接请求唤醒失败，改为等待设备自行上报: sn={}, url={}, err={}",
                     sn, url, e.getMessage());
+            return WakeUpResult.FAILED;
         }
+    }
+
+    /** 唤醒后轮询会话是否建立的间隔。 */
+    private static final long WAKEUP_POLL_INTERVAL_MILLIS = 500L;
+
+    /**
+     * 反向唤醒设备，并等到它真的建链。
+     *
+     * <p>凡是「人点出来的」动作——下发工单、点刷新、点采集——要的都是当下的结果：
+     * 设备在不在线、值是不是最新的。而 CWMP 的指令只能捎带在设备自己发起的那轮会话里，
+     * 不先把它叫上来建立会话，指令进队列后只能干等下一次周期上报（十几分钟），
+     * 看到的就是超时，或者刷新完页面上还是上一次的旧值。</p>
+     *
+     * <p>所以这里不是「发个连接请求就完事」，而是发完之后一直等到会话真的建立：
+     * 判据是设备这会儿有活跃连接，或者它在我们叫完之后有过新的通信。
+     * 只看「会话对象还在」不行——设备报完一轮就把 TCP 断了，会话对象要等扫描才清。</p>
+     *
+     * @param waitSeconds 最多等多少秒
+     * @return true 表示等到会话了；false 表示没等到，调用方自行决定是继续还是放弃
+     */
+    public boolean wakeUpAndAwait(String sn, long waitSeconds) {
+        long mark = lastContactOf(sn);
+        WakeUpResult result = wakeUp(sn, true);
+        if (result == WakeUpResult.SENT) {
+            log.info("已反向唤醒设备，等待它建链: sn={}", sn);
+        } else {
+            log.warn("未发出反向唤醒: sn={}, 原因={}（只能等设备周期上报）", sn, result);
+        }
+        long start = System.currentTimeMillis();
+        long deadline = start + waitSeconds * 1000L;
+        while (System.currentTimeMillis() < deadline) {
+            // 设备这会儿连着（指令会被它紧接着的空 POST 取走），
+            // 或者它在我们叫完之后刚上来过——两者都说明现在提交指令能立刻被取走
+            if (isSessionActive(sn) || lastContactOf(sn) > mark) {
+                log.info("设备已建链: sn={}, 等待={}ms", sn, System.currentTimeMillis() - start);
+                return true;
+            }
+            try {
+                Thread.sleep(WAKEUP_POLL_INTERVAL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        log.warn("等待设备建链超时: sn={}, 已等={}s（指令仍会入队，等设备上报时再下发）", sn, waitSeconds);
+        return false;
+    }
+
+    public boolean wakeUpAndAwait(String sn) {
+        return wakeUpAndAwait(sn, wakeupWaitSeconds);
+    }
+
+    private long lastContactOf(String sn) {
+        CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
+        return session == null ? 0L : session.getLastContactTime();
+    }
+
+    /** 设备这会儿是否有一条活跃的 TCP 连接：连接断开时会话对象还在，连接标识会被清掉。 */
+    private boolean isSessionActive(String sn) {
+        CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
+        return session != null && session.isOnline() && session.getConnectionId() != null;
     }
 
     /**
