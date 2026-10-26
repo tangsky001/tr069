@@ -45,8 +45,8 @@ service.interceptors.response.use(
   response => {
     const res = response.data
 
-    // if the custom code is not 20000, it is judged as an error.
-    if (res.code !== 20000) {
+    // 后端统一返回 { code: 0, message, data }，非 0 视为错误
+    if (res.code !== 0 && res.code !== 20000) {
       Message({
         message: res.message || 'Error',
         type: 'error',
@@ -73,24 +73,8 @@ service.interceptors.response.use(
   },
   error => {
     console.log('err' + error) // for debug
-    const res = error.response && error.response.data
-
-    // 令牌失效由后端统一返回 401，业务码 50008，这里提示并重新登录
-    if (error.response && error.response.status === 401) {
-      MessageBox.confirm('登录状态已失效，可以取消留在本页，或重新登录', '确认退出', {
-        confirmButtonText: '重新登录',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }).then(() => {
-        store.dispatch('user/resetToken').then(() => {
-          location.reload()
-        })
-      })
-      return Promise.reject(new Error((res && res.message) || '登录状态已失效'))
-    }
-
     Message({
-      message: (res && res.message) || error.message,
+      message: error.message,
       type: 'error',
       duration: 5 * 1000
     })

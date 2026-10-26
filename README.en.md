@@ -20,23 +20,9 @@ built with Spring Boot 3 + Vue 2.
 > but it is **read-only**: values are collected and displayed, **no write command is ever sent**
 > (creating VLANs, adding/removing ONTs, rebooting boards are all unimplemented). The template tabs
 > (DBA/line profile, service/TR069/traffic profile) show the device's current configuration collected
-> over real commands, but their "Add / Delete" buttons are still placeholders.
->
-> The **ONT config / status** table follows the layout used in the field: auth code (SN) →
-> **management IP** → **MAC** → **service flow** → **line profile** / **service profile**
-> (two separate columns), then status and the on-demand query icons; two batch buttons
-> (**reboot ONU** / **delete registration**) sit in the bottom-right corner (they act on the
-> selected rows and currently only report that writes are not open yet).
->
-> **On-demand queries (one login per click)**: clicking the SN or a profile column runs three
-> commands in a single session — `display current-configuration ont 0/<slot>/<port> <ONT ID>`
-> (authorization row; the management IP is taken from `display ont info` in the same session);
-> clicking the ONT ID runs `display ont capability 0/<slot> <port> <ONT ID>` (hardware
-> capability / status); "View" in the service flow column runs
-> `display service-port port 0/<slot>/<port> ont <ONT ID>`; the row icons give optical info /
-> version / registration history.
->
-> The per-item list lives in **[1.5 OLT tabs: implemented / placeholder](#15-olt-tabs-implemented--placeholder)**; remaining work is in section 2.
+> over real commands, but their "Add / Delete" buttons are still placeholders. See
+> **[1.5 OLT tabs: implemented / placeholder](#15-olt-tabs-implemented--placeholder)** for the
+> per-tab list; remaining work is in section 2.
 
 ---
 
@@ -120,67 +106,9 @@ The screenshots below are all from the **Huawei** panel.
 
 - **OLT status / configuration**: model, version and patch, backplane, control board MAC, uptime, sync summary; board cards list model / status / description / temperature / port and ONT totals;
 - **Board diagram**: `P0`-`P7` port rows are pinned at the height of the matching physical port on the diagram; expanding a row lists every ONT under that port (ID / SN / model / online-offline);
-- **ONT configuration / status**: one table per board, port × ONT totals / online / offline; one row per ONT, columns left to right are auth code (SN), run flag, **management IP**, **MAC**, **service flow**, **line profile**, **service profile**, ONT description, status and the query icons; rows can be selected and two batch buttons (**reboot ONU** / **delete registration**) sit in the bottom-right corner (not wired yet, clicking reports that writes are not open);
+- **ONT configuration / status**: one table per board, port × ONT totals / online / offline;
 - **VLAN**: L3 VLAN interfaces (VLAN ID / IP / mask), uplink VLAN pass-through (VLANs and native VLAN allowed per uplink), VLAN and L2 interworking (merged into `41、45-46` by type), static routes (destination / next hop / egress interface);
 - **Collection records**: connection time, summary and raw output of every sync and diagnostic run.
-
-#### ONT on-demand query dialogs (one login per click)
-
-Nothing is polled in the background here — each dialog logs in and issues exactly the commands it
-needs, so reading one ONT never walks the whole device:
-
-**[ONT config / service flow]** (click the auth code SN, the line profile or the service profile column)
-
-```
-display current-configuration ont 0/<slot>/<port> <ONT ID>
-display service-port port 0/<slot>/<port> ont <ONT ID>
-display ont info 0 <slot> <port> <ONT ID>
-```
-
-Dialog: authorization info (SN / description / line profile / service profile) + the service flow
-table (index / OLT-side VLAN / VLAN attribute / GEM port / ONT user-side VLAN / upstream+downstream
-traffic profile / edit / select; the four buttons at the bottom all report that they are not open
-yet).
-
-![ONT config / service flow dialog](doc/Display/013810_265.png)
-
-**[ONT hardware capability / status]** (click the ONT ID)
-
-```
-display ont capability 0/<slot> <port> <ONT ID>
-```
-
-Dialog: PON / POTS / ETH / VDSL / GEM port counts, whether IP configuration is supported, T-CONT
-count, flow control type, ONT type, per-T-CONT PQ counts — labels and values are translated
-to Chinese for both Chinese and English output.
-
-![ONT hardware capability / status dialog](doc/Display/013739_612.png)
-
-**[ONT service flow]** (click "View" in the service flow column)
-
-```
-display service-port port 0/<slot>/<port> ont <ONT ID>
-```
-
-Dialog: only the service flow table (same columns as above), no authorization block.
-
-![ONT service flow dialog](doc/Display/004502_731.png)
-
-**[Detail / optical info / version / registration history]** (the eye / thermometer / info / clock icons on a row)
-
-```
-display ont info 0 <slot> <port> <ONT ID>
-display ont optical-info <port> <ONT ID>
-display ont version <port> <ONT ID>
-display ont register-info <port> <ONT ID>
-```
-
-Dialogs: detail (IP, offline reason, online duration) / optical info / version / registration
-history, rendered as card blocks.
-
-![ONT detail / optical info dialog](doc/Display/013803_107.png)
-
-![ONT version / registration history dialog](doc/Display/013753_883.png)
 
 #### DBA / line profile (real collection, read-only)
 
@@ -222,48 +150,6 @@ smart VLAN), static route (`0.0.0.0/0 → 10.172.10.1`).
 
 ![OLT management - VLAN (L3 interfaces / uplink pass-through / L2 interworking / static routes)](doc/Display/203941_898.png)
 
-#### Screenshot inventory
-
-Screenshots are **not moved or renamed** — they all live in the root of
-[`doc/Display/`](./doc/Display) (troubleshooting screenshots in `Debug/`). The tables below split
-them into the **ACS side** (ACS service / ONT device management) and the **OLT side**
-(converged OLT management, read-only collection).
-
-**ACS side (ACS service / ONT device management)**
-
-| File | Content | Where it is used | Status |
-| --- | --- | --- | --- |
-| `170451_518.png` | Login | Screenshots · Login | In use |
-| `170528_847.png` | Dashboard | Screenshots · Dashboard | In use |
-| `171236_574.png` | Device management (unadapted) | Screenshots · Device management | In use |
-| `171244_327.png` | Model adaptation · declaration | Screenshots · Model adaptation | In use |
-| `171437_294.png` | Model adaptation · test collection | Screenshots · Model adaptation | In use |
-| `172759_926.png` | Model adaptation · passed | Screenshots · Model adaptation | In use |
-| `170658_702.png` | Device management (adapted) | Screenshots · Device management | In use |
-| `174419_542.png` | Device list after adaptation | Screenshots · Device management | In use |
-| `013530_034.png` | Device list (current) | Screenshots · Device list | In use |
-| `162116_423.png` | Device detail business panel | Screenshots · Device detail | In use |
-| `013724_056.png` | ONT admin UI platform server config | 1.4 Device provisioning | In use |
-| `162046_560.png` | Device list (**older** version, used before `013530_034`) | — | Unused (kept) |
-| `025159_916.png` | Device list (**older** version, used early on) | — | Unused (kept) |
-
-**OLT side (converged OLT management, read-only collection)**
-
-| File | Content | Where it is used | Status |
-| --- | --- | --- | --- |
-| `164812_931.png` | Huawei panel (OLT status / boards) | Screenshots · OLT management | In use |
-| `164849_972.png`, `164917_540.png` | DBA / line profile | Screenshots · template tabs | In use |
-| `165011_460.png`, `165021_956.png`, `165027_868.png` | Service / TR069 / traffic profile + service flow details | Screenshots · template tabs | In use |
-| `203941_898.png` | VLAN page | Screenshots · VLAN | In use |
-| `013810_265.png` | ONT config / service flow dialog (click SN) | Screenshots · ONT on-demand dialogs | In use |
-| `013739_612.png` | ONT hardware capability / status dialog (click ONT ID) | Screenshots · ONT on-demand dialogs | In use |
-| `004502_731.png` | ONT service flow dialog (service flow column "View") | Screenshots · ONT on-demand dialogs | In use |
-| `013803_107.png` | ONT detail / optical info dialog | Screenshots · ONT on-demand dialogs | In use |
-| `013753_883.png` | ONT version / registration history dialog | Screenshots · ONT on-demand dialogs | In use |
-
-> Adding screenshots: drop them into `doc/Display/` and reference them by file name. Overwriting an
-> existing file needs no README change, so both Gitee and GitHub pick it up.
-
 ---
 
 ## 1. Implemented
@@ -275,7 +161,6 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | CWMP ingress | Inform / empty-POST probe / RPC response, digest auth (`auto` disables it), multiple ports + paths for vendor-specific reporting | `acs/controller/CwmpController`, `acs/auth/CpeAuthenticator`, `common/web/CwmpMultiPortConfig` |
 | Protocol layer | SOAP parse/build, RPC method enums, namespaces | `cwmp/*` |
 | Session management | Session state machine, pending RPCs, timeout fallback; periodic inform treated as heartbeat with session takeover (a CPE switching TCP connections does not rebuild the session, mark it offline, or clear the pending queue); offline only judged by long silence; suspected dual sessions only warn | `acs/session/*` |
-| **Per-ONT on-demand query (read-only)** | Clicking SN / a profile column runs three commands in one session: `display current-configuration ont 0/<slot>/<port> <ONT ID>` (authorization row: SN / line profile / service profile / description) + `display service-port port 0/<slot>/<port> ont <ONT ID>` (service flow table) + `display ont info 0 <slot> <port> <ONT ID>` (management IP); clicking the ONT ID runs `display ont capability 0/<slot> <port> <ONT ID>` (hardware capability); row icons give optical info / version / registration history. Older firmware that does not accept the `ont` filter falls back to a whole-port query filtered by VPI (ONT ID) | `olt/telnet/OltCliSession` (`queryOntConfigAndServicePorts`, `queryServicePorts`, `queryOntDetail`), `olt/telnet/OltInfoParser` (`parseOntBindInfo`, `parseServicePorts`, `parseOntKeyValueBlocks`), `olt/service/OltService#queryOnt` |
 | Device management | Auto registration, online status, paged details, online session details | `acs/service/DeviceRegistryService`, `api/controller/DeviceController` |
 | Capability tree collection | Collects only WAN / WiFi / LAN port / SIP subtrees (fixed in code): `GetParameterNames` for paths + `GetParameterValues` in batches, auto-collect after Inform, forced re-collect on BOOTSTRAP, NextLevel fallback | `acs/service/DeviceCapabilityService` |
 | **Device provisioning** | Right after Inform, issues one `SetParameterValues` writing `ManagementServer.URL` (ACS address), `PeriodicInformInterval` (inform interval) and `ConnectionRequestUsername/Password` (connection request credentials) back to the device; skips items already matching, no re-send within 24h, forced re-send on BOOTSTRAP; credentials are recorded in the ledger once rewritten so wake-up can use them | `acs/service/InformProvisionService` |
@@ -312,7 +197,7 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | Device detail | `/device-detail/:sn` | Done (capability tree, parameter tree, RPC debug + business panel: info cards for uptime/registration time/last inform/inform IP, LAN port block, WLAN split by band, SIP listing real lines only) |
 | Work orders | `/worklist/instances` | Done (work order and step query; batch creation entry is "One-click work order ▲" in the device list toolbar) |
 | OLT ledger | `/olt/management` | Done (**entry page**: ledger CRUD, connectivity diagnostic, trigger sync; **dispatches by vendor** to the three detail pages below; a newly added device goes straight to its vendor page once identified) |
-| OLT detail · Huawei | `/olt/huawei/:id` | Done (**real Telnet collection, read-only**: OLT status (boards/temperature/port ONTs/diagram), configuration, VLAN, **DBA/line profile**, **service/TR069/traffic profile**, ONT config and status, collection records; port rows pinned on the board diagram; the ONT config/status table has auth code / run flag / **management IP** / **MAC** / **service flow** / **line profile** / **service profile** columns, rows are selectable and **reboot ONU / delete registration** buttons sit in the bottom-right; on-demand dialogs: click SN → authorization info + service flow, click ONT ID → hardware capability/status, service flow "View" → service flow table; **cannot change device config**, the "Add/Delete" buttons on template tabs, the batch ops buttons and the four service flow buttons are all placeholders; ONT registration, OLA, ONU rear panel, OLT upgrade, standby, protection are still placeholders) |
+| OLT detail · Huawei | `/olt/huawei/:id` | Done (**real Telnet collection, read-only**: OLT status (boards/temperature/port ONTs/diagram), configuration, VLAN, **DBA/line profile**, **service/TR069/traffic profile**, ONT config and status, collection records; port rows pinned on the board diagram; **cannot change device config**, the "Add/Delete" buttons on template tabs are placeholders; ONT registration, OLA, ONU rear panel, OLT upgrade, standby, protection are still placeholders) |
 | OLT detail · HSGQ | `/olt/hsgq/:id` | Done (**all-in-one panel, read-only**: device overview (4 PON ports, generated per model), PON port status, ONU list (placeholder), configuration, VLAN, collection records) |
 | OLT detail · Generic | `/olt/generic/:id` | Done (unrecognized vendors, ZTE and FiberHome land here: boards, ONTs, VLAN, configuration, collection records; **read-only**, once identified the device can be re-tested and routes to the matching vendor page) |
 
@@ -424,12 +309,8 @@ state and never touches the device.**
 | VLAN | ✅ Implemented | `display vlan all`, `display port vlan`, `display ip interface brief`, `display ip routing-table` | L3 interfaces, uplink pass-through, L2 interworking, static routes |
 | **DBA/line profile** | ✅ Implemented | `display dba-profile all (detail)`, `display ont-lineprofile … all` + per-`profile-id` detail | DBA bandwidth tiers, T-CONT↔DBA, GEM port↔mapping VLAN; "Add/Delete" buttons are **placeholders** |
 | **Service/TR069/traffic profile** | ✅ Implemented | `display ont-srvprofile … all` + detail, `display ont tr069-server-profile all`, `display traffic table ip all`, `display current-configuration section service-port` | LAN/POTS port counts, ACS URL and account, CIR/PIR, service flow details; "Add/Delete" buttons are **placeholders** |
-| ONT config / status | ✅ Implemented | `display ont info 0 <slot> all` | One table per board: port × ONT totals/online/offline; columns include auth code / run flag / **management IP** / **MAC** / **service flow** / **line profile** / **service profile** / description / status / query icons |
-| **Click SN → authorization info + service flow** | ✅ Implemented (read-only) | `display current-configuration ont 0/<slot>/<port> <ONT ID>` + `display service-port port 0/<slot>/<port> ont <ONT ID>` + `display ont info 0 <slot> <port> <ONT ID>` | Authorization: SN / description / line profile / service profile, plus the service flow table; the management IP comes from the detail output |
-| **Click ONT ID → hardware capability / status** | ✅ Implemented (read-only) | `display ont capability 0/<slot> <port> <ONT ID>` | Uplink PON port count / POTS / ETH / GEM port count / IP configuration support / T-CONT count / flow control type / ONT type / per-T-CONT PQ counts, labels and values translated to Chinese |
-| **Service flow "View" → service flow table** | ✅ Implemented (read-only) | `display service-port port 0/<slot>/<port> ont <ONT ID>` | Flow ID / OLT-side VLAN / VLAN attribute / GEM port / ONT user-side VLAN / upstream+downstream traffic profile / edit / select; the four buttons at the bottom are **all placeholders** |
+| ONT config / status | ✅ Implemented | `display ont info 0 <slot> all` | One table per board: port × ONT totals/online/offline |
 | Collection records | ✅ Implemented | local `olt_sync_record` | Duration, summary and raw output of every sync and diagnostic run |
-| **Reboot ONU / delete registration** (batch buttons) | ⬜ Placeholder | — | Buttons are in place with row-selection validation, no command wired — see section 2 #16 |
 | ONT registration (autofind) | ⬜ Placeholder | `display ont autofind all` | Command not wired |
 | OLA | ⬜ Placeholder | — | Not wired |
 | ONU rear panel editor | ⬜ Placeholder | — | Not wired |
@@ -467,10 +348,6 @@ adding/removing ONTs, rebooting boards, editing templates) are all unimplemented
 | 13 | Provisioning result visibility | Not started | Provisioning exists only in the logs: success, the fault reason when the device rejects it, and the last provisioning time are all log-only, invisible in the ledger and UI. A device marked read-only therefore goes unnoticed unless someone reads the logs |
 | 14 | CR credential rewrite compatibility | Not started | A few firmwares share `ManagementServer.ConnectionRequestUsername/Password` with the device login account, so rewriting them changes the web login password too. Needs a per-model allowlist (skip the rewrite) or reading the login account first and comparing |
 | 15 | OLT write operations (config delivery) | Not started | The Telnet link is **read-only** (`display` / `show`); the pages show the device's current state and any change must be made on the device CLI. Commands still to implement: `ont add / delete / reset`, `reboot`, `vlan create / port vlan`, `ont autofind confirm`, `save` (Huawei needs `save` to persist). Three things must land first: a command allowlist with parameter validation (only safe character sets, no arbitrary command injection), a dry-run before writing plus output-based success judgement (today only the prompt is checked, and a failed write returns `% … error` followed by the same prompt), and operation auditing (who changed which command on which device and when — `olt_sync_record` only stores collection records today) |
-| 16 | **ONT batch operation buttons** (reboot ONU / delete registration) | **Placeholder** | Buttons and row-selection validation are in place, clicking reports "write operations are not open yet". Ship together with the write channel in #15: `ont reboot 0/<slot>/<port> <ONT ID>`, `ont delete 0/<slot>/<port> <ONT ID>`, plus a confirmation dialog and a result receipt |
-| 17 | **Service flow operation buttons** (query GMP multicast status / query unknown multicast policy / delete service flow / add service flow) | **Placeholder** | All four buttons in the service flow dialog report "not open yet". The first two are read commands, the last two are writes: wire them separately behind #15 — writes need the allowlist and auditing first, reads can be parsed directly |
-| 18 | **MAC column value** | Partial | Only MAC-authenticated (EPON) ONTs carry a MAC as their auth code, which can be formatted as `aa:bb:cc:dd:ee:ff`; GPON SN authentication exposes no MAC on the OLT side, so the column shows `-`. Getting it from the ONT itself would have to go through the TR-069 parameter mapping (see #5) |
-| 19 | Output label case fallback | Handled | English labels are not case-stable across firmware versions (e.g. `Traffic Schedulers` / `traffic Schedulers`), so the translation table tries an exact match first and falls back to a case-insensitive one; labels/values wrapped onto the next line are stitched back together |
 
 ---
 
@@ -743,8 +620,7 @@ and version; if you change command or parsing behaviour, please add a case under
 
 The remaining items (#7 legacy data migration, #10 alarms and finer permissions, #11 UI polish,
 #12 wake-up coverage for batch ops, #13 provisioning visibility, #14 CR credential rewrite
-compatibility, #16 ONT batch operation buttons, #17 service flow operation buttons, #18 MAC column
-value, #19 output label case fallback) are open for anyone to pick up — just open an issue and say so.
+compatibility) are open for anyone to pick up — just open an issue and say so.
 
 > This project is meant for managing **devices you are authorized to manage**: get permission before
 > pointing it at someone else's network or devices, and follow local laws and your operator's rules.

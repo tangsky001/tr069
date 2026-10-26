@@ -25,7 +25,8 @@ module.exports = {
    * Detail: https://cli.vuejs.org/config/#publicpath
    */
   publicPath: '/',
-  outputDir: 'dist',
+  // 产物直接输出到后端 resources/public，随 jar 一起发布（单 jar 部署）
+  outputDir: '../src/main/resources/public',
   assetsDir: 'static',
   lintOnSave: process.env.NODE_ENV === 'development',
   productionSourceMap: false,
@@ -36,17 +37,11 @@ module.exports = {
       warnings: false,
       errors: true
     },
-    // 只有显式设置 VUE_APP_USE_MOCK=true 时才拦截请求走本地 mock，
-    // 默认直连 javaacs 后端，方便联调登录与设备接口
-    before: process.env.VUE_APP_USE_MOCK === 'true'
-      ? require('./mock/mock-server.js')
-      : undefined,
+    // 开发环境把 /api 代理到后端 ACS 服务
     proxy: {
-      // 把开发态前缀 /dev-api 转发到后端，并改写为后端实际前缀 /api
-      [process.env.VUE_APP_BASE_API]: {
+      '/api': {
         target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
-        changeOrigin: true,
-        pathRewrite: { ['^' + process.env.VUE_APP_BASE_API]: '/api' }
+        changeOrigin: true
       }
     }
   },

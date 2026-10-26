@@ -1,76 +1,60 @@
-# ==================== 配置说明 ====================
-# 本文件打进 jar，值直接写在这里。
-#
-# 现场要改时有两种方式，都不需要重新打包：
-#   1. 在 jar 同级放 config/application.yml，只写要覆盖的键即可，
-#      Spring Boot 原生优先级高于 jar 内（模板见 deploy/config/application.yml.example）
-#   2. 用环境变量或命令行参数覆盖，框架自动做名称映射，例如
-#        acs.cwmp.listen-ports      -> ACS_CWMP_LISTEN_PORTS
-#        spring.datasource.url      -> SPRING_DATASOURCE_URL
-#        spring.datasource.password -> SPRING_DATASOURCE_PASSWORD
 server:
   port: 8888
   servlet:
     encoding:
       charset: UTF-8
       force: true
+    session:
+      timeout: 5m
+      cookie:
+        http-only: true
   tomcat:
     uri-encoding: UTF-8
     threads:
       max: 400
       min-spare: 40
+  max-http-request-header-size: 16KB
 
 spring:
   application:
-    name: javaacs-server
-  # Redis：设备上报队列与下发指令队列的存储
-  data:
-    redis:
-      host: 127.0.0.1
-      port: 6379
-      # 无密码时留空
-      password:
-      database: 0
-      connect-timeout: 5s
-      timeout: 5s
-      lettuce:
-        pool:
-          max-active: 16
-          max-idle: 8
-          min-idle: 2
-          max-wait: 3s
-  # 数据库为现成环境，启动不做任何建表 / 数据初始化
+    name: acs
+  mvc:
+    servlet:
+      load-on-startup: 1
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: Asia/Shanghai
+  datasource:
+    # ---------- MySQL：台账 / 账号 / 任务 / 审计 / 日志 ----------
+    mysql:
+      type: com.zaxxer.hikari.HikariDataSource
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      jdbc-url: jdbc:mysql://127.0.0.1:3306/tr_acs?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&autoReconnect=true&createDatabaseIfNotExist=true
+      username: root
+      password: Qq123456
+      hikari:
+        pool-name: mysqlPool
+        minimum-idle: 2
+        maximum-pool-size: 20
+        connection-test-query: SELECT 1
+    # ---------- SQLite：仅光猫适配数据（能力树 / 参数映射 / 命中记录）----------
+    sqlite:
+      type: com.zaxxer.hikari.HikariDataSource
+      driver-class-name: org.sqlite.JDBC
+      jdbc-url: jdbc:sqlite:./data/tr069_tpl.pack
+      username: ""
+      password: ""
+      hikari:
+        pool-name: sqlitePool
+        minimum-idle: 1
+        maximum-pool-size: 3
+        connection-test-query: SELECT 1
   sql:
     init:
-      mode: never
-  datasource:
-    # 不写死 driver-class-name，由 Spring Boot 依据 JDBC URL 推断，
-    # 后续换用兼容 MySQL 协议的其它数据库时，改连接串即可
-    # characterEncoding 要写 Java 认得的字符集名（UTF-8），写 utf8mb4 会抛
-    # Unsupported character encoding；Connector/J 8 会把 UTF-8 映射成 MySQL 的 utf8mb4
-    url: jdbc:mysql://127.0.0.1:3306/tr_acs?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true&nullCatalogMeansCurrent=true
-    username: root
-    password: Qq123456
-    hikari:
-      pool-name: javaacs-hikari
-      # 设备并发上报量大，空闲连接不宜过低
-      minimum-idle: 10
-      maximum-pool-size: 50
-      connection-timeout: 30000
-      # 连接最长存活 25 分钟，必须小于 MySQL 的 wait_timeout(默认 28800s)，
-      # 否则会取到已被服务端单向关闭的连接
-      max-lifetime: 1500000
-      idle-timeout: 600000
-      validation-timeout: 5000
-      # 工单执行链路较长，开启泄漏检测便于定位未归还的连接
-      leak-detection-threshold: 60000
-  servlet:
-    multipart:
-      max-file-size: 100MB
-      max-request-size: 100MB
-  mvc:
-    pathmatch:
-      matching-strategy: ant_path_matcher
+      mode: always
+      continue-on-error: true
+      schema-locations: classpath:db/schema-mysql.sql
+      data-locations: classpath:db/data-mysql.sql
 
 mybatis-plus:
   configuration:
@@ -79,278 +63,64 @@ mybatis-plus:
   global-config:
     db-config:
       id-type: auto
-      logic-delete-field: deleted
-      logic-delete-value: 1
-      logic-not-delete-value: 0
-  mapper-locations: classpath*:/mapper/**/*.xml
 
-# ==================== TR069 ACS 配置 ====================
+# ============================ ACS 业务配置 ============================
 acs:
-  # ACS 对外通告地址，用于下发给 CPE 的连接请求地址
-  public-host: 127.0.0.1
-
-  cwmp:
-    # CPE 上报监听端口，可填多个（逗号 / 空格分隔）。
-    # 不同厂商光猫出厂固化的 ACS URL 端口并不一致（例如 9090、8082），
-    # 这里列出的端口都会额外开启监听，与主 server.port 重复的会自动跳过。
-    listen-ports: 9090,8082
-    # CPE 上报的路径
-    cpe-path: /ACS-server/ACS
-    # 额外兼容的上报路径（逗号分隔）。各厂商出厂固化的 URL 路径不一致，
-    # 未在清单内的 POST 会被判成 405，设备只会周期性重试，日志里会打印未匹配路径。
-    # 默认值已覆盖常见写法，现场遇到新写法直接在这里追加即可。
-    extra-cpe-paths: /acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/
-    # PortalAgent / 内部节点回调路径
-    user-path: /user
-    # SOAP 命名空间版本
-    cwmp-version: urn:dslforum-org:cwmp-1-0
-
-  session:
-    # 在线判定窗口(秒)：台账里最近一次上报落在窗口内就算在线，设备列表、详情页、
-    # 台账统计都按这一条判。不能按「TCP 连着没有」判——CWMP 是短连接，
-    # 光猫报完一轮就断，刚报过的设备会被判成离线。
-    # 取值要覆盖常见的周期性 Inform 间隔（多为 300~1800 秒）
-    online-window-seconds: 900
-    # 超过窗口还没再上报的设备，隔多久被清扫成离线(毫秒)
-    offline-sweep-interval-millis: 60000
-    # 队列空时把这一跳请求挂起多久再回 204(毫秒)。这段时间不占 Tomcat 线程，
-    # 指令入队时会把挂着的请求叫起来，不用等到超时
-    piggyback-wait-ms: 1500
-    # 单条指令最多尝试下发几次：只有「没等到回应」才重排队列重试，
-    # 设备明确回了 fault（节点不存在、不可写）重发也是同一个结果，直接判失败
-    max-delivery-attempts: 2
-    # 重试前的基本等待(秒)，实际每次按 2 的幂递增（第 1 次等 60s、第 2 次 120s…）。
-    # 设备这一跳没回应多半是它正忙，接着在同一周期重发大概率还是同样的结果
-    retry-delay-seconds: 60
-    # 同一设备的会话互斥：多实例部署时防止两个 ACS 同时对一台设备编排下发。
-    # 拿不到 Redis 时自动放行，不会把设备挡在外面
-    session-lock-enabled: true
-    # 会话锁的持有时长(秒)，要盖住一轮会话的最长静默时间（等空 POST 的超时 + 余量）
-    session-lock-ttl-seconds: 90
-    # 报文顺序不对时是否直接回绝。
-    # 默认 false 只记日志：现场固件顺序花样多，严格回 400 会把本来能用的设备打挂
-    strict-state-check: false
-    # 收到 Inform 后等待 CPE 空 POST 的超时(秒)。超时只结束本轮下发窗口，不判设备离线
-    wait-post-null-timeout: 60
-    # 下发 RPC 后等待响应的超时(秒)
-    wait-rpc-response-timeout: 60
-    # Inform 处理整体超时(秒)
-    soap-inform-timeout: 60
-    # 疑似双会话的告警窗口(秒)：同 SN 在该窗口内从另一条连接上报时记一条 warn 供排查。
-    # 只告警、不关会话：周期上报换 TCP 连接是正常的，关掉会打离线、清空待下发队列、
-    # 作废等待中的指令。设备是否离线只看 online-check-interval（长期无通信）
-    duplicate-grace-seconds: 30
-
+  # CPE 上报路径（多个入口都映射到同一个协议处理器）
+  cwmp-paths: /cwmp,/ACS-server/ACS,/tr069,/tr069/prov
+  # 对外可达地址，用于 Download 的 URL 拼接
+  public-url: http://127.0.0.1:8888
+  # 文件下载是否要求 CPE 带账号密码
+  file-auth-used: false
+  # 未适配型号是否自动采集能力树入库（SQLite）
+  discovery-mode: true
+  # 并发下载上限
+  concurrent-download-limit: 100
+  # 心跳超时宽限（秒）
+  periodic-timeout-margin: 120
+  # 云端同步（预留）
+  cloud-sync: false
   auth:
-    # CPE -> ACS 认证的默认账号，设备级配置优先
-    # 免认证：写成 auto 或留空（含删除该配置项），任何账号密码都放行，
-    # 联调阶段设备侧账号密码写法不一时用它先跑通链路，上线前改回真实账号
+    # CPE -> ACS 认证：none | basic ；账号密码写成 auto/留空表示免认证
+    method: basic
     cpe-to-acs-username: auto
     cpe-to-acs-password: auto
-    # ACS -> CPE 反向连接（唤醒设备）用的账号密码，与上面「光猫连 ACS」那对不是一回事。
-    # 不同批次的光猫出厂 CR 密码各不相同，ACS 猜不出来，所以默认 itms/itms——
-    # 纳管时会把设备上的 CR 凭据统一改成这个值（见 acs.device.provision），
-    # 改成功后登记进台账，唤醒就以台账为准，不再靠猜。
-    # 某批次确定用别的密码就在这里改；留空或 auto 同样按 itms 处理
+    # ACS -> CPE（连接请求 / kick）账号密码
     acs-to-cpe-username: itms
     acs-to-cpe-password: itms
-
-  device:
-    # 设备离线判定周期(秒)：超过该时长没有任何通信才判离线
-    online-check-interval: 120
-    # 会话巡检周期(毫秒)，按无通信时长判离线
-    session-sweep-interval: 60000
-    # 超时未完成工单的清理周期(秒)
-    worklist-status-check-interval: 604800
-    # 设备纳管：收到 Inform 后把 ACS 地址与上报间隔写回设备
-    provision:
-      # 总开关
-      enabled: true
-      # 下发给设备的周期上报间隔(秒)。0 表示不改这一项
-      inform-interval-seconds: 300
-      # 下发给设备的 ACS 上报地址。留空则按 http://{acs.public-host}:{上报端口}{cpe-path} 拼
-      acs-url: http://10.101.125.100:9090/ACS-server/ACS
-      # 一并下发给设备的连接请求凭据，默认跟随 acs.auth.acs-to-cpe-*（即 itms/itms）。
-      # 各批次光猫出厂的 CR 密码不一样，ACS 拿不到就唤不醒它，所以纳管时统一改写，
-      # 写成功后同步登记进台账。这一项留空或 auto 时同样按 itms 处理
-      connection-request-username: ${acs.auth.acs-to-cpe-username}
-      connection-request-password: ${acs.auth.acs-to-cpe-password}
-      # 距上次下发超过该小时数才重发，0 表示每次 Inform 都发。
-      # 设备已被纳管时每次上报都写一遍纯属浪费下发窗口，由它控制校正频率
-      reprovision-interval-hours: 24
-      # BOOTSTRAP 事件是否强制重发：设备恢复出厂后地址会变回原厂平台
-      force-on-bootstrap: true
-    # 业务信息（WAN/WLAN/SIP）采集：向在线设备下发 GetParameterValues 后回库解析，
-    # 数据源是能力树快照，能力树没采过就只能先做能力采集
-    business:
-      # 单次业务采集等待设备的超时(秒)，超时返回已刷到的部分结果
-      collect-timeout-seconds: 45
-    # LAN 网口状态自动刷新：拔插网线后设备不会主动上报，靠定时任务重读网口状态叶子，
-    # 页面不必手动点「重新采集」。只对在线设备下发，指令要等设备下一次空 POST 才带下去
-    lan:
-      auto-refresh:
-        # 总开关
-        enabled: true
-        # 刷新间隔(毫秒)，默认 5 分钟
-        interval-millis: 300000
-        # 单轮等待设备回值的上限(秒)。超时不判失败，指令仍在队列里，下一轮继续
-        wait-seconds: 120
-        # 单轮最多刷多少台，防止设备规模上来后一轮下发过多
-        max-devices-per-round: 200
-    # 设备能力树采集：GetParameterNames 拉全量路径 + GetParameterValues 分批读值
-    capability:
-      # 总开关
-      enabled: true
-      # 收到 Inform 后自动采集。指令在回复 InformResponse 之前入队，
-      # CPE 紧随其后的空 POST 会把 GetParameterNames 捎带下去
-      collect-on-inform: true
-      # BOOTSTRAP 事件强制重新采集（设备可能换了能力）
-      force-on-bootstrap: true
-      # 距上次采集超过该小时数才重采，0 表示每次 Inform 都采
-      refresh-interval-hours: 24
-      # 单条 GetParameterValues 携带的参数个数，太大设备会拒绝
-      value-batch-size: 64
-      # 单次采集读取的参数个数上限，超出部分不读值
-      max-parameters: 20000
-      # 递归 GetParameterNames 失败时，改用 NextLevel=true 逐层展开兜底
-      fallback-next-level: true
-      # 逐层展开的对象个数上限，防止异常设备无限展开
-      max-object-rounds: 500
-      # 采集与回调线程数
-      worker-threads: 8
-      # 一轮采集的总时长上限（毫秒）。设备不在下发窗口时指令只能排在队列里等它上报，
-      # 周期十几分钟的猫要覆盖到「至少一次上报」，否则还没采就判超时。
-      # 调小能更快失败，调大能给慢设备更多机会，按现场上报周期取 1.5 倍左右
-      collect-timeout-ms: 900000
-      # 手动采集前是否先用连接请求把设备叫起来。不需要（靠周期上报就够了）就设 false
-      wakeup-enabled: true
-      # 按运营商的采集标准（子树 / GPN 策略 / 实例探测）与运营商自动识别都写死在代码里，
-      # 见 CapabilityProfiles#builtin 与 DeviceCapabilityService，这里不落配置
-      # 启动时自动补建 cpe_parameter 表，存量库升级时不用手工执行 DDL
-      auto-create-table: true
-
-  # 配置意图模板（只描述开通意图，入库，不直接下发）
-  config-template:
-    # 启动时自动补建 config_template 表
-    auto-create-table: true
-
-  agent:
-    # 单个 RPC 等待设备回应的超时(秒)
-    rpc-timeout: 510
-    # 工单整体执行超时(秒)
-    worklist-timeout: 3600
-    # 指令在队列中等待被设备取走的最长时间(秒)。
-    # 设备离线时靠它把指令收尾，否则挂在结果凭据上的工单步骤会永远等下去
-    pending-timeout-seconds: 600
-    # 超时指令的清扫间隔(毫秒)
-    pending-sweep-interval: 30000
-
-  database:
-    # 启动时的「只读」表存在性校验，不会执行任何 DDL，默认关闭。
-    # 仅当怀疑表没建全时改成 true 排查。
-    schema-check-enabled: false
-    # 表缺失时是否终止启动
-    fail-on-missing-table: false
-
-  queue:
-    # 上报与下发都走 Redis 队列做削峰；关掉则退回进程内同步处理
-    enabled: true
-    # Redis key 前缀，多套环境共用同一个 Redis 时用来隔离
-    key-prefix: acs
-    report:
-      # 上报队列分片数，同一设备固定落在同一分片，保证按序处理
-      shards: 8
-      # 队列为空时的轮询间隔(毫秒)。取数是非阻塞的，无需 BRPOP 阻塞等，
-      # 阻塞取数会占住 Redis 共享连接，把入队与下发一起堵死
-      poll-interval-millis: 200
-    rpc:
-      # 指令在队列中最长存活时间(秒)
-      queue-ttl-seconds: 3600
-      # 执行结果保留时间(秒)，供调用方按任务号查询
-      result-ttl-seconds: 3600
-      # 单个设备队列堆积上限，防止慢设备无限堆积
-      max-pending-per-device: 200
-      # 等待设备响应的最长时间(秒)
-      timeout-seconds: 510
-
-  worklist:
-    # 外部配置根目录，相对进程工作目录解析，刻意放在 jar 外部：现场改文件即时生效。
-    #   从 server 目录启动  → server/configuration
-    #   从 target 目录起 jar → server/target/configuration
-    # 目录由程序自行读写，约定：
-    #   models/{isp}/{型号标识}.xml    设备能力树按型号导出的归档
-    # 光猫适配档案已迁到 SQLite 模板库（acs.tr069tpl.db-path），不再放 YAML 档案
-    # 该目录为空时，依次回退到 jar 同级的 configuration/、target/configuration/
-    root-path: ./configuration
-
-  # ==================== 模板库（光猫已适配数据，便携化 SQLite） ====================
-  tr069tpl:
-    # 模板库 SQLite 文件路径，刻意放在 jar 外部：拷走即用，新机器拿到后光猫
-    # 一上线即识别为已适配，不必重新适配。
-    # 相对路径与 acs.worklist.root-path 同源（经 WorklistRootResolver 解析），
-    # 不按进程工作目录拼——否则从 target 目录起 jar 会去连 target/configuration
-    # 下那一份，与配置根目录里的适配档案分叉。父目录不存在时会自动创建。
-    db-path: ./configuration/tr069_tpl.pack
-    # 雪花 ID 节点号：多节点部署时手动分配避免主键撞车
-    snowflake-node-id: 1
-
-  # ==================== 意图下发执行器 ====================
-  exec:
-    # 下发任务表(device_task)自动建表
-    auto-create-table: true
-    # 下发指令等待设备回应的超时(秒)。ACS 只能在设备上报后的空 POST 里捎带指令，
-    # 这个时间其实是「等设备开一次心跳」的窗口
-    request-timeout-seconds: 90
-
-  # ==================== OLT（Telnet 采集） ====================
-  # OLT 不跑 TR-069，靠登录设备命令行采集。超时按现场设备响应速度调：
-  # 老旧设备敲一条 display board 要十几秒，命令超时给小了会频繁拿到半截回显
-  olt:
-    # 启动时自动补建 olt_device / olt_board / olt_sync_record
-    auto-create-table: true
-    # 建连超时(毫秒)
-    connect-timeout-ms: 8000
-    # 登录超时(毫秒)，含等待账号/密码提示符
-    login-timeout-ms: 15000
-    # 单条命令等待提示符的超时(毫秒)
-    command-timeout-ms: 20000
-    # 单次采集留档的回显上限(字符)，超出截断
-    max-raw-output-chars: 60000
-
-  # ==================== 北向接口 ====================
-  openapi:
-    # 独立端口：给上层系统的对接接口单独监听，防火墙只需向合作方放行这一个端口，
-    # 不必把管理端(8888)暴露出去。置 0 则关闭独立端口，接口改挂在管理端口的 path-prefix 下
-    port: 8899
-    # 路径前缀，鉴权拦截器与端口隔离过滤器都按它判定
-    path-prefix: /openapi/v1
-    # 事件推送表(openapi_webhook*)自动建表
-    auto-create-table: true
-    webhook:
-      # 单次回调的超时(秒)
-      timeout-seconds: 10
-      # 最大推送次数，用尽记为 FAILED
-      max-attempts: 5
-      # 重试任务的扫描间隔(毫秒)
-      retry-interval-millis: 30000
-    watch:
-      # 设备上下线侦测：定期比对会话快照，把变化转成事件推给订阅方。
-      # 首次扫描只建基线，不会把启动时的在线设备推一遍
-      enabled: true
-      interval-millis: 15000
-
-# ==================== 管理端 ====================
-admin:
+  # 会话与任务超时
+  session-timeout-seconds: 180
+  task-timeout-seconds: 600
+  # 默认管理员（首次启动自动创建）
+  default-admin-username: admin
+  default-admin-password: admin123
   jwt:
-    # token 有效期(小时)。签名密钥不在这里配置：由 JwtSecretProvider 从进程工作目录下的
-    # target/secret.xml 加载，首次启动自动生成——配置文件会随 jar 分发，写进去等于公开
-    expire-hours: 12
-  # 管理端账号一律以数据库 sys_user 为准，初始账号由 sql/schema.sql 建库时写入，
-  # 不再通过配置文件指定账号与口令
+    secret: acs-tr069-secret-please-change-me-0123456789
+    expire-seconds: 86400
 
+device:
+  # 超过该时长没有任何通信则判定离线（秒）
+  online-check-interval: 120
+  provision:
+    # 收到 Inform 后把 ACS 地址与上报间隔写回设备
+    enabled: true
+    inform-interval-seconds: 300
+    acs-url: http://127.0.0.1:8888/ACS-server/ACS
+    connection-request-username: itms
+    connection-request-password: itms
+
+syslog:
+  enabled: true
+  # 非 root 运行建议用高端口，Windows 可直接用 514
+  port: 5141
+  bind: 0.0.0.0
+  # 日志保留天数
+  keep-days: 7
 
 logging:
   level:
     root: INFO
-    com.tr069.acs: INFO
-    com.tr069.acs.cwmp: DEBUG
+    com.acsr.acs: INFO
+    com.acsr.acs.cwmp: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

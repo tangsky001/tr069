@@ -4,23 +4,26 @@
 
     <breadcrumb class="breadcrumb-container" />
 
-    <!-- 账号与登出入口固定在导航栏最右侧：面包屑 flex 占满剩余宽度，
-         这里再用 margin-left:auto 兜底，避免窄屏时浮动布局回流到左边 -->
     <div class="right-menu">
-      <el-dropdown class="avatar-container" trigger="click" placement="bottom-end">
+      <el-dropdown class="avatar-container" trigger="click">
         <div class="avatar-wrapper">
-          <span class="user-name">{{ name || '未登录' }}</span>
           <img :src="avatar+'?imageView2/1/w/80/h/80'" class="user-avatar">
           <i class="el-icon-caret-bottom" />
         </div>
         <el-dropdown-menu slot="dropdown" class="user-dropdown">
           <router-link to="/">
             <el-dropdown-item>
-              <i class="el-icon-s-home" />首页
+              Home
             </el-dropdown-item>
           </router-link>
+          <a target="_blank" href="https://github.com/PanJiaChen/vue-admin-template/">
+            <el-dropdown-item>Github</el-dropdown-item>
+          </a>
+          <a target="_blank" href="https://panjiachen.github.io/vue-element-admin-site/#/">
+            <el-dropdown-item>Docs</el-dropdown-item>
+          </a>
           <el-dropdown-item divided @click.native="logout">
-            <i class="el-icon-switch-button" />退出登录
+            <span style="display:block;">Log Out</span>
           </el-dropdown-item>
         </el-dropdown-menu>
       </el-dropdown>
@@ -41,8 +44,7 @@ export default {
   computed: {
     ...mapGetters([
       'sidebar',
-      'avatar',
-      'name'
+      'avatar'
     ])
   },
   methods: {
@@ -62,15 +64,13 @@ export default {
   height: 50px;
   overflow: hidden;
   position: relative;
-  display: flex;
-  align-items: center;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0,21,41,.08);
 
   .hamburger-container {
-    flex: none;
     line-height: 46px;
     height: 100%;
+    float: left;
     cursor: pointer;
     transition: background .3s;
     -webkit-tap-highlight-color:transparent;
@@ -81,14 +81,11 @@ export default {
   }
 
   .breadcrumb-container {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
+    float: left;
   }
 
   .right-menu {
-    flex: none;
-    margin-left: auto;
+    float: right;
     height: 100%;
     line-height: 50px;
 
@@ -96,48 +93,46 @@ export default {
       outline: none;
     }
 
-    .avatar-container {
-      margin-right: 20px;
+    .right-menu-item {
+      display: inline-block;
+      padding: 0 8px;
+      height: 100%;
+      font-size: 18px;
+      color: #5a5e66;
+      vertical-align: text-bottom;
 
-      .avatar-wrapper {
-        display: flex;
-        align-items: center;
-        height: 50px;
+      &.hover-effect {
         cursor: pointer;
+        transition: background .3s;
 
-        .user-name {
-          margin-right: 8px;
-          font-size: 14px;
-          color: #5a5e66;
-          max-width: 120px;
-          overflow: hidden;
-          white-space: nowrap;
-          text-overflow: ellipsis;
-        }
-
-        .user-avatar {
-          width: 32px;
-          height: 32px;
-          border-radius: 50%;
-        }
-
-        .el-icon-caret-bottom {
-          margin-left: 4px;
-          font-size: 12px;
-          color: #5a5e66;
+        &:hover {
+          background: rgba(0, 0, 0, .025)
         }
       }
     }
-  }
-}
-</style>
 
-<style lang="scss">
-// 下拉面板不随导航栏裁切，且菜单项右对齐展开
-.user-dropdown {
-  .el-dropdown-menu__item {
-    i {
-      margin-right: 6px;
+    .avatar-container {
+      margin-right: 30px;
+
+      .avatar-wrapper {
+        margin-top: 5px;
+        position: relative;
+
+        .user-avatar {
+          cursor: pointer;
+          width: 40px;
+          height: 40px;
+          border-radius: 10px;
+        }
+
+        .el-icon-caret-bottom {
+          cursor: pointer;
+          position: absolute;
+          right: -20px;
+          top: 25px;
+          font-size: 12px;
+        }
+      }
     }
   }
 }

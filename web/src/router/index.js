@@ -7,167 +7,131 @@ Vue.use(Router)
 import Layout from '@/layout'
 
 /**
- * 业务路由。
- *
- * meta.title 显示在侧边栏与面包屑，meta.icon 为侧边栏图标。
- * 设备详情不在侧边栏展示（hidden），由列表页跳转进入。
+ * hidden: true                   侧边栏不显示
+ * alwaysShow: true               始终显示根菜单
+ * meta: { title, icon }
  */
+
 export const constantRoutes = [
   {
     path: '/login',
     component: () => import('@/views/login/index'),
     hidden: true
   },
-
   {
     path: '/404',
     component: () => import('@/views/404'),
     hidden: true
   },
-
-  // 登录后默认进概览页。没有这条就会命中下面的 * 兜底，登录后直接跳 404
   {
     path: '/',
     component: Layout,
     redirect: '/dashboard',
-    hidden: true
-  },
-
-  {
-    path: '/dashboard',
-    component: Layout,
-    redirect: '/dashboard/index',
     children: [{
-      path: 'index',
+      path: 'dashboard',
       name: 'Dashboard',
       component: () => import('@/views/dashboard/index'),
-      meta: { title: '首页概览', icon: 'el-icon-s-home' }
+      meta: { title: '首页概览', icon: 'dashboard' }
     }]
   },
-
-  {
-    path: '/template',
-    component: Layout,
-    redirect: '/template/list',
-    children: [{
-      path: 'list',
-      name: 'TemplateList',
-      component: () => import('@/views/worklist/templates'),
-      meta: { title: '配置模板', icon: 'el-icon-files' }
-    }]
-  },
-
-  {
-    path: '/biz',
-    component: Layout,
-    redirect: '/biz/list',
-    children: [{
-      path: 'list',
-      name: 'BizTemplateList',
-      component: () => import('@/views/biz/template'),
-      meta: { title: '业务模板', icon: 'el-icon-menu' }
-    }]
-  },
-
   {
     path: '/device',
     component: Layout,
-    redirect: '/device/list',
+    redirect: '/device/index',
     children: [{
-      path: 'list',
-      name: 'DeviceList',
-      component: () => import('@/views/device/list'),
-      meta: { title: '设备管理', icon: 'el-icon-monitor' }
+      path: 'index',
+      name: 'Device',
+      component: () => import('@/views/device/index'),
+      meta: { title: '设备台账', icon: 'el-icon-s-platform' }
     }]
   },
-
   {
-    path: '/device-detail',
+    path: '/dispatch',
     component: Layout,
-    hidden: true,
+    redirect: '/dispatch/index',
     children: [{
-      path: ':sn',
-      name: 'DeviceDetail',
-      component: () => import('@/views/device/detail'),
-      meta: { title: '设备详情' }
+      path: 'index',
+      name: 'Dispatch',
+      component: () => import('@/views/dispatch/index'),
+      meta: { title: '配置下发', icon: 'el-icon-s-promotion' }
     }]
   },
-
   {
-    path: '/worklist',
+    path: '/adapt',
     component: Layout,
-    redirect: '/worklist/instances',
-    alwaysShow: true,
-    name: 'Worklist',
-    meta: { title: '工单管理', icon: 'el-icon-s-order' },
+    redirect: '/adapt/index',
+    children: [{
+      path: 'index',
+      name: 'Adapt',
+      component: () => import('@/views/adapt/index'),
+      meta: { title: '光猫适配', icon: 'el-icon-s-cooperation' }
+    }]
+  },
+  {
+    path: '/log',
+    component: Layout,
+    redirect: '/log/cwmp',
+    name: 'Log',
+    meta: { title: '日志审计', icon: 'el-icon-document' },
     children: [
       {
-        path: 'deliver',
-        name: 'WorklistDeliver',
-        component: () => import('@/views/worklist/deliver'),
-        meta: { title: '下发业务', icon: 'el-icon-s-promotion' }
+        path: 'cwmp',
+        name: 'CwmpLog',
+        component: () => import('@/views/log/cwmp'),
+        meta: { title: '协议交互' }
       },
       {
-        path: 'instances',
-        name: 'WorklistInstances',
-        component: () => import('@/views/worklist/instances'),
-        meta: { title: '工单记录', icon: 'el-icon-tickets' }
+        path: 'audit',
+        name: 'AuditLog',
+        component: () => import('@/views/log/audit'),
+        meta: { title: '操作审计' }
+      },
+      {
+        path: 'syslog',
+        name: 'Syslog',
+        component: () => import('@/views/log/syslog'),
+        meta: { title: '设备日志' }
       }
     ]
   },
-
   {
-    path: '/olt',
+    path: '/file',
     component: Layout,
-    redirect: '/olt/management',
-    meta: { title: 'OLT管理', icon: 'el-icon-s-platform' },
+    redirect: '/file/index',
     children: [{
-      // 台账入口：增删改、诊断、同步，再按厂商把人送到下面的厂商详情页
-      path: 'management',
-      name: 'OltManagement',
-      component: () => import('@/views/olt/management'),
-      meta: { title: 'OLT管理', icon: 'el-icon-s-platform' }
-    },
-    // 厂商详情页：各厂商命令不同，页面按厂商分开写，由 vendors.js 的映射分发过来
-    {
-      path: 'huawei/:id',
-      name: 'OltHuawei',
-      component: () => import('@/views/olt/huawei'),
-      meta: { title: '华为面板', activeMenu: '/olt/management' },
-      hidden: true
-    },
-    {
-      path: 'hsgq/:id',
-      name: 'OltHsgq',
-      component: () => import('@/views/olt/hsgq'),
-      meta: { title: '鸿升光面板', activeMenu: '/olt/management' },
-      hidden: true
-    },
-    {
-      path: 'generic/:id',
-      name: 'OltGeneric',
-      component: () => import('@/views/olt/generic'),
-      meta: { title: 'OLT面板', activeMenu: '/olt/management' },
-      hidden: true
+      path: 'index',
+      name: 'File',
+      component: () => import('@/views/file/index'),
+      meta: { title: '固件文件', icon: 'el-icon-folder' }
     }]
   },
-
+  {
+    path: '/system',
+    component: Layout,
+    redirect: '/system/user',
+    name: 'System',
+    meta: { title: '系统管理', icon: 'el-icon-setting' },
+    children: [{
+      path: 'user',
+      name: 'User',
+      component: () => import('@/views/system/user'),
+      meta: { title: '账号管理' }
+    }]
+  },
   // 404 page must be placed at the end !!!
   { path: '*', redirect: '/404', hidden: true }
 ]
 
 const createRouter = () => new Router({
-  // mode: 'history', // require service support
   scrollBehavior: () => ({ y: 0 }),
   routes: constantRoutes
 })
 
 const router = createRouter()
 
-// Detail see: https://github.com/vuejs/vue-router/issues/1234#issuecomment-357941465
 export function resetRouter() {
   const newRouter = createRouter()
-  router.matcher = newRouter.matcher // reset router
+  router.matcher = newRouter.matcher
 }
 
 export default router

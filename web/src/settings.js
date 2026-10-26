@@ -1,6 +1,6 @@
 module.exports = {
 
-  title: 'TR069 ACS 管理端',
+  title: 'TR-069 ACS',
 
   /**
    * @type {boolean} true | false

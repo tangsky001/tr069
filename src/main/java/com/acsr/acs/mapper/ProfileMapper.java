@@ -1,0 +1,9 @@
+package com.acsr.acs.mapper;
+
+import com.acsr.acs.model.entity.Profile;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface ProfileMapper extends BaseMapper<Profile> {
+}
