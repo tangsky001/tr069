@@ -171,7 +171,7 @@ display ont register-info <端口> <ONT ID>
 
 ![OLT 管理 - DBA / 线路模板](doc/Display/164849_972.png)
 
-![OLT 管理 - DBA / 线路模板](doc/Display/164917_540.png)
+![OLT 管理 - DBA / 线路模板](doc/Display/183844_270.png)
 
 #### 业务 / TR069 / 流量模板（真实采集，只读）
 
