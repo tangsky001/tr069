@@ -44,6 +44,7 @@
             :slots="slots"
             :slot-count="chassisSlotCount"
             :model="device.model"
+            :brand="device.vendorLabel"
             :expanded-onts="expandedOnts"
             :hover-port="hoverPort"
             empty-text="尚无板卡数据。点击「同步」登录设备采集；若同步成功仍为空，说明厂商命令与解析规则不匹配，可到「采集记录」查看原始回显。"

@@ -9,13 +9,15 @@
     <!-- 槽位一排铺开，机框宽的时候左右滑 -->
     <div ref="scroll" class="chassis-scroll">
       <div class="chassis-frame">
-        <!-- 上导轨：机框型号 + 风扇格栅 -->
+        <!-- 上导轨：风扇 + STATUS 灯 + 厂商标 + 型号牌，照真机导轨摆 -->
         <div class="chassis-rail">
-          <span class="chassis-brand">{{ model || 'OLT' }}</span>
-          <span class="chassis-fan">
-            <i v-for="n in 9" :key="'fan-' + n" />
+          <span class="rail-side">
+            <span class="rail-fan"><i v-for="n in 4" :key="'lf-' + n" /></span>
+            <span class="rail-status"><i /> STATUS</span>
           </span>
-          <span class="chassis-rail-tail">{{ count }} 槽位</span>
+          <span class="rail-logo">{{ brand || model || 'OLT' }}</span>
+          <span class="rail-model" :class="{ 'rail-model-empty': !model }">{{ model || '—' }}</span>
+          <span class="rail-fan"><i v-for="n in 4" :key="'rf-' + n" /></span>
         </div>
 
         <!-- 槽位仓：等宽，板卡按 SlotID 插进去 -->
@@ -47,8 +49,10 @@
               />
             </template>
             <div v-else class="chassis-bay-empty">
-              <span class="chassis-bay-empty-no">{{ slot.index }}</span>
-              <span class="chassis-bay-empty-text">空槽位</span>
+              <!-- 真机空槽位插的是银色盲面板：上下黑色拉手 + 中间通风箭头，不是黑窟窿 -->
+              <span class="blank-tab blank-tab-top" />
+              <span class="blank-arrow" />
+              <span class="blank-tab blank-tab-bottom" />
             </div>
           </div>
         </div>
@@ -73,7 +77,9 @@ import OltBoardPanel from './OltBoardPanel'
 /**
  * 机框视图：把板卡**插进**机框的槽位里，机框型号跟着设备型号走（MA5683T / HSGQ-E04…）。
  *
- * 机框外壳用 HTML/CSS 画（上导轨风扇格栅、下导轨槽位号），12 个槽位等宽排成一排，
+ * 机框外壳用 HTML/CSS 画，照真机来：深色金属边框、上导轨（风扇 + STATUS 灯 + 厂商标 +
+ * 型号牌）、槽位仓是银色卡笼——空槽插银色盲面板（黑色拉手 + 通风箭头），下导轨是深色
+ * 铭牌条上的槽位号。12 个槽位等宽排成一排，
  * 每个槽位放的是真正的板卡面板（`OltBoardPanel`——竖放板卡 + 右侧逐口标注），
  * 槽位号就是 `display board 0` 的 SlotID：板卡按 `slotNo` 落到对应槽位，没插板的槽位画成空槽位。
  *
@@ -98,6 +104,11 @@ export default {
     },
     /** 机框型号（设备型号），显示在框顶上 */
     model: {
+      type: String,
+      default: ''
+    },
+    /** 导轨正中的厂商标（华为/中兴/烽火…），没识别出来就退回型号 */
+    brand: {
       type: String,
       default: ''
     },
@@ -218,51 +229,86 @@ export default {
   position: relative;
   display: inline-block;
   min-width: 100%;
-  border: 1px solid #343c47;
-  border-radius: 5px;
-  background: #171c22;
+  /* 机框外壳：深色金属边框，里面是银色的卡笼 */
+  border: 1px solid #0e1116;
+  border-radius: 7px;
+  background: linear-gradient(#22262b, #14171b);
+  box-shadow: inset 0 1px 0 #31363d, 0 2px 8px rgba(0, 0, 0, 0.45);
 }
-/* 上下导轨 */
+/* ---- 上导轨：风扇 + STATUS + 厂商标 + 型号牌 ---- */
 .chassis-rail {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 4px 4px 0 0;
-  background: #1d232b;
-  border-bottom: 1px solid #2c333d;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 6px 6px 0 0;
+  background: linear-gradient(#26282c, #1a1c20);
+  border-bottom: 1px solid #0c0e11;
 }
-.chassis-brand {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 1.4px;
-  color: #cfd8e3;
+.rail-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
-.chassis-fan {
+.rail-fan {
   display: inline-flex;
   gap: 3px;
-  margin-left: auto;
-  padding: 2px 5px;
-  border: 1px solid #2c333d;
+  padding: 3px 5px;
+  border: 1px solid #33373d;
   border-radius: 3px;
-  background: #10141a;
+  background: #0f1114;
 }
-.chassis-fan i {
+.rail-fan i {
   width: 2px;
-  height: 12px;
-  background: #3a434f;
+  height: 10px;
+  background: #4a515a;
 }
-.chassis-rail-tail {
-  font-size: 11px;
+.rail-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: #6f7883;
+  font-size: 9px;
+  letter-spacing: 1px;
+  white-space: nowrap;
 }
-/* ---- 槽位仓 ---- */
+.rail-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #35c24f;
+  box-shadow: 0 0 4px rgba(53, 194, 79, 0.8);
+}
+.rail-logo {
+  flex: 1;
+  text-align: center;
+  color: #eceff3;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 4px;
+}
+.rail-model {
+  padding: 2px 10px;
+  border: 1px solid #454b53;
+  border-radius: 3px;
+  background: #0f1114;
+  color: #cfd6de;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.rail-model-empty {
+  color: #565e68;
+  border-color: #2c3138;
+}
+/* ---- 槽位仓：银色卡笼，空槽插的是盲面板 ---- */
 .chassis-bays {
   display: grid;
-  gap: 3px;
-  padding: 4px;
-  background: #0d1116;
+  gap: 4px;
+  padding: 6px;
+  background: linear-gradient(#a7acb1, #bfc4c8);
 }
 .chassis-bay {
   box-sizing: border-box;
@@ -271,9 +317,9 @@ export default {
   height: 700px;
   padding: 0;
   /* 边框用 inset 阴影画：真边框会吃掉左右各 1px，SVG 按 58 宽等比缩放就矮一截，底下会空出一条缝 */
-  box-shadow: inset 0 0 0 1px #242a33;
-  border-radius: 4px;
-  background: #0b0e12;
+  box-shadow: inset 0 0 0 1px #8f959b;
+  border-radius: 3px;
+  background: #b3b8bd;
   overflow: hidden;
 }
 .chassis-bay-used {
@@ -287,41 +333,53 @@ export default {
 .chassis-bay-active:hover {
   box-shadow: inset 0 0 0 1px #3f6f9f, 0 0 0 1px rgba(74, 158, 255, 0.25);
 }
-/* 空槽位：虚线仓 + 槽位号，和插了板的槽位一样高 */
+/* 空槽位：真机的银色盲面板——上下黑色拉手，中间一枚向上的通风箭头 */
 .chassis-bay-empty {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
   height: 100%;
-  border: 1px dashed #2a313a;
-  border-radius: 4px;
-  background: #0f1318;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #e6e8ea, #c9cdd0 55%, #d9dcde);
+  box-shadow: inset 0 0 0 1px #9aa0a5, inset 0 2px 3px rgba(255, 255, 255, 0.55);
 }
-.chassis-bay-empty-no {
-  font-size: 20px;
-  font-weight: 600;
-  color: #39404a;
+.blank-tab {
+  width: 28px;
+  height: 9px;
+  margin: 8px 0;
+  border-radius: 2px;
+  background: linear-gradient(#3c4147, #202429);
+  box-shadow: inset 0 1px 0 #585d63;
 }
-.chassis-bay-empty-text {
-  font-size: 11px;
-  color: #333a44;
+.blank-arrow {
+  position: relative;
+  flex: 1;
+  width: 10px;
+  border-left: 1px solid #878d93;
 }
-/* 下导轨的槽位号 */
+.blank-arrow::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: -5.5px;
+  border: 5px solid transparent;
+  border-bottom: 8px solid #878d93;
+}
+/* 下导轨的槽位号：深色铭牌条，白字 */
 .chassis-slotnos {
   display: grid;
-  gap: 3px;
-  padding: 0 4px 4px;
-  background: #0d1116;
+  gap: 4px;
+  padding: 0 6px 6px;
+  background: linear-gradient(#a7acb1, #bfc4c8);
 }
 .chassis-slotno {
   padding: 3px 0;
-  border-radius: 0 0 4px 4px;
-  background: #1d232b;
-  border: 1px solid #2c333d;
+  border-radius: 0 0 3px 3px;
+  background: #23262b;
+  border: 1px solid #0e1013;
   border-top: none;
-  color: #7f8a99;
+  color: #c3c9d0;
   font-size: 11px;
   text-align: center;
 }

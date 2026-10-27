@@ -8,6 +8,7 @@
         :slots="slots"
         :slot-count="slotCount"
         :model="model"
+        :brand="brand"
         :active-slot="activeSlot"
         :hover-port="hoverPort"
         :expanded-onts="expandedOnts"
@@ -92,6 +93,11 @@ export default {
     },
     /** 机框型号（设备型号），印在机框顶上 */
     model: {
+      type: String,
+      default: ''
+    },
+    /** 机框上的厂商标（华为/中兴/烽火…），导轨正中那个大字 */
+    brand: {
       type: String,
       default: ''
     },
