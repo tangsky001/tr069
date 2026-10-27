@@ -29,6 +29,7 @@ public class OltSchemaInitializer implements InitializingBean {
     private static final String[][] EXPECTED_COLUMNS = {
             {"olt_device", "patch_version", "VARCHAR(64) DEFAULT NULL COMMENT '补丁版本，如 SPC107'"},
             {"olt_device", "backplane", "VARCHAR(64) DEFAULT NULL COMMENT '背板/主板型号，如 H802MABO'"},
+            {"olt_device", "slot_count", "INT DEFAULT NULL COMMENT '机框槽位数（display board 0 槽位表）'"},
             {"olt_device", "mac_address", "VARCHAR(32) DEFAULT NULL COMMENT '主控 MAC'"},
             {"olt_device", "uptime", "VARCHAR(64) DEFAULT NULL COMMENT '运行时长'"},
             {"olt_device", "vlan_json", "LONGTEXT DEFAULT NULL COMMENT 'VLAN 快照(JSON)'"},

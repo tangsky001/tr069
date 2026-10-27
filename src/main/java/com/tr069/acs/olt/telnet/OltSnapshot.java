@@ -43,6 +43,9 @@ public class OltSnapshot {
     /** 板卡列表，未采集时为空 */
     private List<OltBoard> boards = new ArrayList<>();
 
+    /** 机框槽位数：display board 0 槽位表里最大的 SlotID + 1，机框视图按它画槽位 */
+    private Integer slotCount;
+
     /** 版本命令回显 */
     private String versionText;
 

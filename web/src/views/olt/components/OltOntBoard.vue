@@ -30,10 +30,22 @@
         <el-table-column label="ONT 总数" prop="onuTotal" width="100" align="center" />
         <el-table-column label="在线" prop="onuOnline" width="80" align="center" />
         <el-table-column label="离线" prop="offline" width="80" align="center" />
+        <el-table-column label="光模块发光" width="120" align="center">
+          <template slot-scope="{ row }">
+            <span v-if="row.txPower">{{ row.txPower }}</span>
+            <span v-else class="ont-sub-empty">--</span>
+          </template>
+        </el-table-column>
         <el-table-column label="光模块收光" width="120" align="center">
           <template slot-scope="{ row }">
             <span v-if="row.hasOptic">{{ row.rxPower || '--' }}</span>
             <span v-else class="ont-sub-empty">未采集</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="光模块温度" width="110" align="center">
+          <template slot-scope="{ row }">
+            <span v-if="row.opticTemperature">{{ row.opticTemperature }}</span>
+            <span v-else class="ont-sub-empty">--</span>
           </template>
         </el-table-column>
       </el-table>

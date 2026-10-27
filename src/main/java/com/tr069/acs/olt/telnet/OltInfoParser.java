@@ -113,6 +113,9 @@ public final class OltInfoParser {
     private static final Pattern BACKPLANE_BOARD = Pattern.compile(
             "(?m)^\\s*\\d{1,2}\\s+(H\\d{3}MAB[A-Z0-9]{0,4})(?=\\s|$)", Pattern.CASE_INSENSITIVE);
 
+    /** 槽位表里的空槽位行：整行只有一个槽位号，没有板卡名 */
+    private static final Pattern EMPTY_SLOT_LINE = Pattern.compile("(?m)^\\s*(\\d{1,2})\\s*$");
+
     /**
      * 华为 display temperature all 的表头：
      * Slot Card Sensor Status Current(C) Lower(C) Upper(C)
@@ -348,6 +351,30 @@ public final class OltInfoParser {
         }
         boards.sort((a, b) -> Integer.compare(a.getSlotNo(), b.getSlotNo()));
         return boards;
+    }
+
+    /**
+     * 机框槽位数：{@code display board 0} 槽位表里最大的 SlotID + 1。
+     *
+     * <p>表里空槽位也占一行（只有槽位号，没有板卡名），所以不能只看解析出来的板卡行——
+     * 现场这台 MA5683T 的槽位表是 0..12 共 13 个槽位，只有 1/6/8 插了板卡，
+     * 机框要按 13 个槽位画，而不是只画到 8 号。</p>
+     */
+    public static Integer parseSlotCount(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        int max = -1;
+        Matcher bare = EMPTY_SLOT_LINE.matcher(text);
+        while (bare.find()) {
+            max = Math.max(max, Integer.parseInt(bare.group(1)));
+        }
+        for (OltBoard board : parseBoards(text)) {
+            if (board.getSlotNo() != null) {
+                max = Math.max(max, board.getSlotNo());
+            }
+        }
+        return max < 0 ? null : max + 1;
     }
 
     /**
@@ -739,19 +766,20 @@ public final class OltInfoParser {
             int online = summary.group(5) == null ? countOnline(text, portNo) : Integer.parseInt(summary.group(5));
             counts.put(portNo, new int[]{total, online});
         }
-        if (!counts.isEmpty()) {
-            return counts;
-        }
-        // 没有汇总行（部分版本只有表格）：行数当总数，Run state 数在线
+        // 明细行兜底：整段没有汇总行（部分版本只有表格），或者只有部分端口带汇总行
+        // （分页截断、只在有 ONT 的口打汇总）时，用表格行数补上——否则这些口会被当成 0 个 ONT，
+        // 页面就把明明有 ONT 在线的口画成离线。
+        Map<Integer, int[]> fromRows = new LinkedHashMap<>();
         Matcher row = ONT_ROW.matcher(text);
         while (row.find()) {
             int portNo = Integer.parseInt(row.group(3));
-            int[] stat = counts.computeIfAbsent(portNo, key -> new int[]{0, 0});
+            int[] stat = fromRows.computeIfAbsent(portNo, key -> new int[]{0, 0});
             stat[0]++;
             if (isOnline(row.group(7))) {
                 stat[1]++;
             }
         }
+        fromRows.forEach(counts::putIfAbsent);
         return counts;
     }
 
@@ -858,6 +886,80 @@ public final class OltInfoParser {
         }
         String state = runState.toLowerCase(Locale.ROOT);
         return state.contains("online") || "up".equals(state);
+    }
+
+    // ------------------------------------------------------------ 端口光模块数值
+
+    /**
+     * {@code display port state <口>}（接口视图）里的键值行：
+     * {@code TX power(dBm)      : 4.23}、{@code Temperature(C)    : 35}。
+     */
+    private static final Pattern PORT_STATE_ROW = Pattern.compile("^([^:：]{2,48})[:：]\\s*(\\S.*)$");
+
+    /**
+     * 解析光模块数值：Optical Module status / Laser state / TX fault /
+     * Temperature(C) / TX Bias current(mA) / Supply Voltage(V) / TX power(dBm) / RX power(dBm)。
+     *
+     * <p>回显里还有 Port Information 段（Port state、Last up time 等），这里只挑光模块的字段；
+     * 一个都没认出来（命令不认、端口不存在）返回 null，调用方据此判断要不要继续问下一个口。</p>
+     */
+    public static OltPort parsePortStateOptics(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        OltPort optics = new OltPort();
+        boolean any = false;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("$ ") || line.contains("#")
+                    || (!line.contains(":") && !line.contains("："))) {
+                continue;
+            }
+            Matcher row = PORT_STATE_ROW.matcher(line);
+            if (!row.matches()) {
+                continue;
+            }
+            String label = row.group(1).replaceAll("\\s+", " ").trim().toLowerCase(Locale.ROOT);
+            String value = row.group(2).trim();
+            switch (label) {
+                case "optical module status":
+                    optics.setModuleStatus(value);
+                    any = true;
+                    break;
+                case "laser state":
+                    optics.setLaserState(value);
+                    any = true;
+                    break;
+                case "tx fault":
+                    optics.setTxFault(value);
+                    any = true;
+                    break;
+                case "temperature(c)":
+                    optics.setOpticTemperature(value + " ℃");
+                    any = true;
+                    break;
+                case "tx bias current(ma)":
+                    optics.setBiasCurrent(value + " mA");
+                    any = true;
+                    break;
+                case "supply voltage(v)":
+                    optics.setSupplyVoltage(value + " V");
+                    any = true;
+                    break;
+                case "tx power(dbm)":
+                    optics.setTxPower(value + " dBm");
+                    any = true;
+                    break;
+                case "rx power(dbm)":
+                    optics.setRxPower(value + " dBm");
+                    any = true;
+                    break;
+                default:
+                    // Port state / Last up time 这些不是光模块数值
+                    break;
+            }
+        }
+        return any ? optics : null;
     }
 
     // ------------------------------------------------------------ 鸿升光 HSGQ

@@ -48,14 +48,14 @@
 
           <olt-board-cards
             :slots="slots"
+            :slot-count="chassisSlotCount"
+            :model="device.model"
             :expanded-onts="expandedOnts"
             :hover-port="hoverPort"
-            :missing-images="missingImages"
             empty-text="尚无整机数据。点击「同步」登录设备采集。"
             @toggle="onToggleOnts"
             @hover="hoverOn"
             @leave="hoverOff"
-            @image-error="markImageMissing"
           />
         </el-tab-pane>
 

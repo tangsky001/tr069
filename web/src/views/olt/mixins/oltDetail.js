@@ -7,33 +7,8 @@ import {
   createDbaProfile,
   deleteDbaProfiles
 } from '@/api/olt'
-import { matchBoardProfile } from '../boardProfiles'
+import { matchBoardProfile, panelKindOf } from '../boardProfiles'
 import { compressVlans as compressVlanRange } from '../utils'
-
-/**
- * 板卡示意图上 PON 口的位置（占图片高度的百分比），下标就是端口号。
- * 只给面板布局固定的型号配，宁可没有也别乱标。
- *
- * GPBD / XGBD 这两块 8 口板的面板一样：上排 4 口（P0-P3）、中间一条激光警告贴、
- * 下排 4 口（P4-P7），数值按图片像素量的——取每个口上下边框（深色缝）的中点除以图高 719。
- */
-const PORT_MARKERS = {
-  H807GPBD: [30.7, 36.6, 42.3, 48.4, 67.7, 73.5, 79.3, 85.2],
-  H801XGBD: [31.2, 37.2, 43.1, 48.9, 68.1, 73.9, 79.8, 85.7],
-  // SCUN 主控板的 4 个 GE 口在图的中下部，两两一组（RJ45 上下沿的中点）
-  H802SCUN: [53.8, 61.2, 68.6, 76.3],
-  // X2CS 上联板的 2 个 SFP+ 笼在图的中下部
-  H801X2CS: [42.4, 69.4]
-}
-
-/**
- * 横向整机图的 PON 口位置（占图片宽度的百分比），下标就是端口号。
- * HSGQ-E04 图是 770x125 的面板照：PON 1-4 横排在图中部（口块中心按像素量的），
- * 后面跟着 GE 上联与 CONSOLE，都不在表里。
- */
-const PORT_MARKERS_X = {
-  'HSGQ-E04': [33.4, 40.8, 48.2, 55.8]
-}
 
 /**
  * OLT 详情页公共逻辑：取台账、板卡、VLAN、采集记录，翻成页面上要显示的样子。
@@ -51,8 +26,6 @@ export const oltDetailMixin = {
       syncing: false,
       testing: false,
       detail: { device: null, boards: [], records: [], vlan: null, template: null },
-      // 图片按型号约定命名，缺图时记下来退回占位，避免一堆 404
-      missingImages: [],
       // 页面自动刷新：后台每 5 分钟自己去采，这里只按间隔把最新数据拉到页面上，不碰设备
       autoRefresh: true,
       pollSeconds: 10,
@@ -82,14 +55,15 @@ export const oltDetailMixin = {
     },
     slots() {
       return this.boards.map(board => {
-        // 板卡型号能对上档案时补上示意图
+        // 板卡型号能对上档案时，用档案里的面板样式和端口数兜底
         const profile = matchBoardProfile(board.boardType)
         const type = board.boardType || '-'
+        const portMode = board.portMode || (profile && profile.portMode) || ''
         const ports = this.buildPorts(board, profile)
         return {
           no: board.slotNo,
           type,
-          portMode: board.portMode || (profile && profile.portMode),
+          portMode,
           portCount: board.portCount,
           status: board.status,
           statusText: this.boardStatusText(board.status),
@@ -97,16 +71,28 @@ export const oltDetailMixin = {
           statusIcon: this.boardStatusIcon(board.status),
           description: board.description || (profile ? profile.label : ''),
           temperature: board.temperature,
-          // 有档案用档案，没有就按约定 /olt/olt_<型号>.png 找图，缺图由 error 事件退回占位
-          image: profile ? profile.image : this.conventionImage(board.boardType),
-          // 横向示意图（整机的面板照片）：档案里先声明，页面不用等图加载完就知道该横着摆
-          wide: !!(profile && profile.wide),
+          // 面板样式：档案里写了就照档案，没有就按端口类型推（主控板画 GE 口、上联板画 SFP+）
+          panel: profile ? profile.panel : panelKindOf(portMode),
+          controlBoard: !!(profile && profile.controlBoard),
           profile,
           ports,
-          onuSummary: this.buildOnuSummary(board),
-          markers: this.buildPortMarkers(type, ports, !!(profile && profile.wide))
+          onuSummary: this.buildOnuSummary(board)
         }
       })
+    },
+    /**
+     * 机框要画多少个槽位：优先用 display board 0 槽位表里的最大 SlotID + 1
+     * （空槽位也在表里，所以 0..12 就是 13 个槽位），没采到就按板卡最大槽位兜底。
+     */
+    chassisSlotCount() {
+      const count = this.device.slotCount
+      if (count && count > 0) {
+        return count
+      }
+      const max = this.boards.reduce((value, board) => {
+        return board.slotNo == null ? value : Math.max(value, board.slotNo)
+      }, -1)
+      return Math.max(12, max + 1)
     },
     /** 「ONT 配置/状态」页只列有端口的板卡（业务板），主控、上联板没有 ONT */
     ontBoards() {
@@ -472,16 +458,14 @@ export const oltDetailMixin = {
             lamp = 'warn'
             lampText = '光模块异常（' + port.opticStatus + '）'
           }
-          let onuText = ''
-          if (port.onuTotal != null) {
-            onuText = port.onuTotal + ' ONT / ' + (port.onuOnline == null ? '-' : port.onuOnline) + ' 在线'
-          }
           // 链路状态来自 display board 0/<槽位> 的 Link 列，离线的口同步时也一起记进来
           const link = (port.linkStatus || '').toLowerCase()
           // 接口标识和 OLT 命令行一致：框、槽、口，例如 0/1/0
           const frameNo = port.frameNo == null ? 0 : port.frameNo
           const slotNo = port.slotNo == null ? board.slotNo : port.slotNo
           const iface = slotNo == null ? '' : frameNo + '/' + slotNo + '/' + port.portNo
+          // 上行口放通了哪些 VLAN（display port vlan 的快照），PON 口一般没有
+          const vlanText = this.portVlanTextOf(iface)
           // 每个 ONT 一条：页面点开端口后逐个显示，在线和不在线都列
           const onts = (port.onts || []).map(ont => ({
             id: ont.ontId,
@@ -493,19 +477,37 @@ export const oltDetailMixin = {
             configText: ont.configState || '',
             matchText: ont.matchState || ''
           }))
+          // 口的 ONT 汇总：设备汇总行缺失（老快照 / 回显没打汇总行）时按明细数兜底，
+          // 否则明明有 ONT 在线的口会显示「0 ONT / 0 在线」并被画成离线
+          let onuTotal = port.onuTotal == null ? 0 : port.onuTotal
+          let onuOnline = port.onuOnline == null ? 0 : port.onuOnline
+          if (!onuTotal && onts.length) {
+            onuTotal = onts.length
+            onuOnline = onts.filter(ont => ont.online).length
+          }
+          const onuText = port.onuTotal != null || onuTotal > 0
+            ? onuTotal + ' ONT / ' + onuOnline + ' 在线'
+            : ''
           return {
             no: port.portNo,
             name: port.portName || ('P' + port.portNo),
             iface,
             onts,
-            onuTotal: port.onuTotal == null ? 0 : port.onuTotal,
-            onuOnline: port.onuOnline == null ? 0 : port.onuOnline,
-            offline: port.onuTotal == null ? 0 : Math.max(0, port.onuTotal - (port.onuOnline || 0)),
+            onuTotal,
+            onuOnline,
+            offline: Math.max(0, onuTotal - onuOnline),
+            // 光模块数值：发光/温度/偏置/电压来自接口视图的 display port state，收光来自 display board
             rxPower: port.rxPower,
+            txPower: port.txPower,
+            opticTemperature: port.opticTemperature,
+            biasCurrent: port.biasCurrent,
+            supplyVoltage: port.supplyVoltage,
+            moduleStatus: port.moduleStatus,
             hasOptic,
             onuText,
             link,
             linkText: link === 'online' ? '在线' : link === 'offline' ? '离线' : '',
+            vlanText,
             lamp,
             lampText
           }
@@ -540,6 +542,17 @@ export const oltDetailMixin = {
     compressVlans(vlans) {
       return compressVlanRange(vlans)
     },
+    /**
+     * 某个接口放通的 VLAN（上行口才有）：按接口号去 display port vlan 的快照里找，
+     * 面板上每一口的「VLAN …」就是从这里来的，没采集到就返回空串。
+     */
+    portVlanTextOf(iface) {
+      if (!iface) return ''
+      const row = (this.portVlans || []).find(item => item && item.iface === iface)
+      if (!row) return ''
+      if (row.vlanText) return row.vlanText
+      return row.vlans && row.vlans.length ? compressVlanRange(row.vlans) : ''
+    },
     /** 「槽位:端口」作为展开 ONT 明细的 key */
     ontKey(slotNo, portNo) {
       return slotNo + ':' + portNo
@@ -558,41 +571,7 @@ export const oltDetailMixin = {
       }
       this.expandedOnts = next
     },
-    /**
-     * 示意图上的端口位置：只有面板布局固定、端口数也对得上的型号才返回。
-     * 端口多过布局（比如 16 口板用了 8 口的图）宁可不钉，也不能把两行叠在一起。
-     *
-     * 竖条板卡图给 top（占图高的百分比），横向整机图给 left（占图宽的百分比），
-     * 组件按有没有 left 决定怎么钉。
-     *
-     * 坐标表的下标是「第几个物理口」，所以这里按端口序号（no 升序后的次序）取坐标，
-     * 不拿 no 直接当下标——华为的口从 0 数起，鸿升光的 PON01 从 1 数起，混用就错位了。
-     */
-    buildPortMarkers(type, ports, wide) {
-      const typeKey = String(type || '').toUpperCase()
-      const positions = (wide ? PORT_MARKERS_X : PORT_MARKERS)[typeKey]
-      if (!positions || !ports.length || ports.length > positions.length) return []
-      return ports
-        .filter(port => port.no != null)
-        .slice()
-        .sort((a, b) => a.no - b.no)
-        .map((port, index) => ({
-          no: port.no,
-          top: wide ? null : positions[index],
-          left: wide ? positions[index] : null
-        }))
-    },
-    /** 端口行要钉的高度（竖条图）：取不到就退回 0（不会出现 NaN） */
-    markerTop(slot, portNo) {
-      const marker = slot.markers.find(item => item.no === portNo)
-      return marker ? marker.top : 0
-    },
-    /** 端口行要钉的横向位置（横向整机图） */
-    markerLeft(slot, portNo) {
-      const marker = slot.markers.find(item => item.no === portNo)
-      return marker ? marker.left : 0
-    },
-    /** 端口行和示意图标注共用同一个 key，hover 时两边一起亮 */
+    /** 端口和面板上的口共用同一个 key，hover 时两边一起亮 */
     isPortActive(slotNo, portNo) {
       return this.hoverPort === this.ontKey(slotNo, portNo)
     },
@@ -616,19 +595,6 @@ export const oltDetailMixin = {
         }
       })
       return known ? (total + ' ONT / ' + online + ' 在线') : ''
-    },
-    /** 板卡示意图约定路径：public/olt/olt_<板卡型号>.png，新增型号只要按名字放图即可 */
-    conventionImage(boardType) {
-      if (!boardType) return null
-      return '/olt/olt_' + String(boardType).toUpperCase() + '.png'
-    },
-    imageError(slot) {
-      return this.missingImages.indexOf(slot.type) >= 0
-    },
-    markImageMissing(boardType) {
-      if (this.missingImages.indexOf(boardType) < 0) {
-        this.missingImages.push(boardType)
-      }
     },
     /**
      * 把设备原始状态翻成页面上的说法：

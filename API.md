@@ -381,7 +381,7 @@ MA5683T 的 `display version` 不给参数时会先回一条参数提示：
 | 来源 | 字段 |
 | --- | --- |
 | `display version` | `model`（MA5683T）、`softwareVersion`（MA5600V800R015C00）、`patchVersion`（SPC107）、`backplane`（H802MABO）、`macAddress`、`uptime`（转成 59天18小时21分11秒） |
-| `display board 0` | 每槽 `boardType` / `status`（Normal、Active_normal、Standby_normal、Auto_find、Failed…）、`boardKind`、`description`、`portMode`、`portCount` |
+| `display board 0` | 每槽 `boardType` / `status`（Normal、Active_normal、Standby_normal、Auto_find、Failed…）、`boardKind`、`description`、`portMode`、`portCount`；另外用**槽位表里最大的 SlotID + 1** 当机框槽位数 `slotCount`（空槽位也占一行：0..12 就是 13 个槽位，只有 1/6/8 插了板卡，机框照样画 13 格） |
 | `display temperature all` | 每槽 `temperature`，一格多传感器取最高温 |
 | `display ont info 0 <槽位> all` | 该板各端口 ONT：`onuTotal` 总数、`onuOnline` 在线数、`onts[]` 每条 ONT 的明细（ID / SN / 在线 / 型号） |
 | `display vlan all` | VLAN 列表：`vlanId`、`type`（smart/standard/mux）、`attribute`、`stdPortNum`、`servPortNum`、`vlanConNum`（回显是 `-` 时为 null） |
@@ -416,14 +416,38 @@ ONT 数量必须用**空格分隔**的参数（`display ont info 0 1 all`，不�
 `boardKind` 取值：`SERVICE`（业务板）/ `CONTROL`（主控板）/ `UPLINK`（上联板）/ `POWER`（电源板）/
 `INTERFACE`（通用接口板）/ `UNKNOWN`。型号认不出时按 MA5600T 槽位约定兜底（6/7 主控、8/9 上联、10/11 电源、12 通用，其余业务板）。
 
-板卡示意图：前端按 `public/olt/olt_<板卡型号大写>.png` 约定加载，
-`olt_H807GPBD.png`、`olt_H802SCUN.png` 已内置；新增型号只需按名字放图，缺图显示「暂无该型号示意图」。
+机框视图：`OltChassis.vue` 按 **`display board 0` 槽位表给出的槽位数**画整框（上导轨风扇格栅、下导轨槽位号，
+槽位号就是 SlotID；接口返回 `device.slotCount`，没采到才按 12 兜底），**槽位 60 宽 / 700 高，板卡 55 宽**：
+槽位尺寸和面板 viewBox 一致、边框用 inset 阴影画，板卡插进去上下左右顶齐不留缝；槽位里渲染 `OltBoardPanel.vue` 的
+`compact` 模式——只画板卡本体（底板、丝印、螺丝、助拔器、RUN/ALM/ACT/ENV 灯、上面的 `PON` 运行灯带
+（8 颗灯独立渲染、分两列排）+ 下面一列竖排的端口、底部的 `N ONT 在线`），两侧导轨和逐口标注列都省掉
+（60 宽放不下），型号与运行状态放在 HTML `title` 里，口名 / RX / ONT / VLAN 用 SVG `<title>` 悬停看。
+没插板的槽位画成虚线空槽位。
+槽位数默认 12，有板子插在更大槽位号上自动补齐；整框约 760 宽，一屏放得下 12 个槽位；
+点槽位高亮该槽位与下导轨上的槽位号，点端口展开 ONT 明细。
 
-端口列表不再单独占一块：面板布局固定的型号，`P0`-`P7` 这 8 行直接**钉在示意图右侧对应物理口的高度上**
-（一行对一个箭头），连一条细线指向该口；`PORT_MARKERS` 里按百分比写死位置，H807GPBD 是上排 0-3、
-下排 4-7，中间那条是激光警告贴。点某一行展开的 ONT 明细显示在图下方，不会把其它行挤开。
-没配布局的型号（或没图）仍按普通列表排在示意图下面，不影响原来的展示。
-新增型号要钉的，量一下端口中心占图片高度的比例填进去即可。
+板卡面板：前端用 SVG 现画（`OltBoardPanel.vue`），复刻 MA5683T 机框业务板外观——板卡**竖着插在机框导轨里**、
+**板卡宽 55、槽位（机框）高 700**（面板 viewBox `237×700`：`SLOT_H = 76 + 8×72 = 652`，
+加上底部汇总 24 与丝印 24 = **700**，端口少的板下面就是空白金属面板；
+底部的「N ONT 在线」汇总行也固定占一格，有没有 ONT 高度都一样），
+深灰金属底板、拉丝纹理、四角螺丝、顶部助拔器、型号/槽位丝印与 RUN/ALM/ACT/ENV 板卡灯；端口**自上而下一列竖排**
+（GPON/EPON 业务板 8 个 PON 口，PON 0 在最上面），每个口画出光口笼（GE 口画 RJ45）+ 口序号丝印 +
+一个圆形指示灯：**绿色闪烁=在线、红色常亮=告警**（光模块异常或注册过 ONT 但全部离线）、**灰色=离线**。
+
+主控板（`controlBoard` 的型号，如 H802SCUN）在板卡灯下面多画一段**管理区**，和真板卡一样：
+`RESET` 复位孔 + `CON` 控制台串口 + `ETH` 管理网口（右侧绿=Link、黄=Act 两颗灯）+ `ESC` 级联扩展口，
+口名用竖排丝印贴在口的右边，标注列写明各自是什么口；管理区下面的 4 个 GE 口照常带数据标注。
+
+右边是**每口的标注列**，用细引出线连到对应的物理口，一口三行：
+`PON 0 … -8.12 dBm`（口名 + 接收光功率）、`27 / 28 ONT 在线`（或上行口的 `链路 在线`）、
+`0/1/0 · VLAN 1、46`（接口号 + 上行口放通的 VLAN，来自 `display port vlan` 快照，PON 口一般没有）。
+标注列表头是板卡运行状态与温度；`N ONT 在线` 的整板汇总嵌在**板卡底部金属面上（底部丝印上方）**，
+跟着板卡走而不是挂在标注列下面，这样各块板在机框里对齐时徽标也在同一条线上。点某个口在面板下方展开这个口下的 ONT 明细。
+
+面板样式由 `boardProfiles.js` 的 `panel` 字段决定：`pon`（PON 业务板）/ `ge`（主控板、以太网上行）/
+`xge`（10GE 上联）/ `generic`（未知型号按端口数画）。已建档：H807GPBD、H801XGBD、H808EPSD（8 口 PON）、
+H802SCUN（主控板 4 个 GE 口）、H801X2CS（2 路 10GE）、HSGQ-E04（4 口 EPON 整机）；
+没建档的板卡按端口类型推断样式，不再依赖任何图片资源。
 
 型号、版本、板卡均为宽松解析：解析不出就留空（页面显示 `-`），不阻断同步。
 解析不符合现场设备时，用 `GET /{id}/records` 拿到原始回显（前 8000 字符）再补正则。

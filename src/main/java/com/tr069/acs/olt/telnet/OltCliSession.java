@@ -241,6 +241,8 @@ public class OltCliSession implements Closeable {
                 snapshot.setBackplane(OltInfoParser.extractBackplaneBoard(boardText));
             }
             snapshot.setBoards(boards);
+            // 机框槽位数跟着 display board 0 的槽位表走（空槽位也在表里），页面按它画整框
+            snapshot.setSlotCount(OltInfoParser.parseSlotCount(boardText));
         }
 
         if (lastError != null) {
@@ -252,12 +254,12 @@ public class OltCliSession implements Closeable {
     }
 
     /**
-     * 配置视图里的一次性采集：温度、各端口 ONT 数量。
+     * 配置视图里的一次性采集：温度、端口状态、ONT 数量、光模块数值、VLAN、模板。
      *
      * <p>现场这台 MA5683T 的这几条命令都只在 config 视图下认，用户视图直接
-     * {@code % Unknown command}。这一版的 {@code display port} 只有
-     * desc/mode/statistics/vlan，没有端口光模块状态，所以不发 display port 命令，
-     * 页面上只看得到端口的 ONT 数量。</p>
+     * {@code % Unknown command}。光模块数值（发光/收光/温度/偏置/电压）还要再往下一层，
+     * 在 {@code interface gpon 0/<槽位>} 接口视图里发 {@code display port state <口>}，
+     * 见 {@link #collectPortOptics}。</p>
      */
     private void collectFromConfigView(List<OltBoard> boards, List<String> notes, OltSnapshot snapshot) {
         int timeout = Math.min(commandTimeoutMs, 8000);
@@ -271,6 +273,8 @@ public class OltCliSession implements Closeable {
             // 先把每块板的端口（含光模块不在位、链路离线的空口）建出来，ONT 再往上面挂
             collectBoardPortStates(boards, timeout);
             ontOk = collectOnts(boards, timeout);
+            // 光模块数值（发光/收光/温度/偏置/电压）：端口建好之后再逐口问
+            collectPortOptics(boards, timeout);
             collectVlans(boards, snapshot, timeout);
             collectTemplates(snapshot, timeout);
         } finally {
@@ -328,6 +332,85 @@ public class OltCliSession implements Closeable {
         port.setOpticalPresent(present);
         port.setLinkStatus(link);
         ports.sort(Comparator.comparing(item -> item.getPortNo() == null ? 0 : item.getPortNo()));
+    }
+
+    /**
+     * 逐口采光模块数值：{@code interface gpon 0/<槽位>} 进接口视图，再
+     * {@code display port state <口>}（用户视图/config 视图直接发不认，必须在接口视图里）。
+     *
+     * <p>只对 PON 业务板发；某块板第一个口就没有光模块回显，说明这版设备/这块板不认这条命令，
+     * 立刻跳过这块板，不挨个口等超时。</p>
+     */
+    private void collectPortOptics(List<OltBoard> boards, int timeout) {
+        for (OltBoard board : boards) {
+            if (board.getSlotNo() == null
+                    || !OltInfoParser.BoardKind.SERVICE.name().equals(board.getBoardKind())) {
+                continue;
+            }
+            int count = portCount(board);
+            if (count <= 0) {
+                continue;
+            }
+            String ponType = "EPON".equalsIgnoreCase(board.getPortMode()) ? "epon" : "gpon";
+            String enter = runQuietly("interface " + ponType + " 0/" + board.getSlotNo(), timeout);
+            if (enter == null || !enter.contains("-if-")) {
+                // 没进接口视图就别继续发（quit 会把 config 视图也退掉）
+                continue;
+            }
+            try {
+                int missed = 0;
+                for (int portNo = 0; portNo < count; portNo++) {
+                    OltPort optics = OltInfoParser.parsePortStateOptics(
+                            runCommand("display port state " + portNo, timeout));
+                    if (optics == null) {
+                        if (++missed >= 2) {
+                            break;
+                        }
+                        continue;
+                    }
+                    missed = 0;
+                    applyPortOptics(board, portNo, optics);
+                }
+            } finally {
+                runQuietly("quit", timeout);
+            }
+        }
+    }
+
+    /** 光模块数值挂到端口上：补空字段，不覆盖 display board 采到的在位状态和链路状态 */
+    private static void applyPortOptics(OltBoard board, int portNo, OltPort optics) {
+        List<OltPort> ports = board.getPorts();
+        if (ports == null) {
+            ports = new ArrayList<>();
+            board.setPorts(ports);
+        }
+        OltPort port = findPort(ports, portNo);
+        if (port == null) {
+            port = new OltPort();
+            port.setFrameNo(0);
+            port.setSlotNo(board.getSlotNo());
+            port.setPortNo(portNo);
+            port.setPortName("P" + portNo);
+            ports.add(port);
+            ports.sort(Comparator.comparing(item -> item.getPortNo() == null ? 0 : item.getPortNo()));
+        }
+        port.setTxPower(optics.getTxPower());
+        port.setOpticTemperature(optics.getOpticTemperature());
+        port.setBiasCurrent(optics.getBiasCurrent());
+        port.setSupplyVoltage(optics.getSupplyVoltage());
+        port.setModuleStatus(optics.getModuleStatus());
+        port.setLaserState(optics.getLaserState());
+        port.setTxFault(optics.getTxFault());
+        if (port.getRxPower() == null) {
+            port.setRxPower(optics.getRxPower());
+        }
+        // Optical Module status 顺带把「在位」补上：display board 没给出状态时用它兜底
+        String moduleStatus = optics.getModuleStatus();
+        if (port.getOpticalPresent() == null && moduleStatus != null) {
+            String state = moduleStatus.toLowerCase(Locale.ROOT);
+            port.setOpticStatus(state);
+            port.setOpticalPresent(!(state.contains("offline") || state.contains("absent")));
+        }
     }
 
     /**
@@ -892,7 +975,19 @@ public class OltCliSession implements Closeable {
                 }
             }
             for (int portNo = 0; portNo < total; portNo++) {
-                applyOntCount(board, portNo, counts.getOrDefault(portNo, new int[]{0, 0}), details.get(portNo));
+                List<OltOnt> list = details.get(portNo);
+                int[] stat = counts.get(portNo);
+                // 汇总行缺失时用明细兜底：有 ONT 明细就不能记成 0/0，否则页面把这个口画成离线
+                if (stat == null && list != null) {
+                    int online = 0;
+                    for (OltOnt ont : list) {
+                        if (Boolean.TRUE.equals(ont.getOnline())) {
+                            online++;
+                        }
+                    }
+                    stat = new int[]{list.size(), online};
+                }
+                applyOntCount(board, portNo, stat == null ? new int[]{0, 0} : stat, list);
                 any = true;
             }
         }

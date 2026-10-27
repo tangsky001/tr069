@@ -63,6 +63,9 @@ public class OltDevice {
     /** 背板/主板型号，如 MA5683T 的 H802MABO。 */
     private String backplane;
 
+    /** 机框槽位数：display board 0 槽位表里最大的 SlotID + 1（空槽位也算），页面机框视图按它画 */
+    private Integer slotCount;
+
     /** 主控 MAC，设备回显里有才采得到。 */
     private String macAddress;
 

@@ -438,6 +438,7 @@ CREATE TABLE IF NOT EXISTS `olt_device` (
     `software_version` VARCHAR(128) DEFAULT NULL COMMENT '软件版本，登录后采集',
     `patch_version`    VARCHAR(64)  DEFAULT NULL COMMENT '补丁版本，如 SPC107',
     `backplane`        VARCHAR(64)  DEFAULT NULL COMMENT '背板/主板型号，如 H802MABO',
+    `slot_count`       INT          DEFAULT NULL COMMENT '机框槽位数（display board 0 槽位表里最大 SlotID + 1）',
     `mac_address`      VARCHAR(32)  DEFAULT NULL COMMENT '主控 MAC',
     `uptime`           VARCHAR(64)  DEFAULT NULL COMMENT '运行时长，如 59天18小时21分11秒',
     `status`           VARCHAR(16)  NOT NULL DEFAULT 'UNKNOWN' COMMENT '状态：UNKNOWN / ONLINE / OFFLINE',

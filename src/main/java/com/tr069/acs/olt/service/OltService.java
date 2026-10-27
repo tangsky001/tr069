@@ -762,6 +762,10 @@ public class OltService {
         if (snapshot.getBackplane() != null) {
             update.set(OltDevice::getBackplane, snapshot.getBackplane());
         }
+        // 机框槽位数（display board 0 槽位表）：采到就更新，没采到保留上次的
+        if (snapshot.getSlotCount() != null) {
+            update.set(OltDevice::getSlotCount, snapshot.getSlotCount());
+        }
         if (snapshot.getMacAddress() != null) {
             update.set(OltDevice::getMacAddress, snapshot.getMacAddress());
         }
