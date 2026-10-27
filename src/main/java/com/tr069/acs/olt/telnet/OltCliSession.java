@@ -89,9 +89,21 @@ public class OltCliSession implements Closeable {
     /** 单条版本命令的超时上限：认厂商要快，不能让它把后面板卡的时间吃掉 */
     private static final int VERSION_PROBE_TIMEOUT_MS = 8000;
 
-    private static final List<Pattern> LOGIN_STOPS = List.of(USERNAME_PROMPT, PASSWORD_PROMPT, SHELL_PROMPT);
-
     private static final List<Pattern> COMMAND_STOPS = List.of(SHELL_PROMPT, PARAM_PROMPT);
+
+    /**
+     * 登录过程中设备停下来要回车时，最多补几次。
+     *
+     * <p>鸿升光（HSGQ）登录成功后会把 {@code telnet login / info all login users}
+     * 的登录记录表打出来——被外网扫描的设备这张表有几十上百行，打完（或打满一屏）
+     * 就停在那儿，要按回车才继续出 {@code suc login!} 和 {@code OLT>} 提示符。
+     * 不补回车就只能等到登录超时，现场看到的是「账号密码都对却连不上」。</p>
+     */
+    private static final int MAX_LOGIN_ENTER = 5;
+
+    /** 判定「这一屏打完了」的静默时间，以及单次读取的上限 */
+    private static final long LOGIN_IDLE_MS = 400L;
+    private static final long LOGIN_IDLE_MAX_MS = 2000L;
 
     private final TelnetClient client;
 
@@ -165,10 +177,10 @@ public class OltCliSession implements Closeable {
         // 先关分页，否则版本/板卡回显都可能停在第一页
         prepareTerminal();
 
-        // 第一步：判定命令风格与厂商。display version 有回显就是华为，show version
-        // 有回显就是第三方；认出厂商后后面的命令只走这一套，不再发另一套去讨一句报错
+        // 第一步：判定命令风格与厂商。display version 有回显说明命令走 display 那一套
+        // （华为用它，第三方也有用的），show version 有回显就走 show；厂商另外按回显关键字认
         VersionProbe probe = probeVersion();
-        OltVendor vendor = detectVendor(probe.style(), probe.text());
+        OltVendor vendor = detectVendor(probe.text());
         String versionText = probe.text();
         if (versionText.isBlank()) {
             notes.add("display version / show version 均无回显（命令超时或连接被断开）");
@@ -196,7 +208,7 @@ public class OltCliSession implements Closeable {
             }
         }
 
-        vendor = detectVendor(probe.style(), versionText, boardText);
+        vendor = detectVendor(versionText, boardText);
         String model = OltInfoParser.extractModel(vendor, versionText);
         if (model == null) {
             // 版本命令没回来时，登录横幅里通常也有型号（Huawei MA5683T ...）
@@ -241,8 +253,10 @@ public class OltCliSession implements Closeable {
                 snapshot.setBackplane(OltInfoParser.extractBackplaneBoard(boardText));
             }
             snapshot.setBoards(boards);
-            // 机框槽位数跟着 display board 0 的槽位表走（空槽位也在表里），页面按它画整框
-            snapshot.setSlotCount(OltInfoParser.parseSlotCount(boardText));
+            // 机框槽位数跟着 display board 0 的槽位表走（空槽位也在表里），页面按它画整框；
+            // 鸿升光是整机，槽位表采不到（也不该画成 12 个空槽位围一台机器），按板卡数给
+            snapshot.setSlotCount(vendor == OltVendor.HSGQ
+                    ? boards.size() : OltInfoParser.parseSlotCount(boardText));
         }
 
         if (lastError != null) {
@@ -1041,24 +1055,25 @@ public class OltCliSession implements Closeable {
     /**
      * 厂商判定：版本回显 → 板卡回显 → 登录横幅 → 提示符，前面的认不出再用后面的兜底。
      *
-     * <p>过程中带上命令风格：{@code display} 有回显认作华为，{@code show} 有回显认作
-     * 第三方（厂商仍记通用，但命令走 show）。</p>
+     * <p>只认回显里的厂商关键字，命令风格不参与判定——风格是 display 的第三方 OLT
+     * 不能被记成华为，否则页面走华为界面、命令走华为那一套，在第三方设备上全是报错。
+     * 风格单独由 {@link #cliStyleOf} 决定，认不出厂商时按探测到的那条命令走。</p>
      */
-    private OltVendor detectVendor(OltVendor.CliStyle style, String... texts) {
+    private OltVendor detectVendor(String... texts) {
         for (String text : texts) {
             if (text == null || text.isBlank()) {
                 continue;
             }
-            OltVendor vendor = OltVendor.detect(style, text);
+            OltVendor vendor = OltVendor.detect(text);
             if (vendor != OltVendor.GENERIC) {
                 return vendor;
             }
         }
-        OltVendor fromBanner = OltVendor.detect(style, banner.toString());
+        OltVendor fromBanner = OltVendor.detect(banner.toString());
         if (fromBanner != OltVendor.GENERIC) {
             return fromBanner;
         }
-        return OltVendor.detect(style, prompt == null ? "" : prompt);
+        return OltVendor.detect(prompt == null ? "" : prompt);
     }
 
     /**
@@ -1148,23 +1163,20 @@ public class OltCliSession implements Closeable {
 
     private void login(String username, String password, long timeoutMs) throws IOException {
         long deadline = System.currentTimeMillis() + Math.max(1000, timeoutMs);
-        String out = client.readUntilAny(LOGIN_STOPS, remaining(deadline));
-        transcript.append(out);
-        banner.append(out).append('\n');
+        String out = readLoginScreen(List.of(USERNAME_PROMPT, PASSWORD_PROMPT, SHELL_PROMPT), deadline);
+        record(out);
 
         if (USERNAME_PROMPT.matcher(out).find()) {
             client.sendLine(username);
             client.resetBuffer();
-            out = client.readUntilAny(List.of(PASSWORD_PROMPT, SHELL_PROMPT, LOGIN_FAILED), remaining(deadline));
-            transcript.append(out);
-            banner.append(out).append('\n');
+            out = readLoginScreen(List.of(PASSWORD_PROMPT, SHELL_PROMPT, LOGIN_FAILED), deadline);
+            record(out);
         }
         if (PASSWORD_PROMPT.matcher(out).find()) {
             client.sendLine(password);
             client.resetBuffer();
-            out = client.readUntilAny(List.of(SHELL_PROMPT, LOGIN_FAILED, USERNAME_PROMPT), remaining(deadline));
-            transcript.append(out);
-            banner.append(out).append('\n');
+            out = readLoginScreen(List.of(SHELL_PROMPT, LOGIN_FAILED, USERNAME_PROMPT), deadline);
+            record(out);
         }
         if (LOGIN_FAILED.matcher(out).find()) {
             throw new OltTelnetException("登录失败（账号 " + username + "）：" + lastLine(out));
@@ -1173,6 +1185,64 @@ public class OltCliSession implements Closeable {
             throw new OltTelnetException("登录后未发现命令行提示符，实际回显：" + lastLine(out));
         }
         prompt = lastLine(out);
+    }
+
+    /** 把这一屏登录回显记进 transcript 与登录横幅（横幅用于版本命令没回显时兜底认型号）。 */
+    private void record(String out) {
+        transcript.append(out);
+        banner.append(out).append('\n');
+    }
+
+    /**
+     * 读登录过程中的一屏，设备停在登录信息页上要回车时自动补。
+     *
+     * <p>先等回显静默（横幅是分几包慢慢来的），没命中任何预期提示就补一个回车再读，
+     * 最多补 {@link #MAX_LOGIN_ENTER} 次。补完还是不出提示，就按超时读一把，
+     * 让 {@code 等待设备回显超时} 连同已收到的文本一起抛出去。</p>
+     */
+    private String readLoginScreen(List<Pattern> stops, long deadline) throws IOException {
+        String out = readLoginOutput(stops, deadline);
+        for (int round = 0; !matchesAny(stops, out); round++) {
+            if (round >= MAX_LOGIN_ENTER || remaining(deadline) < 2000) {
+                return client.readUntilAny(stops, remaining(deadline));
+            }
+            log.info("登录回显未出现预期提示（设备可能停在登录信息页），补一个回车: 第{}次", round + 1);
+            transcript.append("[补回车] ");
+            client.sendLine("");
+            out = readLoginOutput(stops, deadline);
+        }
+        return out;
+    }
+
+    /**
+     * 读一段登录回显：等它静默再返回（不命中提示也不报错）。
+     *
+     * <p>设备说完就断开连接不算错——登录失败被踢、只回一句横幅就关连接都很常见，
+     * 缓冲里已经能判定状态（登录失败提示、提示符）时按已收到的文本收尾，
+     * 让调用方去判断该抛「登录失败」还是继续。</p>
+     */
+    private String readLoginOutput(List<Pattern> stops, long deadline) throws IOException {
+        try {
+            return client.readIdle(LOGIN_IDLE_MS, Math.min(LOGIN_IDLE_MAX_MS, remaining(deadline)));
+        } catch (IOException e) {
+            String text = client.getText();
+            if (matchesAny(stops, text)) {
+                return text;
+            }
+            throw e;
+        }
+    }
+
+    private static boolean matchesAny(List<Pattern> stops, String text) {
+        if (text == null || text.isEmpty()) {
+            return false;
+        }
+        for (Pattern stop : stops) {
+            if (stop.matcher(text).find()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static long remaining(long deadline) {

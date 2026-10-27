@@ -747,7 +747,9 @@ public class OltService {
                 .set(OltDevice::getStatus, STATUS_ONLINE)
                 .set(OltDevice::getLastConnectAt, LocalDateTime.now())
                 .set(OltDevice::getLastError, null);
-        if (snapshot.getVendor() != null) {
+        // 只有真认出厂商才改台账：一次没采到版本回显就把已认出的厂商打回「通用」，
+        // 页面会当场从华为/鸿升光界面掉到第三方界面。认不出的那次保持原值等下次再认
+        if (snapshot.getVendor() != null && snapshot.getVendor() != OltVendor.GENERIC) {
             update.set(OltDevice::getVendor, snapshot.getVendor().name());
         }
         if (snapshot.getModel() != null) {

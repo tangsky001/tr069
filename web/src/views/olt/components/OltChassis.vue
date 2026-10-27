@@ -11,7 +11,7 @@
       <div class="chassis-frame">
         <!-- 上导轨：机框型号 + 风扇格栅 -->
         <div class="chassis-rail">
-          <span class="chassis-brand">MA5683T</span>
+          <span class="chassis-brand">{{ model || 'OLT' }}</span>
           <span class="chassis-fan">
             <i v-for="n in 9" :key="'fan-' + n" />
           </span>
@@ -38,6 +38,7 @@
                 compact
                 :board="slot.board"
                 :panel="slot.board.panel"
+                :chassis-model="model"
                 :hover-port="hoverPort"
                 :expanded-onts="expandedOnts"
                 @toggle="$emit('toggle', $event)"
@@ -70,7 +71,7 @@
 import OltBoardPanel from './OltBoardPanel'
 
 /**
- * 机框视图：把板卡**插进** MA5683T 机框的槽位里。
+ * 机框视图：把板卡**插进**机框的槽位里，机框型号跟着设备型号走（MA5683T / HSGQ-E04…）。
  *
  * 机框外壳用 HTML/CSS 画（上导轨风扇格栅、下导轨槽位号），12 个槽位等宽排成一排，
  * 每个槽位放的是真正的板卡面板（`OltBoardPanel`——竖放板卡 + 右侧逐口标注），

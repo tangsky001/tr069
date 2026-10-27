@@ -115,7 +115,7 @@ import { componentOfVendor } from './vendors'
  * OLT 管理页：上面下拉选哪一台，下面就按厂商出哪一套面板。
  *
  * 这里只管台账本身——下拉切换、增删改、诊断连通性、触发同步，再加一排设备概况；
- * 板卡、ONT、VLAN 那些采集结果的展示全在厂商视图里（huawei / hsgq / generic），
+ * 板卡、ONT、VLAN 那些采集结果的展示全在厂商视图里（华为一套、其它厂商走第三方），
  * 由 vendors.js 按 vendor 挑一个渲染在下面。厂商不同命令不同，混在一个页面里很快就没法维护。
  */
 export default {
@@ -141,7 +141,7 @@ export default {
     selected() {
       return this.resources.find(item => String(item.id) === String(this.selectedId)) || {}
     },
-    /** 按厂商挑视图组件：切到华为就出华为面板，切到鸿升光就出整机面板 */
+    /** 按厂商挑视图组件：华为出华为面板，其它厂商（鸿升光/中兴/烽火…）都出第三方面板 */
     vendorView() {
       return componentOfVendor(this.selected.vendor)
     },

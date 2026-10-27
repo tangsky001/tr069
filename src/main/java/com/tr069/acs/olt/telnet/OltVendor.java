@@ -142,8 +142,10 @@ public enum OltVendor {
         }
         String text = output.toLowerCase(Locale.ROOT);
         if (text.contains("huawei") || text.contains("quidway") || text.contains("versatile routing")
-                || text.contains("ma5600") || text.contains("ma5800") || text.contains("ea5800")
-                || text.contains("ma6800")) {
+                || text.contains("smartax")
+                || text.contains("ma5600") || text.contains("ma5603") || text.contains("ma5608")
+                || text.contains("ma5680") || text.contains("ma5683")
+                || text.contains("ma5800") || text.contains("ea5800") || text.contains("ma6800")) {
             return HUAWEI;
         }
         if (text.contains("zte") || text.contains("zxan") || text.contains("zxr10")
@@ -161,16 +163,15 @@ public enum OltVendor {
     }
 
     /**
-     * 回显里没有厂商关键字时，按命令风格兜底：{@code display} 系列回了内容就是华为，
-     * {@code show} 系列回了内容说明是第三方（中兴/烽火），厂商仍记 {@link #GENERIC}，
-     * 但后续命令按 show 走，不会再发 display 去白等一个来回。
+     * 认不出厂商就是第三方，不拿命令风格猜华为。
+     *
+     * <p>早先 {@code display} 有回显就记作华为，结果第三方 OLT（也用 display 那一套）
+     * 全被存成 HUAWEI，页面一律出华为界面，而华为专属命令在它们上面全是 Unknown command。
+     * 厂商只认回显里的厂商关键字（{@link #detect(String)}）；命令风格是另一回事，
+     * 由 {@code OltCliSession} 单独记在 cliStyle 上决定后续发 display 还是 show。</p>
      */
     public static OltVendor detect(CliStyle style, String output) {
-        OltVendor vendor = detect(output);
-        if (vendor != GENERIC || style == null) {
-            return vendor;
-        }
-        return style == CliStyle.DISPLAY ? HUAWEI : GENERIC;
+        return detect(output);
     }
 
     /**

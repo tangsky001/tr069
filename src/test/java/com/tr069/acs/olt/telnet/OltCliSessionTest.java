@@ -112,6 +112,37 @@ class OltCliSessionTest {
     }
 
     /**
+     * 鸿升光被外网扫描后，登录成功会先打一屏 telnet 登录记录表并停在那儿：
+     * 客户端要自动补回车才进得了命令行，否则登录超时（现场「账号密码对却连不上」）。
+     */
+    @Test
+    void shouldPushEnterWhenLoginBannerStalls() throws Exception {
+        try (FakeOltServer server = new FakeOltServer()) {
+            server.setHsgq(true);
+            server.setLoginBannerEnters(2);
+            OltDevice device = new OltDevice();
+            device.setHost("127.0.0.1");
+            device.setPort(server.getPort());
+            device.setProtocol("TELNET");
+            device.setUsername("root");
+            device.setPassword("admin");
+
+            OltSnapshot snapshot;
+            try (OltCliSession session = OltCliSession.open(
+                    device, StandardCharsets.UTF_8, 3000, 8000, 4000)) {
+                snapshot = session.collect(true);
+            }
+            server.await();
+
+            assertEquals(OltVendor.HSGQ, snapshot.getVendor());
+            assertTrue(snapshot.getTranscript().contains("info all login users"));
+            assertTrue(snapshot.getTranscript().contains("suc login!"));
+            assertTrue(snapshot.getTranscript().contains("[补回车]"));
+            assertEquals("HSGQ-E04", snapshot.getModel());
+        }
+    }
+
+    /**
      * 鸿升光 HSGQ-E04（EPON 一体机）：show version 认出厂商后就够了——
      * 现场不需要采集板卡信息（show pon-info 只回命令回显），直接按型号生成整机卡片出图。
      */
@@ -154,6 +185,8 @@ class OltCliSessionTest {
             assertEquals(4, board.getPorts().size());
             assertEquals("PON01", board.getPorts().get(0).getPortName());
             assertEquals("PON04", board.getPorts().get(3).getPortName());
+            // 整机就是一个槽位：页面（第三方界面）按 slotCount 画机框，别画成 12 个空槽位
+            assertEquals(1, snapshot.getSlotCount());
 
             // show pon-info：PON01 5/5、PON02 2/3、PON03/PON04 0/0
             assertEquals(Integer.valueOf(5), board.getPorts().get(0).getOnuOnline());
@@ -356,6 +389,12 @@ class OltCliSessionTest {
         /** 模拟鸿升光 HSGQ-E04：OLT> 提示符，show version / pon-info / onu-info all */
         private volatile boolean hsgq;
 
+        /**
+         * 登录后打印的 telnet 登录记录表需要几次回车才出提示符（模拟被外网扫描：
+         * 表很长，打完一屏就停下等人按回车），0 表示不打印登录表。
+         */
+        private volatile int loginBannerEnters;
+
         /** 额外插一块上联板（H801X2CS），用来验证上行口 VLAN 采集 */
         private volatile String uplinkBoard;
 
@@ -394,6 +433,10 @@ class OltCliSessionTest {
             this.hsgq = hsgq;
         }
 
+        void setLoginBannerEnters(int loginBannerEnters) {
+            this.loginBannerEnters = loginBannerEnters;
+        }
+
         void setUplinkBoard(String uplinkBoard) {
             this.uplinkBoard = uplinkBoard;
         }
@@ -429,7 +472,28 @@ class OltCliSessionTest {
                     return;
                 }
                 assertEquals("admin", password);
-                write(out, showStyle ? "\r\nZXAN#" : hsgq ? "\r\nOLT>" : "\r\n<HUAWEI>");
+                if (loginBannerEnters > 0) {
+                    // 被外网扫描的鸿升光：登录成功先打一屏 telnet 登录记录表，
+                    // 打完停在那一屏，客户端补几个回车才给提示符
+                    write(out, "\r\n telnet login / info all login users\r\n"
+                            + " userName       Source IP        Time                Type     Login time\r\n"
+                            + " admin          149.88.64.57     2026/10/25 00:59:26 https    2026/10/25 00:59:26\r\n"
+                            + " admin          43.249.31.19     2026/10/26 23:19:43 telnet   2026/10/26 23:19:43\r\n"
+                            + " admin          45.128.232.234   2026/10/26 23:22:16 telnet   2026/10/26 23:22:16\r\n");
+                    int enters = 0;
+                    while (enters < loginBannerEnters) {
+                        String line = readLine(in);
+                        if (line == null) {
+                            return;
+                        }
+                        if (line.isEmpty()) {
+                            enters++;
+                        }
+                    }
+                    write(out, " suc login!\r\nOLT>");
+                } else {
+                    write(out, showStyle ? "\r\nZXAN#" : hsgq ? "\r\nOLT>" : "\r\n<HUAWEI>");
+                }
 
                 // display version 停在参数提示上时，等客户端补回车再吐正文
                 boolean pendingVersion = false;

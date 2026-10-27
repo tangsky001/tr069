@@ -45,7 +45,19 @@
             <span v-if="boardSummary" class="board-summary">{{ boardSummary }}</span>
           </div>
 
+          <olt-hsgq-faceplate
+            v-if="isHsgq && slots.length"
+            :board="slots[0]"
+            :model="device.model"
+            :expanded-onts="expandedOnts"
+            :hover-port="hoverPort"
+            empty-text="尚无板卡数据。点击「同步」登录设备采集。"
+            @toggle="onToggleOnts"
+            @hover="hoverOn"
+            @leave="hoverOff"
+          />
           <olt-board-cards
+            v-else
             :slots="slots"
             :slot-count="chassisSlotCount"
             :model="device.model"
@@ -118,6 +130,7 @@
 import OltDeviceBar from './components/OltDeviceBar'
 import OltDeviceInfo from './components/OltDeviceInfo'
 import OltBoardCards from './components/OltBoardCards'
+import OltHsgqFaceplate from './components/OltHsgqFaceplate'
 import OltOntBoard from './components/OltOntBoard'
 import OltVlanPanel from './components/OltVlanPanel'
 import OltRecords from './components/OltRecords'
@@ -127,10 +140,11 @@ import { detailRoute } from './vendors'
 import { deleteOlt } from '@/api/olt'
 
 /**
- * 通用详情页：没认出来的设备、以及中兴、烽火这些还没有专属视图的厂商都走这里。
+ * 通用详情页：没认出来的设备、以及中兴、烽火、鸿升光这些厂商都走这里。
  *
  * 只摆命令普遍通用的东西：板卡、端口 ONT、VLAN、配置信息、采集记录。
  * 华为那套 DBA、线路模板、主备、保护之类的面板不在这儿——那些标签页换个厂商就是错的。
+ * 鸿升光是整机，板卡区换成按真机正面画的横向面板（OltHsgqFaceplate）。
  */
 export default {
   name: 'OltGeneric',
@@ -138,6 +152,7 @@ export default {
     OltDeviceBar,
     OltDeviceInfo,
     OltBoardCards,
+    OltHsgqFaceplate,
     OltOntBoard,
     OltVlanPanel,
     OltRecords,

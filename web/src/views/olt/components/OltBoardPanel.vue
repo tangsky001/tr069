@@ -264,7 +264,7 @@
       </g>
 
       <!-- 底部丝印：机框型号 + 激光等级贴（窄板只放得下字，三角形省了） -->
-      <text class="bp-frame" x="14" :y="height - 16">MA5683T</text>
+      <text v-if="chassisModel" class="bp-frame" x="14" :y="height - 16">{{ chassisModel }}</text>
       <text class="bp-laser-text" x="58" :y="height - 16" text-anchor="end">CLASS 1</text>
     </svg>
   </div>
@@ -340,6 +340,11 @@ export default {
     compact: {
       type: Boolean,
       default: false
+    },
+    /** 机框型号（设备型号），印在板卡底部丝印上；没传就不印机框型号 */
+    chassisModel: {
+      type: String,
+      default: ''
     }
   },
   computed: {

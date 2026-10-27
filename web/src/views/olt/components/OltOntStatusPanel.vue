@@ -244,7 +244,7 @@
             <template>-</template>
           </el-table-column>
           <el-table-column label="编辑" width="70" align="center">
-            <template slot-scope="{ row }">
+            <template>
               <el-button
                 type="text"
                 icon="el-icon-edit"
