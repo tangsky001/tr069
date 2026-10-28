@@ -67,6 +67,18 @@ export function syncOlt(id) {
 }
 
 /**
+ * 快速同步：只采板卡（display board 0）秒回，机框和型号先出来；
+ * 端口状态 / ONT / VLAN / 模板由后端后台补采，页面轮询即可看到补齐的数据。
+ */
+export function quickSyncOlt(id) {
+  return request({
+    url: '/olt/' + id + '/quick-sync',
+    method: 'post',
+    timeout: 60000
+  })
+}
+
+/**
  * 实时刷新：直连 OLT 采最新数据并写库，返回最新那份。
  * 页面打开、对 OLT 做过操作之后都走它，数据以设备为准。
  */

@@ -156,6 +156,24 @@ public class OltController {
     }
 
     /**
+     * 快速同步：只采板卡（display board 0 / show card），秒级返回机框与型号；
+     * 端口、ONT、VLAN、模板由后台异步补采，页面轮询即可看到补齐的数据。
+     */
+    @PostMapping("/{id}/quick-sync")
+    public Result<OltDetail> quickSync(@PathVariable Long id, HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.quickSync(id, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("OLT 快速同步异常 id={}", id, e);
+            return Result.failure("同步失败：" + e.getMessage());
+        }
+    }
+
+    /**
      * 实时刷新：直连 OLT 采最新数据并入库，页面打开或对 OLT 做过操作后调用。
      * 数据以设备为准，库里那份快照只是连不上设备时的兜底。
      */

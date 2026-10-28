@@ -108,7 +108,7 @@
 
 <script>
 import OltFormDialog from './components/OltFormDialog'
-import { fetchOltList, deleteOlt, testOltById, syncOlt } from '@/api/olt'
+import { fetchOltList, deleteOlt, testOltById, quickSyncOlt } from '@/api/olt'
 import { componentOfVendor } from './vendors'
 
 /**
@@ -250,7 +250,8 @@ export default {
     handleSync() {
       if (!this.selectedId) return
       this.syncing = true
-      syncOlt(this.selectedId)
+      // 只采板卡秒回，端口 / ONT / VLAN / 模板由后端后台补采
+      quickSyncOlt(this.selectedId)
         .then(res => {
           const data = res.data || {}
           this.$message.success('同步完成：' + ((data.device && data.device.syncSummary) || '已刷新采集数据'))

@@ -126,7 +126,7 @@
             :ont-boards="ontBoards"
             :olt-id="detailId"
             :empty-text="'尚未采集到端口/ONT 数据。点右上角「同步ONT状态」立即采集。'"
-            @sync="afterOltOperation"
+            @sync="refreshFull"
           />
         </el-tab-pane>
 

@@ -112,6 +112,73 @@ class OltCliSessionTest {
     }
 
     /**
+     * 快速采集（页面第一次打开 OLT 走这条）：板卡、型号、槽位一次带回来，
+     * 进配置视图才能问到的温度 / 端口 / ONT / VLAN / 模板一条都不发——那些由后台补采。
+     */
+    @Test
+    void shouldCollectBoardsOnlyForFirstScreen() throws Exception {
+        try (FakeOltServer server = new FakeOltServer()) {
+            OltDevice device = new OltDevice();
+            device.setHost("127.0.0.1");
+            device.setPort(server.getPort());
+            device.setProtocol("TELNET");
+            device.setUsername("root");
+            device.setPassword("admin");
+
+            OltSnapshot snapshot;
+            try (OltCliSession session = OltCliSession.open(
+                    device, StandardCharsets.UTF_8, 3000, 5000, 4000)) {
+                snapshot = session.collectBoardsOnly();
+            }
+            server.await();
+
+            assertEquals(OltVendor.HUAWEI, snapshot.getVendor());
+            assertEquals("MA5600T", snapshot.getModel());
+            assertEquals(2, snapshot.getBoards().size());
+            assertEquals(Integer.valueOf(2), snapshot.getSlotCount(), "机框槽位数跟着板卡表走");
+            assertTrue(snapshot.getTranscript().contains("display board 0"));
+            // 慢命令都没发：这些要进配置视图逐板逐口问，首屏等不起
+            assertFalse(snapshot.getTranscript().contains("(config)"));
+            assertFalse(snapshot.getTranscript().contains("display ont info"));
+            assertFalse(snapshot.getTranscript().contains("display vlan all"));
+        }
+    }
+
+    /**
+     * 台账里已经认出华为、登录横幅里又带着型号时，快速采集只发一条板卡命令：
+     * 版本探测、另一套命令风格的尝试全部省掉，首屏就等这一个来回。
+     */
+    @Test
+    void shouldSkipProbeWhenVendorAndModelAlreadyKnown() throws Exception {
+        try (FakeOltServer server = new FakeOltServer()) {
+            server.setBannerTail("\r\nMA5683T");
+            OltDevice device = new OltDevice();
+            device.setHost("127.0.0.1");
+            device.setPort(server.getPort());
+            device.setProtocol("TELNET");
+            device.setUsername("root");
+            device.setPassword("admin");
+            // 上次采集认出来的厂商，这次直接按它的命令集走
+            device.setVendor("HUAWEI");
+
+            OltSnapshot snapshot;
+            try (OltCliSession session = OltCliSession.open(
+                    device, StandardCharsets.UTF_8, 3000, 5000, 4000)) {
+                snapshot = session.collectBoardsOnly();
+            }
+            server.await();
+
+            assertEquals(OltVendor.HUAWEI, snapshot.getVendor());
+            assertEquals("MA5683T", snapshot.getModel());
+            assertEquals(2, snapshot.getBoards().size());
+            assertFalse(snapshot.getTranscript().contains("display version"), "横幅里有型号就不必再问版本");
+            assertFalse(snapshot.getTranscript().contains("show card"), "已知是华为就不试第三方命令");
+            assertFalse(snapshot.getTranscript().contains("terminal length 0"), "只发华为自己的关分页命令");
+            assertTrue(snapshot.getTranscript().contains("scroll"));
+        }
+    }
+
+    /**
      * 鸿升光被外网扫描后，登录成功会先打一屏 telnet 登录记录表并停在那儿：
      * 客户端要自动补回车才进得了命令行，否则登录超时（现场「账号密码对却连不上」）。
      */
@@ -398,6 +465,9 @@ class OltCliSessionTest {
         /** 额外插一块上联板（H801X2CS），用来验证上行口 VLAN 采集 */
         private volatile String uplinkBoard;
 
+        /** 追加在登录横幅后面的内容：真实 OLT 的横幅里往往就带着型号（MA5683T） */
+        private volatile String bannerTail = "";
+
         FakeOltServer() throws IOException {
             serverSocket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
             thread = new Thread(this::serve, "fake-olt");
@@ -441,6 +511,10 @@ class OltCliSessionTest {
             this.uplinkBoard = uplinkBoard;
         }
 
+        void setBannerTail(String bannerTail) {
+            this.bannerTail = bannerTail == null ? "" : bannerTail;
+        }
+
         void await() throws Exception {
             thread.join(8000);
             if (thread.isAlive()) {
@@ -462,7 +536,7 @@ class OltCliSessionTest {
                 out.write(new byte[]{(byte) IAC, (byte) DO, 3});
                 out.flush();
 
-                write(out, "Welcome to Fake OLT\r\nUsername:");
+                write(out, "Welcome to Fake OLT" + bannerTail + "\r\nUsername:");
                 assertEquals("root", readLine(in));
                 write(out, "\r\nPassword:");
                 String password = readLine(in);

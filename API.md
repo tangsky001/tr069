@@ -452,6 +452,21 @@ H802SCUN（主控板 4 个 GE 口）、H801X2CS（2 路 10GE）、HSGQ-E04（4 �
 型号、版本、板卡均为宽松解析：解析不出就留空（页面显示 `-`），不阻断同步。
 解析不符合现场设备时，用 `GET /{id}/records` 拿到原始回显（前 8000 字符）再补正则。
 
+## OLT 首屏两段式同步（板卡先出来，慢数据后台补）
+
+打开一台 OLT 时页面等的是机框：板卡插在哪个槽位、什么型号。这部分只要一条命令——华为
+`display board 0`（一两秒就回完），所以 `POST /api/olt/{id}/quick-sync` 只做这一件事：
+
+1. 按台账里已认出的厂商直接发对应板卡命令（华为 `display board 0`、第三方 `show card`），
+   不再探测版本与命令风格；型号优先取登录横幅，横幅里没有才补一条版本命令；
+2. 板卡写库后**立即返回**详情（含 `deepSyncing: true`），本次没采到的端口 / 温度沿用上次留下的，
+   不会把页面正显示着的数据抹成空；
+3. 温度、逐板端口状态与光模块、ONT 明细、VLAN、DBA/线路模板交给后台线程池补采，
+   跑完覆盖写库；页面轮询 `GET /api/olt/{id}` 即可看到补齐的数据，`deepSyncing` 变回 false。
+
+完整采集（`POST /api/olt/{id}/sync`、`POST /api/olt/{id}/refresh`）保持原样，一次把所有数据采回来，
+给「同步ONT状态」这类明确要慢数据的操作、以及后台定时任务用。
+
 ## OLT 自动采集（不用手点同步）
 
 后台定时任务 `OltAutoRefreshService`：**启动后 5 秒自动采一轮，之后每 5 分钟一轮**，
@@ -728,6 +743,7 @@ X-ACS-Signature: 8Z3k...（Base64）
 
 **OLT**：`GET /api/olt/list`、`GET /api/olt/{id}`、`POST /api/olt/save`、`POST /api/olt/delete`、
 `POST /api/olt/test`、`POST /api/olt/{id}/test`、`POST /api/olt/{id}/sync`、
+`POST /api/olt/{id}/quick-sync`、`POST /api/olt/{id}/refresh`、
 `GET /api/olt/{id}/records`、`GET /api/olt/web-accounts`
 
 **北向查询**：`GET /openapi/v1/devices`、`GET /openapi/v1/devices/{sn}`、

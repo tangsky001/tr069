@@ -2,7 +2,7 @@ import {
   fetchOltDetail,
   fetchOltRecords,
   testOltById,
-  syncOlt,
+  quickSyncOlt,
   refreshOlt,
   createDbaProfile,
   deleteDbaProfiles
@@ -30,10 +30,12 @@ export const oltDetailMixin = {
       autoRefresh: true,
       pollSeconds: 10,
       pollTimer: null,
-      // 实时数据：打开页面会直连 OLT 采最新（refreshOlt），库里那份只用来秒开和连不上时兜底
+      // 实时数据：打开页面会直连 OLT 采最新，库里那份只用来秒开和连不上时兜底
       liveAt: null,
       liveError: '',
       refreshing: false,
+      // 后端正在后台补采慢数据（端口状态 / ONT / VLAN / 模板），板卡已经先出来了
+      deepSyncing: false,
       // 展开看 ONT 明细的端口，key 是「槽位:端口」
       expandedOnts: {},
       // 鼠标停在端口行/示意图标注上时，两边一起高亮
@@ -256,7 +258,8 @@ export const oltDetailMixin = {
         return '实时采集失败：' + this.liveError + '，下面是库里最后一次的快照' + fallback
       }
       if (this.liveAt) {
-        return '实时数据 · ' + this.formatClock(this.liveAt) + ' 直连 OLT 采到，已写入库'
+        const base = '实时数据 · ' + this.formatClock(this.liveAt) + ' 直连 OLT 采到，已写入库'
+        return this.deepSyncing ? base + '，端口 / ONT / VLAN / 模板正在后台补充采集…' : base
       }
       return this.device.lastSyncAt
         ? '库快照 ' + this.device.lastSyncAt + '，正在取实时数据…'
@@ -274,6 +277,10 @@ export const oltDetailMixin = {
       } else {
         this.stopPolling()
       }
+    },
+    // 后台补采开始/结束时换一下轮询间隔：补采中拉密点，补完恢复
+    deepSyncing() {
+      this.startPolling()
     }
   },
   created() {
@@ -290,12 +297,14 @@ export const oltDetailMixin = {
     startPolling() {
       this.stopPolling()
       if (!this.autoRefresh) return
+      // 后台补采期间拉密一点（3 秒），补完恢复页面选的间隔
+      const seconds = this.deepSyncing ? 3 : this.pollSeconds
       this.pollTimer = setInterval(() => {
         // 实时采集中不打断：那一次已经在连设备了，这里只是把库里的变化拉过来
         if (this.detailId && !this.syncing && !this.loading && !this.refreshing) {
           this.loadDetailSilently(this.detailId)
         }
-      }, this.pollSeconds * 1000)
+      }, seconds * 1000)
     },
     stopPolling() {
       if (this.pollTimer) {
@@ -328,8 +337,34 @@ export const oltDetailMixin = {
     /**
      * 实时刷新：直连 OLT 采最新并写库，成功就把页面换成最新那份。
      * 失败不抹掉已经显示的快照，只在页面上说明「现在是旧的、为什么没取到新的」。
+     *
+     * 分两段：先只采板卡（display board 0，一两秒）把机框和型号画出来，
+     * 端口状态 / ONT 明细 / VLAN / 模板由后端后台接着采，页面轮询把补齐的数据拉过来。
+     * 这样第一次打开 OLT 不用干等十几秒才看到东西。
      */
     refreshLive(id) {
+      const target = id || this.detailId
+      if (!target || this.refreshing) return Promise.resolve()
+      this.refreshing = true
+      this.liveError = ''
+      return quickSyncOlt(target)
+        .then(res => {
+          this.applyDetail(res.data)
+          this.liveAt = new Date()
+        })
+        .catch(err => {
+          const data = (err && err.response && err.response.data) || {}
+          this.liveError = data.message || (err && err.message) || '连不上设备'
+        })
+        .finally(() => {
+          this.refreshing = false
+        })
+    },
+    /**
+     * 完整实时刷新：连设备把端口状态、ONT 明细、VLAN、模板一起采回来（十几秒）。
+     * 「同步ONT状态」这类明确就是要慢数据的按钮走它，其余场景走 refreshLive 的两段式。
+     */
+    refreshFull(id) {
       const target = id || this.detailId
       if (!target || this.refreshing) return Promise.resolve()
       this.refreshing = true
@@ -409,7 +444,8 @@ export const oltDetailMixin = {
     handleSync(silent) {
       if (!this.detailId) return
       this.syncing = true
-      return syncOlt(this.detailId)
+      // 和打开页面一样分两段：板卡先出来，慢数据后台补，同步按钮不用等到全部采完
+      return quickSyncOlt(this.detailId)
         .then(res => {
           this.applyDetail(res.data)
           // 同步也是连设备采的，采到的就是实时数据
@@ -434,6 +470,8 @@ export const oltDetailMixin = {
         vlan: body.vlan || null,
         template: body.template || null
       }
+      // 后端后台还在补采慢数据时保持提示与 3 秒轮询，结束（false）后自动恢复
+      this.deepSyncing = !!body.deepSyncing
     },
     /**
      * 端口光模块指示灯：在位亮绿灯，不在位灰灯，故障或类型不匹配黄灯。

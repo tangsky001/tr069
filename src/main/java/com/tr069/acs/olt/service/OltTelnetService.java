@@ -67,6 +67,36 @@ public class OltTelnetService {
     }
 
     /**
+     * 快速采集：只要板卡（型号 / 板卡类型 / 槽位 / 机框槽位数），秒级返回。
+     *
+     * <p>端口、ONT、VLAN、模板那些几十条命令的数据留给后台异步补采，
+     * 页面第一次打开 OLT 不用干等十几秒才看到机框。</p>
+     */
+    public OltSnapshot collectBoards(OltDevice device) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        OltSnapshot snapshot = doCollectBoards(device, charset);
+        if (OltCharset.isAuto(device.getCharset()) && garbled(snapshot)) {
+            log.debug("OLT {} 快速采集回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            try {
+                OltSnapshot retried = doCollectBoards(device, OltCharset.fallback());
+                if (!garbled(retried)) {
+                    return retried;
+                }
+            } catch (IOException e) {
+                log.debug("OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
+            }
+        }
+        return snapshot;
+    }
+
+    private OltSnapshot doCollectBoards(OltDevice device, Charset charset) throws IOException {
+        try (OltCliSession session = OltCliSession.open(
+                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
+            return session.collectBoardsOnly();
+        }
+    }
+
+    /**
      * 单条 ONT 详情查询（光信息 / 版本 / 注册历史）：登录一次、进 GPON 端口视图发命令。
      * 页面上点「光信息」「注册历史」这类图标时才触发，不进定时采集。
      */

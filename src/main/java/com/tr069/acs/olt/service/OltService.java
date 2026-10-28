@@ -36,11 +36,15 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -72,6 +76,19 @@ public class OltService {
 
     /** 采集记录里给页面看的回显片段，够看清 display board / temperature 的输出 */
     private static final int MAX_RAW_PREVIEW = 8000;
+
+    /**
+     * 后台补采线程池：OLT 的 Telnet 并发会话数很小（华为一般只放几个），两台并行足够。
+     * 线程是守护线程，不影响进程退出。
+     */
+    private static final ExecutorService DEEP_POOL = Executors.newFixedThreadPool(2, r -> {
+        Thread thread = new Thread(r, "olt-deep-sync");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    /** 正在后台补采的 OLT：同一台不重复排队 */
+    private final Set<Long> deepSyncing = ConcurrentHashMap.newKeySet();
 
     private final OltDeviceMapper deviceMapper;
 
@@ -113,6 +130,8 @@ public class OltService {
         detail.setRecords(records(id, 10));
         detail.setVlan(readVlan(device.getVlanJson()));
         detail.setTemplate(readTemplate(device.getTemplateJson()));
+        // 后台正在补采慢数据（端口 / ONT / VLAN / 模板）时告诉页面，页面据此提示并轮询
+        detail.setDeepSyncing(deepSyncing.contains(id));
         return detail;
     }
 
@@ -386,6 +405,100 @@ public class OltService {
         return collectAndPersist(id, operator, "实时刷新");
     }
 
+    /**
+     * 快速同步：一次短连接把板卡（型号 / 板卡类型 / 槽位 / 机框槽位数）拿回来写库，
+     * 立即返回；端口状态、ONT、VLAN、模板交给后台异步补采。
+     *
+     * <p>页面第一次打开一台 OLT 等的是机框：华为一条 {@code display board 0} 一两秒就回来了，
+     * 板卡插在哪个槽位、什么型号一眼看全。温度、逐板端口状态、ONT 明细、VLAN、模板
+     * 要进配置视图逐板逐口问，几十条命令十几秒，跟首屏没关系——放后台跑完写库，
+     * 页面照常轮询就能看到补齐的数据。</p>
+     */
+    public OltDetail quickSync(Long id, String operator) {
+        OltDevice device = requireDevice(id);
+        long start = System.currentTimeMillis();
+        OltSnapshot snapshot;
+        try {
+            snapshot = telnetService.collectBoards(device);
+        } catch (Exception e) {
+            long cost = System.currentTimeMillis() - start;
+            String message = rootMessage(e);
+            log.warn("OLT 快速同步失败 id={}: {}", id, message);
+            saveRecord(id, OltSyncRecord.ACTION_SYNC, false, "同步失败：" + message, null, cost, operator);
+            markOffline(id, message);
+            throw new IllegalStateException("同步失败：" + message, e);
+        }
+        long cost = System.currentTimeMillis() - start;
+        List<OltBoard> boards = snapshot.getBoards() == null ? List.of() : snapshot.getBoards();
+        // 快速采集没有端口和温度：沿用上次深度采集留下的，别把页面正显示着的数据抹成空
+        writeBoards(id, boards, LocalDateTime.now(), true);
+        String summary = "已同步 " + boards.size() + " 块板卡" + kindSummary(boards)
+                + (snapshot.getModel() == null ? "" : "，型号 " + snapshot.getModel());
+        if (snapshot.getNotes() != null && !snapshot.getNotes().isEmpty()) {
+            summary = summary + "；" + String.join("；", snapshot.getNotes());
+        }
+        updateAfterConnect(id, snapshot, true, summary);
+        saveRecord(id, OltSyncRecord.ACTION_SYNC, true,
+                "同步（板卡）：" + describe(snapshot) + "；" + summary, snapshot.getTranscript(), cost, operator);
+        submitDeepSync(id, operator);
+        return detail(id);
+    }
+
+    /**
+     * 后台补采慢数据：温度、端口状态与光模块、ONT 明细、VLAN、模板。
+     * 跑完写库，页面轮询详情即可看到；同一台已经在补就不重复排队。
+     */
+    public void submitDeepSync(Long id, String operator) {
+        if (!deepSyncing.add(id)) {
+            return;
+        }
+        DEEP_POOL.submit(() -> {
+            try {
+                collectAndPersist(id, operator, "深度同步");
+            } catch (Exception e) {
+                log.warn("OLT 后台补采失败 id={}: {}", id, e.getMessage());
+            } finally {
+                deepSyncing.remove(id);
+            }
+        });
+    }
+
+    /**
+     * 覆盖写板卡表。
+     *
+     * @param mergeOld true 时本次没采到的端口 / 温度沿用上次留下的（快速同步用）
+     */
+    private int writeBoards(Long id, List<OltBoard> boards, LocalDateTime now, boolean mergeOld) {
+        Map<Integer, OltBoard> previous = new HashMap<>();
+        if (mergeOld) {
+            boardMapper.selectList(new LambdaQueryWrapper<OltBoard>().eq(OltBoard::getOltId, id))
+                    .forEach(board -> {
+                        fillPorts(board);
+                        if (board.getSlotNo() != null) {
+                            previous.put(board.getSlotNo(), board);
+                        }
+                    });
+        }
+        boardMapper.delete(new LambdaQueryWrapper<OltBoard>().eq(OltBoard::getOltId, id));
+        for (OltBoard board : boards) {
+            OltBoard old = previous.get(board.getSlotNo());
+            if (old != null) {
+                if ((board.getPorts() == null || board.getPorts().isEmpty())
+                        && old.getPorts() != null && !old.getPorts().isEmpty()) {
+                    board.setPorts(old.getPorts());
+                }
+                if (board.getTemperature() == null) {
+                    board.setTemperature(old.getTemperature());
+                }
+            }
+            board.setOltId(id);
+            board.setSyncedAt(now);
+            board.setPortsJson(writePorts(board.getPorts()));
+            boardMapper.insert(board);
+        }
+        return boards.size();
+    }
+
     /** 采集并落库的公共实现：返回落库后的最新详情 */
     private OltDetail collectAndPersist(Long id, String operator, String actionLabel) {        OltDevice device = requireDevice(id);
         long start = System.currentTimeMillis();
@@ -394,14 +507,8 @@ public class OltService {
             long cost = System.currentTimeMillis() - start;
             LocalDateTime now = LocalDateTime.now();
 
-            boardMapper.delete(new LambdaQueryWrapper<OltBoard>().eq(OltBoard::getOltId, id));
             List<OltBoard> boards = snapshot.getBoards() == null ? List.of() : snapshot.getBoards();
-            for (OltBoard board : boards) {
-                board.setOltId(id);
-                board.setSyncedAt(now);
-                board.setPortsJson(writePorts(board.getPorts()));
-                boardMapper.insert(board);
-            }
+            writeBoards(id, boards, now, false);
 
             String summary = "已同步 " + boards.size() + " 块板卡" + kindSummary(boards)
                     + (snapshot.getModel() == null ? "" : "，型号 " + snapshot.getModel());
