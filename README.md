@@ -4,7 +4,7 @@
 
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
-- **仓库地址：国内 [Gitee](https://gitee.com/kangweft/tr069) ｜ 国外 [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图在国内加载不出来就去 Gitee 看）
+- **仓库地址：[Gitee](https://gitee.com/kangweft/tr069) ｜  [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图加载不出来就去 Gitee 看）
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
 - 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
@@ -688,10 +688,10 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 
 | 访问 | 地址 |
 | --- | --- |
-| **国内** | https://gitee.com/kangweft/tr069 |
-| **国外** | https://github.com/tangsky001/tr069 |
+| **GITEE** | https://gitee.com/kangweft/tr069 |
+| **GITHUB** | https://github.com/tangsky001/tr069 |
 
-截图都放在 [`doc/Display/`](./doc/Display)，国内加载不出来时直接到 **Gitee** 仓库看（图片与 README 同源，
+截图都放在 [`doc/Display/`](./doc/Display)，加载不出来时直接到 **Gitee** 仓库看（图片与 README 同源，
 不用翻墙）。README 里的相对路径在两个平台都能正常渲染。
 
 **欢迎有兴趣的大佬一起来做。** 这个项目是照着真实现网设备（华为 MA5683T、各类光猫）一条命令一条命令啃出来的，
