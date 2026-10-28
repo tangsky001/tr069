@@ -232,10 +232,12 @@ VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN �
 | 数据模型适配 | TR-098（`InternetGatewayDevice.`）与 TR-181（`Device.`）双模型：Inform 参数多数判定根节点、业务前缀按双模型展开、型号档案与能力树 XML 记录数据模型并对账 | `acs/model/DataModel`、`InformService`、`DeviceBusinessService` |
 | **意图下发执行器** | 意图字段 + 型号语义映射 → CWMP 路径与值 → 按需 `AddObject` 再分批 `SetParameterValues`，全程写进 `device_task`；同 `taskNo` 幂等 | `exec/*`（`IntentDeliveryService`、`IntentPlanRenderer`） |
 | **北向接口** | 独立端口 8899 + `/openapi/v1/**：设备台账/在线/能力树/业务快照/工单结果查询、下发受理与结果查询、Webhook 事件推送（上下线、下发结束），复用管理端 JWT 鉴权 | `openapi/*` |
-| **OLT 命令行采集（只读）** | Telnet 登录 → 关分页 → `display board 0` / `display version` → `enable` → `config`（进视图只为读温度 / ONT / VLAN，不下配置）→ 温度 → 每块业务板一条 `display ont info 0 <槽位> all` → `display vlan all` → 上行/主控口逐个 `display port vlan 0/<槽位>/<端口>` → `display ip interface brief` / `display ip routing-table` → `quit`；板卡、端口 ONT（含每条 ONT 明细）、VLAN、三层接口、静态路由入库（`olt_device.vlan_json`、`olt_board.ports_json`）；启动后自动采一轮、之后每 5 分钟一轮，页面只拉最新数据不碰设备。全程只有 `display` / `show`，**没有任何写设备的命令**（改 VLAN、增删 ONT、重启板卡均未实现）。管理的写操作只是 ACS 自己的 OLT 台账（增删改 + 手工触发同步），不落到设备本身。登录后先用版本命令认厂商，结果写回 `olt_device.vendor`，台账据此把设备分给对应的厂商页面（`web/src/views/olt/vendors.js`）。华为 MA5683T 已实测 | `olt/*`（`telnet/OltCliSession`、`telnet/OltInfoParser`、`service/OltService`、`service/OltTelnetService`） |
+| **OLT 命令行采集** | Telnet 登录 → 关分页 → `display board 0` / `display version` → `enable` → `config`（进视图只为读温度 / ONT / VLAN，不下配置）→ 温度 → 每块业务板一条 `display ont info 0 <槽位> all` → `display vlan all` → 上行/主控口逐个 `display port vlan 0/<槽位>/<端口>` → `display ip interface brief` / `display ip routing-table` → `quit`；板卡、端口 ONT（含每条 ONT 明细）、VLAN、三层接口、静态路由入库（`olt_device.vlan_json`、`olt_board.ports_json`）；启动后自动采一轮、之后每 5 分钟一轮，页面只拉最新数据不碰设备。采集侧全程只有 `display` / `show` / `enable` / `config` / `quit`，写设备的操作走下一行的下发接口（增删 ONT、重启板卡仍未实现）。管理的写操作只是 ACS 自己的 OLT 台账（增删改 + 手工触发同步）。登录后先用版本命令认厂商，结果写回 `olt_device.vendor`，台账据此把设备分给对应的厂商页面（`web/src/views/olt/vendors.js`）。华为 MA5683T 已实测 | `olt/*`（`telnet/OltCliSession`、`telnet/OltInfoParser`、`service/OltService`、`service/OltTelnetService`） |
+| **OLT 配置下发** | 一键开局（改端口 VLAN 模式 `access`/`hybrid`/`trunk` + 建业务 VLAN + 建 TR-069 模板）、VLAN 增删、DBA 模板增删、TR-069 模板新增、按命令动作目录执行单条动作。每个能力都是「表单 / 预览 / 下发」三个接口，**预览与下发走同一个命令方法**，页面看到的必然是将要下发的那条序列；取值约束（ID 范围、名称字符集、批量上限、VLAN 表达式写法）由后端一处给出，前端不保存第二份；下发前后都写采集记录。设备知识（整机型号规格、板卡档案、状态翻译、码表阈值）同样由后端下发，前端只负责渲染 | `olt/service/OltService`（`quickSetup` / `vlanCommands` / `dbaProfileCommand`）、`olt/vendor/*`（命令生成与型号规格）、开发约定见 [doc/BACKEND.md](./doc/BACKEND.md) |
 | **OLT 模板采集（只读）** | 同一 Telnet 会话里继续采模板：`display dba-profile all detail` + `display dba-profile all`（按 ID 回补模板名，总表只给 ID 与 type 数字）、`display ont-lineprofile <gpon\|epon> all` 概要 + 逐条 `profile-id` 明细（T-CONT 的 `DBA Profile-ID`、`<Gem Index:n>` 与 `Mapping VLAN` 表格）、`display ont-srvprofile <gpon\|epon> all` 概要 + 逐条明细（`ont-port pots/eth adaptive`）、`display ont tr069-server-profile all`（ACS 地址与账号）、`display traffic table ip all`（CIR / PIR）、`display current-configuration section service-port`（业务流，字段含义固定优先于表格回显）。PON 类型先 `gpon` 后 `epon` 探测；内置 `profile-id 0` 不展示；结果按整体覆盖写入 `olt_device.template_json`（采不到保留上次） | `olt/telnet/OltInfoParser`（`parseDbaProfiles` / `parseDbaDetails` / `parseLineProfiles` / `parseSrvProfiles` / `parseTr069Profiles` / `parseTrafficTables` / `parseServicePortsFromConfig`）、`olt/telnet/OltCliSession#collectTemplates` |
 | **OLT 单条 ONT 按需查询（只读）** | 点 SN / 模板列 → 一次会话发三条：`display current-configuration ont 0/<槽位>/<端口> <ONT ID>`（授权行：SN / 线路模板 / 业务模板 / 描述）+ `display service-port port 0/<槽位>/<端口> ont <ONT ID>`（业务流表格）+ `display ont info 0 <槽位> <端口> <ONT ID>`（管理 IP）；点 ONT ID → `display ont capability 0/<槽位> <端口> <ONT ID>`（硬件能力/状态）；行图标 → 光信息 / 版本 / 注册历史。老版本不认 `ont` 过滤时退回整口查询按 VPI（ONT ID）筛 | `olt/telnet/OltCliSession`（`queryOntConfigAndServicePorts`、`queryServicePorts`、`queryOntDetail`）、`olt/telnet/OltInfoParser`（`parseOntBindInfo`、`parseServicePorts`、`parseOntKeyValueBlocks`）、`olt/service/OltService#queryOnt` |
 | **OLT 命令行健壮性** | ① 华为续页提示 `( Press 'Q' to break ) ----` 纳入分页识别，提示与正文挤同一行时只清提示不送空格，避免误触发翻页卡死；② 关分页按设备来：华为发 `scroll`（`screen-length` 是 VRP 交换机的，OLT 不认），进 config 视图后重发一次；③ 参数补全提示（含无 `<cr>` 的 `{ all<K>\|bound-info<K> }:`）识别后自动补回车取默认/执行，不再干等 8 秒超时 | `olt/telnet/TelnetClient#handlePagination`、`olt/telnet/OltVendor#getPagingCommands`、`olt/telnet/OltCliSession#readToPrompt` |
+| **在线接口文档** | springdoc 扫接口 + Knife4j 中文界面：启动后浏览器打开 `http://127.0.0.1:8888/doc.html` 查看全部接口的用途、请求参数与返回结构，可在线调试；`http://127.0.0.1:8888/v3/api-docs` 是 OpenAPI 3.0 JSON，可导入 Apifox / Postman。接口清单从 Controller 签名自动扫出，中文说明集中在 `config/OpenApiDocConfig` 的 `DOC` 表 | `config/OpenApiDocConfig`、`pom.xml`（`springdoc-openapi-starter-webmvc-ui` + `knife4j-openapi3-jakarta-spring-boot-starter`） |
 | 管理端鉴权 | JWT 登录、`sys_user` 查库、首次启动写入初始管理员、JWT 拦截器 | `api/controller/AuthController`、`config/AdminAuthInterceptor` |
 | 启动自检 | 各业务表补建/初始化、可选只读表存在性校验 | `common/startup/*` |
 
@@ -250,8 +252,8 @@ VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN �
 | 设备详情 | `/device-detail/:sn` | 已实现（能力树、参数树、RPC 调试 + 业务面板：信息卡改为运行时长/注册时间/最近上报/上报IP、LAN 网口区块、WLAN 按频段分行、SIP 只列真实线路） |
 | 工单记录 | `/worklist/instances` | 已实现（工单与步骤查询；批量建单入口在设备列表工具条「一键工单 ▲」） |
 | OLT 台账 | `/olt/management` | 已实现（**入口页**：台账增删改、诊断连通性、触发同步；**按厂商分发**到下面三个详情页，新加的设备识别出厂商后直接进对应页面） |
-| OLT 详情 · 华为 | `/olt/huawei/:id` | 已实现（**真实 Telnet 采集，只读**：OLT 状态（板卡/温度/端口 ONT/SVG 板卡面板）、配置信息、VLAN、**DBA/线路模板**、**业务/TR069/流量模板**、ONT 配置与状态、采集记录；板卡竖放、端口竖排画在面板上（点端口看该口 ONT）；ONT 配置/状态表列含 认证码 / 运行标志 / **管理IP** / **MAC** / **业务流** / **线路模板** / **业务模板**，行可勾选，右下角**重启ONU / 删除注册**按钮；按需查询弹窗：点 SN → 授权信息 + 改授权，点 ONT ID → 硬件能力/状态，点业务流「查看」→ 业务流表；**不能改设备配置**，模板页的「新增/删除」、批量运维按钮、业务流四个操作按钮均为占位；ONT 注册、OLA、ONU 后板编辑面板、OLT 升级、主备、保护仍为占位） |
-| OLT 详情 · 鸿升光 | `/olt/hsgq/:id` | 已实现（**整机面板，只读**：设备概览（4 个 PON 口，按型号生成）、PON 口状态、ONU 列表（占位）、配置信息、VLAN、采集记录） |
+| OLT 详情 · 华为 | `/olt/huawei/:id` | 已实现（**真实 Telnet 采集，只读**：OLT 状态（板卡/温度/端口 ONT/SVG 板卡面板）、配置信息、VLAN、**DBA/线路模板**、**业务/TR069/流量模板**、ONT 配置与状态、采集记录；板卡竖放、端口竖排画在面板上（点端口看该口 ONT）；ONT 配置/状态表列含 认证码 / 运行标志 / **管理IP** / **MAC** / **业务流** / **线路模板** / **业务模板**，行可勾选，右下角**重启ONU / 删除注册**按钮；按需查询弹窗：点 SN → 授权信息 + 改授权，点 ONT ID → 硬件能力/状态，点业务流「查看」→ 业务流表；除 VLAN 增删、DBA 模板增删、一键开局外**不能改设备配置**，业务模板页的「新增/删除」、批量运维按钮、业务流四个操作按钮仍为占位；ONT 注册、OLA、ONU 后板编辑面板、OLT 升级、主备、保护仍为占位） |
+| OLT 详情 · 鸿升光 | `/olt/hsgq/:id` | 已实现（**整机前面板**：按型号画出 PON 口 + 上联 GE / XGE + NMS / CONSOLE，顶部显示规格 `8 × GPON + 4 × GE + 4 × XGE`；PON 口状态、ONU 列表、配置信息、VLAN（可增删）、一键开局、采集记录） |
 | OLT 详情 · 通用 | `/olt/generic/:id` | 已实现（未识别厂商、中兴、烽火走这里：板卡、ONT、VLAN、配置信息、采集记录；**只读**，识别出来后可编辑重测并自动分流到对应厂商页） |
 
 设备列表右下角工具条（`web/src/views/device/list.vue`，需先勾选设备）：
@@ -410,8 +412,9 @@ acs:
 鸿升光页（`/olt/hsgq/:id`）：设备概览、PON 口状态、配置信息、VLAN、采集记录已实现；ONU 列表占位。
 通用页（`/olt/generic/:id`）：OLT 状态、配置信息、VLAN、ONT 配置与状态、采集记录已实现。
 
-**所有页面都只读**：发往设备的命令全是 `display` / `show`，写操作（建 VLAN、增删 ONT、重启板卡、
-模板增删改）一律未实现，见第 2 节 #15。
+**采集只读，配置可下发**：采集侧发往设备的命令全是 `display` / `show`；写操作已实现建/删 VLAN、
+DBA 模板增删、TR-069 模板新增、一键开局（改端口 VLAN 模式 + 建业务 VLAN），增删 ONT、重启板卡、
+业务模板增删改仍未实现，见第 2 节 #15。
 
 ---
 
@@ -424,7 +427,7 @@ acs:
 | 3 | ~~业务模板整包下发~~ | **已实现** | `POST /api/biz-template/execute`：按成员顺序串行执行，执行记录写 `biz_template_execution`；成员失败按模板 `continueOnError` 决定停下还是继续，继续跑完且有失败记 `partial` |
 | 4 | ~~一键工单（开通 / 检修）~~ | **已实现** | 设备列表勾选后按台建单，每台一个独立流水号（`worklistDesc` 幂等），单台失败记录但继续其余设备，最后汇总失败清单 |
 | 5 | 设备批量运维指令后端 | 部分接通（**超管密码已接通**） | Telnet 开关与命令执行、WAN 侧访问、WiFi 开关、禁用 SIP、删除 WAN 连接、解除上网限制、SSID 前缀清理、配置文件导出/克隆、强制上报等需逐个按厂商/型号补齐参数路径（统一走型号映射，不写死路径）。超管账号查询已可用，但依赖设备在线且该型号把 `User.{i}.Username/Password` 暴露给 TR-069 |
-| 6 | ~~OLT 融合管理真实数据~~ | **已实现（只读）** | Telnet **采集**已接通（华为 MA5683T 实测）：台账、板卡与温度、端口与每条 ONT 明细、VLAN 与三层接口 / 静态路由、**DBA/线路模板**、**业务/TR069/流量模板**（含 TR069 服务器模板与流量限速模板）、业务流明细均真实入库；页面「同步」与后台 5 分钟定时刷新。发往设备的只有 `display` / `show`，**写设备未实现**，见 #15。剩余占位：ONT 注册（`display ont autofind all`）、OLA、ONU 后板编辑面板、OLT 升级、主备、保护，以及各模板页的「新增/删除」按钮。光模块数值（Tx 发光 / 收光 / 温度 / 偏置电流 / 供电电压）另走接口视图：`interface gpon 0/<槽位>` 下的 `display port state <口>`，已逐口采集入库。逐页状态见 [1.5 节](#15-olt-标签页已实现--占位) |
+| 6 | ~~OLT 融合管理真实数据~~ | **已实现（只读）** | Telnet **采集**已接通（华为 MA5683T 实测）：台账、板卡与温度、端口与每条 ONT 明细、VLAN 与三层接口 / 静态路由、**DBA/线路模板**、**业务/TR069/流量模板**（含 TR069 服务器模板与流量限速模板）、业务流明细均真实入库；页面「同步」与后台 5 分钟定时刷新。发往设备的采集命令只有 `display` / `show`；**配置下发已实现**（建/删 VLAN、DBA 模板增删、TR-069 模板新增、一键开局），增删 ONT 与重启板卡仍未实现，见 #15。剩余占位：ONT 注册（`display ont autofind all`）、OLA、ONU 后板编辑面板、OLT 升级、主备、保护，以及各模板页的「新增/删除」按钮。光模块数值（Tx 发光 / 收光 / 温度 / 偏置电流 / 供电电压）另走接口视图：`interface gpon 0/<槽位>` 下的 `display port state <口>`，已逐口采集入库。逐页状态见 [1.5 节](#15-olt-标签页已实现--占位) |
 | 7 | 存量数据迁移 | 未开始 | 存量 `biz_template_item.template_key` 仍是旧文件 key，`BizTemplateService.parseId` 会判定为“配置模板不存在”，需迁移脚本改为 `config_template.id` |
 | 8 | 意图字段扩展 | 进行中 | 现 WAN 类仅 IP 协议 / VLAN 使用与否 / 是否绑定端口；待补 WAN IP 获取方式、PPPoE 账号、SIP 服务器/账号、WiFi SSID/密码等意图（VLAN ID、具体端口仍不落库，由下发时决定） |
 | 9 | 旧机制彻底清理 | 基本完成 | 旧文件模板 / 向导编译 / 旧工单编排引擎已删，工单改走 `IntentDeliveryService`；`worklist` 包中保留档案、型号映射、能力树导出与工单建单/查询，收尾时可再审视命名。**UDP 连接请求（TR-111 打洞）已删**：内网部署下设备直连可达，用不到穿透，且它「发出即算成功」会顶掉 HTTP 那条，唤醒失败还看不出来 |
@@ -466,6 +469,7 @@ javaacs/
 ├── README.en.md              English version
 ├── API.md                    接口文档（管理端 /api 与北向 /openapi/v1）
 ├── doc/
+│   ├── BACKEND.md            后端开发文档（OLT 模块：厂商接入、设备知识归属、命令与校验同源）
 │   ├── DEPLOYMENT.md         部署文档
 │   ├── ADAPTED_MODELS.md     已适配光猫型号清单（运营商 + 厂家型号）
 │   ├── ADAPTED_MODELS.en.md  Adapted ONT models (English)
@@ -504,7 +508,7 @@ configuration/
 | `template` | **配置意图模板**：实体、Mapper、Service、Controller（意图字段定义集中在 `ConfigTemplateService#FIELD_DEFS`） |
 | `biz` | 业务模板：编排实体、成员视图、执行记录、下发前自检 |
 | `worklist` | 光猫档案（`loader`/`registry`/`model`）、型号语义映射（`ModelMappingService`）、能力树导出（`ModelTreeStore`）、机型适配（`ModelAdaptationService`）、工单建单与查询（`WorklistDeliveryService`、`controller/WorklistExecuteController`） |
-| `olt` | **OLT 管理（只读）**：Telnet 会话与命令编排（`telnet/OltCliSession`，只发 `display` / `show` / `enable` / `config` / `quit`）、回显解析（`telnet/OltInfoParser`，板卡 / VLAN / ONT / DBA / 线路模板 / 业务与 TR069 模板 / 流量模板 / 业务流）、厂商命令差异（`telnet/OltVendor`）、原始连接（`telnet/TelnetClient`，分页提示与续页）、模板与采集数据模型（`model/OltDbaProfile`、`OltLineProfile`、`OltGemport`、`OltGemMapping`、`OltSrvProfile`、`OltTr069Profile`、`OltTrafficTable`、`OltServicePort`）、台账与同步（`service/OltService`）、定时刷新（`service/OltAutoRefreshService`）、Controller 与模型 |
+| `olt` | **OLT 管理（采集 + 下发）**：Telnet 会话与命令编排（`telnet/OltCliSession`，只发 `display` / `show` / `enable` / `config` / `quit`）、回显解析（`telnet/OltInfoParser`，板卡 / VLAN / ONT / DBA / 线路模板 / 业务与 TR069 模板 / 流量模板 / 业务流）、厂商命令差异（`vendor/OltVendorProfile` 及各家实现、命令动作目录 `vendor/Hsgq*ActionCatalog`）、设备知识（`vendor/HsgqModelCatalog` 整机型号规格、`vendor/OltBoardCatalog` 板卡型号档案与状态翻译）、原始连接（`telnet/TelnetClient`，分页提示与续页）、模板与采集数据模型（`model/*`）、台账与同步（`service/OltService`）、定时刷新（`service/OltAutoRefreshService`）、Controller 与模型。开发约定见 [doc/BACKEND.md](doc/BACKEND.md) |
 | `api` | 管理端接口：设备、能力、业务、RPC 任务、统计、登录及其 Service |
 | `exec` | **意图下发执行器**：下发计划渲染（`IntentPlanRenderer`）、执行与任务表（`IntentDeliveryService`、`DeviceTask`）、任务结束事件 |
 | `openapi` | **北向接口**：端口与路径隔离（`config`）、查询/下发/事件订阅三个 Controller、Webhook 推送与事件投递、设备上下线侦测（`watch`） |
@@ -522,7 +526,7 @@ web/src/
 │   ├── device/     设备列表 list.vue、设备详情 detail.vue
 │   ├── worklist/   templates.vue（意图模板）、instances.vue（工单记录）、profiles.vue（光猫适配）
 │   ├── biz/        业务模板 template.vue
-│   ├── olt/        OLT/ONU 管理（真实采集，只读）
+│   ├── olt/        OLT/ONU 管理（真实采集 + 配置下发）
 │   │   ├── management.vue      台账入口：增删改 / 诊断 / 同步，按厂商分发
 │   │   ├── huawei.vue          华为面板（display 命令族）
 │   │   ├── hsgq.vue            鸿升光面板（整机一体化，show 命令族）
@@ -536,7 +540,7 @@ web/src/
 │   │   │                       OltDbaPanel（DBA / 线路模板，新增删除按钮为占位）、
 │   │   │                       OltServicePanel（业务 / TR069 / 流量模板 + 业务流明细）、
 │   │   │                       OltVlanPanel（VLAN）、OltRecords（采集记录）
-│   │   └── boardProfiles.js    板卡型号档案与面板样式
+│   │   └── 板卡型号档案已移到后端 vendor/OltBoardCatalog，随板卡返回，前端不再保存
 │   └── login/ 404.vue
 ├── components/     DeviceBusinessPanel（业务面板）、DeviceIdentityCell（终端信息列）、DeviceRuntimeCell（运行信息列）等
 └── router/         菜单与路由
@@ -560,6 +564,14 @@ npm run dev
 ```
 
 浏览器打开 `http://127.0.0.1:9528`，首次启动会创建初始管理员 **admin / admin**（仅当 `sys_user` 为空），登录后请立即改密码。
+
+接口文档随服务一起启动，不用另外装东西：
+
+```
+http://127.0.0.1:8888/doc.html           Knife4j 文档界面（推荐，可填 token 直接调试）
+http://127.0.0.1:8888/doc/index.html     原生 Swagger UI（备用）
+http://127.0.0.1:8888/v3/api-docs        OpenAPI 3.0 JSON，导入 Apifox / Postman
+```
 
 构建校验：
 

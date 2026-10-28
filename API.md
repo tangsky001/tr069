@@ -3,6 +3,12 @@
 覆盖管理端（`/api`）与北向（`/openapi/v1`）两套 HTTP 接口。南向设备上报口
 （`/ACS-server/ACS`）是 CWMP SOAP 协议，不在本文范围内，仅在 §6 列出端口与路径便于排障。
 
+> **在线文档**：服务启动后浏览器打开 <http://127.0.0.1:8888/doc.html>（Knife4j 界面）
+> 可直接查看全部接口的用途、请求参数与返回结构，顶部「Authorize / 认证」填一次 token 就能在线调试。
+> <http://127.0.0.1:8888/v3/api-docs> 是同一份内容的 OpenAPI 3.0 JSON，
+> 在 Apifox / Postman 里「导入 → OpenAPI/Swagger」粘贴这个地址即可批量生成接口。
+> 说明文字集中在 `config/OpenApiDocConfig` 的 `DOC` 表，新增接口在那儿补一句即可。
+
 ---
 
 ## 1. 通用约定

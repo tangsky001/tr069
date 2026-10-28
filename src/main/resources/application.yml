@@ -20,6 +20,30 @@ server:
       max: 400
       min-spare: 40
 
+# 接口文档：启动后浏览器打开 http://127.0.0.1:8888/doc.html 看全部接口与参数
+springdoc:
+  api-docs:
+    # 这份 JSON 可以直接导进 Apifox / Postman
+    path: /v3/api-docs
+  swagger-ui:
+    # 原生 Swagger UI，Knife4j 界面不可用时可以退回这里
+    path: /doc/index.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  # 只文档化这两类路径，光猫 CWMP 上报口（/ACS-server/**）不进文档
+  paths-to-match:
+    - /api/**
+    - /openapi/**
+
+# Knife4j 文档界面（左侧主页 / Swagger Models / 文档管理，右侧简介与接口统计）
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    enable-footer: false
+    enable-footer-custom: true
+    footer-custom-content: TR069 ACS 接口文档
+
 spring:
   application:
     name: javaacs-server

@@ -48,6 +48,16 @@ module.exports = {
         target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
         changeOrigin: true,
         pathRewrite: { ['^' + process.env.VUE_APP_BASE_API]: '/api' }
+      },
+      // 接口文档（Swagger UI）由后端 8888 提供。不代理的话，
+      // 访问 /doc/index.html 会被前端路由兜成首页（地址栏变成 /doc/index.html#/dashboard/index）
+      '/doc': {
+        target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
+        changeOrigin: true
+      },
+      '/v3': {
+        target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
+        changeOrigin: true
       }
     }
   },
