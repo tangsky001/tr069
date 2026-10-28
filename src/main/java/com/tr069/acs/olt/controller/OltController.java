@@ -4,14 +4,21 @@ import com.tr069.acs.common.Result;
 import com.tr069.acs.config.AdminAuthInterceptor;
 import com.tr069.acs.olt.model.OltAction;
 import com.tr069.acs.olt.model.OltDetail;
+import com.tr069.acs.olt.model.OltDbaForm;
 import com.tr069.acs.olt.model.OltDbaProfileRequest;
 import com.tr069.acs.olt.model.OltExecRequest;
 import com.tr069.acs.olt.model.OltExecResult;
 import com.tr069.acs.olt.model.OltOntQueryRequest;
 import com.tr069.acs.olt.model.OltOntQueryResult;
 import com.tr069.acs.olt.model.OltQuickSetupRequest;
+import com.tr069.acs.olt.model.OltDeviceOptions;
 import com.tr069.acs.olt.model.OltDeviceView;
+import com.tr069.acs.olt.model.OltQuickSetupForm;
+import com.tr069.acs.olt.model.OltQuickSetupPreview;
 import com.tr069.acs.olt.model.OltSaveRequest;
+import com.tr069.acs.olt.model.OltTr069Form;
+import com.tr069.acs.olt.model.OltVlanForm;
+import com.tr069.acs.olt.model.OltVlanRequest;
 import com.tr069.acs.olt.model.OltSyncRecordView;
 import com.tr069.acs.olt.model.OltTestResult;
 import com.tr069.acs.olt.model.OltTr069Profile;
@@ -218,6 +225,35 @@ public class OltController {
     }
 
     /**
+     * 「新增 DBA 模板」表单的元数据：五类模板各要填什么、取值上下限。
+     */
+    @GetMapping("/{id}/dba-profile/form")
+    public Result<OltDbaForm> dbaForm(@PathVariable Long id) {
+        try {
+            return Result.success(oltService.dbaForm(id));
+        } catch (Exception e) {
+            log.error("查询 DBA 表单异常 id={}", id, e);
+            return Result.failure("查询 DBA 表单失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * DBA 模板预演：不下发，返回这次会执行的命令。
+     */
+    @PostMapping("/{id}/dba-profile/preview")
+    public Result<OltQuickSetupPreview> previewDbaProfile(@PathVariable Long id,
+                                                          @RequestBody OltDbaProfileRequest request) {
+        try {
+            return Result.success(oltService.previewDbaProfile(id, request));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("DBA 模板预演异常 id={}", id, e);
+            return Result.failure("命令预演失败：" + e.getMessage());
+        }
+    }
+
+    /**
      * 新增 DBA 模板：下发 dba-profile add，成功后自动重采返回最新数据。
      */
     @PostMapping("/{id}/dba-profile")
@@ -252,6 +288,35 @@ public class OltController {
         } catch (Exception e) {
             log.error("删除 DBA 模板异常 id={}", id, e);
             return Result.failure("删除 DBA 模板失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 「新建 VLAN」表单的元数据：VLAN ID 范围、一次最多几个、哪些端口能做成员。
+     */
+    @GetMapping("/{id}/vlan/form")
+    public Result<OltVlanForm> vlanForm(@PathVariable Long id) {
+        try {
+            return Result.success(oltService.vlanForm(id));
+        } catch (Exception e) {
+            log.error("查询 VLAN 表单异常 id={}", id, e);
+            return Result.failure("查询 VLAN 表单失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * VLAN 预演：不下发，返回这次会执行的命令。
+     */
+    @PostMapping("/{id}/vlan/preview")
+    public Result<OltQuickSetupPreview> previewVlan(@PathVariable Long id,
+                                                    @RequestBody OltVlanRequest request) {
+        try {
+            return Result.success(oltService.previewVlan(id, request));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("VLAN 预演异常 id={}", id, e);
+            return Result.failure("命令预演失败：" + e.getMessage());
         }
     }
 
@@ -380,6 +445,74 @@ public class OltController {
             log.error("一键开局异常 id={}", id, e);
             return Result.failure("一键开局失败：" + e.getMessage());
         }
+    }
+
+    /**
+     * 一键开局预演：不下发，返回这次会执行的命令和提醒。
+     *
+     * <p>命令由后端现算，和实际下发同源，页面照着显示即可——前端不再自己拼命令。</p>
+     */
+    @PostMapping("/{id}/quick-setup/preview")
+    public Result<OltQuickSetupPreview> previewQuickSetup(@PathVariable Long id,
+                                                          @RequestBody OltQuickSetupRequest request) {
+        try {
+            return Result.success(oltService.previewQuickSetup(id, request));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("一键开局预演异常 id={}", id, e);
+            return Result.failure("命令预演失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 一键开局表单的取值约束与默认值（可选模式、VLAN 范围、一次最多几个端口）。
+     */
+    @GetMapping("/{id}/quick-setup/form")
+    public Result<OltQuickSetupForm> quickSetupForm(@PathVariable Long id) {
+        try {
+            return Result.success(oltService.quickSetupForm(id));
+        } catch (Exception e) {
+            log.error("查询开局表单异常 id={}", id, e);
+            return Result.failure("查询开局表单失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * TR-069 模板表单的默认值与取值约束，两个入口共用同一份。
+     */
+    @GetMapping("/{id}/tr069/form")
+    public Result<OltTr069Form> tr069Form(@PathVariable Long id) {
+        try {
+            return Result.success(oltService.tr069Form(id));
+        } catch (Exception e) {
+            log.error("查询 TR-069 表单异常 id={}", id, e);
+            return Result.failure("查询 TR-069 表单失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 命令动作预演：把进视图、命令、退出算出来返回，不下发。
+     */
+    @PostMapping("/{id}/actions/preview")
+    public Result<OltExecResult> previewAction(@PathVariable Long id,
+                                               @RequestBody OltExecRequest request) {
+        try {
+            return Result.success(oltService.previewAction(id, request));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("命令预演异常 id={}", id, e);
+            return Result.failure("命令预演失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 设备台账表单的备选项：厂商码表、字符集、默认端口与默认账号。
+     */
+    @GetMapping("/options")
+    public Result<OltDeviceOptions> deviceOptions() {
+        return Result.success(OltService.deviceOptions());
     }
 
     /**

@@ -2,8 +2,8 @@
   <div class="hsgq-faceplate">
     <div v-if="!board" class="hsgq-empty">{{ emptyText }}</div>
     <template v-else>
-      <!-- 整机面板：按真机正面画（HSGQ 红标 / PON1-4 / GE1-4 / CONSOLE+ETH），不用机框插槽那套 -->
-      <svg class="hsgq-svg" viewBox="0 0 760 130" role="img" :aria-label="model">
+      <!-- 整机面板：按真机正面画，PON 口数与上联 GE/XGE、NMS/CONSOLE 由型号规格决定 -->
+      <svg class="hsgq-svg" :viewBox="viewBox" role="img" :aria-label="ariaLabel">
         <defs>
           <linearGradient id="hsgq-body" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stop-color="#e6e6e6" />
@@ -12,7 +12,7 @@
           </linearGradient>
         </defs>
 
-        <rect x="2" y="2" width="756" height="126" rx="9" class="fp-body" />
+        <rect x="2" y="2" :width="width - 4" height="126" rx="9" class="fp-body" />
 
         <!-- 左上 HSGQ 红标，左下型号 -->
         <text class="fp-logo" x="30" y="48">HSGQ</text>
@@ -43,28 +43,30 @@
           <rect :x="pon.x - pon.step / 2" y="46" :width="pon.step" height="70" fill="transparent" />
         </g>
 
-        <!-- GE1/GE2 上下叠一排，GE3、GE4 各一个 -->
-        <rect x="444" y="40" width="54" height="84" rx="4" class="fp-box" />
-        <text class="fp-label" x="471" y="51">GE1</text>
-        <rect x="456" y="55" width="30" height="20" rx="2" class="fp-rj45" />
-        <text class="fp-label" x="471" y="100">GE2</text>
-        <rect x="456" y="104" width="30" height="20" rx="2" class="fp-rj45" />
-        <text class="fp-label" x="527" y="60">GE3</text>
-        <rect x="512" y="64" width="30" height="22" rx="2" class="fp-rj45" />
-        <text class="fp-label" x="582" y="60">GE4</text>
-        <rect x="567" y="64" width="30" height="22" rx="2" class="fp-rj45" />
+        <!-- 上联口：GE（RJ45 电口）+ XGE（SFP+ 光口），几个由型号规格决定；
+             一个都没有时连括号也不画，免得留个空框 -->
+        <g v-if="uplinkPorts.length" class="fp-uplink">
+          <path :d="uplinkBracketPath" class="fp-bracket" />
+          <text class="fp-group-label" :x="(uplinkX0 + uplinkLineEnd) / 2" y="32">UPLINK</text>
+        </g>
+        <g v-for="port in uplinkPorts" :key="port.key">
+          <text class="fp-label" :x="port.x" y="60">{{ port.label }}</text>
+          <rect v-if="port.kind === 'ge'" :x="port.x - 15" y="64" width="30" height="22" rx="2" class="fp-rj45" />
+          <!-- SFP+ 光口：窄槽，和电口一眼能分开 -->
+          <rect v-else :x="port.x - 12" y="64" width="24" height="22" rx="2" class="fp-sfp" />
+        </g>
 
-        <!-- CONSOLE + ETH -->
-        <rect x="625" y="18" width="58" height="104" rx="4" class="fp-box" />
-        <text class="fp-label" x="654" y="30">CONSOLE</text>
-        <rect x="637" y="34" width="34" height="22" rx="2" class="fp-rj45" />
-        <text class="fp-label" x="654" y="86">ETH</text>
-        <rect x="637" y="90" width="34" height="22" rx="2" class="fp-rj45" />
+        <!-- 管理口：NMS / CONSOLE / USB，有才画 -->
+        <rect v-if="mgmtPorts.length" :x="mgmtX0" y="18" :width="mgmtWidth" height="104" rx="4" class="fp-box" />
+        <g v-for="port in mgmtPorts" :key="port.key">
+          <text class="fp-label" :x="port.x" y="34">{{ port.label }}</text>
+          <rect :x="port.x - 17" y="40" width="34" height="22" rx="2" class="fp-rj45" />
+        </g>
 
         <!-- 右侧状态灯列：PWR/SYS 常绿，PON 跟 ONU 在线数走 -->
         <g v-for="led in leds" :key="'led-' + led.label">
-          <text class="fp-led-label" x="696" :y="led.y">{{ led.label }}</text>
-          <circle cx="742" :cy="led.y - 2.5" r="2.5" :class="led.class" />
+          <text class="fp-led-label" :x="ledsX" :y="led.y">{{ led.label }}</text>
+          <circle :cx="ledsX + 46" :cy="led.y - 2.5" r="2.5" :class="led.class" />
         </g>
       </svg>
 
@@ -90,6 +92,9 @@
 </template>
 
 <script>
+/** 上联口每个占的宽度（含间隔） */
+const UPLINK_STEP = 56
+
 /**
  * 鸿升光整机面板（第三方界面的板卡区专用）。
  *
@@ -128,12 +133,75 @@ export default {
     }
   },
   computed: {
-    /** PON 区在面板上的横向范围（左边是 HSGQ 标与 RST，右边是 GE/CONSOLE） */
+    /** 整机规格：几个 PON 口、几个 GE / XGE、有没有 NMS / CONSOLE，由后端按型号给 */
+    frontPanel() {
+      return (this.board && this.board.frontPanel) || null
+    },
+    /** PON 区在面板上的横向范围（左边是 HSGQ 标与 RST，右边是上联口） */
     ponAreaStart() {
       return 240
     },
+    /** PON 区宽度跟着口数走：4 口 4×46，16 口就宽一倍 */
     ponAreaWidth() {
-      return 380
+      const count = (this.board.ports || []).length || 4
+      return Math.max(4, count) * 46
+    },
+    /** 上联口起点：PON 区右边留一段 */
+    uplinkX0() {
+      return this.ponAreaStart + this.ponAreaWidth + 30
+    },
+    uplinkLineEnd() {
+      return this.uplinkX0 + Math.max(1, this.uplinkPorts.length) * UPLINK_STEP - 12
+    },
+    uplinkBracketPath() {
+      return `M${this.uplinkX0} 44 v-6 h${this.uplinkLineEnd - this.uplinkX0} v6`
+    },
+    /** GE 在前、XGE 在后，和真机上印的顺序一致 */
+    uplinkPorts() {
+      const panel = this.frontPanel
+      if (!panel) return []
+      const list = []
+      for (let i = 0; i < (panel.geCount || 0); i++) {
+        list.push({ key: 'ge-' + i, kind: 'ge', label: 'GE' + (i + 1), x: this.uplinkX0 + UPLINK_STEP * (i + 0.5) })
+      }
+      for (let i = 0; i < (panel.xgeCount || 0); i++) {
+        list.push({
+          key: 'xge-' + i,
+          kind: 'xge',
+          label: 'XGE' + (i + 1),
+          x: this.uplinkX0 + UPLINK_STEP * (panel.geCount + i + 0.5)
+        })
+      }
+      return list
+    },
+    mgmtX0() {
+      return this.uplinkLineEnd + 18
+    },
+    /** 管理口：NMS / CONSOLE / USB（真机上这三样常并排画在一个框里） */
+    mgmtPorts() {
+      const panel = this.frontPanel
+      if (!panel) return []
+      const keys = []
+      if (panel.hasNms) keys.push({ key: 'nms', label: 'NMS' })
+      if (panel.hasConsole) keys.push({ key: 'console', label: 'CONSOLE' })
+      if (panel.hasUsb) keys.push({ key: 'usb', label: 'USB' })
+      return keys.map((item, index) => ({ ...item, x: this.mgmtX0 + 6 + index * 56 + 22 }))
+    },
+    mgmtWidth() {
+      return Math.max(0, this.mgmtPorts.length * 56 + 12)
+    },
+    ledsX() {
+      return (this.mgmtPorts.length ? this.mgmtX0 + this.mgmtWidth : this.uplinkLineEnd + 16) + 14
+    },
+    /** 面板总宽：内容到哪画到哪，右侧给状态灯留 70 */
+    width() {
+      return Math.max(760, this.ledsX + 74)
+    },
+    viewBox() {
+      return '0 0 ' + this.width + ' 130'
+    },
+    ariaLabel() {
+      return this.model + (this.frontPanel ? ' 整机前面板：' + this.frontPanel.summary : ' 整机前面板')
     },
     /** 每个 PON 口占的宽度：4 口 95、8 口 47.5、16 口 23.75 */
     ponStep() {
@@ -301,6 +369,11 @@ export default {
 .fp-rj45 {
   fill: #17191c;
   stroke: #6f6f6f;
+}
+/* SFP+ 光口：比电口窄，中间一道亮槽，和 GE 一眼能分开 */
+.fp-sfp {
+  fill: #17191c;
+  stroke: #8a8a8a;
 }
 .fp-led-label {
   fill: #5a5a5a;

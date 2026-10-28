@@ -82,6 +82,7 @@
     <!-- 一键开局：批量下发开局要做的那几条命令，默认把所有 PON 和 GE 口设成 trunk -->
     <olt-quick-setup-dialog
       :visible.sync="quickVisible"
+      :olt-id="oltId"
       :ports="ports"
       :submit-handler="setupHandler"
     />
@@ -90,6 +91,7 @@
 
 <script>
 import OltQuickSetupDialog from './OltQuickSetupDialog'
+import { fetchOltOptions } from '@/api/olt'
 
 /**
  * 设备配置（命令动作中心）。
@@ -106,6 +108,12 @@ export default {
   name: 'OltCommandCenter',
   components: { OltQuickSetupDialog },
   props: {
+    /** 设备 ID，「一键开局」取表单约束和命令预览要用 */
+    oltId: {
+      type: [Number, String],
+      default: null
+    },
+
     /** 动作目录，来自 GET /api/olt/{id}/actions */
     actions: {
       type: Array,
@@ -133,7 +141,9 @@ export default {
       values: {},
       running: '',
       output: null,
-      quickVisible: false
+      quickVisible: false,
+      /** 视图中文名等码表，来自 GET /api/olt/options */
+      viewLabels: null
     }
   },
   computed: {
@@ -157,6 +167,15 @@ export default {
       }
     }
   },
+  created() {
+    fetchOltOptions()
+      .then(res => {
+        this.viewLabels = res.data && res.data.viewLabels ? res.data.viewLabels : null
+      })
+      .catch(() => {
+        this.viewLabels = null
+      })
+  },
   methods: {
     /** 每个动作一份表单值，默认值取参数定义里的 defaultValue */
     resetValues() {
@@ -174,36 +193,24 @@ export default {
     paramsOf(action) {
       return this.values[action.code] || {}
     },
+    /** 视图叫什么由后端给（码表在 GET /api/olt/options 里） */
     viewText(view) {
-      const map = {
-        CONFIG: '全局配置视图',
-        VLAN: 'VLAN 视图',
-        PORT: '端口视图',
-        VLANIF: '三层接口视图'
-      }
-      return map[view] || view
+      return (this.viewLabels && this.viewLabels[view]) || view
     },
-    /** 把模板里的占位符换成当前填的值，让用户先看清要发什么命令 */
+    /**
+     * 把占位符换成当前填的值，让用户先看清要发什么命令。
+     *
+     * <p>进哪个视图、要不要 exit 由后端算好放在 {@code previewCommands} 里，
+     * 这里只做文本替换，不再判断视图。</p>
+     */
     preview(action) {
       const params = this.paramsOf(action)
-      const lines = []
-      if (action.view === 'VLAN') {
-        lines.push('vlan standard ' + (params.vlanId || '{vlanId}'))
-      } else if (action.view === 'PORT') {
-        lines.push('interface ' + (params.portType || '{portType}') + ' ' + (params.portNo || '{portNo}'))
-      } else if (action.view === 'VLANIF') {
-        lines.push('interface vlanif ' + (params.vlanId || '{vlanId}'))
-      }
-      const commands = action.commands || []
-      commands.forEach(template => {
-        lines.push(template.replace(/\{(\w+)\}/g, (all, key) => {
-          return params[key] ? params[key] : all
-        }))
-      })
-      if (action.view !== 'CONFIG') {
-        lines.push('exit')
-      }
-      return lines.join('  →  ')
+      const templates = action.previewCommands && action.previewCommands.length
+        ? action.previewCommands
+        : (action.commands || [])
+      return templates.map(template => template.replace(/\{(\w+)\}/g, (all, key) => {
+        return params[key] ? params[key] : all
+      })).join('  →  ')
     },
     run(action) {
       if (!this.execHandler) {

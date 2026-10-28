@@ -20,7 +20,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OltActionRenderTest {
 
     private static OltAction action(OltAction.View view, List<OltActionParam> params, String... commands) {
-        return new OltAction("test", "章节", "功能", view, List.of(commands), params, false, false, null);
+        return new OltAction("test", "章节", "功能", view, List.of(commands), List.of(),
+                params, false, false, null);
+    }
+
+    @Test
+    void previewCommandsShouldMatchWhatWillBeSent() {
+        // 页面上展示的命令（previewCommands）和真正下发的（planCommands）必须一条不差：
+        // 视图怎么进、要不要 exit 曾经是页面自己补的，改了后端不改前端就对不上
+        Map<String, String> params = Map.of(
+                "vlanId", "100", "portType", "ge", "portNo", "2",
+                "ponId", "3", "onuId", "4", "profileId", "20", "aclId", "2000");
+        for (OltAction.View view : OltAction.View.values()) {
+            OltAction action = action(view, List.of(), "show this");
+            List<String> plan = OltService.planCommands(action, params);
+            String enter = OltService.enterCommandTemplate(view);
+            int index = 0;
+            if (enter != null) {
+                assertEquals(render(enter, params), plan.get(index++), view + " 的进视图命令");
+            }
+            assertEquals("show this", plan.get(index++), view + " 的命令本身");
+            if (view != OltAction.View.CONFIG) {
+                assertEquals("exit", plan.get(index), view + " 退出视图");
+            }
+        }
+    }
+
+    private static String render(String template, Map<String, String> params) {
+        String text = template;
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            text = text.replace("{" + entry.getKey() + "}", entry.getValue());
+        }
+        return text;
     }
 
     @Test
@@ -153,7 +184,7 @@ class OltActionRenderTest {
     @Test
     void defaultValueShouldBeApplied() {
         OltAction action = new OltAction("test", "章节", "功能", OltAction.View.CONFIG,
-                List.of("vlan mode {mode}"),
+                List.of("vlan mode {mode}"), List.of(),
                 List.of(OltActionParam.choice("mode", "模式", List.of("access", "trunk"), "access", null)),
                 false, false, null);
         Map<String, String> params = OltService.resolveParams(action, Map.of("mode", ""));

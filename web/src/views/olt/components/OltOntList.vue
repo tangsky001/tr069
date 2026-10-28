@@ -71,18 +71,7 @@
 </template>
 
 <script>
-/** 「配置」下拉里的动作，顺序按现场习惯排 */
-const ONU_ACTIONS = [
-  { code: 'detail', label: '查看详情' },
-  { code: 'mac', label: '查看MAC地址信息' },
-  { code: 'port', label: 'ONU端口配置' },
-  { code: 'delete', label: '删除ONU' },
-  { code: 'block', label: '添加到阻止列表' },
-  { code: 'reboot', label: '重启ONU' },
-  { code: 'optical', label: '关闭发光射机' },
-  { code: 'unregister', label: '解注册ONU' },
-  { code: 'config', label: '配置ONU信息' }
-]
+import { fetchOltOptions } from '@/api/olt'
 
 /**
  * ONU 平铺列表：一条 ONU 一行，不再按 PON 口折叠。
@@ -111,7 +100,8 @@ export default {
   },
   data() {
     return {
-      actions: ONU_ACTIONS
+      /** 「配置」下拉里的动作由后端给（顺序也在那边排好） */
+      actions: []
     }
   },
   computed: {
@@ -156,6 +146,15 @@ export default {
       })
       return rows
     }
+  },
+  created() {
+    fetchOltOptions()
+      .then(res => {
+        this.actions = res.data && res.data.onuActions ? res.data.onuActions : []
+      })
+      .catch(() => {
+        this.actions = []
+      })
   },
   methods: {
     onCommand(row, code) {

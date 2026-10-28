@@ -102,13 +102,10 @@ public class HsgqGponOltProfile extends HsgqOltProfile {
         return 8;
     }
 
+    /** GPON 产品线：型号认不出来时按 GPON 兜底，别画成 EPON */
     @Override
-    public OltBoard buildWholeDevice(String model) {
-        OltBoard board = super.buildWholeDevice(
-                model == null || model.isBlank() ? DEFAULT_MODEL : model.trim());
-        board.setPortMode("GPON");
-        board.setDescription("整机（" + board.getPortCount() + " 口 GPON）");
-        return board;
+    protected String ponTypeName() {
+        return "GPON";
     }
 
     /**

@@ -18,6 +18,14 @@ import java.util.List;
 @Data
 public class OltQuickSetupRequest {
 
+    /**
+     * 页面上「统一端口 VLAN 模式」这一步勾没勾。
+     *
+     * <p>没勾就完全不动端口——即使 {@link #ports} 里有内容也忽略，
+     * 免得页面取消了勾选、后端照着残留的端口清单把命令发出去。</p>
+     */
+    private Boolean portModeEnabled = Boolean.TRUE;
+
     /** 要改模式的端口，空就是不改端口 */
     private List<PortRef> ports;
 

@@ -48,17 +48,18 @@
             <span v-if="boardSummary" class="board-summary">{{ boardSummary }}</span>
           </div>
 
-          <olt-board-cards
-            :slots="slots"
-            :slot-count="chassisSlotCount"
+          <!-- 整机不是板卡：一台设备画一块前面板，PON 口 + 上联 GE/XGE + NMS/CONSOLE -->
+          <olt-hsgq-faceplate
+            v-if="slots.length"
+            :board="slots[0]"
             :model="device.model"
             :expanded-onts="expandedOnts"
             :hover-port="hoverPort"
-            empty-text="尚无整机数据。点击「同步」登录设备采集。"
             @toggle="onToggleOnts"
             @hover="hoverOn"
             @leave="hoverOff"
           />
+          <div v-else class="olt-empty">尚无整机数据。点击「同步」登录设备采集。</div>
         </el-tab-pane>
 
         <el-tab-pane label="PON 口状态" name="pon">
@@ -110,6 +111,7 @@
 
         <el-tab-pane label="VLAN" name="vlan">
           <olt-hsgq-vlan-panel
+            :olt-id="detailId"
             :vlans="vlanList"
             :member-ports="memberPorts"
             :create-handler="createVlan"
@@ -124,6 +126,7 @@
 
         <el-tab-pane label="设备配置" name="commands">
           <olt-command-center
+            :olt-id="detailId"
             :actions="commandActions"
             :exec-handler="execAction"
             :ports="memberPorts"
@@ -148,7 +151,7 @@
 <script>
 import OltDeviceBar from './components/OltDeviceBar'
 import OltDeviceInfo from './components/OltDeviceInfo'
-import OltBoardCards from './components/OltBoardCards'
+import OltHsgqFaceplate from './components/OltHsgqFaceplate'
 import OltOntList from './components/OltOntList'
 import OltHsgqVlanPanel from './components/OltHsgqVlanPanel'
 import OltHsgqTr069Panel from './components/OltHsgqTr069Panel'
@@ -170,7 +173,7 @@ export default {
   components: {
     OltDeviceBar,
     OltDeviceInfo,
-    OltBoardCards,
+    OltHsgqFaceplate,
     OltOntList,
     OltHsgqVlanPanel,
     OltHsgqTr069Panel,

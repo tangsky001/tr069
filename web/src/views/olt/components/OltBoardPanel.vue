@@ -290,6 +290,7 @@
  * 纯展示：端口数据由外面折算好传进来（board.ports），交互冒泡给页面处理。
  */
 import { boardLampState, portLampState } from '../utils'
+import { fetchOltOptions } from '@/api/olt'
 
 // 板卡宽度 55、机框（槽位）高度 700：板卡就是插进机框的一条窄板，比例按真机框来
 const PANEL_W = 237
@@ -318,6 +319,7 @@ export default {
       type: Object,
       required: true
     },
+
     /** 面板样式：pon（PON 业务板）/ ge（主控、以太网上行）/ xge（10GE 上联）/ generic */
     panel: {
       type: String,
@@ -345,6 +347,12 @@ export default {
     chassisModel: {
       type: String,
       default: ''
+    }
+  },
+  data() {
+    return {
+      /** 温度告警阈值等，来自 GET /api/olt/options */
+      options: null
     }
   },
   computed: {
@@ -446,7 +454,10 @@ export default {
     envState() {
       const temp = this.board.temperature
       if (temp == null) return 'offline'
-      return temp >= 65 ? 'alarm' : 'offline'
+      // 告警阈值由后端给，页面不自己定「多少度算高」
+      const limit = this.options ? this.options.envTempAlarmC : null
+      if (limit == null) return 'offline'
+      return temp >= limit ? 'alarm' : 'offline'
     },
     /** 板卡右边缘（导轨就贴在板卡右边） */
     plateRight() {
@@ -464,6 +475,15 @@ export default {
     ariaLabel() {
       return this.modelText + ' 槽位 ' + this.slotText + ' 面板示意'
     }
+  },
+  created() {
+    fetchOltOptions()
+      .then(res => {
+        this.options = res.data
+      })
+      .catch(() => {
+        this.options = null
+      })
   },
   methods: {
     /** 端口一列竖排：第 index 个口的行顶 y */

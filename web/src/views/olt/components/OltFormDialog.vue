@@ -25,7 +25,7 @@
       </el-form-item>
 
       <el-form-item :label="loginLabel + ' 登录账号'">
-        <el-input v-model="form.username" placeholder="默认为 root" clearable />
+        <el-input v-model="form.username" :placeholder="usernamePlaceholder" clearable />
       </el-form-item>
 
       <el-form-item :label="loginLabel + ' 登录密码'">
@@ -122,16 +122,11 @@
 </template>
 
 <script>
-import { saveOlt, testOlt, fetchOltWebAccounts } from '@/api/olt'
+import { saveOlt, testOlt, fetchOltWebAccounts, fetchOltOptions } from '@/api/olt'
 
-/** 厂商码 → 中文名，与后端 OltVendor 一致 */
-const VENDOR_LABELS = {
-  HUAWEI: '华为',
-  ZTE: '中兴',
-  FIBERHOME: '烽火',
-  HSGQ: '鸿升光 EPON',
-  HSGQ_GPON: '鸿升光 GPON',
-  GENERIC: '通用'
+/** 字符集里 AUTO 页面上叫「自动」，其余照原样显示 */
+const CHARSET_LABELS = {
+  AUTO: '自动'
 }
 
 /**
@@ -161,12 +156,8 @@ export default {
     return {
       form: this.emptyForm(),
       accountOptions: [],
-      charsetOptions: [
-        { label: '自动', value: 'AUTO' },
-        { label: 'UTF-8', value: 'UTF-8' },
-        { label: 'GBK', value: 'GBK' },
-        { label: 'GB18030', value: 'GB18030' }
-      ],
+      /** 厂商码表、字符集、默认端口与默认账号，来自后端 */
+      options: null,
       rules: {
         host: [
           { required: true, message: '请输入 OLT 地址', trigger: 'blur' },
@@ -197,14 +188,32 @@ export default {
     loginLabel() {
       return this.form.protocol === 'SSH' ? 'SSH' : 'Telnet'
     },
+    vendorOptions() {
+      return this.options ? this.options.vendors : []
+    },
+    charsetOptions() {
+      const charsets = this.options ? this.options.charsets : []
+      return charsets.map(item => ({ label: CHARSET_LABELS[item] || item, value: item }))
+    },
     defaultPort() {
-      return this.form.protocol === 'SSH' ? 22 : 23
+      if (!this.options) {
+        return null
+      }
+      return this.form.protocol === 'SSH' ? this.options.sshPort : this.options.telnetPort
+    },
+    usernamePlaceholder() {
+      return this.options ? '默认为 ' + this.options.defaultUsername : ''
     },
     passwordPlaceholder() {
-      return this.isEdit ? '留空表示不修改（默认 admin）' : '默认为 admin'
+      if (!this.options) {
+        return ''
+      }
+      const text = '默认为 ' + this.options.defaultPassword
+      return this.isEdit ? '留空表示不修改（' + text + '）' : text
     },
     vendorLabel() {
-      return VENDOR_LABELS[this.form.vendor] || this.form.vendor
+      const hit = this.vendorOptions.find(item => item.code === this.form.vendor)
+      return hit ? hit.label : (this.form.vendor || '')
     }
   },
   methods: {
@@ -216,7 +225,8 @@ export default {
         protocol: 'TELNET',
         username: '',
         password: '',
-        port: 23,
+        // 端口由后端给的默认值补上（handleOpen 里用 defaultPort），不在这里写死 23
+        port: null,
         charset: 'AUTO',
         bindLocalIp: '',
         webAccounts: [],
@@ -226,9 +236,14 @@ export default {
         model: ''
       }
     },
-    handleOpen() {
+    async handleOpen() {
       this.testResult = null
       this.form = this.emptyForm()
+      // 端口的默认值来自后端，先拿到再填表单
+      if (!this.options) {
+        await Promise.resolve(this.loadOptions())
+      }
+      this.form.port = this.defaultPort
       if (this.olt) {
         this.form.id = this.olt.id
         this.form.name = this.olt.name || ''
@@ -260,9 +275,19 @@ export default {
     },
     onProtocolChange() {
       // 协议切换时只在端口仍是默认值的情况下跟随，避免覆盖用户手填的端口
-      if (this.form.port === 23 || this.form.port === 22 || !this.form.port) {
+      const defaults = this.options ? [this.options.sshPort, this.options.telnetPort] : []
+      if (!this.form.port || defaults.includes(this.form.port)) {
         this.form.port = this.defaultPort
       }
+    },
+    loadOptions() {
+      fetchOltOptions()
+        .then(res => {
+          this.options = res.data
+        })
+        .catch(() => {
+          this.options = null
+        })
     },
     selectAllAccounts() {
       this.form.webAccounts = this.accountOptions.map(item => item.username)

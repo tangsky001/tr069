@@ -15,6 +15,8 @@ import com.tr069.acs.olt.mapper.OltDeviceMapper;
 import com.tr069.acs.olt.mapper.OltSyncRecordMapper;
 import com.tr069.acs.olt.model.OltAction;
 import com.tr069.acs.olt.model.OltActionParam;
+import com.tr069.acs.olt.model.OltDbaForm;
+import com.tr069.acs.olt.model.OltDbaType;
 import com.tr069.acs.olt.model.OltDetail;
 import com.tr069.acs.olt.model.OltDbaProfileRequest;
 import com.tr069.acs.olt.model.OltExecRequest;
@@ -24,7 +26,14 @@ import com.tr069.acs.olt.model.OltOntInfo;
 import com.tr069.acs.olt.model.OltOntQueryResult;
 import com.tr069.acs.olt.model.OltServicePort;
 import com.tr069.acs.olt.model.OltQuickSetupRequest;
+import com.tr069.acs.olt.model.OltBoardProfile;
+import com.tr069.acs.olt.model.OltBoardStatusRule;
+import com.tr069.acs.olt.model.OltDeviceOptions;
 import com.tr069.acs.olt.model.OltDeviceView;
+import com.tr069.acs.olt.model.OltOption;
+import com.tr069.acs.olt.model.OltQuickSetupForm;
+import com.tr069.acs.olt.model.OltQuickSetupPreview;
+import com.tr069.acs.olt.model.OltTr069Form;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltSaveRequest;
 import com.tr069.acs.olt.model.OltSyncRecordView;
@@ -33,12 +42,15 @@ import com.tr069.acs.olt.model.OltTestResult;
 import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltTr069ProfileRequest;
 import com.tr069.acs.olt.model.OltVlanInfo;
+import com.tr069.acs.olt.model.OltVlanForm;
 import com.tr069.acs.olt.model.OltVlanPort;
 import com.tr069.acs.olt.model.OltVlanRequest;
 import com.tr069.acs.olt.model.VlanIdExpression;
 import com.tr069.acs.olt.telnet.OltInfoParser;
 import com.tr069.acs.olt.telnet.OltSnapshot;
 import com.tr069.acs.olt.telnet.OltVendor;
+import com.tr069.acs.olt.vendor.HsgqModelCatalog;
+import com.tr069.acs.olt.vendor.OltBoardCatalog;
 import com.tr069.acs.olt.vendor.OltVendorProfile;
 import com.tr069.acs.olt.vendor.OltVendorProfiles;
 import lombok.RequiredArgsConstructor;
@@ -139,7 +151,10 @@ public class OltService {
         List<OltBoard> boards = boardMapper.selectList(new LambdaQueryWrapper<OltBoard>()
                 .eq(OltBoard::getOltId, id)
                 .orderByAsc(OltBoard::getSlotNo));
-        boards.forEach(this::fillPorts);
+        boards.forEach(board -> {
+            fillPorts(board);
+            fillBoardProfile(board);
+        });
         detail.setBoards(boards);
         detail.setRecords(records(id, 10));
         detail.setVlan(readVlan(device.getVlanJson()));
@@ -147,6 +162,54 @@ public class OltService {
         // 后台正在补采慢数据（端口 / ONT / VLAN / 模板）时告诉页面，页面据此提示并轮询
         detail.setDeepSyncing(deepSyncing.contains(id));
         return detail;
+    }
+
+    /**
+     * 按型号档案把板卡补齐：面板样式、是否主控板，端口类型/数量在设备没给时按档案兜底。
+     *
+     * <p>华为 {@code display board 0} 只回板卡名和状态，端口数得靠型号档案补；
+     * 状态也在这里翻成中文和等级，页面不用再拿正则去匹配设备回的英文。</p>
+     */
+    private static void fillBoardProfile(OltBoard board) {
+        // 整机（鸿升光）：没有板卡插框，面板按型号规格画，不做板卡档案匹配。
+        // 旧快照里没有这块（运行时字段），按型号现补，免得页面整机面板空着。
+        if (board.getFrontPanel() == null) {
+            board.setFrontPanel(HsgqModelCatalog.frontPanelOf(board.getBoardType()));
+        }
+        if (board.getFrontPanel() != null) {
+            board.setPanelKind("whole");
+            board.setControlBoard(Boolean.FALSE);
+            fillBoardStatus(board);
+            return;
+        }
+        OltBoardProfile profile = OltBoardCatalog.match(board.getBoardType());
+        if (profile != null) {
+            board.setPanelKind(profile.panel());
+            board.setControlBoard(profile.controlBoard());
+            if (board.getPortMode() == null || board.getPortMode().isBlank()) {
+                board.setPortMode(profile.portMode());
+            }
+            if (board.getPortCount() == null) {
+                board.setPortCount(profile.ports());
+            }
+        } else {
+            board.setPanelKind(OltBoardCatalog.panelKindOf(board.getPortMode()));
+            board.setControlBoard(Boolean.FALSE);
+        }
+        fillBoardStatus(board);
+    }
+
+    /** 设备回的英文状态 → 中文说法 + 等级（整机和板卡共用） */
+    private static void fillBoardStatus(OltBoard board) {
+        OltBoardStatusRule rule = OltBoardCatalog.statusOf(board.getStatus());
+        if (rule == null) {
+            board.setStatusText(board.getStatus() == null || board.getStatus().isBlank()
+                    ? "未知" : board.getStatus());
+            board.setStatusLevel("info");
+        } else {
+            board.setStatusText(rule.label());
+            board.setStatusLevel(rule.level());
+        }
     }
 
     /** DBA / 线路模板快照同样是 JSON 存在 device 行上，解析失败就当没采过 */
@@ -691,53 +754,92 @@ public class OltService {
      * <p>校验规则与网管一致：ID 10-512 且不重复、模板名数字字母下划线、
      * 五类模板各取所需（type1 只要固定、type4 只要最大、type5 三个都要）。</p>
      */
-    public OltDetail createDbaProfile(Long id, OltDbaProfileRequest request, String operator) {
-        requireDevice(id);
+    /**
+     * 新增 DBA 模板的命令：{@code dba-profile add profile-id 10 profile-name "dba-100M" type4 max 102400}。
+     *
+     * <p>校验和命令只有这一处。五类模板各取所需（type1 只要固定、type4 只要最大、
+     * type5 三个都要），少填一个就在这里抛出去——页面的命令预览和实际下发都走它，
+     * 不会再出现「预览看着能发、下发被设备拒」。</p>
+     */
+    public String dbaProfileCommand(OltDbaProfileRequest request) {
         Integer profileId = request.getProfileId();
-        if (profileId == null || profileId < 10 || profileId > 512) {
-            throw new IllegalArgumentException("模板 ID 必须在 10-512 之间");
+        if (profileId == null || profileId < DBA_PROFILE_ID_MIN || profileId > DBA_PROFILE_ID_MAX) {
+            throw new IllegalArgumentException("模板 ID 必须在 "
+                    + DBA_PROFILE_ID_MIN + "-" + DBA_PROFILE_ID_MAX + " 之间");
         }
         String name = request.getName() == null ? "" : request.getName().trim();
-        if (!name.matches("[A-Za-z0-9_]{1,32}")) {
-            throw new IllegalArgumentException("模板名只能由数字、字母及下划线组成，最长 32 位");
+        if (!name.matches(DBA_NAME_PATTERN)) {
+            throw new IllegalArgumentException("模板名只能由数字、字母及下划线组成，最长 " + DBA_NAME_MAX + " 位");
         }
-        String type = request.getType() == null ? "" : request.getType().trim().toLowerCase();
+        String type = request.getType() == null ? "" : request.getType().trim().toLowerCase(Locale.ROOT);
         if (!type.matches("type[1-5]")) {
             throw new IllegalArgumentException("DBA 类型必须是 type1~type5");
         }
         Integer fix = positive(request.getFixKbps(), "固定带宽");
         Integer assure = positive(request.getAssureKbps(), "保证带宽");
         Integer max = positive(request.getMaxKbps(), "最大带宽");
-        String command = switch (type) {
+        String head = "dba-profile add profile-id " + profileId + " profile-name \"" + name + "\" " + type;
+        return switch (type) {
             case "type1" -> {
                 requireNotNull(fix, "type1（固定带宽）需要填写固定带宽");
-                yield "dba-profile add profile-id " + profileId + " profile-name \"" + name
-                        + "\" type1 fix " + fix;
+                yield head + " fix " + fix;
             }
             case "type2" -> {
                 requireNotNull(assure, "type2（保证带宽）需要填写保证带宽");
-                yield "dba-profile add profile-id " + profileId + " profile-name " + name
-                        + "\" type2 assure " + assure;
+                yield head + " assure " + assure;
             }
             case "type3" -> {
-                requireNotNull(assure, "type3（保证带宽+最大带宽）需要填写保证带宽");
-                requireNotNull(max, "type3（保证带宽+最大带宽）需要填写最大带宽");
-                yield "dba-profile add profile-id " + profileId + " profile-name " + name
-                        + "\" type3 assure " + assure + " max " + max;
+                requireNotNull(assure, "type3（保证+最大带宽）需要填写保证带宽");
+                requireNotNull(max, "type3（保证+最大带宽）需要填写最大带宽");
+                yield head + " assure " + assure + " max " + max;
             }
             case "type4" -> {
                 requireNotNull(max, "type4（最大带宽）需要填写最大带宽");
-                yield "dba-profile add profile-id " + profileId + " profile-name " + name
-                        + "\" type4 max " + max;
+                yield head + " max " + max;
             }
             default -> {
                 requireNotNull(fix, "type5（固定+保证+最大带宽）需要填写固定带宽");
                 requireNotNull(assure, "type5（固定+保证+最大带宽）需要填写保证带宽");
                 requireNotNull(max, "type5（固定+保证+最大带宽）需要填写最大带宽");
-                yield "dba-profile add profile-id " + profileId + " profile-name " + name
-                        + "\" type5 fix " + fix + " assure " + assure + " max " + max;
+                yield head + " fix " + fix + " assure " + assure + " max " + max;
             }
         };
+    }
+
+    /**
+     * 「新增 DBA 模板」表单的元数据：有哪五类、每类要填哪几个带宽、取值上下限。
+     *
+     * <p>页面不再自己保存这些约束——以前服务端校验一份、页面提示一份，
+     * 改了这边忘那边就会「页面说能填、下发被拒」。</p>
+     */
+    public OltDbaForm dbaForm(Long id) {
+        // 支不支持由设备命令目录说了算，不在页面里按厂商猜
+        boolean supported = profileOf(id).actions().stream()
+                .anyMatch(action -> action.code() != null && action.code().contains("dba"));
+        return new OltDbaForm(supported, DBA_TYPES, DEFAULT_DBA_TYPE,
+                DBA_PROFILE_ID_MIN, DBA_PROFILE_ID_MAX, DBA_NAME_MAX, DBA_NAME_PATTERN,
+                DBA_BANDWIDTH_MIN, DBA_BANDWIDTH_MAX);
+    }
+
+    /** DBA 模板预演：不下发，只把命令算出来给页面看；填错的地方直接抛给页面显示 */
+    public OltQuickSetupPreview previewDbaProfile(Long id, OltDbaProfileRequest request) {
+        if (request == null) {
+            return new OltQuickSetupPreview(List.of(), List.of("先填模板参数"));
+        }
+        List<String> warnings = new ArrayList<>();
+        OltTemplateInfo template = readTemplate(requireDevice(id).getTemplateJson());
+        if (template != null && request.getProfileId() != null && template.getDbaProfiles().stream()
+                .anyMatch(profile -> request.getProfileId().equals(profile.getProfileId()))) {
+            warnings.add("模板 ID " + request.getProfileId() + " 设备上已经有了，下发会被拒");
+        }
+        return new OltQuickSetupPreview(List.of(dbaProfileCommand(request)), warnings);
+    }
+
+    public OltDetail createDbaProfile(Long id, OltDbaProfileRequest request, String operator) {
+        requireDevice(id);
+        // 命令和校验都在 dbaProfileCommand 里，页面预览走的是同一个方法
+        String command = dbaProfileCommand(request);
+        Integer profileId = request.getProfileId();
         // 库里快照已有同 ID 就提前拦下（OLT 端才是最终裁决，这里只是友好提示）
         OltTemplateInfo template = readTemplate(requireDevice(id).getTemplateJson());
         if (template != null && template.getDbaProfiles().stream()
@@ -764,6 +866,30 @@ public class OltService {
      * {@code vlan standard 101 110}），成功后自动重采写库。
      */
     public OltDetail createVlan(Long id, OltVlanRequest request, String operator) {
+        List<int[]> segments = vlanSegments(request);
+        // 库里快照已有就提前拦下（设备端才是最终裁决，这里只是少跑一个来回）
+        List<Integer> existing = existingVlanIds(id, segmentIds(segments));
+        if (!existing.isEmpty()) {
+            throw new IllegalArgumentException("VLAN " + joinIds(existing)
+                    + " 已存在（如果刚在设备上建过，先同步一次再操作）");
+        }
+        // 命令生成与页面预览同源，改一处两边一起变
+        List<String> commands = vlanCommands(id, request);
+        OltVendorProfile profile = profileOf(id);
+        boolean withPorts = !normalizeVlanPorts(profile, request == null ? null : request.getTagged()).isEmpty()
+                || !normalizeVlanPorts(profile, request == null ? null : request.getUntagged()).isEmpty();
+        return dispatchConfig(id, commands, operator,
+                "新增VLAN " + describeVlans(segments) + (withPorts ? "（含端口）" : ""));
+    }
+
+    /**
+     * 新建 VLAN 的命令（含校验）：{@code vlan standard 41} → {@code port epon 1-4 tagged} → {@code exit}。
+     *
+     * <p>表达式怎么解析（{@code 41,45-46}）、VLAN ID 允许到多少、一次最多几个、
+     * 哪些端口能做成员，以前页面上也存了一份；现在页面预览和实际下发都走这个方法，
+     * 「页面说能建、下发被设备拒」这种事不会再发生。</p>
+     */
+    public List<String> vlanCommands(Long id, OltVlanRequest request) {
         OltVendorProfile profile = profileOf(id);
         if (!profile.supportsVlanConfig()) {
             throw new IllegalArgumentException("这台设备的厂商还没接入 VLAN 下发，先到设备上配好再同步");
@@ -771,30 +897,12 @@ public class OltService {
         List<String> tagged = normalizeVlanPorts(profile, request == null ? null : request.getTagged());
         List<String> untagged = normalizeVlanPorts(profile, request == null ? null : request.getUntagged());
         List<int[]> segments = vlanSegments(request);
-        List<Integer> ids = new ArrayList<>();
-        for (int[] segment : segments) {
-            for (int vlanId = segment[0]; vlanId <= segment[1]; vlanId++) {
-                ids.add(vlanId);
-            }
-        }
         boolean withPorts = !tagged.isEmpty() || !untagged.isEmpty();
         int limit = withPorts ? MAX_VLANS_WITH_PORTS : MAX_VLANS_BATCH;
-        if (ids.size() > limit) {
+        if (segmentIds(segments).size() > limit) {
             throw new IllegalArgumentException(withPorts
                     ? "一次最多给 " + MAX_VLANS_WITH_PORTS + " 个 VLAN 配成员端口（每个 VLAN 都要单独进视图），请分几次建"
                     : "一次最多建 " + MAX_VLANS_BATCH + " 个 VLAN，请分几次建");
-        }
-        // 库里快照已有就提前拦下（设备端才是最终裁决，这里只是少跑一个来回）
-        OltVlanInfo snapshot = readVlan(requireDevice(id).getVlanJson());
-        if (snapshot != null && snapshot.getVlans() != null) {
-            for (Integer vlanId : ids) {
-                boolean exists = snapshot.getVlans().stream()
-                        .anyMatch(vlan -> vlan.getVlanId() != null && vlan.getVlanId().equals(vlanId));
-                if (exists) {
-                    throw new IllegalArgumentException("VLAN " + vlanId
-                            + " 已存在（如果刚在设备上建过，先同步一次再操作）");
-                }
-            }
         }
         List<String> commands = new ArrayList<>();
         for (int[] segment : segments) {
@@ -803,8 +911,60 @@ public class OltService {
         if (commands.isEmpty()) {
             throw new IllegalArgumentException("没生成要下发的命令，VLAN 未变更");
         }
-        return dispatchConfig(id, commands, operator,
-                "新增VLAN " + describeVlans(segments) + (withPorts ? "（含端口）" : ""));
+        return commands;
+    }
+
+    /** 「新建 VLAN」表单的元数据：ID 范围、一次最多几个、哪些端口能做成员 */
+    public OltVlanForm vlanForm(Long id) {
+        OltVendorProfile profile = profileOf(id);
+        List<String> portTypes = VLAN_PORT_TYPE_ORDER.stream()
+                .filter(type -> profile.vlanMemberPortTypes().contains(type))
+                .toList();
+        return new OltVlanForm(profile.supportsVlanConfig(), 1, VlanIdExpression.MAX_VLAN_ID,
+                MAX_VLANS_BATCH, MAX_VLANS_WITH_PORTS, portTypes, VLAN_PORT_EXCLUSIVE_TAG_MODE);
+    }
+
+    /** VLAN 预演：不下发，只把命令算出来给页面看；填错的地方直接抛给页面显示 */
+    public OltQuickSetupPreview previewVlan(Long id, OltVlanRequest request) {
+        List<String> warnings = new ArrayList<>();
+        List<Integer> existing = existingVlanIds(id, segmentIds(vlanSegments(request)));
+        if (!existing.isEmpty()) {
+            warnings.add("VLAN " + joinIds(existing) + " 在设备快照里已经有了，下发会被拒（先同步一次再建）");
+        }
+        return new OltQuickSetupPreview(vlanCommands(id, request), warnings);
+    }
+
+    /** 快照里已经存在的 VLAN，用来提前提醒（设备端才是最终裁决） */
+    private List<Integer> existingVlanIds(Long id, List<Integer> ids) {
+        OltVlanInfo snapshot = readVlan(requireDevice(id).getVlanJson());
+        if (snapshot == null || snapshot.getVlans() == null || ids.isEmpty()) {
+            return List.of();
+        }
+        List<Integer> existing = new ArrayList<>();
+        for (Integer vlanId : ids) {
+            boolean hit = snapshot.getVlans().stream()
+                    .anyMatch(vlan -> vlan.getVlanId() != null && vlan.getVlanId().equals(vlanId));
+            if (hit) {
+                existing.add(vlanId);
+            }
+        }
+        return existing;
+    }
+
+    /** [[41,41],[45,46]] → [41,45,46] */
+    private static List<Integer> segmentIds(List<int[]> segments) {
+        List<Integer> ids = new ArrayList<>();
+        for (int[] segment : segments) {
+            for (int vlanId = segment[0]; vlanId <= segment[1]; vlanId++) {
+                ids.add(vlanId);
+            }
+        }
+        return ids;
+    }
+
+    /** [41,45] → {@code 41、45} */
+    private static String joinIds(List<Integer> ids) {
+        return ids.stream().map(String::valueOf).collect(Collectors.joining("、"));
     }
 
     /**
@@ -880,7 +1040,10 @@ public class OltService {
         if (request.getVlanList() != null && !request.getVlanList().isBlank()) {
             VlanIdExpression.expand(request.getVlanList());
         }
-        List<OltQuickSetupRequest.PortRef> ports = checkQuickPorts(request.getPorts());
+        // 页面上这一步没勾就一个端口都不动，端口清单只是残留数据
+        List<OltQuickSetupRequest.PortRef> ports = Boolean.FALSE.equals(request.getPortModeEnabled())
+                ? List.of()
+                : checkQuickPorts(request.getPorts());
         int vlanCount = checkQuickVlanIds(request.getCreateVlanIds(), request.getAddCreatedToPorts());
         if (request.getTr069() != null) {
             checkTr069Request(request.getTr069());
@@ -894,6 +1057,132 @@ public class OltService {
             throw new IllegalArgumentException("没生成要下发的命令，开局未执行");
         }
         return dispatchConfig(id, commands, operator, describeQuickSetup(request));
+    }
+
+    /**
+     * 一键开局预演：不下发，只把这次会执行的命令和要注意的地方算出来给页面看。
+     *
+     * <p>和 {@link #quickSetup} 走同一套校验、同一个 {@code quickSetupCommands}，
+     * 所以页面看到的必然就是即将下发的那条序列。以前前端自己拼一份预览，
+     * 命令一改两边就对不上（先建 VLAN 还是先改端口这种顺序问题尤其容易漏）。</p>
+     *
+     * <p>填了一半也能预演：写法不对（VLAN 表达式、URL 格式）直接抛出去让页面显示，
+     * 只是没勾满则给提醒、命令为空。</p>
+     */
+    public OltQuickSetupPreview previewQuickSetup(Long id, OltQuickSetupRequest request) {
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsQuickSetup()) {
+            throw new IllegalArgumentException("这台设备还没接入一键开局，先到设备上手动配");
+        }
+        if (request == null) {
+            return new OltQuickSetupPreview(List.of(), List.of("先勾选要做的开局项"));
+        }
+        String mode = normalizeMode(request.getMode());
+        if (request.getVlanList() != null && !request.getVlanList().isBlank()) {
+            // 写法不对会在这一行抛出去，页面直接把原因显示出来
+            VlanIdExpression.expand(request.getVlanList());
+        }
+        boolean portStep = !Boolean.FALSE.equals(request.getPortModeEnabled());
+        List<OltQuickSetupRequest.PortRef> ports = portStep ? checkQuickPorts(request.getPorts()) : List.of();
+        int vlanCount = checkQuickVlanIds(request.getCreateVlanIds(), request.getAddCreatedToPorts());
+        if (request.getTr069() != null) {
+            checkTr069Request(request.getTr069());
+        }
+        request.setMode(mode);
+
+        if (ports.isEmpty() && vlanCount == 0 && request.getTr069() == null) {
+            return new OltQuickSetupPreview(List.of(), List.of("先勾选要做的开局项"));
+        }
+        List<String> warnings = new ArrayList<>();
+        if (portStep && ports.isEmpty()) {
+            warnings.add("至少勾选一个端口");
+        }
+        if (vlanCount > 0 && ports.isEmpty()) {
+            // 建 VLAN 却没端口：建出来也没人用，还得再跑一次会话
+            warnings.add("要建 VLAN 就得先把端口勾上");
+        } else if (portStep && !ports.isEmpty()
+                && (request.getVlanList() == null || request.getVlanList().isBlank())) {
+            warnings.add("没填 VLAN，只会改端口模式");
+        }
+        return new OltQuickSetupPreview(profile.quickSetupCommands(request), warnings);
+    }
+
+    /**
+     * 一键开局表单：可选模式、VLAN 取值范围、一次最多几个端口、TR-069 默认填什么。
+     *
+     * <p>这些都是设备侧约定，以前散在页面里（还和另一处面板对不上），现在后端一处给出。</p>
+     */
+    public OltQuickSetupForm quickSetupForm(Long id) {
+        OltVendorProfile profile = profileOf(id);
+        return new OltQuickSetupForm(profile.supportsQuickSetup(), QUICK_MODE_LIST, DEFAULT_QUICK_MODE,
+                QUICK_PORT_TYPES, DEFAULT_QUICK_PORT_TYPES, MAX_QUICK_PORTS,
+                1, VlanIdExpression.MAX_VLAN_ID, defaultTr069Request());
+    }
+
+    /**
+     * TR-069 模板表单：默认值 + 取值约束。
+     *
+     * <p>「一键开局」和「TR069模板」页签的「增加」两个入口共用这一份，
+     * 不会出现两处默认值或长度限制不一致。</p>
+     */
+    public OltTr069Form tr069Form(Long id) {
+        return new OltTr069Form(profileOf(id).supportsTr069Profile(), defaultTr069Request(),
+                TR069_PROFILE_ID_MIN, TR069_PROFILE_ID_MAX, TR069_PORT_MIN, TR069_PORT_MAX,
+                TR069_NAME_MAX, TR069_URL_MAX, TR069_FIELD_MAX, TR069_URL_PATTERN);
+    }
+
+    /** TR-069 的现场默认值：模板 10 + ACS 10.172.10.1，开局时不用每次手填 */
+    private static OltTr069ProfileRequest defaultTr069Request() {
+        OltTr069ProfileRequest request = new OltTr069ProfileRequest();
+        request.setProfileName("ACS_TR069");
+        request.setProfileId(10);
+        request.setUrl("http://10.172.10.1");
+        request.setAcsUsername("acs");
+        request.setAcsPassword("acs");
+        request.setUsername("acs");
+        request.setPassword("acs");
+        request.setPort(9090);
+        return request;
+    }
+
+    /**
+     * 命令动作预演：把进视图、命令本身、退出算出来，不下发。
+     *
+     * <p>视图怎么进怎么出是设备知识，以前页面自己加 {@code exit}，
+     * 现在和真正执行走同一个 {@code planCommands}。</p>
+     */
+    public OltExecResult previewAction(Long id, OltExecRequest request) {
+        String code = request == null ? null : request.getCode();
+        if (code == null || code.isBlank()) {
+            throw new IllegalArgumentException("命令动作编号不能为空");
+        }
+        OltAction action = profileOf(id).actions().stream()
+                .filter(item -> code.equals(item.code()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("这台设备没有这个命令动作：" + code));
+        Map<String, String> params = resolveParams(action, request.getParams());
+        OltExecResult result = new OltExecResult();
+        result.setCode(action.code());
+        result.setLabel(action.label());
+        result.setQuery(action.query());
+        result.setCommands(planCommands(action, params));
+        return result;
+    }
+
+    /**
+     * 设备台账表单的备选项：厂商码表、采集字符集、默认连接端口和默认账号。
+     *
+     * <p>厂商列表直接由 {@link OltVendor} 枚举给出，加一个厂商不用再改页面。</p>
+     */
+    public static OltDeviceOptions deviceOptions() {
+        List<OltOption> vendors = new ArrayList<>();
+        for (OltVendor vendor : OltVendor.values()) {
+            vendors.add(new OltOption(vendor.name(), vendor.getLabel()));
+        }
+        return new OltDeviceOptions(vendors, List.of("AUTO", "UTF-8", "GBK", "GB18030"),
+                DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, "root", "admin",
+                OltBoardCatalog.profiles(), VIEW_LABELS, ONU_ACTIONS, VLAN_TYPE_LABELS,
+                BOARD_CATEGORY_LABELS, DEFAULT_SLOT_COUNT, OltBoardCatalog.ENV_TEMP_ALARM_C);
     }
 
     private static String describeQuickSetup(OltQuickSetupRequest request) {
@@ -921,7 +1210,63 @@ public class OltService {
     /** 一次性改多少个端口的上限：每个端口 4 条命令，再多一轮会话出结果会很慢 */
     private static final int MAX_QUICK_PORTS = 32;
 
-    private static final Set<String> QUICK_MODES = Set.of("access", "hybrid", "trunk");
+    /** 端口 VLAN 模式，顺序即页面下拉里的顺序 */
+    private static final List<String> QUICK_MODE_LIST = List.of("access", "hybrid", "trunk");
+
+    /** 开局默认模式：上联口跑业务 VLAN 基本都是 trunk */
+    private static final String DEFAULT_QUICK_MODE = "trunk";
+
+
+
+    private static final Set<String> QUICK_MODES = Set.copyOf(QUICK_MODE_LIST);
+
+    /** 开局能选的端口类型 */
+    private static final List<String> QUICK_PORT_TYPES = List.of("epon", "gpon", "ge", "xge");
+
+    /** 默认只勾 PON 口和 GE 上联口：10GE 通常跑堆叠/上联，不该跟着开局一起改 */
+    private static final List<String> DEFAULT_QUICK_PORT_TYPES = List.of("epon", "gpon", "ge");
+
+    // TR-069 模板的取值约束：校验和表单元数据共用同一份，改一处两边一起变
+    private static final int TR069_PROFILE_ID_MIN = 1;
+
+    private static final int TR069_PROFILE_ID_MAX = 32;
+
+    private static final int TR069_NAME_MAX = 32;
+
+    private static final int TR069_URL_MAX = 64;
+
+    private static final int TR069_FIELD_MAX = 24;
+
+    private static final int TR069_PORT_MIN = 1;
+
+    private static final int TR069_PORT_MAX = 65535;
+
+    /** ACS 地址的写法要求，和 checkTr069Request 里的校验是同一条规则 */
+    private static final String TR069_URL_PATTERN = "(?i)^(https?|tr069)://\\S+$";
+
+    // DBA 模板的取值约束：校验、命令、表单元数据共用同一份
+    private static final int DBA_PROFILE_ID_MIN = 10;
+
+    private static final int DBA_PROFILE_ID_MAX = 512;
+
+    private static final int DBA_NAME_MAX = 32;
+
+    private static final String DBA_NAME_PATTERN = "[A-Za-z0-9_]{1,32}";
+
+    private static final int DBA_BANDWIDTH_MIN = 128;
+
+    private static final int DBA_BANDWIDTH_MAX = 10000000;
+
+    /** 现场基本都用「最大带宽」，默认选它 */
+    private static final String DEFAULT_DBA_TYPE = "type4";
+
+    /** 五类 DBA 模板各要填哪几个带宽字段（手册 5.1） */
+    private static final List<OltDbaType> DBA_TYPES = List.of(
+            new OltDbaType("type1", "type1 - 固定带宽", List.of("fix")),
+            new OltDbaType("type2", "type2 - 保证带宽", List.of("assure")),
+            new OltDbaType("type3", "type3 - 保证带宽+最大带宽", List.of("assure", "max")),
+            new OltDbaType("type4", "type4 - 最大带宽（默认）", List.of("max")),
+            new OltDbaType("type5", "type5 - 固定+保证+最大带宽", List.of("fix", "assure", "max")));
 
     private static final Pattern PORT_TYPE = Pattern.compile("(?i)^(epon|gpon|ge|xge)$");
 
@@ -965,30 +1310,32 @@ public class OltService {
             throw new IllegalArgumentException("请填写模板参数");
         }
         Integer profileId = request.getProfileId();
-        if (profileId == null || profileId < 1 || profileId > 32) {
-            throw new IllegalArgumentException("模板 ID 必须在 1-32 之间");
+        if (profileId == null || profileId < TR069_PROFILE_ID_MIN || profileId > TR069_PROFILE_ID_MAX) {
+            throw new IllegalArgumentException("模板 ID 必须在 "
+                    + TR069_PROFILE_ID_MIN + "-" + TR069_PROFILE_ID_MAX + " 之间");
         }
         String name = trimToNull(request.getProfileName());
-        if (name == null || name.length() > 32) {
-            throw new IllegalArgumentException("模板名不能为空，最长 32 个字符");
+        if (name == null || name.length() > TR069_NAME_MAX) {
+            throw new IllegalArgumentException("模板名不能为空，最长 " + TR069_NAME_MAX + " 个字符");
         }
         if (hasBlank(name)) {
             throw new IllegalArgumentException("模板名不能包含空格");
         }
         String url = trimToNull(request.getUrl());
-        if (url == null || url.length() > 64) {
-            throw new IllegalArgumentException("ACS 服务器 URL 不能为空，最长 64 个字符");
+        if (url == null || url.length() > TR069_URL_MAX) {
+            throw new IllegalArgumentException("ACS 服务器 URL 不能为空，最长 " + TR069_URL_MAX + " 个字符");
         }
-        if (!url.matches("(?i)^(https?|tr069)://\\S+$")) {
+        if (!url.matches(TR069_URL_PATTERN)) {
             throw new IllegalArgumentException("ACS 服务器 URL 要以 http:// 或 https:// 开头，例如 http://192.168.1.10:9090");
         }
-        checkOption(request.getAcsUsername(), 24, "ACS 服务器用户名");
-        checkOption(request.getAcsPassword(), 24, "ACS 服务器密码");
-        checkOption(request.getUsername(), 24, "连接用户名");
-        checkOption(request.getPassword(), 24, "连接密码");
+        checkOption(request.getAcsUsername(), TR069_FIELD_MAX, "ACS 服务器用户名");
+        checkOption(request.getAcsPassword(), TR069_FIELD_MAX, "ACS 服务器密码");
+        checkOption(request.getUsername(), TR069_FIELD_MAX, "连接用户名");
+        checkOption(request.getPassword(), TR069_FIELD_MAX, "连接密码");
         Integer port = request.getPort();
-        if (port == null || port < 1 || port > 65535) {
-            throw new IllegalArgumentException("连接端口必须在 1-65535 之间");
+        if (port == null || port < TR069_PORT_MIN || port > TR069_PORT_MAX) {
+            throw new IllegalArgumentException("连接端口必须在 "
+                    + TR069_PORT_MIN + "-" + TR069_PORT_MAX + " 之间");
         }
         if (Boolean.TRUE.equals(request.getInformEnable())) {
             Integer interval = request.getInformInterval();
@@ -1026,6 +1373,59 @@ public class OltService {
 
     /** 带端口一次最多几个 VLAN（每个 3 条命令，再多一轮会话发不完） */
     private static final int MAX_VLANS_WITH_PORTS = 16;
+
+    /** 命令动作视图的中文名（页面把 view 翻成这句） */
+    private static final Map<String, String> VIEW_LABELS = Map.ofEntries(
+            Map.entry("CONFIG", "全局配置视图"),
+            Map.entry("VLAN", "VLAN 视图"),
+            Map.entry("PORT", "端口视图"),
+            Map.entry("PON", "EPON 口视图"),
+            Map.entry("GPON", "GPON 口视图"),
+            Map.entry("LINE_PROFILE", "线路模板视图"),
+            Map.entry("SRV_PROFILE", "业务模板视图"),
+            Map.entry("ONU", "ONU 视图"),
+            Map.entry("MANAGE", "管理接口视图"),
+            Map.entry("ACL", "ACL 视图"),
+            Map.entry("MCAST", "组播 VLAN 视图"),
+            Map.entry("VLANIF", "三层接口视图"));
+
+    /** ONU / ONT 上能做的操作（「配置」下拉里的那几项） */
+    private static final List<OltOption> ONU_ACTIONS = List.of(
+            new OltOption("detail", "查看详情"),
+            new OltOption("mac", "查看MAC地址信息"),
+            new OltOption("port", "ONU端口配置"),
+            new OltOption("delete", "删除ONU"),
+            new OltOption("block", "添加到阻止列表"),
+            new OltOption("reboot", "重启ONU"),
+            new OltOption("optical", "关闭发光射机"),
+            new OltOption("unregister", "解注册ONU"),
+            new OltOption("config", "配置ONU信息"));
+
+    /** VLAN 类型的中文名，和网管「单层智能 VLAN：41、45-46」的写法一致 */
+    private static final Map<String, String> VLAN_TYPE_LABELS = Map.ofEntries(
+            Map.entry("smart", "单层智能 VLAN (Smart VLAN)"),
+            Map.entry("mux", "汇聚 VLAN (Mux VLAN)"),
+            Map.entry("standard", "标准 VLAN (Standard VLAN)"),
+            Map.entry("super", "超级 VLAN (Super VLAN)"),
+            Map.entry("connect", "二层互通 VLAN"));
+
+    /** 板卡类别的中文名 */
+    private static final Map<String, String> BOARD_CATEGORY_LABELS = Map.ofEntries(
+            Map.entry("SERVICE", "业务板"),
+            Map.entry("CONTROL", "主控板"),
+            Map.entry("UPLINK", "上联板"),
+            Map.entry("POWER", "电源板"),
+            Map.entry("INTERFACE", "通用接口板"),
+            Map.entry("UNKNOWN", "未知"));
+
+    /** 机框槽位数的兜底：设备没回机框槽位数时按这个画 */
+    private static final int DEFAULT_SLOT_COUNT = 12;
+
+    /** 页面分组展示端口的顺序（设备侧没规定顺序，只是页面看起来顺） */
+    private static final List<String> VLAN_PORT_TYPE_ORDER = List.of("epon", "gpon", "ge", "xge");
+
+    /** 同一个端口不能既 tagged 又 untagged：这台设备只认一种带标签方式 */
+    private static final boolean VLAN_PORT_EXCLUSIVE_TAG_MODE = true;
 
     /** 页面传上来的端口写法：{@code epon1} / {@code ge3} / {@code xge2} */
     private static final Pattern VLAN_PORT_REF = Pattern.compile(
@@ -1124,7 +1524,45 @@ public class OltService {
      * 页面不写死任何一条命令。</p>
      */
     public List<OltAction> actions(Long id) {
-        return profileOf(id).actions();
+        // 顺手把「进视图 / 退视图」也拼进展示用的命令序列：
+        // 视图语义是设备知识，不该由页面在渲染时自己补 exit
+        return profileOf(id).actions().stream().map(this::withPreviewCommands).toList();
+    }
+
+    private OltAction withPreviewCommands(OltAction action) {
+        List<String> preview = new ArrayList<>();
+        String enter = enterCommandTemplate(action.view());
+        if (enter != null) {
+            preview.add(enter);
+        }
+        preview.addAll(action.commands());
+        if (action.view() != OltAction.View.CONFIG) {
+            preview.add("exit");
+        }
+        return action.withPreviewCommands(preview);
+    }
+
+    /**
+     * 进视图的命令模板，占位符留着让页面按填的值替换。
+     *
+     * <p>和 {@link #planCommands} 里真正下发的那条是同一句（那边换成具体值），
+     * 测试里会比对两边，改了一处忘了另一处会直接失败。</p>
+     */
+    static String enterCommandTemplate(OltAction.View view) {
+        return switch (view) {
+            case VLAN -> "vlan standard {vlanId}";
+            case PORT -> "interface {portType} {portNo}";
+            case PON -> "interface epon {ponId}";
+            case GPON -> "interface gpon {ponId}";
+            case LINE_PROFILE -> "ont-lineprofile gpon profile-id {profileId}";
+            case SRV_PROFILE -> "ont-srvprofile gpon profile-id {profileId}";
+            case ONU -> "interface onu {ponId}/{onuId}";
+            case MANAGE -> "interface manage";
+            case ACL -> "acl {aclId}";
+            case MCAST -> "multicast-vlan {vlanId}";
+            case VLANIF -> "interface vlanif {vlanId}";
+            case CONFIG -> null;
+        };
     }
 
     /**
@@ -1271,24 +1709,11 @@ public class OltService {
     /** 把动作翻成真正下发的命令：先进视图，再逐条渲染，最后 exit 回全局配置视图（包内可见，便于单测） */
     static List<String> planCommands(OltAction action, Map<String, String> params) {
         List<String> plan = new ArrayList<>();
-        switch (action.view()) {
-            case VLAN -> plan.add("vlan standard " + requireParam(params, "vlanId", "VLAN ID"));
-            case PORT -> plan.add("interface " + requireParam(params, "portType", "端口类型")
-                    + " " + requireParam(params, "portNo", "端口号"));
-            case PON -> plan.add("interface epon " + requireParam(params, "ponId", "PON 口号"));
-            case GPON -> plan.add("interface gpon " + requireParam(params, "ponId", "PON 口号"));
-            case LINE_PROFILE -> plan.add("ont-lineprofile gpon profile-id "
-                    + requireParam(params, "profileId", "模板 ID"));
-            case SRV_PROFILE -> plan.add("ont-srvprofile gpon profile-id "
-                    + requireParam(params, "profileId", "模板 ID"));
-            case ONU -> plan.add("interface onu " + requireParam(params, "ponId", "PON 口号")
-                    + "/" + requireParam(params, "onuId", "ONU ID"));
-            case MANAGE -> plan.add("interface manage");
-            case ACL -> plan.add("acl " + requireParam(params, "aclId", "ACL ID"));
-            case MCAST -> plan.add("multicast-vlan " + requireParam(params, "vlanId", "VLAN ID"));
-            case VLANIF -> plan.add("interface vlanif " + requireParam(params, "vlanId", "VLAN ID"));
-            default -> {
-            }
+        String enter = enterCommandTemplate(action.view());
+        if (enter != null) {
+            // 进视图要用的参数缺了会在这里抛出去，提示和原来逐条 requireParam 一致
+            requireViewParams(action.view(), params);
+            plan.add(renderCommand(enter, params));
         }
         for (String template : action.commands()) {
             plan.add(renderCommand(template, params));
@@ -1297,6 +1722,26 @@ public class OltService {
             plan.add("exit");
         }
         return plan;
+    }
+
+    /** 进视图要用到的参数必须先齐，否则设备根本进不去那个视图 */
+    private static void requireViewParams(OltAction.View view, Map<String, String> params) {
+        switch (view) {
+            case VLAN, VLANIF, MCAST -> requireParam(params, "vlanId", "VLAN ID");
+            case PORT -> {
+                requireParam(params, "portType", "端口类型");
+                requireParam(params, "portNo", "端口号");
+            }
+            case PON, GPON -> requireParam(params, "ponId", "PON 口号");
+            case LINE_PROFILE, SRV_PROFILE -> requireParam(params, "profileId", "模板 ID");
+            case ONU -> {
+                requireParam(params, "ponId", "PON 口号");
+                requireParam(params, "onuId", "ONU ID");
+            }
+            case ACL -> requireParam(params, "aclId", "ACL ID");
+            default -> {
+            }
+        }
     }
 
     /** 命令模板里的可选段：[ backup-server-ip {backupIp}] —— 段内参数没填就整段去掉 */

@@ -92,6 +92,7 @@
           </div>
 
           <olt-dba-panel
+            :olt-id="detailId"
             :dba-profiles="dbaProfiles"
             :line-profiles="lineProfiles"
             :create-handler="createDba"

@@ -76,7 +76,9 @@
               placeholder="100 或 100-200,300"
               @keyup.enter.native="save"
             />
-            <div class="vlan-form-hint">请输入1到4094之间的数字,可以使用,或-连接</div>
+            <div v-if="meta" class="vlan-form-hint">
+              请输入{{ meta.vlanIdMin }}到{{ meta.vlanIdMax }}之间的数字,可以使用,或-连接
+            </div>
           </div>
         </div>
 
@@ -120,6 +122,13 @@
         </div>
       </div>
 
+      <div class="vlan-preview">
+        <div v-if="preview.warnings.length" class="vlan-preview-warn">
+          <div v-for="(warning, index) in preview.warnings" :key="index">{{ warning }}</div>
+        </div>
+        <pre :class="{ 'is-error': previewError }">{{ previewText }}</pre>
+      </div>
+
       <div slot="footer" class="vlan-dialog-foot">
         <el-button size="small" @click="dialogVisible = false">取消</el-button>
         <el-button size="small" type="success" :loading="saving" @click="save">确认</el-button>
@@ -129,6 +138,8 @@
 </template>
 
 <script>
+import { fetchVlanForm, previewVlan } from '@/api/olt'
+
 /**
  * 鸿升光 VLAN 面板：VLAN 列表（含成员端口）+ 新增 / 删除。
  *
@@ -143,6 +154,11 @@
 export default {
   name: 'OltHsgqVlanPanel',
   props: {
+    /** 设备 ID，取 VLAN 约束和命令预览要用 */
+    oltId: {
+      type: [Number, String],
+      default: null
+    },
     vlans: {
       type: Array,
       default: () => []
@@ -176,13 +192,18 @@ export default {
         { key: 'tagged' },
         { key: 'untagged' }
       ],
-      form: { vlanIds: '', tagged: [], untagged: [] }
+      form: { vlanIds: '', tagged: [], untagged: [] },
+      /** VLAN ID 范围、一次最多几个、哪些端口能做成员，来自后端 */
+      meta: null,
+      preview: { commands: [], warnings: [] },
+      previewError: ''
     }
   },
   computed: {
     /** 端口按类型分组：PON 一组、GE 一组、XGE 一组，每组每行摆 4 个 */
     portGroups() {
-      const order = ['epon', 'gpon', 'ge', 'xge']
+      // 分组顺序和「哪些类型能做成员」由后端给，页面不自己列类型
+      const order = this.meta ? this.meta.portTypes : []
       const groups = new Map()
       this.memberPorts.forEach(port => {
         if (!port || !port.type) {
@@ -200,12 +221,75 @@ export default {
       return this.memberPorts
         .filter(port => port && port.type && port.no != null)
         .map(port => String(port.type).toLowerCase() + port.no)
+    },
+    previewText() {
+      if (this.previewError) {
+        return this.previewError
+      }
+      if (!this.preview.commands.length) {
+        return '（填好 VLAN ID 后显示要下发的命令）'
+      }
+      return this.preview.commands.join('\n')
+    }
+  },
+  watch: {
+    form: {
+      deep: true,
+      handler() {
+        this.schedulePreview()
+      }
+    }
+  },
+  beforeDestroy() {
+    if (this.previewTimer) {
+      clearTimeout(this.previewTimer)
     }
   },
   methods: {
-    openCreate() {
+    async openCreate() {
+      await this.loadMeta()
       this.form = { vlanIds: '', tagged: [], untagged: [] }
       this.dialogVisible = true
+    },
+    loadMeta() {
+      if (this.meta || !this.oltId) {
+        return Promise.resolve()
+      }
+      return fetchVlanForm(this.oltId)
+        .then(res => {
+          this.meta = res.data
+        })
+        .catch(() => {
+          this.$message.error('读取 VLAN 参数失败')
+        })
+    },
+    schedulePreview() {
+      if (this.previewTimer) {
+        clearTimeout(this.previewTimer)
+      }
+      this.previewTimer = setTimeout(() => this.runPreview(), 300)
+    },
+    /** 让后端按页面填的内容把命令算出来；写法不对、数量超了都由后端指出 */
+    async runPreview() {
+      if (!this.oltId || !String(this.form.vlanIds || '').trim()) {
+        this.preview = { commands: [], warnings: [] }
+        this.previewError = ''
+        return
+      }
+      try {
+        const result = await previewVlan(this.oltId, {
+          vlanIds: this.form.vlanIds,
+          tagged: this.form.tagged,
+          untagged: this.form.untagged
+        })
+        // 命令在 { code, data } 的 data 里
+        const data = result.data || {}
+        this.preview = { commands: data.commands || [], warnings: data.warnings || [] }
+        this.previewError = ''
+      } catch (e) {
+        this.preview = { commands: [], warnings: [] }
+        this.previewError = e && e.message ? e.message : '命令预演失败'
+      }
     },
     isAllPicked(mode) {
       return this.allPortKeys.length > 0 && this.allPortKeys.every(key => this.form[mode].includes(key))
@@ -220,90 +304,40 @@ export default {
     },
     /** tagged 和 untagged 互斥：同一个口不能两种都占，勾一边就把另一边摘掉 */
     exclusive(mode) {
+      // 有不有这条限制由后端说（这台设备只认一种带标签方式）
+      if (this.meta && !this.meta.exclusiveTagMode) {
+        return
+      }
       const other = mode === 'tagged' ? 'untagged' : 'tagged'
       const picked = new Set(this.form[mode])
       this.form[other] = this.form[other].filter(key => !picked.has(key))
     },
     /**
-     * 校验并下发。
-     *
-     * <p>VLAN ID 在本地先解析一遍：写错了立刻提示，不用等设备回一句报错。</p>
+     * 下发：命令和校验都在后端，这里先让后端算一遍——
+     * 表达式写法、VLAN ID 范围、一次最多几个都不在页面判断，写错了后端会给原因。
      */
-    save() {
+    async save() {
       const text = (this.form.vlanIds || '').trim()
       if (!text) {
         this.$message.warning('请填写 VLAN ID，例如 100 或 100-200,300')
         return
       }
-      let ids
-      try {
-        ids = this.parseVlanIds(text)
-      } catch (e) {
-        this.$message.warning(e.message)
+      await this.runPreview()
+      if (this.previewError) {
+        this.$message.warning(this.previewError)
         return
       }
       if (!this.createHandler) {
         return
       }
-      const tagged = this.form.tagged
-      const untagged = this.form.untagged
-      const withPorts = tagged.length > 0 || untagged.length > 0
-      const limit = withPorts ? 16 : 64
-      if (ids.length > limit) {
-        this.$message.warning(
-          withPorts
-            ? `一次最多给 16 个 VLAN 配端口（每个 VLAN 都要单独进视图），这次填了 ${ids.length} 个`
-            : `一次最多建 64 个 VLAN，这次填了 ${ids.length} 个`
-        )
-        return
-      }
       this.saving = true
-      this.createHandler({ vlanIds: text, tagged, untagged })
+      this.createHandler({ vlanIds: text, tagged: this.form.tagged, untagged: this.form.untagged })
         .then(() => {
           this.dialogVisible = false
         })
         .finally(() => {
           this.saving = false
         })
-    },
-    /** 与服务端同一套规则：逗号分隔、短横线表示范围、1-4094、范围前小后大 */
-    parseVlanIds(text) {
-      const ids = []
-      const seen = new Set()
-      text.split(/[,，]/).forEach(part => {
-        const piece = part.trim()
-        if (!piece) {
-          return
-        }
-        const dash = piece.indexOf('-')
-        const from = dash < 0 ? piece : piece.slice(0, dash).trim()
-        const to = dash < 0 ? piece : piece.slice(dash + 1).trim()
-        const start = this.toVlanId(from)
-        const end = this.toVlanId(to)
-        if (end < start) {
-          throw new Error(`VLAN 范围 ${piece} 前后写反了，应该是 小-大`)
-        }
-        for (let id = start; id <= end; id++) {
-          if (!seen.has(id)) {
-            seen.add(id)
-            ids.push(id)
-          }
-        }
-      })
-      if (!ids.length) {
-        throw new Error('请填写 VLAN ID，例如 100 或 100-200,300')
-      }
-      return ids
-    },
-    toVlanId(piece) {
-      if (!/^\d+$/.test(piece)) {
-        throw new Error('VLAN ID 只能是数字：' + piece)
-      }
-      const id = Number(piece)
-      if (id < 1 || id > 4094) {
-        throw new Error('VLAN ID 必须在 1-4094 之间：' + id)
-      }
-      return id
     },
     removeSelected() {
       const vlanIds = this.selected.map(row => row.vlanId).filter(id => id != null)
@@ -390,6 +424,37 @@ export default {
 }
 .vlan-port-grid ::v-deep .el-checkbox {
   margin-right: 0;
+}
+.vlan-preview {
+  margin: 8px 0 0;
+  border: 1px solid #dfe6ee;
+  border-radius: 4px;
+
+  pre {
+    margin: 0;
+    padding: 8px 10px;
+    max-height: 160px;
+    overflow: auto;
+    color: #2c3e50;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+
+    /* 校验没过时这里显示的是后端给的原因 */
+    &.is-error {
+      color: #c0392b;
+    }
+  }
+}
+.vlan-preview-warn {
+  padding: 6px 10px;
+  color: #8a6d3b;
+  font-size: 12px;
+  line-height: 1.6;
+  background: #fcf8e3;
+  border-bottom: 1px solid #f5e6c0;
 }
 .vlan-dialog-foot {
   display: flex;

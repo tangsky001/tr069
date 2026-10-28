@@ -12,18 +12,21 @@ import java.util.List;
  * 做成动作目录后，新增功能只是往 {@code HsgqActionCatalog} 里加一行，
  * 页面、校验、视图切换、留档全都不用动。</p>
  *
- * @param code     动作编号（章节.功能，如 {@code vlan.create}），页面提交时用
- * @param chapter  章节标题，页面按它分组
- * @param label    功能名（手册里那一列）
- * @param view     命令要在哪个视图里执行
- * @param commands 命令模板，按顺序下发
- * @param params   参数定义
- * @param query    查询类：执行完把回显返回页面，不触发重采
- * @param danger   破坏性操作（如 no vlan all），页面要二次确认
- * @param note     手册里的「备注说明」
+ * @param code            动作编号（章节.功能，如 {@code vlan.create}），页面提交时用
+ * @param chapter         章节标题，页面按它分组
+ * @param label           功能名（手册里那一列）
+ * @param view            命令要在哪个视图里执行
+ * @param commands        命令模板，按顺序下发
+ * @param previewCommands 给页面展示的完整命令模板：进视图 + 命令 + exit，占位符保留；
+ *                        由服务端按 {@code view} 拼好，页面不用自己判断视图怎么进怎么出
+ * @param params          参数定义
+ * @param query           查询类：执行完把回显返回页面，不触发重采
+ * @param danger          破坏性操作（如 no vlan all），页面要二次确认
+ * @param note            手册里的「备注说明」
  */
 public record OltAction(String code, String chapter, String label, View view, List<String> commands,
-                        List<OltActionParam> params, boolean query, boolean danger, String note) {
+                        List<String> previewCommands, List<OltActionParam> params, boolean query,
+                        boolean danger, String note) {
 
     /** 命令要在哪个视图里执行 */
     public enum View {
@@ -56,34 +59,45 @@ public record OltAction(String code, String chapter, String label, View view, Li
     /** 全局配置视图下的写操作 */
     public static OltAction config(String code, String chapter, String label, String note,
                                    List<OltActionParam> params, String... commands) {
-        return new OltAction(code, chapter, label, View.CONFIG, List.of(commands), params, false, false, note);
+        return new OltAction(code, chapter, label, View.CONFIG, List.of(commands), List.of(),
+                params, false, false, note);
     }
 
     /** 全局配置视图下的查询 */
     public static OltAction query(String code, String chapter, String label, String note, String command) {
-        return new OltAction(code, chapter, label, View.CONFIG, List.of(command), List.of(), true, false, note);
+        return new OltAction(code, chapter, label, View.CONFIG, List.of(command), List.of(),
+                List.of(), true, false, note);
     }
 
     /** 带视图切换的写操作 */
     public static OltAction in(View view, String code, String chapter, String label, String note,
                                List<OltActionParam> params, String... commands) {
-        return new OltAction(code, chapter, label, view, List.of(commands), params, false, false, note);
+        return new OltAction(code, chapter, label, view, List.of(commands), List.of(),
+                params, false, false, note);
     }
 
     /** 带参数的查询（如 ping <目标地址>） */
     public static OltAction queryWith(String code, String chapter, String label, String note,
                                       List<OltActionParam> params, String command) {
-        return new OltAction(code, chapter, label, View.CONFIG, List.of(command), params, true, false, note);
+        return new OltAction(code, chapter, label, View.CONFIG, List.of(command), List.of(),
+                params, true, false, note);
     }
 
     /** 带视图切换的查询 */
     public static OltAction queryIn(View view, String code, String chapter, String label, String note,
                                     List<OltActionParam> params, String command) {
-        return new OltAction(code, chapter, label, view, List.of(command), params, true, false, note);
+        return new OltAction(code, chapter, label, view, List.of(command), List.of(),
+                params, true, false, note);
     }
 
     /** 标记为破坏性操作（页面二次确认，后端照常执行） */
     public OltAction dangerous() {
-        return new OltAction(code, chapter, label, view, commands, params, query, true, note);
+        return new OltAction(code, chapter, label, view, commands, previewCommands,
+                params, query, true, note);
+    }
+
+    /** 带上给页面展示的命令序列（进视图 + 命令 + exit，占位符保留） */
+    public OltAction withPreviewCommands(List<String> preview) {
+        return new OltAction(code, chapter, label, view, commands, preview, params, query, danger, note);
     }
 }

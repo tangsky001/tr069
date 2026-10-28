@@ -208,6 +208,100 @@ export function quickSetupOlt(id, data) {
   })
 }
 
+/**
+ * 一键开局预演：不下发，让后端把这次会执行的命令和提醒算出来。
+ * 预览与实际下发同源，前端不再自己拼命令。
+ */
+export function previewQuickSetup(id, data) {
+  return request({
+    url: '/olt/' + id + '/quick-setup/preview',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 一键开局表单的取值约束与默认值 */
+export function fetchQuickSetupForm(id) {
+  return request({
+    url: '/olt/' + id + '/quick-setup/form',
+    method: 'get'
+  })
+}
+
+/** TR-069 模板表单的默认值与取值约束 */
+export function fetchTr069Form(id) {
+  return request({
+    url: '/olt/' + id + '/tr069/form',
+    method: 'get'
+  })
+}
+
+/** 命令动作预演：后端把进视图 + 命令 + 退出算好返回，不下发 */
+export function previewOltAction(id, data) {
+  return request({
+    url: '/olt/' + id + '/actions/preview',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 「新建 VLAN」表单的元数据：VLAN ID 范围、一次最多几个、哪些端口能做成员 */
+export function fetchVlanForm(id) {
+  return request({
+    url: '/olt/' + id + '/vlan/form',
+    method: 'get'
+  })
+}
+
+/** VLAN 预演：不下发，让后端把 vlan standard / port ... tagged 算出来 */
+export function previewVlan(id, data) {
+  return request({
+    url: '/olt/' + id + '/vlan/preview',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 「新增 DBA 模板」表单的元数据：五类模板各要填什么、取值上下限 */
+export function fetchDbaForm(id) {
+  return request({
+    url: '/olt/' + id + '/dba-profile/form',
+    method: 'get'
+  })
+}
+
+/** DBA 模板预演：不下发，让后端把 dba-profile add 算出来 */
+export function previewDbaProfile(id, data) {
+  return request({
+    url: '/olt/' + id + '/dba-profile/preview',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/**
+ * 设备台账表单与各种码表的备选项：厂商、板卡档案、视图名、ONU 动作、VLAN 类型、温度阈值…
+ *
+ * 码表不会变，页面里好几个组件都要用，这里缓存一份，不用每个组件各发一次。
+ */
+let optionsCache = null
+export function fetchOltOptions() {
+  if (optionsCache) {
+    return Promise.resolve(optionsCache)
+  }
+  return request({
+    url: '/olt/options',
+    method: 'get'
+  }).then(res => {
+    optionsCache = res
+    return res
+  })
+}
+
 /** 采集记录 */
 export function fetchOltRecords(id, limit) {
   return request({

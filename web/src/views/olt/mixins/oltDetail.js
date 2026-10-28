@@ -10,9 +10,9 @@ import {
   deleteOltVlans,
   fetchOltActions,
   quickSetupOlt,
-  execOltAction
+  execOltAction,
+  fetchOltOptions
 } from '@/api/olt'
-import { matchBoardProfile, panelKindOf } from '../boardProfiles'
 import { compressVlans as compressVlanRange } from '../utils'
 
 /**
@@ -46,7 +46,9 @@ export const oltDetailMixin = {
       // 鼠标停在端口行/示意图标注上时，两边一起高亮
       hoverPort: '',
       // 「设备配置」页签的命令动作目录（按厂商 profile 给，页面只负责渲染）
-      commandActions: []
+      commandActions: [],
+      // 码表与阈值：厂商、板卡档案、视图名、ONU 动作、VLAN 类型、板卡类别、槽位兜底、温度阈值
+      options: null
     }
   },
   computed: {
@@ -70,25 +72,24 @@ export const oltDetailMixin = {
     slots() {
       return this.boards.map(board => {
         // 板卡型号能对上档案时，用档案里的面板样式和端口数兜底
-        const profile = matchBoardProfile(board.boardType)
+        // 面板样式、端口数、状态中文与等级：都是服务端按型号档案算好后随板卡来的
         const type = board.boardType || '-'
-        const portMode = board.portMode || (profile && profile.portMode) || ''
-        const ports = this.buildPorts(board, profile)
+        const ports = this.buildPorts(board)
         return {
           no: board.slotNo,
           type,
-          portMode,
+          portMode: board.portMode || '',
           portCount: board.portCount,
           status: board.status,
-          statusText: this.boardStatusText(board.status),
-          statusType: this.boardStatusType(board.status),
-          statusIcon: this.boardStatusIcon(board.status),
-          description: board.description || (profile ? profile.label : ''),
+          statusText: board.statusText || board.status || '-',
+          statusType: board.statusLevel || 'info',
+          statusIcon: this.statusIconOf(board.statusLevel),
+          description: board.description || '',
           temperature: board.temperature,
-          // 面板样式：档案里写了就照档案，没有就按端口类型推（主控板画 GE 口、上联板画 SFP+）
-          panel: profile ? profile.panel : panelKindOf(portMode),
-          controlBoard: !!(profile && profile.controlBoard),
-          profile,
+          panel: board.panelKind || 'generic',
+          controlBoard: !!board.controlBoard,
+          // 整机（鸿升光）才有：前面板有几个 PON / 上联口 / NMS，由型号决定
+          frontPanel: board.frontPanel || null,
           ports,
           onuSummary: this.buildOnuSummary(board)
         }
@@ -106,7 +107,9 @@ export const oltDetailMixin = {
       const max = this.boards.reduce((value, board) => {
         return board.slotNo == null ? value : Math.max(value, board.slotNo)
       }, -1)
-      return Math.max(12, max + 1)
+      // 兜底的槽位数由后端给（设备没回槽位数时按这个画）
+      const fallback = this.options ? this.options.defaultSlotCount : 0
+      return Math.max(fallback, max + 1)
     },
     /** 「ONT 配置/状态」页只列有端口的板卡（业务板），主控、上联板没有 ONT */
     ontBoards() {
@@ -209,12 +212,7 @@ export const oltDetailMixin = {
     },
     /** 按 VLAN 类型分组，和网管上「单层智能 VLAN：41、45-46」的写法一致 */
     vlanTypeGroups() {
-      const labels = {
-        smart: '单层智能 VLAN (Smart VLAN)',
-        mux: '汇聚 VLAN (Mux VLAN)',
-        standard: '标准 VLAN (Standard VLAN)',
-        super: '超级 VLAN (Super VLAN)'
-      }
+      const labels = this.options ? this.options.vlanTypeLabels : {}
       const groups = {}
       this.vlanList.forEach(vlan => {
         const type = (vlan.type || 'other').toLowerCase()
@@ -239,9 +237,10 @@ export const oltDetailMixin = {
       const connectIds = this.vlanList
         .filter(vlan => vlan.vlanConNum != null)
         .map(vlan => vlan.vlanId)
+      const labels = this.options ? this.options.vlanTypeLabels : {}
       rows.push({
         type: 'connect',
-        label: '二层互通 VLAN',
+        label: labels.connect || '',
         text: connectIds.length ? this.compressVlans(connectIds) : '无',
         std: null,
         serv: null
@@ -256,14 +255,12 @@ export const oltDetailMixin = {
     /** 板卡类别统计，形如：共 7 块板卡（业务板 2 / 主控板 2 / 上联板 2 / 电源板 1） */
     boardSummary() {
       if (this.boards.length === 0) return ''
-      const labels = {
-        SERVICE: '业务板',
-        CONTROL: '主控板',
-        UPLINK: '上联板',
-        POWER: '电源板',
-        INTERFACE: '通用接口板',
-        UNKNOWN: '未知'
+      // 整机（鸿升光）没有板卡可言，直接报型号规格：8 × GPON + 4 × GE + 4 × XGE
+      const whole = this.boards.find(board => board.frontPanel)
+      if (whole) {
+        return whole.frontPanel.summary || whole.description || ''
       }
+      const labels = this.options ? this.options.boardCategoryLabels : {}
       const counts = {}
       this.boards.forEach(board => {
         const kind = board.boardKind || 'UNKNOWN'
@@ -336,11 +333,22 @@ export const oltDetailMixin = {
   },
   created() {
     this.startPolling()
+    this.loadOptions()
   },
   beforeDestroy() {
     this.stopPolling()
   },
   methods: {
+    /** 码表与阈值由后端一次性给出：厂商、板卡档案、视图名、VLAN 类型、温度阈值… */
+    loadOptions() {
+      return fetchOltOptions()
+        .then(res => {
+          this.options = res.data
+        })
+        .catch(() => {
+          this.options = null
+        })
+    },
     /**
      * 自动刷新：按间隔拉详情，后台定时任务采集到的数据不用等手点同步就能看到。
      * 只在页面空闲（没有正在进行的加载、同步）时拉，避免和用户操作抢。
@@ -578,11 +586,11 @@ export const oltDetailMixin = {
      * 端口光模块指示灯：在位亮绿灯，不在位灰灯，故障或类型不匹配黄灯。
      * 没采到状态就整段不渲染，避免一排灰灯看着像「全部不在位」。
      */
-    buildPorts(board, profile) {
+    buildPorts(board) {
       // 设备回显只列配了 ONT 的端口（P0-P2 有数据、P3-P7 空着时，回显里就没有 P3-P7），
       // 但钉行模式要求每个物理口都有一行——缺的口按端口号补占位，行里只有名字和接口号。
-      // display board 0 有些版本连端口数都不带（port_count=0），这时用板卡档案里的端口数兜底
-      const ports = this.completePorts(board, board.ports || [], profile)
+      // display board 0 有些版本连端口数都不带（port_count=0），端口数由后端按型号档案兜底
+      const ports = this.completePorts(board, board.ports || [])
       return ports
         .map(port => {
           const status = (port.opticStatus || '').toLowerCase()
@@ -671,8 +679,9 @@ export const oltDetailMixin = {
      * 端口数补齐到板卡的 portCount：回显里没出现的端口号按 0..portCount-1 补占位，
      * 名字与已有端口的命名一致（P3、P4…）。已有端口数够了就不动（鸿升光 1..4 号不会多出 0 号口）。
      */
-    completePorts(board, ports, profile) {
-      const total = board.portCount || (profile && profile.ports)
+    completePorts(board, ports) {
+      // 端口数后端已按型号档案兜底，这里只按它补占位口
+      const total = board.portCount
       if (!total || ports.length >= total) {
         return ports
       }
@@ -750,36 +759,13 @@ export const oltDetailMixin = {
       return known ? (total + ' ONT / ' + online + ' 在线') : ''
     },
     /**
-     * 把设备原始状态翻成页面上的说法：
-     * Normal 是正常，Active_normal 是激活，Standby_normal 是备用。
+     * 状态等级 → 图标：等级的判定在服务端（型号档案 + 状态翻译规则），
+     * 这里只是把等级翻成一个图标，属于页面表现。
      */
-    boardStatusText(status) {
-      const text = (status || '').toLowerCase().replace(/[_-]+/g, ' ').trim()
-      if (!text) return '未知'
-      if (/auto find/.test(text)) return '自动发现'
-      if (/not installed/.test(text)) return '未插板'
-      if (/active/.test(text)) return '激活'
-      if (/standby/.test(text)) return '备用'
-      if (/fail|fault/.test(text)) return '故障'
-      if (/abnormal/.test(text)) return '异常'
-      if (/offline/.test(text)) return '离线'
-      if (/config/.test(text)) return '配置中'
-      if (/inservice|in service|in position|normal|working|online|up/.test(text)) return '正常'
-      return status
-    },
-    boardStatusType(status) {
-      const text = (status || '').toLowerCase()
-      if (!text) return 'info'
-      if (/fail|fault|abnormal|offline|not installed|out of service/.test(text)) return 'danger'
-      if (/auto find|auto_find|standby|config/.test(text)) return 'warning'
-      if (/normal|active|inservice|in service|in position|working|online|up/.test(text)) return 'success'
-      return 'info'
-    },
-    boardStatusIcon(status) {
-      const type = this.boardStatusType(status)
-      if (type === 'success') return 'el-icon-success'
-      if (type === 'danger') return 'el-icon-error'
-      if (type === 'warning') return 'el-icon-warning-outline'
+    statusIconOf(level) {
+      if (level === 'success') return 'el-icon-success'
+      if (level === 'danger') return 'el-icon-error'
+      if (level === 'warning') return 'el-icon-warning-outline'
       return 'el-icon-info'
     }
   }

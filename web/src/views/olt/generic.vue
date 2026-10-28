@@ -41,7 +41,7 @@
           </div>
 
           <div class="olt-section-title">
-            板卡信息
+            {{ isHsgq ? '整机信息' : '板卡信息' }}
             <span v-if="boardSummary" class="board-summary">{{ boardSummary }}</span>
           </div>
 
@@ -90,6 +90,7 @@
               </div>
             </div>
             <olt-hsgq-vlan-panel
+              :olt-id="detailId"
               :vlans="vlanList"
               :member-ports="memberPorts"
               :create-handler="createVlan"
@@ -147,6 +148,7 @@
         <!-- 命令动作目录只有接入了手册的厂商才有（鸿升光），其它厂商不显示这个页签 -->
         <el-tab-pane v-if="commandActions.length" label="设备配置" name="commands">
           <olt-command-center
+            :olt-id="detailId"
             :actions="commandActions"
             :exec-handler="execAction"
             :ports="memberPorts"

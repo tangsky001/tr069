@@ -45,32 +45,72 @@
       append-to-body
       :close-on-click-modal="false"
     >
-      <el-form ref="createForm" :model="form" :rules="rules" label-width="130px" size="small">
+      <el-form
+        v-if="meta"
+        ref="createForm"
+        :model="form"
+        :rules="rules"
+        label-width="130px"
+        size="small"
+      >
         <el-form-item label="模板名" prop="profileName">
-          <el-input v-model="form.profileName" maxlength="32" placeholder="1-32 个字符" />
+          <el-input
+            v-model="form.profileName"
+            :maxlength="meta.nameMax"
+            :placeholder="'1-' + meta.nameMax + ' 个字符'"
+          />
         </el-form-item>
         <el-form-item label="模板 ID" prop="profileId">
-          <el-input-number v-model="form.profileId" :min="1" :max="32" controls-position="right" />
+          <el-input-number
+            v-model="form.profileId"
+            :min="meta.profileIdMin"
+            :max="meta.profileIdMax"
+            controls-position="right"
+          />
         </el-form-item>
         <el-form-item label="ACS 服务器 URL" prop="url">
-          <el-input v-model="form.url" maxlength="64" placeholder="http://192.168.1.10:9090" />
+          <el-input v-model="form.url" :maxlength="meta.urlMax" placeholder="http://192.168.1.10:9090" />
         </el-form-item>
         <el-form-item label="ACS 服务器用户名" prop="acsUsername">
-          <el-input v-model="form.acsUsername" maxlength="24" placeholder="0-24 个字符" />
+          <el-input
+            v-model="form.acsUsername"
+            :maxlength="meta.fieldMax"
+            :placeholder="'0-' + meta.fieldMax + ' 个字符'"
+          />
         </el-form-item>
         <el-form-item label="ACS 服务器密码" prop="acsPassword">
-          <el-input v-model="form.acsPassword" maxlength="24" show-password placeholder="0-24 个字符" />
+          <el-input
+            v-model="form.acsPassword"
+            :maxlength="meta.fieldMax"
+            show-password
+            :placeholder="'0-' + meta.fieldMax + ' 个字符'"
+          />
         </el-form-item>
         <el-form-item label="连接用户名" prop="username">
-          <el-input v-model="form.username" maxlength="24" placeholder="0-24 个字符" />
+          <el-input
+            v-model="form.username"
+            :maxlength="meta.fieldMax"
+            :placeholder="'0-' + meta.fieldMax + ' 个字符'"
+          />
         </el-form-item>
         <el-form-item label="连接密码" prop="password">
-          <el-input v-model="form.password" maxlength="24" show-password placeholder="0-24 个字符" />
+          <el-input
+            v-model="form.password"
+            :maxlength="meta.fieldMax"
+            show-password
+            :placeholder="'0-' + meta.fieldMax + ' 个字符'"
+          />
         </el-form-item>
         <el-form-item label="连接端口" prop="port">
-          <el-input-number v-model="form.port" :min="1" :max="65535" controls-position="right" />
+          <el-input-number
+            v-model="form.port"
+            :min="meta.portMin"
+            :max="meta.portMax"
+            controls-position="right"
+          />
         </el-form-item>
       </el-form>
+      <div v-else class="olt-empty">正在读取模板参数…</div>
       <div class="tr069-dialog-tip">
         不改定期通知，模板建出来用设备的默认间隔。
       </div>
@@ -95,19 +135,19 @@
 </template>
 
 <script>
-import { fetchTr069Profiles, createTr069Profile } from '@/api/olt'
+import { fetchTr069Profiles, createTr069Profile, fetchTr069Form } from '@/api/olt'
 
-/** 表单初值：现场就这一套（模板 10 + 10.172.10.1），打开就能直接建 */
+/** 字段没填时交给后端校验，这里只保证不会把 undefined 发出去 */
 function emptyForm() {
   return {
-    profileName: 'ACS_TR069',
-    profileId: 10,
-    url: 'http://10.172.10.1',
-    acsUsername: 'acs',
-    acsPassword: 'acs',
-    username: 'acs',
-    password: 'acs',
-    port: 9090
+    profileName: '',
+    profileId: null,
+    url: '',
+    acsUsername: '',
+    acsPassword: '',
+    username: '',
+    password: '',
+    port: null
   }
 }
 
@@ -139,22 +179,43 @@ export default {
       createVisible: false,
       detailVisible: false,
       detail: null,
-      form: emptyForm(),
-      rules: {
-        profileName: [
-          { required: true, message: '请填写模板名', trigger: 'blur' },
-          { max: 32, message: '最长 32 个字符', trigger: 'blur' }
-        ],
-        profileId: [{ required: true, message: '模板 ID 必填，范围 1-32', trigger: 'change' }],
-        url: [
-          { required: true, message: '请填写 ACS 服务器 URL', trigger: 'blur' },
-          { pattern: /^(https?|tr069):\/\/\S+$/i, message: '要以 http:// 或 https:// 开头', trigger: 'blur' }
-        ],
-        port: [{ required: true, message: '请填写连接端口（1-65535）', trigger: 'change' }]
-      }
+      /** 模板参数的默认值与取值约束，来自后端，和「一键开局」里那份是同一个接口 */
+      meta: null,
+      form: emptyForm()
     }
   },
   computed: {
+    /** 校验规则按后端给的约束生成：范围、长度、地址写法都只有一份 */
+    rules() {
+      const meta = this.meta
+      if (!meta) {
+        return {}
+      }
+      return {
+        profileName: [
+          { required: true, message: '请填写模板名', trigger: 'blur' },
+          { max: meta.nameMax, message: '最长 ' + meta.nameMax + ' 个字符', trigger: 'blur' }
+        ],
+        profileId: [{
+          required: true,
+          message: '模板 ID 必填，范围 ' + meta.profileIdMin + '-' + meta.profileIdMax,
+          trigger: 'change'
+        }],
+        url: [
+          { required: true, message: '请填写 ACS 服务器 URL', trigger: 'blur' },
+          {
+            pattern: new RegExp(meta.urlPattern, 'i'),
+            message: '要以 http:// 或 https:// 开头',
+            trigger: 'blur'
+          }
+        ],
+        port: [{
+          required: true,
+          message: '请填写连接端口（' + meta.portMin + '-' + meta.portMax + '）',
+          trigger: 'change'
+        }]
+      }
+    },
     /** 查询方式只是本地过滤：设备那条 show 只有「全部」一种写法 */
     rows() {
       const keyword = (this.keyword || '').trim().toLowerCase()
@@ -176,8 +237,22 @@ export default {
   },
   mounted() {
     this.load()
+    this.loadMeta()
   },
   methods: {
+    /** 模板参数的默认值和取值约束由后端给，页面上不再写死 */
+    loadMeta() {
+      if (!this.oltId) {
+        return
+      }
+      fetchTr069Form(this.oltId)
+        .then(res => {
+          this.meta = res.data
+        })
+        .catch(() => {
+          this.$message.error('读取 TR-069 模板参数失败')
+        })
+    },
     load() {
       if (!this.oltId) {
         return
@@ -198,7 +273,8 @@ export default {
       this.keyword = ''
     },
     openCreate() {
-      this.form = emptyForm()
+      // 默认值用后端的（模板 10 + 现场 ACS 地址），改地址时直接覆盖
+      this.form = this.meta && this.meta.defaults ? { ...this.meta.defaults } : emptyForm()
       this.createVisible = true
       this.$nextTick(() => {
         if (this.$refs.createForm) {

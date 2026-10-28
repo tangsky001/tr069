@@ -2,6 +2,7 @@ package com.tr069.acs.olt.vendor;
 
 import com.tr069.acs.olt.entity.OltBoard;
 import com.tr069.acs.olt.model.OltAction;
+import com.tr069.acs.olt.model.OltFrontPanel;
 import com.tr069.acs.olt.model.OltOnt;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltQuickSetupRequest;
@@ -182,15 +183,24 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
     @Override
     public OltBoard buildWholeDevice(String model) {
         String resolved = model == null || model.isBlank() ? DEFAULT_MODEL : model.trim();
-        int count = ponPortCount(resolved);
+        // 型号决定整机前面板：几个 PON 口、几个上联 GE / XGE、有没有 NMS / CONSOLE
+        HsgqModelCatalog.Spec spec = HsgqModelCatalog.match(resolved);
+        if (spec == null) {
+            spec = HsgqModelCatalog.fallback(ponTypeName(), ponPortCount(resolved));
+        }
+        int count = spec.ponCount();
         OltBoard board = new OltBoard();
         board.setSlotNo(0);
         board.setBoardType(resolved);
         board.setStatus("Up");
         board.setPortCount(count);
-        board.setPortMode("EPON");
+        board.setPortMode(spec.ponType());
         board.setBoardKind("SERVICE");
-        board.setDescription("整机（" + count + " 口 EPON）");
+        // 整机不是「板卡」，描述就写整机规格
+        board.setDescription(spec.label() + " 整机（" + spec.summary() + "）");
+        board.setFrontPanel(new OltFrontPanel(resolved, spec.ponType(), count,
+                spec.geCount(), spec.xgeCount(), spec.hasNms(), spec.hasConsole(), spec.hasUsb(),
+                spec.summary()));
         List<OltPort> ports = new ArrayList<>();
         for (int no = 1; no <= count; no++) {
             OltPort port = new OltPort();
@@ -202,6 +212,11 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         }
         board.setPorts(ports);
         return board;
+    }
+
+    /** 这条产品线的 PON 口类型，GPON 那台覆写成 GPON */
+    protected String ponTypeName() {
+        return "EPON";
     }
 
     @Override
