@@ -13,22 +13,34 @@ import com.tr069.acs.olt.entity.OltSyncRecord;
 import com.tr069.acs.olt.mapper.OltBoardMapper;
 import com.tr069.acs.olt.mapper.OltDeviceMapper;
 import com.tr069.acs.olt.mapper.OltSyncRecordMapper;
+import com.tr069.acs.olt.model.OltAction;
+import com.tr069.acs.olt.model.OltActionParam;
 import com.tr069.acs.olt.model.OltDetail;
 import com.tr069.acs.olt.model.OltDbaProfileRequest;
+import com.tr069.acs.olt.model.OltExecRequest;
+import com.tr069.acs.olt.model.OltExecResult;
 import com.tr069.acs.olt.model.OltOntQueryRequest;
 import com.tr069.acs.olt.model.OltOntInfo;
 import com.tr069.acs.olt.model.OltOntQueryResult;
 import com.tr069.acs.olt.model.OltServicePort;
+import com.tr069.acs.olt.model.OltQuickSetupRequest;
 import com.tr069.acs.olt.model.OltDeviceView;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltSaveRequest;
 import com.tr069.acs.olt.model.OltSyncRecordView;
 import com.tr069.acs.olt.model.OltTemplateInfo;
 import com.tr069.acs.olt.model.OltTestResult;
+import com.tr069.acs.olt.model.OltTr069Profile;
+import com.tr069.acs.olt.model.OltTr069ProfileRequest;
 import com.tr069.acs.olt.model.OltVlanInfo;
+import com.tr069.acs.olt.model.OltVlanPort;
+import com.tr069.acs.olt.model.OltVlanRequest;
+import com.tr069.acs.olt.model.VlanIdExpression;
 import com.tr069.acs.olt.telnet.OltInfoParser;
 import com.tr069.acs.olt.telnet.OltSnapshot;
 import com.tr069.acs.olt.telnet.OltVendor;
+import com.tr069.acs.olt.vendor.OltVendorProfile;
+import com.tr069.acs.olt.vendor.OltVendorProfiles;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,6 +57,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -743,6 +757,600 @@ public class OltService {
                 .map(profileId -> "dba-profile delete profile-id " + profileId)
                 .toList();
         return dispatchConfig(id, commands, operator, "删除DBA模板");
+    }
+
+    /**
+     * 新建 VLAN：鸿升光下发 {@code vlan standard <id>}（一段连续 ID 写成
+     * {@code vlan standard 101 110}），成功后自动重采写库。
+     */
+    public OltDetail createVlan(Long id, OltVlanRequest request, String operator) {
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsVlanConfig()) {
+            throw new IllegalArgumentException("这台设备的厂商还没接入 VLAN 下发，先到设备上配好再同步");
+        }
+        List<String> tagged = normalizeVlanPorts(profile, request == null ? null : request.getTagged());
+        List<String> untagged = normalizeVlanPorts(profile, request == null ? null : request.getUntagged());
+        List<int[]> segments = vlanSegments(request);
+        List<Integer> ids = new ArrayList<>();
+        for (int[] segment : segments) {
+            for (int vlanId = segment[0]; vlanId <= segment[1]; vlanId++) {
+                ids.add(vlanId);
+            }
+        }
+        boolean withPorts = !tagged.isEmpty() || !untagged.isEmpty();
+        int limit = withPorts ? MAX_VLANS_WITH_PORTS : MAX_VLANS_BATCH;
+        if (ids.size() > limit) {
+            throw new IllegalArgumentException(withPorts
+                    ? "一次最多给 " + MAX_VLANS_WITH_PORTS + " 个 VLAN 配成员端口（每个 VLAN 都要单独进视图），请分几次建"
+                    : "一次最多建 " + MAX_VLANS_BATCH + " 个 VLAN，请分几次建");
+        }
+        // 库里快照已有就提前拦下（设备端才是最终裁决，这里只是少跑一个来回）
+        OltVlanInfo snapshot = readVlan(requireDevice(id).getVlanJson());
+        if (snapshot != null && snapshot.getVlans() != null) {
+            for (Integer vlanId : ids) {
+                boolean exists = snapshot.getVlans().stream()
+                        .anyMatch(vlan -> vlan.getVlanId() != null && vlan.getVlanId().equals(vlanId));
+                if (exists) {
+                    throw new IllegalArgumentException("VLAN " + vlanId
+                            + " 已存在（如果刚在设备上建过，先同步一次再操作）");
+                }
+            }
+        }
+        List<String> commands = new ArrayList<>();
+        for (int[] segment : segments) {
+            commands.addAll(profile.createVlanCommands(segment[0], segment[1], tagged, untagged));
+        }
+        if (commands.isEmpty()) {
+            throw new IllegalArgumentException("没生成要下发的命令，VLAN 未变更");
+        }
+        return dispatchConfig(id, commands, operator,
+                "新增VLAN " + describeVlans(segments) + (withPorts ? "（含端口）" : ""));
+    }
+
+    /**
+     * TR-069 模板列表：不读库，每次实时登设备查。
+     *
+     * <p>页面上「刷新」就是调这个；设备上改了模板这里立刻能看见，
+     * 也不会因为库里存着旧快照而显示成已经删掉/已经新建。</p>
+     */
+    public List<OltTr069Profile> tr069Profiles(Long id) {
+        OltDevice device = requireDevice(id);
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsTr069Profile()) {
+            throw new IllegalArgumentException("这台设备还没接入 TR-069 模板命令");
+        }
+        try {
+            List<String> outputs = telnetService.queryCommands(device, profile.tr069ProfileQueryCommands());
+            return profile.parseTr069Profiles(outputs.isEmpty() ? null : outputs.get(0));
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            log.warn("查询 TR-069 模板失败 id={}: {}", id, message);
+            throw new IllegalStateException("查询 TR-069 模板失败：" + message, e);
+        }
+    }
+
+    /**
+     * 新增 TR-069 模板：下发 {@code onu-tr069-profile add ...}，成功后立刻重查一次返回新列表。
+     *
+     * <p>不重采整台设备——模板跟板卡/ONU 数据无关，没必要为了一个模板等十几秒。</p>
+     */
+    public List<OltTr069Profile> createTr069Profile(Long id, OltTr069ProfileRequest request, String operator) {
+        OltDevice device = requireDevice(id);
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsTr069Profile()) {
+            throw new IllegalArgumentException("这台设备还没接入 TR-069 模板命令");
+        }
+        checkTr069Request(request);
+        List<String> commands = profile.createTr069ProfileCommands(request);
+        if (commands.isEmpty()) {
+            throw new IllegalArgumentException("没生成要下发的命令，模板未创建");
+        }
+        long start = System.currentTimeMillis();
+        try {
+            List<String> outputs = telnetService.sendConfig(device, commands);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+                    "新增TR069模板 " + request.getProfileId() + "：" + String.join("；", commands),
+                    String.join("\n", outputs), System.currentTimeMillis() - start, operator);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    "新增TR069模板失败 " + request.getProfileId() + "："
+                            + String.join("；", commands) + "：" + message,
+                    null, System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException(message, e);
+        }
+        return tr069Profiles(id);
+    }
+
+    /**
+     * 一键开局：把页面的几个勾选项编成一批命令一次下发，成功后重采。
+     *
+     * <p>三步各自独立，哪个字段是空就跳过哪一步；命令由厂商 profile 编，
+     * 这里只管校验和下发结果。</p>
+     */
+    public OltDetail quickSetup(Long id, OltQuickSetupRequest request, String operator) {
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsQuickSetup()) {
+            throw new IllegalArgumentException("这台设备还没接入一键开局，先到设备上手动配");
+        }
+        if (request == null) {
+            throw new IllegalArgumentException("请把开局选项填完整");
+        }
+        String mode = normalizeMode(request.getMode());
+        if (request.getVlanList() != null && !request.getVlanList().isBlank()) {
+            VlanIdExpression.expand(request.getVlanList());
+        }
+        List<OltQuickSetupRequest.PortRef> ports = checkQuickPorts(request.getPorts());
+        int vlanCount = checkQuickVlanIds(request.getCreateVlanIds(), request.getAddCreatedToPorts());
+        if (request.getTr069() != null) {
+            checkTr069Request(request.getTr069());
+        }
+        if (ports.isEmpty() && vlanCount == 0 && request.getTr069() == null) {
+            throw new IllegalArgumentException("至少勾选一项开局内容");
+        }
+        request.setMode(mode);
+        List<String> commands = profile.quickSetupCommands(request);
+        if (commands.isEmpty()) {
+            throw new IllegalArgumentException("没生成要下发的命令，开局未执行");
+        }
+        return dispatchConfig(id, commands, operator, describeQuickSetup(request));
+    }
+
+    private static String describeQuickSetup(OltQuickSetupRequest request) {
+        List<String> parts = new ArrayList<>();
+        if (!request.getPorts().isEmpty()) {
+            parts.add(request.getPorts().size() + " 个端口 → " + request.getMode());
+        }
+        if (request.getCreateVlanIds() != null && !request.getCreateVlanIds().isBlank()) {
+            parts.add("建 VLAN " + request.getCreateVlanIds());
+        }
+        if (request.getTr069() != null) {
+            parts.add("建 TR069 模板 " + request.getTr069().getProfileId());
+        }
+        return "一键开局（" + String.join("；", parts) + "）";
+    }
+
+    private static String normalizeMode(String mode) {
+        String text = mode == null || mode.isBlank() ? "trunk" : mode.trim().toLowerCase(Locale.ROOT);
+        if (!QUICK_MODES.contains(text)) {
+            throw new IllegalArgumentException("端口 VLAN 模式只能是 access / hybrid / trunk");
+        }
+        return text;
+    }
+
+    /** 一次性改多少个端口的上限：每个端口 4 条命令，再多一轮会话出结果会很慢 */
+    private static final int MAX_QUICK_PORTS = 32;
+
+    private static final Set<String> QUICK_MODES = Set.of("access", "hybrid", "trunk");
+
+    private static final Pattern PORT_TYPE = Pattern.compile("(?i)^(epon|gpon|ge|xge)$");
+
+    private static List<OltQuickSetupRequest.PortRef> checkQuickPorts(List<OltQuickSetupRequest.PortRef> ports) {
+        if (ports == null || ports.isEmpty()) {
+            return List.of();
+        }
+        if (ports.size() > MAX_QUICK_PORTS) {
+            throw new IllegalArgumentException("一次最多改 " + MAX_QUICK_PORTS + " 个端口，请分几次开局");
+        }
+        for (OltQuickSetupRequest.PortRef port : ports) {
+            String type = port == null || port.getType() == null ? "" : port.getType().trim().toLowerCase(Locale.ROOT);
+            if (!PORT_TYPE.matcher(type).matches()) {
+                throw new IllegalArgumentException("端口类型只认 epon / gpon / ge / xge：" + type);
+            }
+            Integer no = port == null ? null : port.getNo();
+            if (no == null || no < 1 || no > 64) {
+                throw new IllegalArgumentException("端口号必须在 1-64 之间：" + no);
+            }
+            port.setType(type);
+        }
+        return ports;
+    }
+
+    /** 校验要新建的 VLAN，返回一共要建多少个（带端口时逐个进视图，数量得收着点） */
+    private static int checkQuickVlanIds(String ids, Boolean addPorts) {
+        if (ids == null || ids.isBlank()) {
+            return 0;
+        }
+        List<Integer> vlanIds = VlanIdExpression.expand(ids);
+        int limit = Boolean.TRUE.equals(addPorts) ? MAX_VLANS_WITH_PORTS : MAX_VLANS_BATCH;
+        if (vlanIds.size() > limit) {
+            throw new IllegalArgumentException(Boolean.TRUE.equals(addPorts)
+                    ? "带上成员端口时一次最多建 " + MAX_VLANS_WITH_PORTS + " 个 VLAN"
+                    : "一次最多建 " + MAX_VLANS_BATCH + " 个 VLAN");
+        }
+        return vlanIds.size();
+    }
+    private void checkTr069Request(OltTr069ProfileRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("请填写模板参数");
+        }
+        Integer profileId = request.getProfileId();
+        if (profileId == null || profileId < 1 || profileId > 32) {
+            throw new IllegalArgumentException("模板 ID 必须在 1-32 之间");
+        }
+        String name = trimToNull(request.getProfileName());
+        if (name == null || name.length() > 32) {
+            throw new IllegalArgumentException("模板名不能为空，最长 32 个字符");
+        }
+        if (hasBlank(name)) {
+            throw new IllegalArgumentException("模板名不能包含空格");
+        }
+        String url = trimToNull(request.getUrl());
+        if (url == null || url.length() > 64) {
+            throw new IllegalArgumentException("ACS 服务器 URL 不能为空，最长 64 个字符");
+        }
+        if (!url.matches("(?i)^(https?|tr069)://\\S+$")) {
+            throw new IllegalArgumentException("ACS 服务器 URL 要以 http:// 或 https:// 开头，例如 http://192.168.1.10:9090");
+        }
+        checkOption(request.getAcsUsername(), 24, "ACS 服务器用户名");
+        checkOption(request.getAcsPassword(), 24, "ACS 服务器密码");
+        checkOption(request.getUsername(), 24, "连接用户名");
+        checkOption(request.getPassword(), 24, "连接密码");
+        Integer port = request.getPort();
+        if (port == null || port < 1 || port > 65535) {
+            throw new IllegalArgumentException("连接端口必须在 1-65535 之间");
+        }
+        if (Boolean.TRUE.equals(request.getInformEnable())) {
+            Integer interval = request.getInformInterval();
+            if (interval == null || interval < 1 || interval > 86400) {
+                throw new IllegalArgumentException("定期通知间隔必须在 1-86400 秒之间");
+            }
+        }
+    }
+
+    /** 可空字段：要么不填，要么不超过长度上限、不带空格 */
+    private void checkOption(String value, int maxLength, String label) {
+        String text = trimToNull(value);
+        if (text == null) {
+            return;
+        }
+        if (text.length() > maxLength) {
+            throw new IllegalArgumentException(label + "最长 " + maxLength + " 个字符");
+        }
+        if (hasBlank(text)) {
+            throw new IllegalArgumentException(label + "不能包含空格");
+        }
+    }
+
+    private static boolean hasBlank(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            if (Character.isWhitespace(text.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 一次建多少个 VLAN：不带端口时一条命令建一段；带端口就得逐个 VLAN 进视图，得收着点 */
+    private static final int MAX_VLANS_BATCH = 64;
+
+    /** 带端口一次最多几个 VLAN（每个 3 条命令，再多一轮会话发不完） */
+    private static final int MAX_VLANS_WITH_PORTS = 16;
+
+    /** 页面传上来的端口写法：{@code epon1} / {@code ge3} / {@code xge2} */
+    private static final Pattern VLAN_PORT_REF = Pattern.compile(
+            "(?i)^(epon|gpon|ge|xge)\\s*(\\d{1,3})$");
+
+    /**
+     * 校验页面勾的端口：写法要对、类型要是这台设备能加进 VLAN 的。
+     *
+     * <p>GPON 那台的 PON 口不做二层成员，页面本来也不会给勾，这里再拦一次——
+     * 命令发过去设备只会回一句报错，不如当面说清楚。</p>
+     */
+    private List<String> normalizeVlanPorts(OltVendorProfile profile, List<String> ports) {
+        if (ports == null || ports.isEmpty()) {
+            return List.of();
+        }
+        Set<String> allowed = profile.vlanMemberPortTypes();
+        List<String> normalized = new ArrayList<>();
+        for (String port : ports) {
+            String text = port == null ? "" : port.trim().toLowerCase(Locale.ROOT);
+            Matcher matcher = VLAN_PORT_REF.matcher(text);
+            if (!matcher.matches()) {
+                throw new IllegalArgumentException("端口写法不对：" + port);
+            }
+            String type = matcher.group(1);
+            int no = Integer.parseInt(matcher.group(2));
+            if (!allowed.contains(type)) {
+                throw new IllegalArgumentException(OltVlanPort.label(type, no)
+                        + " 不能加进 VLAN：这台设备的 PON 口不做二层成员端口，业务走 service-port 绑 GEM Port");
+            }
+            normalized.add(type + no);
+        }
+        return normalized;
+    }
+
+    /** 页面上填的 VLAN：优先用表达式（100-200,300），老页面只给起止 ID 时也认 */
+    private List<int[]> vlanSegments(OltVlanRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("请填写 VLAN ID，例如 100 或 100-200,300");
+        }
+        if (request.getVlanIds() != null && !request.getVlanIds().isBlank()) {
+            return VlanIdExpression.segments(request.getVlanIds());
+        }
+        Integer start = request.getVlanId();
+        checkVlanId(start, "起始 VLAN ID");
+        int last = request.getEndVlanId() == null ? start : request.getEndVlanId();
+        checkVlanId(last, "结束 VLAN ID");
+        if (last < start) {
+            throw new IllegalArgumentException("结束 VLAN ID 不能小于起始 VLAN ID");
+        }
+        return List.of(new int[]{start, last});
+    }
+
+    /** 连续段 → 给人看的写法：[[101,110],[300,300]] → 101-110,300 */
+    private static String describeVlans(List<int[]> segments) {
+        return segments.stream()
+                .map(segment -> segment[0] == segment[1]
+                        ? String.valueOf(segment[0])
+                        : segment[0] + "-" + segment[1])
+                .collect(Collectors.joining(","));
+    }
+
+    /** 删除勾选的 VLAN：逐条（连续段合并）下发 {@code no vlan}，成功后自动重采 */
+    public OltDetail deleteVlans(Long id, List<Integer> vlanIds, String operator) {
+        if (vlanIds == null || vlanIds.isEmpty()) {
+            throw new IllegalArgumentException("先勾选要删除的 VLAN");
+        }
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsVlanConfig()) {
+            throw new IllegalArgumentException("这台设备的厂商还没接入 VLAN 下发，先到设备上配好再同步");
+        }
+        List<Integer> ids = vlanIds.stream()
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("先勾选要删除的 VLAN");
+        }
+        ids.forEach(vlanId -> checkVlanId(vlanId, "VLAN ID"));
+        List<String> commands = profile.deleteVlanCommands(ids);
+        if (commands.isEmpty()) {
+            throw new IllegalArgumentException("没生成要下发的命令，VLAN 未变更");
+        }
+        return dispatchConfig(id, commands, operator, "删除VLAN " + join(ids));
+    }
+
+    /** 这台设备的厂商 profile（VLAN 这类命令写法按厂商走） */
+    private OltVendorProfile profileOf(Long id) {
+        return OltVendorProfiles.of(OltVendor.of(requireDevice(id).getVendor()));
+    }
+
+    /**
+     * 这台设备支持的命令动作目录（页面「设备配置」页签按章节渲染）。
+     *
+     * <p>动作定义在厂商 profile 里（鸿升光是 {@code HsgqActionCatalog}），
+     * 页面不写死任何一条命令。</p>
+     */
+    public List<OltAction> actions(Long id) {
+        return profileOf(id).actions();
+    }
+
+    /**
+     * 执行一条命令动作：校验参数 → 按视图编排命令 → 下发。
+     *
+     * <p>查询类（如 {@code show cpu-usage}）把回显返回页面，不触发重采；
+     * 配置类执行完重采一次，返回最新详情，页面直接换上去。</p>
+     */
+    public OltExecResult execAction(Long id, OltExecRequest request, String operator) {
+        OltDevice device = requireDevice(id);
+        String code = request == null ? null : request.getCode();
+        if (code == null || code.isBlank()) {
+            throw new IllegalArgumentException("命令动作编号不能为空");
+        }
+        OltAction action = profileOf(id).actions().stream()
+                .filter(item -> code.equals(item.code()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("这台设备没有这个命令动作：" + code));
+        Map<String, String> params = resolveParams(action, request.getParams());
+        List<String> plan = planCommands(action, params);
+
+        OltExecResult result = new OltExecResult();
+        result.setCode(action.code());
+        result.setLabel(action.label());
+        result.setQuery(action.query());
+        result.setCommands(plan);
+        long start = System.currentTimeMillis();
+        try {
+            List<String> outputs = telnetService.sendConfig(device, plan);
+            result.setOutputs(outputs);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+                    action.label() + "：" + String.join("；", plan),
+                    String.join("\n", outputs), System.currentTimeMillis() - start, operator);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    action.label() + "失败：" + String.join("；", plan) + "：" + message, null,
+                    System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException(message, e);
+        }
+        // 配置类才重采：查看 CPU 这种命令不该顺带把整机重采一遍
+        if (!action.query()) {
+            result.setDetail(collectAndPersist(id, operator, action.label() + "后重采"));
+        }
+        return result;
+    }
+
+    /** 端口 / VLAN 列表的写法：1,3,4-8 */
+    private static final Pattern PORT_LIST = Pattern.compile("^\\d{1,4}([,-]\\d{1,4})*$");
+
+    /**
+     * 文本参数：中英文、数字和常见符号，允许空格（端口描述、用户描述要能写中文），
+     * 但不许换行和分号——命令是一条条发下去的，混进换行就等于多发一条命令。
+     */
+    private static final Pattern TEXT_VALUE = Pattern.compile("^[\\p{L}\\p{N}._:/@#()\\[\\] -]{1,64}$");
+
+    /** 命令模板里的占位符 {key} */
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\{(\\w+)}");
+
+    /** 按参数定义校验表单，缺省值补上，返回渲染用的键值表（包内可见，便于单测） */
+    static Map<String, String> resolveParams(OltAction action, Map<String, String> input) {
+        Map<String, String> values = new LinkedHashMap<>();
+        for (OltActionParam param : action.params()) {
+            String raw = input == null ? null : input.get(param.key());
+            if (raw == null || raw.isBlank()) {
+                raw = param.defaultValue();
+            }
+            if (raw == null || raw.isBlank()) {
+                if (param.required()) {
+                    throw new IllegalArgumentException("请填写「" + param.label() + "」");
+                }
+                continue;
+            }
+            values.put(param.key(), checkParam(param, raw.trim()));
+        }
+        // 视图切换要用的参数（VLAN / 端口视图）必须齐，否则进不去视图
+        switch (action.view()) {
+            case VLAN, VLANIF -> requireParam(values, "vlanId", "VLAN ID");
+            case PORT -> {
+                requireParam(values, "portType", "端口类型");
+                requireParam(values, "portNo", "端口号");
+            }
+            case PON, GPON -> requireParam(values, "ponId", "PON 口号");
+            case LINE_PROFILE, SRV_PROFILE -> requireParam(values, "profileId", "模板 ID");
+            case ONU -> {
+                requireParam(values, "ponId", "PON 口号");
+                requireParam(values, "onuId", "ONU ID");
+            }
+            case ACL -> requireParam(values, "aclId", "ACL ID");
+            case MCAST -> requireParam(values, "vlanId", "VLAN ID");
+            default -> {
+            }
+        }
+        return values;
+    }
+
+    static String checkParam(OltActionParam param, String value) {
+        switch (param.type()) {
+            case "number" -> {
+                int number;
+                try {
+                    number = Integer.parseInt(value);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("「" + param.label() + "」必须是数字");
+                }
+                if ((param.min() != null && number < param.min())
+                        || (param.max() != null && number > param.max())) {
+                    throw new IllegalArgumentException("「" + param.label() + "」要在 "
+                            + param.min() + "-" + param.max() + " 之间");
+                }
+                return String.valueOf(number);
+            }
+            case "ports" -> {
+                if (!PORT_LIST.matcher(value).matches()) {
+                    throw new IllegalArgumentException("「" + param.label()
+                            + "」格式不对，用 1,3,4-8 这种写法");
+                }
+                return value;
+            }
+            case "enum" -> {
+                if (param.options() == null || !param.options().contains(value)) {
+                    throw new IllegalArgumentException("「" + param.label() + "」只能是 " + param.options());
+                }
+                return value;
+            }
+            default -> {
+                if (!TEXT_VALUE.matcher(value).matches()) {
+                    throw new IllegalArgumentException("「" + param.label()
+                            + "」只能填字母、数字和 . : / _ -");
+                }
+                return value;
+            }
+        }
+    }
+
+    private static String requireParam(Map<String, String> values, String key, String label) {
+        String value = values.get(key);
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("请填写「" + label + "」");
+        }
+        return value;
+    }
+
+    /** 把动作翻成真正下发的命令：先进视图，再逐条渲染，最后 exit 回全局配置视图（包内可见，便于单测） */
+    static List<String> planCommands(OltAction action, Map<String, String> params) {
+        List<String> plan = new ArrayList<>();
+        switch (action.view()) {
+            case VLAN -> plan.add("vlan standard " + requireParam(params, "vlanId", "VLAN ID"));
+            case PORT -> plan.add("interface " + requireParam(params, "portType", "端口类型")
+                    + " " + requireParam(params, "portNo", "端口号"));
+            case PON -> plan.add("interface epon " + requireParam(params, "ponId", "PON 口号"));
+            case GPON -> plan.add("interface gpon " + requireParam(params, "ponId", "PON 口号"));
+            case LINE_PROFILE -> plan.add("ont-lineprofile gpon profile-id "
+                    + requireParam(params, "profileId", "模板 ID"));
+            case SRV_PROFILE -> plan.add("ont-srvprofile gpon profile-id "
+                    + requireParam(params, "profileId", "模板 ID"));
+            case ONU -> plan.add("interface onu " + requireParam(params, "ponId", "PON 口号")
+                    + "/" + requireParam(params, "onuId", "ONU ID"));
+            case MANAGE -> plan.add("interface manage");
+            case ACL -> plan.add("acl " + requireParam(params, "aclId", "ACL ID"));
+            case MCAST -> plan.add("multicast-vlan " + requireParam(params, "vlanId", "VLAN ID"));
+            case VLANIF -> plan.add("interface vlanif " + requireParam(params, "vlanId", "VLAN ID"));
+            default -> {
+            }
+        }
+        for (String template : action.commands()) {
+            plan.add(renderCommand(template, params));
+        }
+        if (action.view() != OltAction.View.CONFIG) {
+            plan.add("exit");
+        }
+        return plan;
+    }
+
+    /** 命令模板里的可选段：[ backup-server-ip {backupIp}] —— 段内参数没填就整段去掉 */
+    private static final Pattern OPTIONAL_PART = Pattern.compile("\\[([^]]*)]");
+
+    private static String renderCommand(String template, Map<String, String> params) {
+        // 先处理可选段：段里的占位符都有值就保留（去掉方括号），否则整段删掉
+        Matcher optional = OPTIONAL_PART.matcher(template);
+        StringBuilder kept = new StringBuilder();
+        while (optional.find()) {
+            String part = optional.group(1);
+            optional.appendReplacement(kept,
+                    Matcher.quoteReplacement(hasAllParams(part, params) ? part : ""));
+        }
+        optional.appendTail(kept);
+        String text = kept.toString();
+        Matcher matcher = PLACEHOLDER.matcher(text);
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            String value = params.get(key);
+            if (value == null) {
+                throw new IllegalArgumentException("命令缺少参数：" + key);
+            }
+            text = text.replace("{" + key + "}", value);
+        }
+        return text;
+    }
+
+    /** 可选段里的占位符是不是全都有值；段里压根没有占位符的按保留处理 */
+    private static boolean hasAllParams(String part, Map<String, String> params) {
+        Matcher matcher = PLACEHOLDER.matcher(part);
+        while (matcher.find()) {
+            if (params.get(matcher.group(1)) == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void checkVlanId(Integer vlanId, String label) {
+        if (vlanId == null || vlanId < 1 || vlanId > 4094) {
+            throw new IllegalArgumentException(label + " 必须在 1-4094 之间");
+        }
+    }
+
+    private static String join(List<Integer> ids) {
+        StringBuilder text = new StringBuilder();
+        for (Integer id : ids) {
+            if (text.length() > 0) {
+                text.append(',');
+            }
+            text.append(id);
+        }
+        return text.toString();
     }
 
     /** 下发配置的公共流程：连设备执行 → 写采集记录（带回显）→ 自动重采刷新库和页面 */

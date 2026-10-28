@@ -292,8 +292,29 @@ OLT 不走 TR-069：纳管方式是 Telnet 登录设备命令行执行查询。�
 | POST | `/test` | 保存入参 | 诊断测试，**未保存的表单也能测**；不覆盖已采集的板卡 |
 | POST | `/{id}/test` | — | 对已保存设备做诊断测试 |
 | POST | `/{id}/sync` | — | 登录采集版本与板卡，覆盖写 `olt_board` 并刷新台账，返回最新详情 |
+| POST | `/{id}/vlan` | `{vlanIds, tagged[], untagged[]}` | 新建 VLAN 并配成员端口，成功后自动重采 |
+| DELETE | `/{id}/vlan` | `[100, 200]` | 删除勾选的 VLAN（下发 `no vlan ...`，连续段合并成一条），成功后自动重采 |
+| GET | `/{id}/actions` | — | 命令动作目录：这台设备能下发哪些命令（章节 / 功能 / 参数 / 视图 / 是否查询 / 是否高风险） |
+| POST | `/{id}/exec` | `{code, params}` | 执行一条命令动作。查询类返回设备回显，配置类下发后重采并返回最新详情 |
 | GET | `/{id}/records` | `limit`(默认10，上限100) | 采集记录，`rawPreview` 为回显片段 |
 | GET | `/web-accounts` | — | 「允许访问的 Web 登录账号」候选，来自 `sys_user` 启用账号 |
+
+新建 VLAN 入参（页面「创建」弹窗）：
+
+```json
+{
+  "vlanIds": "100-102,300",
+  "tagged": ["epon1", "epon2", "ge3"],
+  "untagged": ["ge4"]
+}
+```
+
+- `vlanIds`：1-4094，支持 `,` 与 `-` 连接，写反或越界当场报错；不带端口时一次最多 64 个，带端口一次最多 16 个
+  （每个 VLAN 都要单独进视图配端口）。
+- `tagged` / `untagged`：端口写法 `类型+编号`，同一个口不能两边都占（页面会互斥）。
+- 下发顺序：`vlan standard 100-102` → 逐個 VLAN `vlan standard <id>` + `port epon 1-2 tagged` + `exit`。
+- 可勾的端口来自采集时执行的 `show port state all`（`vlan.memberPorts`）；GPON 的 PON 口不在里面，
+  它不做二层成员，勾了后端也会拒绝并说明原因。
 
 保存入参：
 
@@ -339,7 +360,18 @@ OLT 不走 TR-069：纳管方式是 Telnet 登录设备命令行执行查询。�
 | 华为 `HUAWEI` | huawei / vrp / ma5600 / ma5800 | `display version` | `display board 0` | `display temperature all` |
 | 中兴 `ZTE` | zte / zxan / c320 / c300 | `show version` | `show card` | — |
 | 烽火 `FIBERHOME` | fiberhome / an5516 / an6000 | `show version` | `show card` | — |
+| 鸿升光 `HSGQ` | hsgq / hongsheng / 鸿升光 | `show version` | 无（整机按型号生成） | — |
 | 通用 `GENERIC` | 兜底 | 两条都试 | `display board 0`、`show card` | — |
+
+鸿升光（EPON 一体化）另外那几条，都在 `HsgqOltProfile` 里：
+
+| 用途 | 命令 | 说明 |
+| --- | --- | --- |
+| 采集 PON 口 ONU 数 | `show pon-info` | `PON01 Up 5/5`（在线/总数） |
+| 采集 ONU 明细 | `show onu-info all` | MAC 即 EPON 的 SN，离线也列出来 |
+| 采集 VLAN | `show running-config` | `vlan standard 100` 一行一个 VLAN，紧跟的 `port epon 2 untagged` 是成员端口；采不到时退回 `show vlan` |
+| 新建 VLAN | `vlan standard <id>` / `vlan standard <start> <end>` | 会切进 vlan 视图，下发时自动补 `exit` 回全局配置视图 |
+| 删除 VLAN | `no vlan <id>` / `no vlan <start> <end>` | 全局配置视图命令，勾选连续时合并成一条 |
 
 采集顺序（现场要求）：登录成功 → 关分页 → **`display board 0`** → `display version` →
 `enable` → `config` → 温度（按槽位）→ 每块业务板一条 `display ont info 0 <槽位> all` →
@@ -466,6 +498,89 @@ H802SCUN（主控板 4 个 GE 口）、H801X2CS（2 路 10GE）、HSGQ-E04（4 �
 
 完整采集（`POST /api/olt/{id}/sync`、`POST /api/olt/{id}/refresh`）保持原样，一次把所有数据采回来，
 给「同步ONT状态」这类明确要慢数据的操作、以及后台定时任务用。
+
+## OLT 厂商适配：新增一家 / 一个型号要改哪些地方
+
+各家 OLT 的命令根本不同：华为是 `display`、第三方是 `show`；华为 MA5600 关分页是 `scroll`，
+其它家是 `terminal length 0`；中兴要认 `show card`，而鸿升光这类一体化设备压根没有板卡概念。
+这些差别集中在 `src/main/java/com/tr069/acs/olt/vendor/` 下的厂商 profile 里：
+
+| 文件 | 作用 |
+| --- | --- |
+| `OltVendorProfile` | 厂商能力接口：识别、命令清单、型号怎么抠、有没有板卡、怎么进配置视图、配置视图里补采什么 |
+| `AbstractOltVendorProfile` | 默认实现（第三方 OLT 的常见样子），继承它只覆写不一样的那几个方法 |
+| `HuaweiOltProfile` / `ZteOltProfile` / `FiberhomeOltProfile` / `HsgqOltProfile` | 已接入的品牌 |
+| `GenericOltProfile` | 认不出厂商时的兜底：两套命令都试，型号挨家问一遍（新品牌注册进来自动认得） |
+| `OltVendorProfiles` | 注册表，会话按厂商取 profile、按回显认厂商 |
+
+**加一家品牌的完整改动：**
+
+1. `src/main/java/com/tr069/acs/olt/vendor/XxxOltProfile.java`——继承 `AbstractOltVendorProfile`，
+   通常只要写 `vendor()`、`matches()`（回显关键字）、几条命令和型号正则；
+2. `OltVendor` 枚举加一个取值（库里存的厂商编号、页面下拉用它）；
+3. `OltVendorProfiles.register()` 里加一行。
+
+会话主流程（登录、探测风格、采板卡、深度采集编排）和 `OltInfoParser` 都不用动。
+
+**同一个品牌加型号**通常在自家 profile 内部就能解决：鸿升光的 PON 口数在 `HsgqOltProfile.PON_PORT_COUNT`
+里加一行；像 `HSGQ-E08A` 这种「字母 + 数字」的型号不用加，`ponPortCount` 会自己从型号里抠出口数。
+需要在页面上出现新型号的示意图时，另外往 `web/src/views/olt/boardProfiles.js` 里加一条。
+
+## OLT 命令动作目录（手册里的命令怎么变成页面上的功能）
+
+鸿升光两台设备、两份手册加起来六百多条命令（EPON 13 章 332 条、GPON 15 章 300 余条），
+一条一个接口写不完也维护不了，所以它们被登记成「动作目录」：
+
+| 设备 | 厂商码 | 目录 | 手册 |
+| --- | --- | --- | --- |
+| 鸿升光 EPON（E04/E08/E16） | `HSGQ` | `HsgqActionCatalog` | 13 章 141 页 |
+| 鸿升光 GPON（4/8/16 口，Neutral-G04/G08/G16） | `HSGQ_GPON` | `HsgqGponActionCatalog` | 15 章 157 页 |
+
+一条动作 = 章节 + 功能名 + 命令模板 + 参数定义 + 执行视图 + 是否查询 + 是否高风险；
+页面（「设备配置」页签）按目录自动生成表单，服务端按同一份定义校验参数、拼视图、下发、留档。
+两台设备共用同一套界面：`GET /{id}/actions` 取哪份目录由设备的 `vendor` 决定。
+
+**GPON 与 EPON 的差别**（写动作时别照抄）：PON 口关键字是 `gpon`、PON 口不做二层成员端口
+（业务靠 `service-port` 绑 GEM Port）、多了第 5 章模板（DBA / 线路模板 / 业务模板）与第 6 章虚端口、
+ONT 按 SN/LOID 注册且第 9 章命令全在 GPON 口视图里、第 3 章多一节风扇管理。
+
+**加一条命令**就是加一行：
+
+```java
+list.add(config("vlan.create", CH_VLAN, "创建单个 VLAN", "端口 VLAN，取值 1-4094",
+        List.of(vlanId), "vlan standard {vlanId}"));
+list.add(query("sys.cpu", CH_CPU, "查看 CPU 利用率", null, "show cpu-usage"));
+list.add(in(OltAction.View.PON, "pon.mac.bind", CH_PON_AUTH, "MAC 认证：添加白名单并绑定 ONU", null,
+        List.of(ponId, mac), "bind-onu[{ onuId}] mac {mac}"));
+```
+
+**执行视图**（命令在哪个提示符下发，`exit` 自动补）：
+
+| view | 进入命令 | 提示符 |
+| --- | --- | --- |
+| `CONFIG` | — | `OLT(config)#` |
+| `VLAN` | `vlan standard <vlanId>` | `OLT(config-vlan-100)#` |
+| `PORT` | `interface <portType> <portNo>` | `OLT(config-ge-1)#` |
+| `PON` | `interface epon <ponId>` | `OLT(config-epon-1)#`（EPON） |
+| `GPON` | `interface gpon <ponId>` | `OLT(config-gpon-1)#`（GPON） |
+| `LINE_PROFILE` | `ont-lineprofile gpon profile-id <profileId>` | `OLT(config-gpon-lineprofile-1)#`（GPON） |
+| `SRV_PROFILE` | `ont-srvprofile gpon profile-id <profileId>` | `OLT(config-gpon-srvprofile-1)#`（GPON） |
+| `ONU` | `interface onu <ponId>/<onuId>` | `OLT(config-onu-1/1)#`（EPON） |
+| `MANAGE` | `interface manage` | `OLT(config-manage)#` |
+| `ACL` | `acl <aclId>` | `OLT(acl-basic-2000)#` |
+| `MCAST` | `multicast-vlan <vlanId>` | `OLT(multicast-vlan-100)#` |
+| `VLANIF` | `interface vlanif <vlanId>` | `OLT(config-vlanif-1)#` |
+
+**可选参数**写成方括号段，参数没填就整段去掉：`ntp enable ntp-server-ip {serverIp}[ backup-server-ip {backupIp}]`、
+`user add {userName} {password} {level}[ reenter {reenter}][ {info}]`。
+
+**参数校验**：`number` 卡范围、`ports` 只认 `1,3,4-8`、`enum` 只认下拉值、`text` 拒绝换行与分号
+（命令是一条条发的，参数里混进换行等于多发一条命令）。
+
+**查询 vs 配置**：`query`/`queryWith`/`queryIn` 只把回显返回页面；配置类下发成功后会自动重采一次
+（`dispatchConfig`），页面直接换成新数据。
+
+两份手册里还剩缩写术语那一章（EPON 第 13 章、GPON 第 15 章）没有动作——那是名词表，不是命令。
 
 ## OLT 自动采集（不用手点同步）
 

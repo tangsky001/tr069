@@ -2,14 +2,21 @@ package com.tr069.acs.olt.controller;
 
 import com.tr069.acs.common.Result;
 import com.tr069.acs.config.AdminAuthInterceptor;
+import com.tr069.acs.olt.model.OltAction;
 import com.tr069.acs.olt.model.OltDetail;
 import com.tr069.acs.olt.model.OltDbaProfileRequest;
+import com.tr069.acs.olt.model.OltExecRequest;
+import com.tr069.acs.olt.model.OltExecResult;
 import com.tr069.acs.olt.model.OltOntQueryRequest;
 import com.tr069.acs.olt.model.OltOntQueryResult;
+import com.tr069.acs.olt.model.OltQuickSetupRequest;
 import com.tr069.acs.olt.model.OltDeviceView;
 import com.tr069.acs.olt.model.OltSaveRequest;
 import com.tr069.acs.olt.model.OltSyncRecordView;
 import com.tr069.acs.olt.model.OltTestResult;
+import com.tr069.acs.olt.model.OltTr069Profile;
+import com.tr069.acs.olt.model.OltTr069ProfileRequest;
+import com.tr069.acs.olt.model.OltVlanRequest;
 import com.tr069.acs.olt.service.OltService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
@@ -245,6 +252,133 @@ public class OltController {
         } catch (Exception e) {
             log.error("删除 DBA 模板异常 id={}", id, e);
             return Result.failure("删除 DBA 模板失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 这台设备支持的命令动作目录（鸿升光对应手册 13 章里的一个个功能格）。
+     */
+    @GetMapping("/{id}/actions")
+    public Result<List<OltAction>> actions(@PathVariable Long id) {
+        try {
+            return Result.success(oltService.actions(id));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("查询命令动作异常 id={}", id, e);
+            return Result.failure("查询命令动作失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 执行一条命令动作：查询类返回回显，配置类返回重采后的详情。
+     */
+    @PostMapping("/{id}/exec")
+    public Result<OltExecResult> exec(@PathVariable Long id,
+                                      @RequestBody OltExecRequest request,
+                                      HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.execAction(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("执行命令动作异常 id={}", id, e);
+            return Result.failure("执行命令失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 新建 VLAN：下发 {@code vlan standard ...}，成功后自动重采返回最新数据。
+     */
+    @PostMapping("/{id}/vlan")
+    public Result<OltDetail> createVlan(@PathVariable Long id,
+                                        @RequestBody OltVlanRequest request,
+                                        HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.createVlan(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("新增 VLAN 异常 id={}", id, e);
+            return Result.failure("新增 VLAN 失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 删除勾选的 VLAN：下发 {@code no vlan ...}，成功后自动重采。
+     */
+    @DeleteMapping("/{id}/vlan")
+    public Result<OltDetail> deleteVlans(@PathVariable Long id,
+                                         @RequestBody List<Integer> vlanIds,
+                                         HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.deleteVlans(id, vlanIds, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("删除 VLAN 异常 id={}", id, e);
+            return Result.failure("删除 VLAN 失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * TR-069（ACS）模板列表：不读库，实时登设备执行 {@code show onu-tr069-profile all}。
+     */
+    @GetMapping("/{id}/tr069-profiles")
+    public Result<List<OltTr069Profile>> tr069Profiles(@PathVariable Long id) {
+        try {
+            return Result.success(oltService.tr069Profiles(id));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("查询 TR-069 模板异常 id={}", id, e);
+            return Result.failure("查询 TR-069 模板失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 新增 TR-069 模板：下发 {@code onu-tr069-profile add ...}，返回下发后的最新列表。
+     */
+    @PostMapping("/{id}/tr069-profiles")
+    public Result<List<OltTr069Profile>> createTr069Profile(@PathVariable Long id,
+                                                           @RequestBody OltTr069ProfileRequest request,
+                                                           HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.createTr069Profile(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("新增 TR-069 模板异常 id={}", id, e);
+            return Result.failure("新增 TR-069 模板失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 一键开局：一次下发端口 VLAN 模式、业务 VLAN、TR-069 模板，成功后自动重采。
+     */
+    @PostMapping("/{id}/quick-setup")
+    public Result<OltDetail> quickSetup(@PathVariable Long id,
+                                        @RequestBody OltQuickSetupRequest request,
+                                        HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.quickSetup(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("一键开局异常 id={}", id, e);
+            return Result.failure("一键开局失败：" + e.getMessage());
         }
     }
 

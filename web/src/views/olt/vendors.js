@@ -10,7 +10,7 @@
  * 2. 在台账页里用下拉切换——用 {@link componentOfVendor} 拿到视图组件，
  *    直接渲染在页面上，切设备当场换视图，不用跳来跳去。
  *
- * 台账里的 vendor 是后端 OltVendor 的枚举名（HUAWEI / ZTE / FIBERHOME / HSGQ / GENERIC）。
+ * 台账里的 vendor 是后端 OltVendor 的枚举名（HUAWEI / ZTE / FIBERHOME / HSGQ / HSGQ_GPON / GENERIC）。
  */
 export const VENDOR_VIEWS = {
   HUAWEI: {

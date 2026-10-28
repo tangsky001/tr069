@@ -22,9 +22,9 @@
         <text class="fp-rst" x="176" y="101">RST</text>
         <circle cx="206" cy="97" r="3.5" class="fp-rst-hole" />
 
-        <!-- PON 组括弧 + 4 个 SC 口，点口看该口 ONT -->
-        <path d="M245 44 v-6 h184 v6" class="fp-bracket" />
-        <text class="fp-group-label" x="337" y="32">PON</text>
+        <!-- PON 组括弧 + PON 口：4 / 8 / 16 口按实际端口数等距排开，点口看该口 ONT -->
+        <path :d="bracketPath" class="fp-bracket" />
+        <text class="fp-group-label" :x="bracketCenter" y="32">PON</text>
         <g
           v-for="pon in ponPorts"
           :key="'pon-' + pon.no"
@@ -33,12 +33,14 @@
           @click="toggle(pon)"
         >
           <title>{{ ponTitle(pon) }}</title>
-          <text class="fp-port-no" :x="pon.x" y="58">{{ pon.no }}</text>
-          <rect :x="pon.x - 17" y="63" width="34" height="30" rx="3" class="fp-sc" />
+          <text class="fp-port-no" :class="{ 'fp-small': compact }" :x="pon.x" y="58">{{ pon.no }}</text>
+          <rect :x="pon.x - pon.w / 2" y="63" :width="pon.w" height="30" rx="3" class="fp-sc" />
           <circle :cx="pon.x" cy="71" r="4" class="fp-sc-dot" />
-          <circle :cx="pon.x + 24" cy="78" r="3" :class="lampClass(pon)" />
-          <text class="fp-count" :x="pon.x" y="112">{{ countText(pon) }}</text>
-          <rect :x="pon.x - 25" y="46" width="50" height="70" fill="transparent" />
+          <circle :cx="pon.x + pon.w / 2 - 5" cy="78" r="3" :class="lampClass(pon)" />
+          <text class="fp-count" :class="{ 'fp-small': compact }" :x="pon.x" y="112">
+            {{ countText(pon) }}
+          </text>
+          <rect :x="pon.x - pon.step / 2" y="46" :width="pon.step" height="70" fill="transparent" />
         </g>
 
         <!-- GE1/GE2 上下叠一排，GE3、GE4 各一个 -->
@@ -126,25 +128,54 @@ export default {
     }
   },
   computed: {
-    /** PON 口摆位：4 个口等距排开，超出的口忽略（E04 固定 4 口） */
+    /** PON 区在面板上的横向范围（左边是 HSGQ 标与 RST，右边是 GE/CONSOLE） */
+    ponAreaStart() {
+      return 240
+    },
+    ponAreaWidth() {
+      return 380
+    },
+    /** 每个 PON 口占的宽度：4 口 95、8 口 47.5、16 口 23.75 */
+    ponStep() {
+      const count = (this.board.ports || []).length || 4
+      return this.ponAreaWidth / count
+    },
+    /** 口子多了字要缩小，16 口时 9.5px 会糊成一片 */
+    compact() {
+      return this.ponStep < 32
+    },
+    bracketPath() {
+      return `M${this.ponAreaStart} 44 v-6 h${this.ponAreaWidth} v6`
+    },
+    bracketCenter() {
+      return this.ponAreaStart + this.ponAreaWidth / 2
+    },
+    /** PON 口摆位：按实际端口数（4/8/16）等距排开，口宽随间距收窄 */
     ponPorts() {
-      return (this.board.ports || []).slice(0, 4).map((port, index) => ({
+      const step = this.ponStep
+      const width = Math.max(12, Math.min(34, step - 10))
+      return (this.board.ports || []).map((port, index) => ({
         ...port,
-        x: 262 + index * 50
+        x: this.ponAreaStart + step * (index + 0.5),
+        step,
+        w: width
       }))
     },
-    /** 右侧状态灯：PWR/SYS 常绿，PON 各口看 ONU 在线，ETH 常灰 */
+    /** 右侧状态灯：PWR/SYS 常绿，PON 各口看 ONU 在线，ETH 常灰；口太多时只留 PWR/SYS/ETH 免得挤出面板 */
     leds() {
       const rows = [
         { label: 'PWR', class: 'fp-led-on' },
         { label: 'SYS', class: 'fp-led-on' }
       ]
-      for (let no = 1; no <= 4; no++) {
-        const pon = this.ponPorts.find(port => port.no === no)
-        rows.push({ label: 'PON' + no, class: this.lampClass(pon || { onuTotal: 0, onuOnline: 0 }) })
+      const ports = this.board.ports || []
+      if (ports.length <= 6) {
+        ports.forEach(pon => {
+          rows.push({ label: 'PON' + pon.no, class: this.lampClass(pon) })
+        })
       }
       rows.push({ label: 'ETH', class: 'fp-led-idle' })
-      return rows.map((row, index) => ({ ...row, y: 32 + index * 12.5 }))
+      const gap = rows.length > 8 ? 9 : 12.5
+      return rows.map((row, index) => ({ ...row, y: 32 + index * gap }))
     },
     /** 已展开的 PON 口（带着端口引用，下面直接渲染 ONT 明细） */
     openPanels() {
@@ -244,6 +275,10 @@ export default {
   fill: #4a4a4a;
   font-size: 9.5px;
   text-anchor: middle;
+}
+/* 8/16 口机型：口间距小，字号跟着收一档 */
+.fp-small {
+  font-size: 8px;
 }
 .fp-sc {
   fill: #17191c;

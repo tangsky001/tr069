@@ -127,6 +127,87 @@ export function deleteDbaProfiles(id, profileIds) {
   })
 }
 
+/**
+ * 这台 OLT 支持的命令动作目录（鸿升光对应手册 13 章里的功能格）。
+ * 返回 [{ code, chapter, label, view, commands, params, query, danger, note }]
+ */
+export function fetchOltActions(id) {
+  return request({ url: '/olt/' + id + '/actions', method: 'get' })
+}
+
+/**
+ * 执行一条命令动作：查询类返回回显，配置类返回重采后的详情。
+ * data: { code, params }
+ */
+export function execOltAction(id, data) {
+  return request({
+    url: '/olt/' + id + '/exec',
+    method: 'post',
+    data,
+    timeout: 180000
+  })
+}
+
+/**
+ * 新增 VLAN：鸿升光下发 vlan standard <id>（一段连续 ID 写成 vlan standard 101 110），
+ * 成功后自动重采。data: { vlanId, endVlanId }，只建一个时 endVlanId 留空。
+ */
+export function createOltVlan(id, data) {
+  return request({
+    url: '/olt/' + id + '/vlan',
+    method: 'post',
+    data,
+    timeout: 180000
+  })
+}
+
+/**
+ * 删除勾选的 VLAN：逐条（连续段合并）下发 no vlan，成功后自动重采。
+ */
+export function deleteOltVlans(id, vlanIds) {
+  return request({
+    url: '/olt/' + id + '/vlan',
+    method: 'delete',
+    data: vlanIds,
+    timeout: 180000
+  })
+}
+
+/**
+ * TR-069（ACS）模板列表：不读库，每次实时登设备执行 show onu-tr069-profile all。
+ */
+export function fetchTr069Profiles(id) {
+  return request({
+    url: '/olt/' + id + '/tr069-profiles',
+    method: 'get',
+    timeout: 60000
+  })
+}
+
+/**
+ * 新增 TR-069 模板：下发 onu-tr069-profile add ...，返回下发后的最新列表。
+ */
+export function createTr069Profile(id, data) {
+  return request({
+    url: '/olt/' + id + '/tr069-profiles',
+    method: 'post',
+    data,
+    timeout: 60000
+  })
+}
+
+/**
+ * 一键开局：一次下发端口 VLAN 模式、业务 VLAN、TR-069 模板，成功后重采返回最新数据。
+ */
+export function quickSetupOlt(id, data) {
+  return request({
+    url: '/olt/' + id + '/quick-setup',
+    method: 'post',
+    data,
+    timeout: 180000
+  })
+}
+
 /** 采集记录 */
 export function fetchOltRecords(id, limit) {
   return request({

@@ -5,7 +5,12 @@ import {
   quickSyncOlt,
   refreshOlt,
   createDbaProfile,
-  deleteDbaProfiles
+  deleteDbaProfiles,
+  createOltVlan,
+  deleteOltVlans,
+  fetchOltActions,
+  quickSetupOlt,
+  execOltAction
 } from '@/api/olt'
 import { matchBoardProfile, panelKindOf } from '../boardProfiles'
 import { compressVlans as compressVlanRange } from '../utils'
@@ -39,16 +44,19 @@ export const oltDetailMixin = {
       // 展开看 ONT 明细的端口，key 是「槽位:端口」
       expandedOnts: {},
       // 鼠标停在端口行/示意图标注上时，两边一起高亮
-      hoverPort: ''
+      hoverPort: '',
+      // 「设备配置」页签的命令动作目录（按厂商 profile 给，页面只负责渲染）
+      commandActions: []
     }
   },
   computed: {
     device() {
       return this.detail.device || {}
     },
-    /** 鸿升光整机：板卡区不用机框插槽，改画横向整机面板 */
+    /** 鸿升光整机（EPON 与 GPON 都是）：板卡区不用机框插槽，改画横向整机面板 */
     isHsgq() {
-      return this.device.vendor === 'HSGQ'
+      const vendor = this.device.vendor
+      return vendor === 'HSGQ' || vendor === 'HSGQ_GPON'
     },
     boards() {
       return this.detail.boards || []
@@ -127,6 +135,38 @@ export const oltDetailMixin = {
     },
     portVlans() {
       return (this.vlanInfo && this.vlanInfo.portVlans) || []
+    },
+    /**
+     * 能做 VLAN 成员的端口（「创建 VLAN」弹窗的复选框）。
+     *
+     * <p>采集回来的清单里本该已含 PON 口，但早期快照只有上联电口（show port state all 不列 PON），
+     * 这里用板卡的 PON 口补一次，免得没重新同步时弹窗里少一排 PON。GPON 的 PON 口不做二层成员，不补。</p>
+     */
+    memberPorts() {
+      const collected = (this.vlanInfo && this.vlanInfo.memberPorts) || []
+      if (collected.some(port => /^(epon|gpon)$/i.test(port.type || ''))) {
+        return collected
+      }
+      const ponType = this.boards.some(board => (board.portMode || '').toUpperCase() === 'EPON')
+        ? 'epon'
+        : null
+      if (!ponType) {
+        return collected
+      }
+      const ponPorts = []
+      this.boards
+        .filter(board => (board.portMode || '').toUpperCase() === 'EPON')
+        .forEach(board => {
+          (board.ports || []).forEach(port => {
+            const no = port.portNo
+            ponPorts.push({
+              type: ponType,
+              no,
+              label: port.portName || 'PON' + String(no).padStart(2, '0')
+            })
+          })
+        })
+      return ponPorts.length ? [...ponPorts, ...collected] : collected
     },
     vlanIpInterfaces() {
       return (this.vlanInfo && this.vlanInfo.ipInterfaces) || []
@@ -281,6 +321,17 @@ export const oltDetailMixin = {
     // 后台补采开始/结束时换一下轮询间隔：补采中拉密点，补完恢复
     deepSyncing() {
       this.startPolling()
+    },
+    // 换设备就重新拉该厂商的命令动作目录（鸿升光才有，其它厂商是空表）
+    detailId: {
+      immediate: true,
+      handler(id) {
+        if (id) {
+          this.loadActions()
+        } else {
+          this.commandActions = []
+        }
+      }
     }
   },
   created() {
@@ -412,6 +463,56 @@ export const oltDetailMixin = {
       return deleteDbaProfiles(this.detailId, profileIds)
         .then(res => this.applyAfterConfig(res, '删除DBA模板'))
     },
+    /** 新增 VLAN（鸿升光下发 vlan standard），VLAN 面板的弹窗调用 */
+    createVlan(payload) {
+      return createOltVlan(this.detailId, payload)
+        .then(res => this.applyAfterConfig(res, '新增VLAN'))
+    },
+    /** 删除勾选的 VLAN（下发 no vlan） */
+    deleteVlan(vlanIds) {
+      return deleteOltVlans(this.detailId, vlanIds)
+        .then(res => this.applyAfterConfig(res, '删除VLAN'))
+    },
+    /** 拉「设备配置」页签的命令动作目录（按厂商 profile 给，没接入动作目录的厂商是空表） */
+    loadActions() {
+      if (!this.detailId) {
+        this.commandActions = []
+        return Promise.resolve([])
+      }
+      return fetchOltActions(this.detailId)
+        .then(res => {
+          this.commandActions = res.data || []
+          return this.commandActions
+        })
+        .catch(() => {
+          // 老厂商没有动作目录：接口报错就当没有，别把页面卡住
+          this.commandActions = []
+          return []
+        })
+    },
+    /**
+     * 一键开局：把弹窗选好的一揽子命令一次性下发。
+     *
+     * <p>POST /api/olt/{id}/quick-setup，后端按「建 VLAN → 改端口模式 → 建 TR-069 模板」
+     * 的顺序编命令，返回的就是下发后重采的最新数据。</p>
+     */
+    handleQuickSetup(payload) {
+      return quickSetupOlt(this.detailId, payload)
+        .then(res => this.applyAfterConfig(res, '一键开局'))
+    },
+    /** 执行一条命令动作：配置类用返回的详情刷新页面，查询类把回显交给组件显示 */
+    execAction(payload) {
+      return execOltAction(this.detailId, payload).then(res => {
+        const data = res.data || {}
+        if (data.detail) {
+          this.applyDetail(data.detail)
+          this.liveAt = new Date()
+          this.liveError = ''
+          this.$message.success((data.label || '配置') + ' 已下发，已重新采集')
+        }
+        return data
+      })
+    },
     formatClock(date) {
       if (!date) return ''
       const pad = value => (value < 10 ? '0' + value : '' + value)
@@ -517,7 +618,17 @@ export const oltDetailMixin = {
             stateText: ont.online === true ? '在线' : '离线',
             // 配置状态（normal / initial / failed），display ont info 的 Config 列
             configText: ont.configState || '',
-            matchText: ont.matchState || ''
+            matchText: ont.matchState || '',
+            // 下面这些只有部分厂商回显里带，采不到就是空，页面统一显示「-」
+            name: ont.name || '',
+            authorized: ont.authorized,
+            registerTime: ont.registerTime || '',
+            lastOfflineTime: ont.lastOfflineTime || '',
+            offlineReason: ont.offlineReason || '',
+            deviceType: ont.deviceType || '',
+            onuType: ont.onuType || '',
+            distance: ont.distance,
+            rxPower: ont.rxPower || ''
           }))
           // 口的 ONT 汇总：设备汇总行缺失（老快照 / 回显没打汇总行）时按明细数兜底，
           // 否则明明有 ONT 在线的口会显示「0 ONT / 0 在线」并被画成离线

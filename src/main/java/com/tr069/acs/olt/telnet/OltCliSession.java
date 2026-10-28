@@ -15,6 +15,8 @@ import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltPortVlan;
 import com.tr069.acs.olt.model.OltVlan;
 import com.tr069.acs.olt.model.OltVlanInfo;
+import com.tr069.acs.olt.vendor.OltVendorProfile;
+import com.tr069.acs.olt.vendor.OltVendorProfiles;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.Closeable;
@@ -76,9 +78,6 @@ public class OltCliSession implements Closeable {
 
     /** 板卡探测顺序：华为 → 中兴/烽火。不用不带参数的 display board，那会停在 Parameter 提示上 */
     private static final List<String> BOARD_COMMANDS = List.of("display board 0", "show card", "show slot");
-
-    /** 版本探测顺序：华为 display → 第三方 show，谁回了内容就用谁的命令风格 */
-    private static final List<String> VERSION_COMMANDS = List.of("display version", "show version");
 
     /** 设备不认这条命令时的回显，说明风格发错了，换另一套再试 */
     private static final Pattern COMMAND_REJECTED = Pattern.compile(
@@ -207,7 +206,7 @@ public class OltCliSession implements Closeable {
         String boardText = "";
         List<OltBoard> boards = List.of();
         List<String> boardCommands = boardCommands(vendor, probe.style());
-        if (withBoards && vendor != OltVendor.HSGQ) {
+        if (withBoards && !OltVendorProfiles.of(vendor).wholeDevice()) {
             for (String command : boardCommands) {
                 String out = runCommand(command);
                 if (out != null && !out.isBlank()) {
@@ -231,10 +230,9 @@ public class OltCliSession implements Closeable {
             // 版本命令没回来时，登录横幅里通常也有型号（Huawei MA5683T ...）
             model = OltInfoParser.extractModel(vendor, banner.toString());
         }
-        if (withBoards && vendor == OltVendor.HSGQ) {
-            // 现场确认：鸿升光不需要采集板卡信息，识别出厂商后直接按型号生成整机卡片出图
-            // （E04 固定 4 个 PON 口；show pon-info 部分固件只回命令回显，采不到数据）
-            boards = List.of(OltInfoParser.buildHsgqBoard(model));
+        if (withBoards && OltVendorProfiles.of(vendor).wholeDevice()) {
+            // 一体化整机（鸿升光 HSGQ 这类）：不采板卡，识别出厂商后直接按型号生成整机卡片出图
+            boards = List.of(OltVendorProfiles.of(vendor).buildWholeDevice(model));
             boardText = "";
         }
 
@@ -252,10 +250,12 @@ public class OltCliSession implements Closeable {
 
         if (withBoards) {
             if (vendor == OltVendor.HUAWEI && !boards.isEmpty()) {
+                // 华为那套（温度 / 逐板端口与光模块 / ONT / VLAN / 模板）还在这里逐条编排，
+                // 没搬到 profile 里；别的新厂商在自己的 profile.collectDetails 里接管
                 collectFromConfigView(boards, notes, snapshot);
-            }
-            if (vendor == OltVendor.HSGQ && !boards.isEmpty()) {
-                collectHsgq(boards.get(0), notes);
+            } else if (!boards.isEmpty()) {
+                OltVendorProfiles.of(vendor)
+                        .collectDetails(this::runCommand, snapshot, boards, notes, Math.min(commandTimeoutMs, 8000));
             }
             if (snapshot.getBackplane() == null && vendor == OltVendor.HUAWEI) {
                 // MA5683T 这类设备的 display version 不带 PCB/Backplane 段，
@@ -271,9 +271,8 @@ public class OltCliSession implements Closeable {
             }
             snapshot.setBoards(boards);
             // 机框槽位数跟着 display board 0 的槽位表走（空槽位也在表里），页面按它画整框；
-            // 鸿升光是整机，槽位表采不到（也不该画成 12 个空槽位围一台机器），按板卡数给
-            snapshot.setSlotCount(vendor == OltVendor.HSGQ
-                    ? boards.size() : OltInfoParser.parseSlotCount(boardText));
+            // 一体化整机由 profile 给（那类设备没有槽位表，也不该画成一圈空槽位围一台机器）
+            snapshot.setSlotCount(OltVendorProfiles.of(vendor).slotCount(boardText, boards));
         }
 
         if (lastError != null) {
@@ -306,21 +305,24 @@ public class OltCliSession implements Closeable {
         String boardText = "";
         List<OltBoard> boards = List.of();
         List<String> commands = boardCommands(vendor, cliStyleOf(vendor, null));
-        for (String command : commands) {
-            String out = runCommand(command, timeout);
-            if (out == null || out.isBlank()) {
-                continue; // 这条不认（命令风格不对），换下一条
+        // 一体化整机没有板卡命令可问，别为一个必然没有结果的来回付钱
+        if (!OltVendorProfiles.of(vendor).wholeDevice()) {
+            for (String command : commands) {
+                String out = runCommand(command, timeout);
+                if (out == null || out.isBlank()) {
+                    continue; // 这条不认（命令风格不对），换下一条
+                }
+                // 有回显就收手：解析不出板卡再问一遍拿到的还是同一段文本，只白等一个超时
+                boardText = out;
+                boards = OltInfoParser.parseBoards(out);
+                break;
             }
-            // 有回显就收手：解析不出板卡再问一遍拿到的还是同一段文本，只白等一个超时
-            boardText = out;
-            boards = OltInfoParser.parseBoards(out);
-            break;
         }
         if (vendor == OltVendor.GENERIC) {
             vendor = detectVendor(boardText);
         }
         if (boards.isEmpty() && boardText.isBlank()
-                && vendor != OltVendor.GENERIC && vendor != OltVendor.HSGQ) {
+                && vendor != OltVendor.GENERIC && !OltVendorProfiles.of(vendor).wholeDevice()) {
             // 台账里的厂商跟这台设备对不上（换过设备 / 手填错）：换另一套命令再试一条
             for (String command : BOARD_COMMANDS) {
                 if (commands.contains(command)) {
@@ -344,9 +346,9 @@ public class OltCliSession implements Closeable {
             model = OltInfoParser.extractModel(vendor, boardText);
         }
         String versionText = "";
-        if (model == null || vendor == OltVendor.HSGQ) {
+        if (model == null || OltVendorProfiles.of(vendor).wholeDevice()) {
             // 横幅和板卡回显里都没有型号（部分版本横幅只有版权声明），补一条版本命令；
-            // 鸿升光是整机，型号只能从版本命令里来
+            // 一体化整机没有板卡回显，型号只能从版本命令里来
             for (String command : versionCommands(vendor)) {
                 String out = runCommand(command, Math.min(commandTimeoutMs, VERSION_PROBE_TIMEOUT_MS));
                 if (out != null && !out.isBlank() && !isRejected(out)) {
@@ -361,9 +363,9 @@ public class OltCliSession implements Closeable {
                 vendor = detectVendor(versionText);
             }
         }
-        if (vendor == OltVendor.HSGQ) {
-            // 鸿升光没有板卡概念：整机按型号生成一张卡片，PON 口数据留给深度采集
-            boards = List.of(OltInfoParser.buildHsgqBoard(model));
+        if (OltVendorProfiles.of(vendor).wholeDevice()) {
+            // 一体化整机没有板卡概念：按型号生成一张卡片，PON 口与 ONU 数据留给深度采集
+            boards = List.of(OltVendorProfiles.of(vendor).buildWholeDevice(model));
             boardText = "";
         }
         if (boards.isEmpty()) {
@@ -385,8 +387,7 @@ public class OltCliSession implements Closeable {
             snapshot.setMacAddress(OltInfoParser.extractMacAddress(versionText));
         }
         snapshot.setBoards(boards);
-        snapshot.setSlotCount(vendor == OltVendor.HSGQ
-                ? boards.size() : OltInfoParser.parseSlotCount(boardText));
+        snapshot.setSlotCount(OltVendorProfiles.of(vendor).slotCount(boardText, boards));
         if (lastError != null) {
             notes.add("命令异常：" + lastError.getMessage());
         }
@@ -867,17 +868,17 @@ public class OltCliSession implements Closeable {
                 || OltInfoParser.BoardKind.CONTROL.name().equals(boardKind);
     }
 
-    /** enable → config。enable 在已是特权视图时会回一句报错，忽略即可。 */
+    /**
+     * 进配置视图，写法由厂商 profile 决定（华为 {@code enable}→{@code config} 后还要补一条
+     * scroll；鸿升光有的固件只认 {@code configure}）。
+     */
     private boolean enterConfigView(int timeout) {
-        runQuietly("enable", timeout);
-        String out = runQuietly("config", timeout);
-        if (out == null || !out.contains("(config)#")) {
-            return false;
-        }
-        // scroll 在特权视图才生效（登录后的用户视图发了也不认），进 config 后补一次，
-        // 后面 display ont info / service-port 这类长回显就不分页了
-        runQuietly("scroll", timeout);
-        return true;
+        return profile().enterConfigView(this::runQuietly, timeout);
+    }
+
+    /** 台账里认出来的这家设备对应的 profile（写操作、单条查询这些按设备走缓存里的厂商） */
+    private OltVendorProfile profile() {
+        return OltVendorProfiles.of(vendorHint);
     }
 
     /**
@@ -1001,8 +1002,35 @@ public class OltCliSession implements Closeable {
         return outputs;
     }
 
-    /** OLT 拒绝命令时的回显特征，返回拒绝原因那一行，没拒绝返回 null */
-    private static final Pattern REJECT_ROW = Pattern.compile("(?im)^.*(Error:|错误[:：]|无效|非法|existed|not exist).*$");
+    /**
+     * 只读查询：进 config 视图后逐条执行 show 类命令，返回每条的回显。
+     *
+     * <p>和 {@link #sendConfigCommands} 的区别是不把回显里的 Error 当异常抛——
+     * 查询命令在这台设备上不认时只会回一行 Unknown，由调用方决定怎么提示，
+     * 不该把一个「没有这个功能」说成下发失败。</p>
+     */
+    public List<String> queryCommands(List<String> commands) {
+        prepareTerminal(vendorHint);
+        if (!enterConfigView(commandTimeoutMs)) {
+            throw new IllegalStateException("进不了 config 视图，无法查询");
+        }
+        List<String> outputs = new ArrayList<>();
+        for (String command : commands) {
+            outputs.add(runCommand(command, commandTimeoutMs));
+        }
+        return outputs;
+    }
+
+    /**
+     * OLT 拒绝命令时的回显特征，返回拒绝原因那一行，没拒绝返回 null。
+     *
+     * <p>不能只认 {@code Error:}：这台设备配置命令被拒时写的是
+     * {@code Error, PORT trunk vlan set fail, reason: ...}（逗号），
+     * 还会把 exists 拼成 {@code exsits}。按行首的 error / fail 兜住，
+     * 否则下发全被设备顶回来、页面却显示成功。</p>
+     */
+    private static final Pattern REJECT_ROW = Pattern.compile(
+            "(?im)^.*(\\berror\\b|\\bfail(?:ed|ure)?\\b|错误[:：]?|无效|非法|not\\s+exist|exsits|不存在).*$");
 
     private String commandRejected(String out) {
         if (out == null || out.isBlank()) {
@@ -1019,70 +1047,6 @@ public class OltCliSession implements Closeable {
         return null;
     }
 
-    /**
-     * 鸿升光进配置视图：{@code enable} → {@code config}，有的固件只认 {@code configure}，
-     * 所以两条都试（不支持的那条只回一句报错，代价是一个来回）。
-     * 判据是提示符变成 {@code OLT(config)#}。
-     */
-    private boolean enterHsgqConfigView(int timeout) {
-        runQuietly("enable", timeout);
-        String out = runQuietly("config", timeout);
-        if (out != null && out.contains("(config)#")) {
-            return true;
-        }
-        out = runQuietly("configure", timeout);
-        return out != null && out.contains("(config)#");
-    }
-
-    /**
-     * 鸿升光整机采集：配置视图下 {@code show onu-info all}（每条 ONU 的 MAC 与在线状态）
-     * 与 {@code show pon-info}（每口在线/总数），按 PON 号挂到对应端口上。
-     *
-     * <p>整机没有板卡概念，卡片是按型号生成的（{@link OltInfoParser#buildHsgqBoard}），
-     * 这里只把这两条命令带回来的真实数据补进去；采不到就留空，页面显示「-」，
-     * 不会把没采到当成 0，也不会打乱按型号生成的端口。</p>
-     */
-    private void collectHsgq(OltBoard board, List<String> notes) {
-        int timeout = Math.min(commandTimeoutMs, 8000);
-        if (!enterHsgqConfigView(timeout)) {
-            notes.add("进不了配置视图（enable → config/configure），PON 口与 ONU 未采到");
-            return;
-        }
-        try {
-            String ponText = runCommand("show pon-info", timeout);
-            String onuText = runCommand("show onu-info all", timeout);
-            Map<Integer, int[]> counts = OltInfoParser.parseHsgqPonInfo(ponText);
-            Map<Integer, List<OltOnt>> onts = OltInfoParser.parseHsgqOnuInfo(onuText);
-            if (counts.isEmpty() && onts.isEmpty()) {
-                notes.add("ONU 数量未采到：show pon-info / show onu-info all 无有效回显");
-                return;
-            }
-            List<OltPort> ports = board.getPorts();
-            if (ports == null) {
-                ports = new ArrayList<>();
-                board.setPorts(ports);
-            }
-            for (OltPort port : ports) {
-                Integer ponNo = port.getPortNo();
-                if (ponNo == null) {
-                    continue;
-                }
-                int[] stat = counts.get(ponNo);
-                if (stat != null) {
-                    port.setOnuOnline(stat[0]);
-                    port.setOnuTotal(stat[1]);
-                }
-                // 明细优先用 onu-info 的列表；只有 pon-info 时留空，免得列表和计数对不上
-                List<OltOnt> list = onts.get(ponNo);
-                if (list != null) {
-                    port.setOnts(list);
-                }
-            }
-        } finally {
-            // 只退到特权视图：再 quit 一次就是 logout，设备会停下来问 y/n
-            runQuietly("quit", timeout);
-        }
-    }
 
     /**
      * ONT 数量：config 视图下 {@code display ont info 0 <槽位> all}，参数是空格分隔。
@@ -1218,8 +1182,9 @@ public class OltCliSession implements Closeable {
      * 板卡命令：按厂商/风格挑一套，只有风格完全没定下来才两套都试。
      */
     private static List<String> boardCommands(OltVendor vendor, OltVendor.CliStyle style) {
+        List<String> own = OltVendorProfiles.of(vendor).boardCommands();
         if (vendor != OltVendor.GENERIC) {
-            return vendor.getBoardCommands();
+            return own;
         }
         if (style == OltVendor.CliStyle.DISPLAY) {
             return List.of("display board 0");
@@ -1227,7 +1192,7 @@ public class OltCliSession implements Closeable {
         if (style == OltVendor.CliStyle.SHOW) {
             return List.of("show card", "show slot");
         }
-        return BOARD_COMMANDS;
+        return own;
     }
 
     /**
@@ -1258,9 +1223,9 @@ public class OltCliSession implements Closeable {
     /** 版本命令清单：认出厂商就用厂商自己的，省掉一整轮探测来回 */
     private static List<String> versionCommands(OltVendor vendor) {
         if (vendor != null && vendor != OltVendor.GENERIC) {
-            return vendor.getVersionCommands();
+            return OltVendorProfiles.of(vendor).versionCommands();
         }
-        return VERSION_COMMANDS;
+        return OltVendorProfiles.of(OltVendor.GENERIC).versionCommands();
     }
 
     /** 设备不认这条命令（风格发错了） */
@@ -1433,22 +1398,25 @@ public class OltCliSession implements Closeable {
     private void prepareTerminal(OltVendor vendor, boolean firstOnly) {
         int timeout = Math.min(commandTimeoutMs, 4000);
         if (vendor != null && vendor != OltVendor.GENERIC) {
-            List<String> commands = vendor.getPagingCommands();
+            List<String> commands = OltVendorProfiles.of(vendor).pagingCommands();
             for (String command : firstOnly && !commands.isEmpty() ? commands.subList(0, 1) : commands) {
                 runQuietly(command, timeout);
             }
             return;
         }
+        List<String> huawei = OltVendorProfiles.of(OltVendor.HUAWEI).pagingCommands();
+        List<String> thirdParty = OltVendorProfiles.of(OltVendor.ZTE).pagingCommands();
+        List<String> generic = OltVendorProfiles.of(OltVendor.GENERIC).pagingCommands();
         if (firstOnly) {
             // 认不出厂商：华为的 scroll 与第三方通用的 terminal length 0 各来一条
-            runQuietly(OltVendor.HUAWEI.getPagingCommands().get(0), timeout);
-            runQuietly(OltVendor.GENERIC.getPagingCommands().get(0), timeout);
+            runQuietly(huawei.get(0), timeout);
+            runQuietly(generic.get(0), timeout);
             return;
         }
-        for (String command : OltVendor.HUAWEI.getPagingCommands()) {
+        for (String command : huawei) {
             runQuietly(command, timeout);
         }
-        for (String command : OltVendor.ZTE.getPagingCommands()) {
+        for (String command : thirdParty) {
             runQuietly(command, timeout);
         }
     }

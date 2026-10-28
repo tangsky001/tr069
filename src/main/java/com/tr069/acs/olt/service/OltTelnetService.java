@@ -161,6 +161,27 @@ public class OltTelnetService {
     }
 
     /**
+     * 只读查询（TR-069 模板列表这类不进库的实时数据）：登录 → config 视图逐条 show。
+     */
+    public List<String> queryCommands(OltDevice device, List<String> commands) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        List<String> outputs = doQueryCommands(device, charset, commands);
+        if (OltCharset.isAuto(device.getCharset())
+                && outputs.stream().anyMatch(out -> out != null && out.indexOf('\uFFFD') >= 0)) {
+            return doQueryCommands(device, OltCharset.fallback(), commands);
+        }
+        return outputs;
+    }
+
+    private List<String> doQueryCommands(OltDevice device, Charset charset, List<String> commands)
+            throws IOException {
+        try (OltCliSession session = OltCliSession.open(
+                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
+            return session.queryCommands(commands);
+        }
+    }
+
+    /**
      * 下发配置命令（DBA 模板增删这类写操作）：登录 → config 视图逐条执行。
      * 「自动」编码时回显解出替换符就用备用编码重发一遍，避免中文错误提示读不懂。
      */

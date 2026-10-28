@@ -20,6 +20,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -244,6 +245,20 @@ class OltCliSessionTest {
             assertFalse(snapshot.getTranscript().contains("show vlan all"));
             assertTrue(snapshot.getNotes().isEmpty());
 
+            // VLAN 快照走 show running-config：VLAN 1（PON01-04 + GE01-08 不带标）与 VLAN 41（GE01,2 带标）
+            assertTrue(snapshot.getTranscript().contains("show running-config"));
+            assertNotNull(snapshot.getVlanInfo());
+            assertEquals(2, snapshot.getVlanInfo().getVlans().size());
+            assertEquals(Integer.valueOf(1), snapshot.getVlanInfo().getVlans().get(0).getVlanId());
+            assertEquals("EPON01,EPON02,EPON03,EPON04,GE01,GE02,GE03,GE04,GE05,GE06,GE07,GE08",
+                    snapshot.getVlanInfo().getVlans().get(0).getUntaggedPorts());
+            assertEquals("GE01,GE02", snapshot.getVlanInfo().getVlans().get(1).getTaggedPorts());
+
+            // 「创建 VLAN」弹窗的可勾选端口：4 个 PON + 8 个 GE，顺序与面板一致
+            assertEquals(12, snapshot.getVlanInfo().getMemberPorts().size());
+            assertEquals("PON01", snapshot.getVlanInfo().getMemberPorts().get(0).getLabel());
+            assertEquals("GE08", snapshot.getVlanInfo().getMemberPorts().get(11).getLabel());
+
             // 整机卡片：型号即板卡型号（页面按它找示意图），4 个 PON 口
             assertEquals(1, snapshot.getBoards().size());
             OltBoard board = snapshot.getBoards().get(0);
@@ -267,6 +282,14 @@ class OltCliSessionTest {
             assertEquals("C8:21:DA:F8:2F:70", board.getPorts().get(0).getOnts().get(0).getSn());
             assertTrue(board.getPorts().get(0).getOnts().get(0).getOnline());
             assertFalse(board.getPorts().get(1).getOnts().get(1).getOnline());
+
+            // 手册 6.4 / 6.5：进 PON 口视图补的设备类型、ONU 类型与接收光功率
+            OltOnt first = board.getPorts().get(0).getOnts().get(0);
+            assertEquals("HGU", first.getDeviceType());
+            assertEquals("1ge", first.getOnuType());
+            assertEquals("-7.3119 dBm", first.getRxPower());
+            // 离线那条没有光功率回显，留空让页面显示「-」
+            assertNull(board.getPorts().get(1).getOnts().get(1).getRxPower());
         }
     }
 
@@ -618,6 +641,34 @@ class OltCliSessionTest {
                                     + "   2026/10/25 00:46:11   ONU02/02   NO-DESCRIPTI\r\n"
                                     + " Total: 8  Online:7  Offline:1\r\n"
                                     + "OLT>");
+                        } else if ("show running-config".equals(command)) {
+                            // 鸿升光采 VLAN 用的就是这条：vlan standard 一行一个 VLAN，
+                            // 紧跟的 port epon/ge ... tagged|untagged 是成员端口
+                            write(out, "!\r\n"
+                                    + "vlan standard 1\r\n"
+                                    + " port epon 1-4 untagged\r\n"
+                                    + " port ge 1-8 untagged\r\n"
+                                    + "!\r\n"
+                                    + "vlan standard 41\r\n"
+                                    + " port ge 1,2 tagged\r\n"
+                                    + "!\r\n"
+                                    + "OLT>");
+                        } else if ("show port state all".equals(command)) {
+                            // 「创建 VLAN」弹窗的勾选项来自这条：4 个 PON 口 + 8 个上联 GE
+                            write(out, "Port       Status    Speed     MTU\r\n"
+                                    + "epon1      Up        1000      1500\r\n"
+                                    + "epon2      Up        1000      1500\r\n"
+                                    + "epon3      Down      1000      1500\r\n"
+                                    + "epon4      Down      1000      1500\r\n"
+                                    + "ge1        Up        1000      1500\r\n"
+                                    + "ge2        Up        1000      1500\r\n"
+                                    + "ge3        Down      1000      1500\r\n"
+                                    + "ge4        Down      1000      1500\r\n"
+                                    + "ge5        Down      1000      1500\r\n"
+                                    + "ge6        Down      1000      1500\r\n"
+                                    + "ge7        Down      1000      1500\r\n"
+                                    + "ge8        Down      1000      1500\r\n"
+                                    + "OLT>");
                         } else if ("show vlan all".equals(command)) {
                             write(out, "----------------------------------------\r\n"
                                     + " VLAN ID            : 1\r\n"
@@ -636,6 +687,27 @@ class OltCliSessionTest {
                                     + " Default Vlan Ports :\r\n"
                                     + "----------------------------------------\r\n"
                                     + "OLT(config)#");
+                        } else if (command.startsWith("interface epon ")) {
+                            write(out, "OLT(config-epon-" + command.substring("interface epon ".length()) + ")#");
+                        } else if ("show onu-version all".equals(command)) {
+                            // 手册 6.4：设备类型与 ONU 类型（1ge / 1ge1fe）都在这一条里
+                            write(out, "PON/ONU ONU-Name  Mac-Address   Vendor Serial DevType Type"
+                                    + "   Version   ONU-DESC\r\n"
+                                    + " 1/1 ONU01/01 38:3a:21:28:8d:ad HSGQ 0000 HGU 1ge V1.9.0-200326 NO-DESCRIPTION\r\n"
+                                    + " 1/2 ONU01/02 38:3a:21:28:06:66 HSGQ 0000 HGU 1ge1fe M221-210105 NO-DESCRIPTION\r\n"
+                                    + " 2/1 ONU02/01 38:3a:21:28:0c:11 HSGQ 0000 HGU 1ge V1.9.0-200326 NO-DESCRIPTION\r\n"
+                                    + " 2/2 ONU02/02 38:3a:21:28:0c:22 HSGQ 0000 SFU 1fe V1.9.0-200326 NO-DESCRIPTION\r\n"
+                                    + "OLT(config-epon-1)#");
+                        } else if ("show optical-info".equals(command)) {
+                            // 手册 6.5：先发光（Tx）后收光（Rx），页面要最后那个
+                            write(out, "PON/ONU ONU-Name Mac-address Temperature Voltage Bias"
+                                    + "   Tx power  Rx power\r\n"
+                                    + " 1/1 ONU01/01 38:3a:21:28:8d:ad 47 C 3.30 V 14 mA 2.0194 dBm -7.3119 dBm\r\n"
+                                    + " 1/2 ONU01/02 38:3a:21:28:06:66 37 C 3.34 V 16 mA 2.6477 dBm -16.4975 dBm\r\n"
+                                    + " 2/1 ONU02/01 38:3a:21:28:0c:11 45 C 3.28 V 15 mA 2.1000 dBm -21.4267 dBm\r\n"
+                                    + "OLT(config-epon-1)#");
+                        } else if ("exit".equals(command)) {
+                            write(out, "OLT(config)#");
                         } else if ("enable".equals(command)) {
                             write(out, "OLT#");
                         } else if ("configure".equals(command)) {

@@ -129,7 +129,8 @@ const VENDOR_LABELS = {
   HUAWEI: '华为',
   ZTE: '中兴',
   FIBERHOME: '烽火',
-  HSGQ: '鸿升光',
+  HSGQ: '鸿升光 EPON',
+  HSGQ_GPON: '鸿升光 GPON',
   GENERIC: '通用'
 }
 

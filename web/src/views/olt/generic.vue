@@ -81,22 +81,45 @@
         </el-tab-pane>
 
         <el-tab-pane label="VLAN" name="vlan">
-          <div class="olt-summary">
-            <div>
-              VLAN <b>{{ vlanList.length }}</b> 个，上行口 <b>{{ portVlans.length }}</b> 个，
-              三层接口 <b>{{ vlanIpInterfaces.length }}</b> 个，静态路由 <b>{{ staticRoutes.length }}</b> 条
-              <span v-if="vlanInfo && vlanInfo.collectedAt">；快照时间 {{ vlanInfo.collectedAt }}</span>
+          <!-- 鸿升光：没有 vlanif / 静态路由那一套，用它能真正增删的 VLAN 面板 -->
+          <template v-if="isHsgq">
+            <div class="olt-summary">
+              <div>
+                VLAN <b>{{ vlanList.length }}</b> 个（按 <code>show running-config</code> 采集）
+                <span v-if="vlanInfo && vlanInfo.collectedAt">；快照时间 {{ vlanInfo.collectedAt }}</span>
+              </div>
             </div>
-          </div>
+            <olt-hsgq-vlan-panel
+              :vlans="vlanList"
+              :member-ports="memberPorts"
+              :create-handler="createVlan"
+              :delete-handler="deleteVlan"
+            />
+          </template>
 
-          <olt-vlan-panel
-            :vlan-list="vlanList"
-            :port-vlans="portVlans"
-            :vlan-ip-interfaces="vlanIpInterfaces"
-            :static-routes="staticRoutes"
-            :vlan-group-rows="vlanGroupRows"
-            empty-text="尚未采集到 VLAN 信息，也可以点上面的「同步」立即刷新。"
-          />
+          <template v-else>
+            <div class="olt-summary">
+              <div>
+                VLAN <b>{{ vlanList.length }}</b> 个，上行口 <b>{{ portVlans.length }}</b> 个，
+                三层接口 <b>{{ vlanIpInterfaces.length }}</b> 个，静态路由 <b>{{ staticRoutes.length }}</b> 条
+                <span v-if="vlanInfo && vlanInfo.collectedAt">；快照时间 {{ vlanInfo.collectedAt }}</span>
+              </div>
+            </div>
+
+            <olt-vlan-panel
+              :vlan-list="vlanList"
+              :port-vlans="portVlans"
+              :vlan-ip-interfaces="vlanIpInterfaces"
+              :static-routes="staticRoutes"
+              :vlan-group-rows="vlanGroupRows"
+              empty-text="尚未采集到 VLAN 信息，也可以点上面的「同步」立即刷新。"
+            />
+          </template>
+        </el-tab-pane>
+
+        <!-- TR-069（ACS）模板只有鸿升光接过命令，别的厂商不显示这个页签 -->
+        <el-tab-pane v-if="isHsgq" label="TR069模板" name="tr069" lazy>
+          <olt-hsgq-tr069-panel :olt-id="detailId" />
         </el-tab-pane>
 
         <el-tab-pane label="ONT 配置/状态" name="ont">
@@ -107,9 +130,27 @@
             </div>
           </div>
 
+          <!-- 鸿升光：ONU 数量本来就少（一台几十条），平铺成一张表比按 PON 口折叠好查 -->
+          <olt-ont-list
+            v-if="isHsgq"
+            :ont-boards="ontBoards"
+            :sn-label="device.vendor === 'HSGQ' ? 'MAC 地址' : 'SN'"
+            empty-text="尚未采集到 ONU 数据。点上面的「同步」，采集时会跑 show onu-info all。"
+          />
           <olt-ont-board
+            v-else
             :ont-boards="ontBoards"
             empty-text="尚未采集到端口/ONT 数据，点上面的「同步」立即刷新。"
+          />
+        </el-tab-pane>
+
+        <!-- 命令动作目录只有接入了手册的厂商才有（鸿升光），其它厂商不显示这个页签 -->
+        <el-tab-pane v-if="commandActions.length" label="设备配置" name="commands">
+          <olt-command-center
+            :actions="commandActions"
+            :exec-handler="execAction"
+            :ports="memberPorts"
+            :setup-handler="handleQuickSetup"
           />
         </el-tab-pane>
 
@@ -133,7 +174,11 @@ import OltDeviceInfo from './components/OltDeviceInfo'
 import OltBoardCards from './components/OltBoardCards'
 import OltHsgqFaceplate from './components/OltHsgqFaceplate'
 import OltOntBoard from './components/OltOntBoard'
+import OltOntList from './components/OltOntList'
 import OltVlanPanel from './components/OltVlanPanel'
+import OltHsgqVlanPanel from './components/OltHsgqVlanPanel'
+import OltHsgqTr069Panel from './components/OltHsgqTr069Panel'
+import OltCommandCenter from './components/OltCommandCenter'
 import OltRecords from './components/OltRecords'
 import OltFormDialog from './components/OltFormDialog'
 import { oltDetailMixin } from './mixins/oltDetail'
@@ -155,7 +200,11 @@ export default {
     OltBoardCards,
     OltHsgqFaceplate,
     OltOntBoard,
+    OltOntList,
     OltVlanPanel,
+    OltHsgqVlanPanel,
+    OltHsgqTr069Panel,
+    OltCommandCenter,
     OltRecords,
     OltFormDialog
   },
