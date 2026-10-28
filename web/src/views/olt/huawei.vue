@@ -42,14 +42,15 @@
 
           <olt-board-cards
             :slots="slots"
+            :slot-count="chassisSlotCount"
+            :model="device.model"
+            :brand="device.vendorLabel"
             :expanded-onts="expandedOnts"
             :hover-port="hoverPort"
-            :missing-images="missingImages"
             empty-text="尚无板卡数据。点击「同步」登录设备采集；若同步成功仍为空，说明厂商命令与解析规则不匹配，可到「采集记录」查看原始回显。"
             @toggle="onToggleOnts"
             @hover="hoverOn"
             @leave="hoverOff"
-            @image-error="markImageMissing"
           />
         </el-tab-pane>
 
@@ -91,6 +92,7 @@
           </div>
 
           <olt-dba-panel
+            :olt-id="detailId"
             :dba-profiles="dbaProfiles"
             :line-profiles="lineProfiles"
             :create-handler="createDba"
@@ -125,7 +127,7 @@
             :ont-boards="ontBoards"
             :olt-id="detailId"
             :empty-text="'尚未采集到端口/ONT 数据。点右上角「同步ONT状态」立即采集。'"
-            @sync="afterOltOperation"
+            @sync="refreshFull"
           />
         </el-tab-pane>
 

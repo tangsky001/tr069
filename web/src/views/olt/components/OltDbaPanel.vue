@@ -134,38 +134,43 @@
         :close-on-click-modal="false"
         append-to-body
       >
-        <el-form label-width="110px" size="small" @submit.native.prevent>
+        <el-form v-if="meta" label-width="110px" size="small" @submit.native.prevent>
           <el-form-item label="模板ID">
             <el-input-number
               v-model="form.profileId"
-              :min="10"
-              :max="512"
-              placeholder="10-512, 不能重复"
+              :min="meta.profileIdMin"
+              :max="meta.profileIdMax"
+              :placeholder="meta.profileIdMin + '-' + meta.profileIdMax + ', 不能重复'"
               class="dba-id-input"
             />
           </el-form-item>
           <el-form-item label="模板名">
-            <el-input v-model="form.name" placeholder="数字、字母及下划线组成" :maxlength="32" />
+            <el-input v-model="form.name" placeholder="数字、字母及下划线组成" :maxlength="meta.nameMax" />
           </el-form-item>
           <el-form-item label="DBA 类型">
             <el-select v-model="form.type" style="width: 100%">
-              <el-option label="type4 - 最大带宽（默认）" value="type4" />
-              <el-option label="type1 - 固定带宽" value="type1" />
-              <el-option label="type2 - 保证带宽" value="type2" />
-              <el-option label="type3 - 保证带宽+最大带宽" value="type3" />
-              <el-option label="type5 - 固定带宽+保证带宽+最大带宽" value="type5" />
+              <el-option v-for="type in meta.types" :key="type.code" :label="type.label" :value="type.code" />
             </el-select>
           </el-form-item>
-          <el-form-item label="固定带宽大小">
-            <el-input v-model="form.fixKbps" placeholder="kbps" />
+          <!-- 哪几个带宽框该出现由后端按类型决定，页面不认识 type1~type5 的区别 -->
+          <el-form-item v-if="needs('fix')" label="固定带宽大小">
+            <el-input v-model="form.fixKbps" :placeholder="bandwidthPlaceholder" />
           </el-form-item>
-          <el-form-item label="保证带宽大小">
-            <el-input v-model="form.assureKbps" placeholder="单位 kbps, 10m表示10Mbps" />
+          <el-form-item v-if="needs('assure')" label="保证带宽大小">
+            <el-input v-model="form.assureKbps" :placeholder="bandwidthPlaceholder" />
           </el-form-item>
-          <el-form-item label="最大带宽大小">
-            <el-input v-model="form.maxKbps" placeholder="单位 kbps, 100m表示100Mbps" />
+          <el-form-item v-if="needs('max')" label="最大带宽大小">
+            <el-input v-model="form.maxKbps" :placeholder="bandwidthPlaceholder" />
           </el-form-item>
         </el-form>
+        <div v-else class="olt-empty">正在读取模板参数…</div>
+
+        <div class="dba-preview">
+          <div v-if="preview.warnings.length" class="dba-preview-warn">
+            <div v-for="(warning, index) in preview.warnings" :key="index">{{ warning }}</div>
+          </div>
+          <pre :class="{ 'is-error': previewError }">{{ previewText }}</pre>
+        </div>
         <div class="dba-dialog-footer">
           <el-button type="primary" :loading="saving" @click="save">保存设置</el-button>
           <el-button type="warning" @click="dialogVisible = false">关闭</el-button>
@@ -187,9 +192,19 @@
  * createHandler / deleteHandler 由页面（mixin）执行，成功后页面会拿最新
  * 采集数据刷新；「增加 GEM Port」仍是占位。
  */
+import { fetchDbaForm, previewDbaProfile } from '@/api/olt'
+
+/** 表单改动后隔多久重新算命令 */
+const PREVIEW_DELAY_MS = 300
+
 export default {
   name: 'OltDbaPanel',
   props: {
+    /** 设备 ID，取表单约束和命令预览要用 */
+    oltId: {
+      type: [Number, String],
+      default: null
+    },
     dbaProfiles: {
       type: Array,
       default: () => []
@@ -219,6 +234,10 @@ export default {
       lineSelected: [],
       dialogVisible: false,
       saving: false,
+      /** 五类模板的字段矩阵与取值约束，来自后端 */
+      meta: null,
+      preview: { commands: [], warnings: [] },
+      previewError: '',
       form: {}
     }
   },
@@ -230,70 +249,117 @@ export default {
       })
       return map
     },
-    needFix() {
-      return ['type1', 'type5'].includes(this.form.type)
+    /** 当前类型要填哪几个带宽字段：矩阵由后端给，页面不认识 type1~type5 */
+    currentFields() {
+      const hit = this.meta && this.meta.types
+        ? this.meta.types.find(type => type.code === this.form.type)
+        : null
+      return hit ? hit.fields : []
     },
-    needAssure() {
-      return ['type2', 'type3', 'type5'].includes(this.form.type)
+    bandwidthPlaceholder() {
+      return this.meta
+        ? '单位 kbps，' + this.meta.bandwidthMin + '-' + this.meta.bandwidthMax
+        : '单位 kbps'
     },
-    needMax() {
-      return ['type3', 'type4', 'type5'].includes(this.form.type)
-    },
-    /** 弹窗里三个带宽框始终显示（对齐网管），但只校验当前类型需要的 */
-    unusedKbpsKeys() {
-      const unused = []
-      if (!this.needFix) unused.push('fixKbps')
-      if (!this.needAssure) unused.push('assureKbps')
-      if (!this.needMax) unused.push('maxKbps')
-      return unused
+    previewText() {
+      if (this.previewError) {
+        return this.previewError
+      }
+      if (!this.preview.commands.length) {
+        return '（填好参数后显示要下发的命令）'
+      }
+      return this.preview.commands.join('\n')
+    }
+  },
+  watch: {
+    form: {
+      deep: true,
+      handler() {
+        this.schedulePreview()
+      }
+    }
+  },
+  beforeDestroy() {
+    if (this.previewTimer) {
+      clearTimeout(this.previewTimer)
     }
   },
   methods: {
-    /** 打开弹窗：type4 是网管上的默认类型 */
-    openCreate() {
-      this.form = { profileId: undefined, name: '', type: 'type4', fixKbps: '', assureKbps: '', maxKbps: '' }
+    needs(field) {
+      return this.currentFields.includes(field)
+    },
+    /** 打开弹窗：默认类型由后端给 */
+    async openCreate() {
+      await this.loadMeta()
+      this.form = {
+        profileId: undefined,
+        name: '',
+        type: this.meta ? this.meta.defaultType : '',
+        fixKbps: '',
+        assureKbps: '',
+        maxKbps: ''
+      }
       this.dialogVisible = true
     },
-    /** 按类型校验后交给页面下发，成功关弹窗（错误提示由 request 拦截器统一弹） */
-    save() {
-      const form = this.form
-      if (!form.profileId || form.profileId < 10 || form.profileId > 512) {
-        this.$message.warning('模板 ID 必须在 10-512 之间')
+    loadMeta() {
+      if (this.meta || !this.oltId) {
+        return Promise.resolve()
+      }
+      return fetchDbaForm(this.oltId)
+        .then(res => {
+          this.meta = res.data
+        })
+        .catch(() => {
+          this.$message.error('读取 DBA 模板参数失败')
+        })
+    },
+    schedulePreview() {
+      if (this.previewTimer) {
+        clearTimeout(this.previewTimer)
+      }
+      this.previewTimer = setTimeout(() => this.runPreview(), PREVIEW_DELAY_MS)
+    },
+    /** 让后端把 dba-profile add 算出来；校验没过也由后端指出 */
+    async runPreview() {
+      if (!this.oltId || !this.form.type) {
         return
       }
-      if (!/^[A-Za-z0-9_]{1,32}$/.test(form.name || '')) {
-        this.$message.warning('模板名只能由数字、字母及下划线组成')
+      try {
+        const result = await previewDbaProfile(this.oltId, this.payload())
+        // 命令在 { code, data } 的 data 里
+        const data = result.data || {}
+        this.preview = { commands: data.commands || [], warnings: data.warnings || [] }
+        this.previewError = ''
+      } catch (e) {
+        this.preview = { commands: [], warnings: [] }
+        this.previewError = e && e.message ? e.message : '命令预演失败'
+      }
+    },
+    payload() {
+      const fields = this.currentFields
+      return {
+        profileId: this.form.profileId,
+        name: this.form.name,
+        type: this.form.type,
+        // 不属于当前类型的字段不提交，免得 type4 还带着个固定带宽
+        fixKbps: fields.includes('fix') ? Number(this.form.fixKbps) : null,
+        assureKbps: fields.includes('assure') ? Number(this.form.assureKbps) : null,
+        maxKbps: fields.includes('max') ? Number(this.form.maxKbps) : null
+      }
+    },
+    /** 命令和校验都在后端：算不出命令就拦下，不再本地判一遍 */
+    async save() {
+      await this.runPreview()
+      if (this.previewError) {
+        this.$message.warning(this.previewError)
         return
       }
-      const fields = [
-        ['fixKbps', this.needFix, '固定带宽'],
-        ['assureKbps', this.needAssure, '保证带宽'],
-        ['maxKbps', this.needMax, '最大带宽']
-      ]
-      for (const [key, required, label] of fields) {
-        const value = Number(form[key])
-        if (required && (!form[key] || !Number.isFinite(value) || value <= 0)) {
-          this.$message.warning('请填写正整数 ' + label + '（单位 kbps）')
-          return
-        }
-      }
-      // 不属于当前类型的字段清掉再提交，避免 type4 还带着个 0 的固定带宽
-      this.unusedKbpsKeys.forEach(key => {
-        form[key] = null
-      })
       if (!this.createHandler) {
         this.$message.info('下发能力未接入')
         return
       }
       this.saving = true
-      Promise.resolve(this.createHandler({
-        profileId: form.profileId,
-        name: form.name,
-        type: form.type,
-        fixKbps: this.needFix ? Number(form.fixKbps) : null,
-        assureKbps: this.needAssure ? Number(form.assureKbps) : null,
-        maxKbps: this.needMax ? Number(form.maxKbps) : null
-      }))
+      Promise.resolve(this.createHandler(this.payload()))
         .then(() => {
           this.dialogVisible = false
         })
@@ -440,5 +506,34 @@ export default {
 .dba-dialog-footer {
   text-align: left;
   padding-left: 110px;
+}
+.dba-preview {
+  margin: 8px 0;
+  border: 1px solid #dfe6ee;
+  border-radius: 4px;
+
+  pre {
+    margin: 0;
+    padding: 8px 10px;
+    color: #2c3e50;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+
+    /* 校验没过时这里显示的是后端给的原因 */
+    &.is-error {
+      color: #c0392b;
+    }
+  }
+}
+.dba-preview-warn {
+  padding: 6px 10px;
+  color: #8a6d3b;
+  font-size: 12px;
+  line-height: 1.6;
+  background: #fcf8e3;
+  border-bottom: 1px solid #f5e6c0;
 }
 </style>

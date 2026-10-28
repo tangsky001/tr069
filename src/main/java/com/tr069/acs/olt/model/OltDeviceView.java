@@ -48,6 +48,9 @@ public class OltDeviceView {
 
     private String backplane;
 
+    /** 机框槽位数（来自 display board 0 的槽位表），机框视图按它画槽位 */
+    private Integer slotCount;
+
     private String macAddress;
 
     private String uptime;
@@ -91,6 +94,7 @@ public class OltDeviceView {
         view.setSoftwareVersion(device.getSoftwareVersion());
         view.setPatchVersion(device.getPatchVersion());
         view.setBackplane(device.getBackplane());
+        view.setSlotCount(device.getSlotCount());
         view.setMacAddress(device.getMacAddress());
         view.setUptime(device.getUptime());
         view.setStatus(device.getStatus());

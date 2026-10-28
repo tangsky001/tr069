@@ -17,6 +17,7 @@ import com.tr069.acs.olt.model.OltIpInterface;
 import com.tr069.acs.olt.model.OltPortVlan;
 import com.tr069.acs.olt.model.OltStaticRoute;
 import com.tr069.acs.olt.model.OltVlan;
+import com.tr069.acs.olt.vendor.OltVendorProfiles;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -39,24 +40,10 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ 型号 / 版本
 
-    /** 华为 OLT 型号：MA5683T / MA5600T；注意别把版本号 MA5600V800R015C00 当成型号 */
-    private static final Pattern MODEL_HUAWEI = Pattern.compile(
-            "(?i)\\b(MA5800-[A-Z0-9]+|EA5800-[A-Z0-9]+|MA6800T|MA5\\d{3,4}T?)\\b");
-
-    private static final Pattern MODEL_ZTE = Pattern.compile(
-            "(?i)\\b(ZXA10\\s*[A-Z]\\d{3,4}[A-Z]?|ZXA10\\s*C\\d{3})\\b");
-
-    private static final Pattern MODEL_FIBERHOME = Pattern.compile(
-            "(?i)\\b(AN5\\d{3}-\\d{2}|AN6000-\\d+|AN5516-\\d{2})\\b");
-
-    /** 鸿升光：HSGQ-E04（show version 的 Software Version 和 Product 行里都有） */
-    private static final Pattern MODEL_HSGQ = Pattern.compile(
-            "(?i)\\b(HSGQ-[A-Za-z0-9]{2,10})\\b");
-
-    /** 型号常见写法：Model: xxx / Product name : xxx / 设备型号 */
-    private static final Pattern MODEL_LINE = Pattern.compile(
-            "(?im)^\\s*(?:model(?:\\s*name)?|product\\s*name|device\\s*type|equipment\\s*type|设备型号|产品名称)"
-                    + "\\s*[:：]\\s*([A-Za-z0-9._/-]{3,40})\\s*$");
+    /**
+     * 型号 / 版本的提取要看厂商：这块搬到各家 profile 了（见 {@link #extractModel}），
+     * 版本 / 补丁 / 背板 / MAC 这些各家写法一致的还在这里。
+     */
 
     /** 产品版本号：MA5600V800R015C00（华为型号+版本拼在一起，优先于纯 VRP 号） */
     private static final Pattern VERSION_PRODUCT = Pattern.compile(
@@ -113,6 +100,9 @@ public final class OltInfoParser {
     private static final Pattern BACKPLANE_BOARD = Pattern.compile(
             "(?m)^\\s*\\d{1,2}\\s+(H\\d{3}MAB[A-Z0-9]{0,4})(?=\\s|$)", Pattern.CASE_INSENSITIVE);
 
+    /** 槽位表里的空槽位行：整行只有一个槽位号，没有板卡名 */
+    private static final Pattern EMPTY_SLOT_LINE = Pattern.compile("(?m)^\\s*(\\d{1,2})\\s*$");
+
     /**
      * 华为 display temperature all 的表头：
      * Slot Card Sensor Status Current(C) Lower(C) Upper(C)
@@ -149,36 +139,16 @@ public final class OltInfoParser {
 
     /**
      * 从版本回显里提取型号。
+     *
+     * <p>各家型号写法不一样（华为 MA5683T、中兴 ZXA10 C320、鸿升光 HSGQ-E04），
+     * 规则在各家 profile 的 {@code extractModel} 里，这里只认出来是哪一家然后转过去。
+     * 认不出厂商时兜底那份会挨家试一遍。</p>
      */
     public static String extractModel(OltVendor vendor, String text) {
         if (text == null || text.isBlank()) {
             return null;
         }
-        Pattern[] candidates;
-        switch (vendor == null ? OltVendor.GENERIC : vendor) {
-            case HUAWEI:
-                candidates = new Pattern[]{MODEL_HUAWEI, MODEL_LINE};
-                break;
-            case ZTE:
-                candidates = new Pattern[]{MODEL_ZTE, MODEL_LINE};
-                break;
-            case FIBERHOME:
-                candidates = new Pattern[]{MODEL_FIBERHOME, MODEL_LINE};
-                break;
-            case HSGQ:
-                candidates = new Pattern[]{MODEL_HSGQ, MODEL_LINE};
-                break;
-            default:
-                candidates = new Pattern[]{MODEL_HUAWEI, MODEL_ZTE, MODEL_FIBERHOME, MODEL_HSGQ, MODEL_LINE};
-                break;
-        }
-        for (Pattern pattern : candidates) {
-            Matcher matcher = pattern.matcher(text);
-            if (matcher.find()) {
-                return clean(matcher.group(1));
-            }
-        }
-        return null;
+        return OltVendorProfiles.of(vendor).extractModel(text);
     }
 
     /**
@@ -348,6 +318,30 @@ public final class OltInfoParser {
         }
         boards.sort((a, b) -> Integer.compare(a.getSlotNo(), b.getSlotNo()));
         return boards;
+    }
+
+    /**
+     * 机框槽位数：{@code display board 0} 槽位表里最大的 SlotID + 1。
+     *
+     * <p>表里空槽位也占一行（只有槽位号，没有板卡名），所以不能只看解析出来的板卡行——
+     * 现场这台 MA5683T 的槽位表是 0..12 共 13 个槽位，只有 1/6/8 插了板卡，
+     * 机框要按 13 个槽位画，而不是只画到 8 号。</p>
+     */
+    public static Integer parseSlotCount(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        int max = -1;
+        Matcher bare = EMPTY_SLOT_LINE.matcher(text);
+        while (bare.find()) {
+            max = Math.max(max, Integer.parseInt(bare.group(1)));
+        }
+        for (OltBoard board : parseBoards(text)) {
+            if (board.getSlotNo() != null) {
+                max = Math.max(max, board.getSlotNo());
+            }
+        }
+        return max < 0 ? null : max + 1;
     }
 
     /**
@@ -739,19 +733,20 @@ public final class OltInfoParser {
             int online = summary.group(5) == null ? countOnline(text, portNo) : Integer.parseInt(summary.group(5));
             counts.put(portNo, new int[]{total, online});
         }
-        if (!counts.isEmpty()) {
-            return counts;
-        }
-        // 没有汇总行（部分版本只有表格）：行数当总数，Run state 数在线
+        // 明细行兜底：整段没有汇总行（部分版本只有表格），或者只有部分端口带汇总行
+        // （分页截断、只在有 ONT 的口打汇总）时，用表格行数补上——否则这些口会被当成 0 个 ONT，
+        // 页面就把明明有 ONT 在线的口画成离线。
+        Map<Integer, int[]> fromRows = new LinkedHashMap<>();
         Matcher row = ONT_ROW.matcher(text);
         while (row.find()) {
             int portNo = Integer.parseInt(row.group(3));
-            int[] stat = counts.computeIfAbsent(portNo, key -> new int[]{0, 0});
+            int[] stat = fromRows.computeIfAbsent(portNo, key -> new int[]{0, 0});
             stat[0]++;
             if (isOnline(row.group(7))) {
                 stat[1]++;
             }
         }
+        fromRows.forEach(counts::putIfAbsent);
         return counts;
     }
 
@@ -860,92 +855,78 @@ public final class OltInfoParser {
         return state.contains("online") || "up".equals(state);
     }
 
-    // ------------------------------------------------------------ 鸿升光 HSGQ
+    // ------------------------------------------------------------ 端口光模块数值
 
     /**
-     * 鸿升光整机卡片：现场不需要采集板卡信息（{@code show pon-info} 在部分固件上
-     * 只回一声命令回显，采不到数据），识别出厂商后直接按型号生成——
-     * E04 固定 4 个 PON 口，端口只给名字，ONU 数量页面显示「-」，示意图按型号出。
+     * {@code display port state <口>}（接口视图）里的键值行：
+     * {@code TX power(dBm)      : 4.23}、{@code Temperature(C)    : 35}。
      */
-    public static OltBoard buildHsgqBoard(String model) {
-        OltBoard board = new OltBoard();
-        board.setSlotNo(0);
-        board.setBoardType(model == null || model.isBlank() ? "HSGQ-E04" : model);
-        board.setStatus("Up");
-        board.setPortCount(4);
-        board.setPortMode("EPON");
-        board.setBoardKind(BoardKind.SERVICE.name());
-        board.setDescription("整机（4 口 EPON）");
-        List<OltPort> ports = new ArrayList<>();
-        for (int no = 1; no <= 4; no++) {
-            OltPort port = new OltPort();
-            port.setFrameNo(0);
-            port.setSlotNo(0);
-            port.setPortNo(no);
-            port.setPortName(String.format("PON%02d", no));
-            ports.add(port);
-        }
-        board.setPorts(ports);
-        return board;
-    }
+    private static final Pattern PORT_STATE_ROW = Pattern.compile("^([^:：]{2,48})[:：]\\s*(\\S.*)$");
 
     /**
-     * {@code show pon-info} 的端口行：
-     * {@code PON01   Up        5/5}（端口名 / 状态 / 在线数/总数）。
+     * 解析光模块数值：Optical Module status / Laser state / TX fault /
+     * Temperature(C) / TX Bias current(mA) / Supply Voltage(V) / TX power(dBm) / RX power(dBm)。
+     *
+     * <p>回显里还有 Port Information 段（Port state、Last up time 等），这里只挑光模块的字段；
+     * 一个都没认出来（命令不认、端口不存在）返回 null，调用方据此判断要不要继续问下一个口。</p>
      */
-    private static final Pattern HSGQ_PON_PORT = Pattern.compile(
-            "(?im)^\\s*PON(\\d{1,2})\\s+(Up|Down)\\s+(\\d{1,3})\\s*/\\s*(\\d{1,3})\\s*$");
-
-    /**
-     * {@code show onu-info all} 的数据行：
-     * {@code 1/1   c8:21:da:f8:2f:70   Online   TRUE   TRUE   2026/10/25 00:46:10   ONU01/01   NO-DESCRIPTI}。
-     * 前面的 1/1 是「PON 口号/ONU 号」，后面跟着 MAC 与在线状态；末行 {@code Total: 8  Online:7  Offline:1}。
-     */
-    private static final Pattern HSGQ_ONU_ROW = Pattern.compile(
-            "(?im)^\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})\\s+"
-                    + "([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\\s+"
-                    + "(Online|Offline)\\b(?:.*?\\b(ONU[0-9]{2}/[0-9]{2})\\b)?");
-
-    /**
-     * 鸿升光 {@code show pon-info}：PON 口号 → {在线数, 总数}。
-     * 采不到就返回空表，页面上 ONU 列照旧显示「-」，不会把没采到的数据当成 0。
-     */
-    public static Map<Integer, int[]> parseHsgqPonInfo(String text) {
-        Map<Integer, int[]> result = new LinkedHashMap<>();
+    public static OltPort parsePortStateOptics(String text) {
         if (text == null || text.isBlank()) {
-            return result;
+            return null;
         }
-        Matcher matcher = HSGQ_PON_PORT.matcher(text);
-        while (matcher.find()) {
-            int ponNo = Integer.parseInt(matcher.group(1));
-            int online = Integer.parseInt(matcher.group(3));
-            int total = Integer.parseInt(matcher.group(4));
-            result.put(ponNo, new int[]{online, total});
+        OltPort optics = new OltPort();
+        boolean any = false;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("$ ") || line.contains("#")
+                    || (!line.contains(":") && !line.contains("："))) {
+                continue;
+            }
+            Matcher row = PORT_STATE_ROW.matcher(line);
+            if (!row.matches()) {
+                continue;
+            }
+            String label = row.group(1).replaceAll("\\s+", " ").trim().toLowerCase(Locale.ROOT);
+            String value = row.group(2).trim();
+            switch (label) {
+                case "optical module status":
+                    optics.setModuleStatus(value);
+                    any = true;
+                    break;
+                case "laser state":
+                    optics.setLaserState(value);
+                    any = true;
+                    break;
+                case "tx fault":
+                    optics.setTxFault(value);
+                    any = true;
+                    break;
+                case "temperature(c)":
+                    optics.setOpticTemperature(value + " ℃");
+                    any = true;
+                    break;
+                case "tx bias current(ma)":
+                    optics.setBiasCurrent(value + " mA");
+                    any = true;
+                    break;
+                case "supply voltage(v)":
+                    optics.setSupplyVoltage(value + " V");
+                    any = true;
+                    break;
+                case "tx power(dbm)":
+                    optics.setTxPower(value + " dBm");
+                    any = true;
+                    break;
+                case "rx power(dbm)":
+                    optics.setRxPower(value + " dBm");
+                    any = true;
+                    break;
+                default:
+                    // Port state / Last up time 这些不是光模块数值
+                    break;
+            }
         }
-        return result;
-    }
-
-    /**
-     * 鸿升光 {@code show onu-info all}：PON 口号 → 这条 PON 口下的 ONU 列表。
-     * EPON 没有 GPON 的 SN，唯一标识就是 MAC，所以 MAC 放在 sn 上（页面显示「SN/MAC」那列）。
-     */
-    public static Map<Integer, List<OltOnt>> parseHsgqOnuInfo(String text) {
-        Map<Integer, List<OltOnt>> result = new LinkedHashMap<>();
-        if (text == null || text.isBlank()) {
-            return result;
-        }
-        Matcher matcher = HSGQ_ONU_ROW.matcher(text);
-        while (matcher.find()) {
-            int ponNo = Integer.parseInt(matcher.group(1));
-            OltOnt ont = new OltOnt();
-            ont.setOntId(Integer.parseInt(matcher.group(2)));
-            ont.setSn(matcher.group(3).toUpperCase(Locale.ROOT));
-            ont.setRunState(matcher.group(4));
-            ont.setOnline("online".equalsIgnoreCase(matcher.group(4)));
-            ont.setDescription(matcher.group(5));
-            result.computeIfAbsent(ponNo, key -> new ArrayList<>()).add(ont);
-        }
-        return result;
+        return any ? optics : null;
     }
 
     // ------------------------------------------------------------ VLAN

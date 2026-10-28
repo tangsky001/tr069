@@ -145,37 +145,68 @@
   line-height: 1.9;
   margin-bottom: 16px;
 }
-/* ---- 板卡卡片：插槽 / 型号 / 状态 / 描述 / 温度 / 示意图 ---- */
-.board-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
-  margin-top: 12px;
-}
-.board-card {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  padding: 12px 14px;
-  background: #fff;
-}
-.board-row {
+/* 板卡不再单独成卡：整排插在 OltChassis 的槽位里（样式在组件内） */
+/* 图例：三种灯色说明（整页只出现一次，不跟着每块板重复） */
+.board-legend {
   display: flex;
   align-items: center;
-  padding: 5px 0;
-  font-size: 13px;
-  color: #303133;
-  border-bottom: 1px dashed #f0f2f5;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #9099a6;
 }
-.board-row.no-border {
-  border-bottom: none;
+.board-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
-.board-row .k {
-  width: 76px;
-  flex-shrink: 0;
-  color: #909399;
+.board-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
 }
-.board-row .v {
-  word-break: break-all;
+.board-dot-online {
+  background: #35d07f;
+  animation: board-blink 1.3s ease-in-out infinite;
+}
+.board-dot-alarm {
+  background: #ff4d4f;
+}
+.board-dot-offline {
+  background: #565c66;
+}
+.board-legend-tip {
+  margin-left: auto;
+  color: #6f7883;
+}
+@keyframes board-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+/* 点开的端口明细：竖板太窄，明细放到面板下方整行铺开 */
+.board-ont-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.board-ont-details .ont-panel {
+  margin-top: 0;
+}
+/* 明细行在整行宽度里排，描述过长就省略，不把状态列挤出去 */
+.board-ont-details .ont-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .board-status-success {
   color: #67c23a;
@@ -354,124 +385,41 @@
   font-size: 12px;
   color: #c0c4cc;
 }
-.board-photo-box {
-  padding: 8px 0 2px;
-  text-align: left;
-}
-.board-photo-wrap {
-  position: relative;
-  display: inline-block;
-}
-/* 端口行钉在图的右侧，整块往左让出位置（连接线 12 + 行宽 210） */
-.board-photo-rows {
-  margin-right: 240px;
-}
-.port-overlay {
-  position: absolute;
-  left: calc(100% + 12px);
-  width: 210px;
-  transform: translateY(-50%);
-  gap: 6px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #fff;
-  z-index: 2;
-  white-space: nowrap;
-}
-/* 连到物理口的那条小横线 */
-.port-overlay::before {
-  content: '';
-  position: absolute;
-  right: 100%;
-  top: 50%;
-  width: 12px;
-  height: 1px;
-  background: #dcdfe6;
-}
-.port-overlay.port-row-active::before {
-  background: #409eff;
-}
-.port-row-active {
-  background: #ecf5ff;
-}
-/* ---- 横向整机图（鸿升光那类面板照）：端口行在图的下方，跑马线折上去连到 PON 口 ---- */
-.board-photo-box-wide {
-  /* 钉行和走线都是 absolute，不占流式空间，图下面要留出这一排行的高度 */
-  padding-bottom: 82px;
-}
-/* 跑马线：横段从行的中心走到口的正下方 */
-.port-lead-h {
-  position: absolute;
-  top: calc(100% + 22px);
-  height: 1px;
-  background: #dcdfe6;
-  z-index: 1;
-}
-/* 跑马线：竖段从横段那头往上折，插到物理口上 */
-.port-lead-v {
-  position: absolute;
-  top: 100%;
-  height: 22px;
-  width: 1px;
-  background: #dcdfe6;
-  transform: translateX(-50%);
-  z-index: 1;
-}
-.port-lead-active {
-  background: #409eff;
-}
-.port-overlay-x {
-  position: absolute;
-  top: calc(100% + 26px);
-  transform: translateX(-50%);
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  padding: 3px 10px;
-  border: 1px solid #ebeef5;
-  border-radius: 4px;
-  background: #fff;
-  z-index: 2;
-  white-space: nowrap;
-}
-.port-overlay-x.port-row-active {
-  border-color: #409eff;
-}
-/* 横向图下的钉行窄一些，字号也小一号，免得盖住相邻口 */
-.port-overlay-x .port-name {
-  font-size: 12px;
-}
-.port-overlay-x .port-iface {
-  font-size: 11px;
-}
-.port-overlay-x .port-ont {
-  font-size: 11px;
-}
-/* ---- 点开端口后的 ONT 明细面板 ---- */
+/* ---- 点开端口后的 ONT 明细面板：跟着板卡卡片一起走深色 ---- */
 .ont-panel {
   margin-top: 10px;
   padding: 6px 8px;
-  border: 1px solid #ebeef5;
+  border: 1px solid #2b313a;
   border-radius: 4px;
-  background: #fafcff;
+  background: #12161c;
   text-align: left;
 }
 .ont-panel-title {
   display: flex;
   align-items: center;
   font-size: 12px;
-  color: #303133;
+  color: #c9d1dc;
   margin-bottom: 4px;
 }
 .ont-panel-close {
   margin-left: auto;
-  color: #409eff;
+  color: #4a9eff;
   cursor: pointer;
 }
 .ont-panel .ont-list {
   padding-left: 0;
   max-height: 220px;
   overflow: auto;
+}
+.ont-panel .ont-row {
+  color: #a8b1bf;
+}
+.ont-panel .ont-sn,
+.ont-panel .ont-desc {
+  color: #8b95a3;
+}
+.ont-panel .ont-offline {
+  color: #7b8492;
 }
 /* 端口行的链路状态（display board 的 Link 列）：在线绿字、离线灰字 */
 .port-link {
@@ -483,43 +431,7 @@
 .port-link-offline {
   color: #c0c4cc;
 }
-/* 示意图是窄长条（约 42x719），按高度缩放，宽度交给原图比例；换成高清图后自动变宽 */
-.board-img {
-  height: 400px;
-  width: auto;
-  max-width: 92px;
-  border: 1px solid #ebeef5;
-  border-radius: 4px;
-  background: #fafafa;
-  padding: 4px 3px;
-}
-/* 横向示意图（整机的面板照片，如鸿升光 HSGQ-E04 的 770x125）：
-   按原图尺寸横向铺开，最多铺到原图宽度，不让小图被拉花 */
-.board-img-wide {
-  height: auto;
-  width: 100%;
-  max-width: none;
-}
-/* 横向图的 wrap 要收缩到图片宽度：钉行的 left 百分比是按图宽量的，
-   wrap 撑满整卡的话坐标就全偏了 */
-.board-photo-wide {
-  display: inline-block;
-  max-width: 100%;
-}
-/* 有横向示意图时卡片独占整行，横向图才铺得开 */
-.board-grid-single {
-  grid-template-columns: 1fr;
-}
-.board-no-image {
-  height: 120px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed #dcdfe6;
-  border-radius: 4px;
-  color: #c0c4cc;
-  font-size: 12px;
-}
+
 .olt-placeholder {
   color: #909399;
   font-size: 13px;

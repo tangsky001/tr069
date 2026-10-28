@@ -18,9 +18,19 @@ public record IntentPlan(String bizObject, int instance, List<String> objectsToA
                          List<PlanItem> parameters, List<String> errors) {
 
     /**
-     * 是否可以直接下发：没有问题且确实有要写的参数。
+     * 是否可以直接下发：没有问题，且确实有要写的参数或明确的动作。
      */
     public boolean deliverable() {
-        return errors.isEmpty() && !parameters.isEmpty();
+        return errors.isEmpty() && (!parameters.isEmpty() || isRebootOnly());
+    }
+
+    /**
+     * 纯重启计划：Device_Mgmt 意图没有任何参数要写，动作就是执行收尾时发 Reboot。
+     *
+     * <p>重启是标准 TR-069 RPC，不依赖任何型号适配——配置模板里勾了
+     * 「下发业务完成后重启光猫」，这就是一张合法的空计划。</p>
+     */
+    public boolean isRebootOnly() {
+        return "Device_Mgmt".equals(bizObject) && parameters.isEmpty();
     }
 }

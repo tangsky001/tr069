@@ -1,16 +1,16 @@
 /**
- * 厂商到详情视图的映射。
+ * 厂商到详情视图的映射：只有华为一套独立界面，其它厂商都走第三方界面。
  *
- * OLT 各家命令不一样，页面要摆的东西也不一样：华为有板卡、温度、每口 ONT，
- * 鸿升光是整机一体化设备（没有板卡概念），识别不出来的走通用视图。
- * 所以按 vendor 分三个独立的视图组件，各管自己的标签页与说明文案。
- *
- * 台账里的 vendor 是后端 OltVendor 的枚举名（HUAWEI / ZTE / FIBERHOME / HSGQ / GENERIC）。
+ * 华为有板卡、温度、每口 ONT 那一套专属面板；鸿升光、中兴、烽火以及没认出厂商的设备
+ * 摆的都是板卡/端口、VLAN、ONT 这几样，统一由第三方界面（generic.vue）承担，
+ * 不再为每家单独开一个页面。
  *
  * 两种用法：
  * 1. 进详情页——用 {@link detailRoute} 拼路由，跳到 /olt/<厂商>/:id；
  * 2. 在台账页里用下拉切换——用 {@link componentOfVendor} 拿到视图组件，
  *    直接渲染在页面上，切设备当场换视图，不用跳来跳去。
+ *
+ * 台账里的 vendor 是后端 OltVendor 的枚举名（HUAWEI / ZTE / FIBERHOME / HSGQ / HSGQ_GPON / GENERIC）。
  */
 export const VENDOR_VIEWS = {
   HUAWEI: {
@@ -18,20 +18,14 @@ export const VENDOR_VIEWS = {
     name: 'OltHuawei',
     label: '华为',
     loader: () => import('@/views/olt/huawei')
-  },
-  HSGQ: {
-    path: 'hsgq',
-    name: 'OltHsgq',
-    label: '鸿升光',
-    loader: () => import('@/views/olt/hsgq')
   }
 }
 
-/** 没认出来、以及还没有专属视图的厂商（中兴、烽火）都走这个 */
+/** 第三方界面：鸿升光、中兴、烽火、以及没认出厂商的设备都走这个 */
 export const GENERIC_VIEW = {
   path: 'generic',
   name: 'OltGeneric',
-  label: '通用',
+  label: '第三方',
   loader: () => import('@/views/olt/generic')
 }
 
@@ -55,7 +49,7 @@ export function detailRoute(vendor, id) {
 /**
  * 按 vendor 取视图组件（异步组件）。
  *
- * 台账页下拉切换 OLT 时用它：切到华为就渲染华为面板，切到鸿升光就渲染整机面板，
+ * 台账页下拉切换 OLT 时用它：切到华为就渲染华为面板，切到其它厂商就是第三方面板，
  * 页面原地换，不用路由跳转。
  */
 export function componentOfVendor(vendor) {

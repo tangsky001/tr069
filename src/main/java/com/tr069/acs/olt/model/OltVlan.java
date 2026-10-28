@@ -28,4 +28,18 @@ public class OltVlan {
 
     /** VLAN-Con 个数，回显为「-」时为 null */
     private Integer vlanConNum;
+
+    /**
+     * 这个 VLAN 的成员端口（鸿升光 {@code show vlan} 才有这栏，华为的 display vlan all 没有）。
+     *
+     * <p>设备回显里就是 {@code GE03} / {@code EPON01,EPON02} 这种写法，原样保留，
+     * 页面直接列出来，不在后端压成区间——现场要按这串字去核端口。</p>
+     */
+    private String taggedPorts;
+
+    /** 不带标签的成员端口 */
+    private String untaggedPorts;
+
+    /** 缺省 VLAN 成员端口（{@code port ... default-vlan}） */
+    private String defaultVlanPorts;
 }

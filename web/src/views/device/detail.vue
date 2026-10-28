@@ -1,5 +1,5 @@
 <template>
-  <div class="app-container" v-loading="loading">
+  <div v-loading="loading" class="app-container">
     <div class="page-head">
       <el-button icon="el-icon-arrow-left" size="small" @click="goBack">返回</el-button>
       <span class="page-title">设备详情</span>
@@ -86,7 +86,7 @@
         v-model="rpcArgs"
         type="textarea"
         :rows="5"
-        placeholder='下发参数，JSON 格式。例如 GetParameterValues：{"ParameterNames":["InternetGatewayDevice.DeviceInfo.SerialNumber"]}'
+        placeholder="下发参数，JSON 格式。例如 GetParameterValues：{&quot;ParameterNames&quot;:[&quot;InternetGatewayDevice.DeviceInfo.SerialNumber&quot;]}"
       />
       <div v-if="rpcTask" class="rpc-result">
         <div class="rpc-result-title">

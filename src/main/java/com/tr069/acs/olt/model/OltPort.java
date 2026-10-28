@@ -35,6 +35,27 @@ public class OltPort {
     /** 收光功率，如 -8.12 dBm；不在位时为空 */
     private String rxPower;
 
+    /** 发光功率，如 4.23 dBm（display port state 的 TX power） */
+    private String txPower;
+
+    /** 光模块温度，如 35 ℃（display port state 的 Temperature） */
+    private String opticTemperature;
+
+    /** 偏置电流，如 92 mA（TX Bias current） */
+    private String biasCurrent;
+
+    /** 供电电压，如 3.22 V（Supply Voltage） */
+    private String supplyVoltage;
+
+    /** 光模块状态，取自 display port state 的 Optical Module status：Online / Offline */
+    private String moduleStatus;
+
+    /** 激光器状态：Normal / Abnormal */
+    private String laserState;
+
+    /** 发送故障：Normal / Fault */
+    private String txFault;
+
     /** 链路状态，来自 display board 0/<槽位> 的 Link 列：online / offline；未采到为 null */
     private String linkStatus;
 

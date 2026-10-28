@@ -61,5 +61,3 @@ export function newWorklistDesc(category) {
     `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
   return `ADMIN-${category || 'biz'}-${stamp}-${Math.random().toString(36).slice(2, 8)}`
 }
-
-

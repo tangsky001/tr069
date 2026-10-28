@@ -25,7 +25,8 @@ module.exports = {
    * Detail: https://cli.vuejs.org/config/#publicpath
    */
   publicPath: '/',
-  outputDir: 'dist',
+  // 构建产物直接输出到后端 resources，随 jar 一起打包（classpath:static）
+  outputDir: '../src/main/resources/static',
   assetsDir: 'static',
   lintOnSave: process.env.NODE_ENV === 'development',
   productionSourceMap: false,
@@ -47,6 +48,16 @@ module.exports = {
         target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
         changeOrigin: true,
         pathRewrite: { ['^' + process.env.VUE_APP_BASE_API]: '/api' }
+      },
+      // 接口文档（Swagger UI）由后端 8888 提供。不代理的话，
+      // 访问 /doc/index.html 会被前端路由兜成首页（地址栏变成 /doc/index.html#/dashboard/index）
+      '/doc': {
+        target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
+        changeOrigin: true
+      },
+      '/v3': {
+        target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
+        changeOrigin: true
       }
     }
   },

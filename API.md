@@ -3,6 +3,12 @@
 覆盖管理端（`/api`）与北向（`/openapi/v1`）两套 HTTP 接口。南向设备上报口
 （`/ACS-server/ACS`）是 CWMP SOAP 协议，不在本文范围内，仅在 §6 列出端口与路径便于排障。
 
+> **在线文档**：服务启动后浏览器打开 <http://127.0.0.1:8888/doc.html>（Knife4j 界面）
+> 可直接查看全部接口的用途、请求参数与返回结构，顶部「Authorize / 认证」填一次 token 就能在线调试。
+> <http://127.0.0.1:8888/v3/api-docs> 是同一份内容的 OpenAPI 3.0 JSON，
+> 在 Apifox / Postman 里「导入 → OpenAPI/Swagger」粘贴这个地址即可批量生成接口。
+> 说明文字集中在 `config/OpenApiDocConfig` 的 `DOC` 表，新增接口在那儿补一句即可。
+
 ---
 
 ## 1. 通用约定
@@ -292,8 +298,29 @@ OLT 不走 TR-069：纳管方式是 Telnet 登录设备命令行执行查询。�
 | POST | `/test` | 保存入参 | 诊断测试，**未保存的表单也能测**；不覆盖已采集的板卡 |
 | POST | `/{id}/test` | — | 对已保存设备做诊断测试 |
 | POST | `/{id}/sync` | — | 登录采集版本与板卡，覆盖写 `olt_board` 并刷新台账，返回最新详情 |
+| POST | `/{id}/vlan` | `{vlanIds, tagged[], untagged[]}` | 新建 VLAN 并配成员端口，成功后自动重采 |
+| DELETE | `/{id}/vlan` | `[100, 200]` | 删除勾选的 VLAN（下发 `no vlan ...`，连续段合并成一条），成功后自动重采 |
+| GET | `/{id}/actions` | — | 命令动作目录：这台设备能下发哪些命令（章节 / 功能 / 参数 / 视图 / 是否查询 / 是否高风险） |
+| POST | `/{id}/exec` | `{code, params}` | 执行一条命令动作。查询类返回设备回显，配置类下发后重采并返回最新详情 |
 | GET | `/{id}/records` | `limit`(默认10，上限100) | 采集记录，`rawPreview` 为回显片段 |
 | GET | `/web-accounts` | — | 「允许访问的 Web 登录账号」候选，来自 `sys_user` 启用账号 |
+
+新建 VLAN 入参（页面「创建」弹窗）：
+
+```json
+{
+  "vlanIds": "100-102,300",
+  "tagged": ["epon1", "epon2", "ge3"],
+  "untagged": ["ge4"]
+}
+```
+
+- `vlanIds`：1-4094，支持 `,` 与 `-` 连接，写反或越界当场报错；不带端口时一次最多 64 个，带端口一次最多 16 个
+  （每个 VLAN 都要单独进视图配端口）。
+- `tagged` / `untagged`：端口写法 `类型+编号`，同一个口不能两边都占（页面会互斥）。
+- 下发顺序：`vlan standard 100-102` → 逐個 VLAN `vlan standard <id>` + `port epon 1-2 tagged` + `exit`。
+- 可勾的端口来自采集时执行的 `show port state all`（`vlan.memberPorts`）；GPON 的 PON 口不在里面，
+  它不做二层成员，勾了后端也会拒绝并说明原因。
 
 保存入参：
 
@@ -339,7 +366,18 @@ OLT 不走 TR-069：纳管方式是 Telnet 登录设备命令行执行查询。�
 | 华为 `HUAWEI` | huawei / vrp / ma5600 / ma5800 | `display version` | `display board 0` | `display temperature all` |
 | 中兴 `ZTE` | zte / zxan / c320 / c300 | `show version` | `show card` | — |
 | 烽火 `FIBERHOME` | fiberhome / an5516 / an6000 | `show version` | `show card` | — |
+| 鸿升光 `HSGQ` | hsgq / hongsheng / 鸿升光 | `show version` | 无（整机按型号生成） | — |
 | 通用 `GENERIC` | 兜底 | 两条都试 | `display board 0`、`show card` | — |
+
+鸿升光（EPON 一体化）另外那几条，都在 `HsgqOltProfile` 里：
+
+| 用途 | 命令 | 说明 |
+| --- | --- | --- |
+| 采集 PON 口 ONU 数 | `show pon-info` | `PON01 Up 5/5`（在线/总数） |
+| 采集 ONU 明细 | `show onu-info all` | MAC 即 EPON 的 SN，离线也列出来 |
+| 采集 VLAN | `show running-config` | `vlan standard 100` 一行一个 VLAN，紧跟的 `port epon 2 untagged` 是成员端口；采不到时退回 `show vlan` |
+| 新建 VLAN | `vlan standard <id>` / `vlan standard <start> <end>` | 会切进 vlan 视图，下发时自动补 `exit` 回全局配置视图 |
+| 删除 VLAN | `no vlan <id>` / `no vlan <start> <end>` | 全局配置视图命令，勾选连续时合并成一条 |
 
 采集顺序（现场要求）：登录成功 → 关分页 → **`display board 0`** → `display version` →
 `enable` → `config` → 温度（按槽位）→ 每块业务板一条 `display ont info 0 <槽位> all` →
@@ -381,7 +419,7 @@ MA5683T 的 `display version` 不给参数时会先回一条参数提示：
 | 来源 | 字段 |
 | --- | --- |
 | `display version` | `model`（MA5683T）、`softwareVersion`（MA5600V800R015C00）、`patchVersion`（SPC107）、`backplane`（H802MABO）、`macAddress`、`uptime`（转成 59天18小时21分11秒） |
-| `display board 0` | 每槽 `boardType` / `status`（Normal、Active_normal、Standby_normal、Auto_find、Failed…）、`boardKind`、`description`、`portMode`、`portCount` |
+| `display board 0` | 每槽 `boardType` / `status`（Normal、Active_normal、Standby_normal、Auto_find、Failed…）、`boardKind`、`description`、`portMode`、`portCount`；另外用**槽位表里最大的 SlotID + 1** 当机框槽位数 `slotCount`（空槽位也占一行：0..12 就是 13 个槽位，只有 1/6/8 插了板卡，机框照样画 13 格） |
 | `display temperature all` | 每槽 `temperature`，一格多传感器取最高温 |
 | `display ont info 0 <槽位> all` | 该板各端口 ONT：`onuTotal` 总数、`onuOnline` 在线数、`onts[]` 每条 ONT 的明细（ID / SN / 在线 / 型号） |
 | `display vlan all` | VLAN 列表：`vlanId`、`type`（smart/standard/mux）、`attribute`、`stdPortNum`、`servPortNum`、`vlanConNum`（回显是 `-` 时为 null） |
@@ -416,17 +454,139 @@ ONT 数量必须用**空格分隔**的参数（`display ont info 0 1 all`，不�
 `boardKind` 取值：`SERVICE`（业务板）/ `CONTROL`（主控板）/ `UPLINK`（上联板）/ `POWER`（电源板）/
 `INTERFACE`（通用接口板）/ `UNKNOWN`。型号认不出时按 MA5600T 槽位约定兜底（6/7 主控、8/9 上联、10/11 电源、12 通用，其余业务板）。
 
-板卡示意图：前端按 `public/olt/olt_<板卡型号大写>.png` 约定加载，
-`olt_H807GPBD.png`、`olt_H802SCUN.png` 已内置；新增型号只需按名字放图，缺图显示「暂无该型号示意图」。
+机框视图：`OltChassis.vue` 按 **`display board 0` 槽位表给出的槽位数**画整框（上导轨风扇格栅、下导轨槽位号，
+槽位号就是 SlotID；接口返回 `device.slotCount`，没采到才按 12 兜底），**槽位 60 宽 / 700 高，板卡 55 宽**：
+槽位尺寸和面板 viewBox 一致、边框用 inset 阴影画，板卡插进去上下左右顶齐不留缝；槽位里渲染 `OltBoardPanel.vue` 的
+`compact` 模式——只画板卡本体（底板、丝印、螺丝、助拔器、RUN/ALM/ACT/ENV 灯、上面的 `PON` 运行灯带
+（8 颗灯独立渲染、分两列排）+ 下面一列竖排的端口、底部的 `N ONT 在线`），两侧导轨和逐口标注列都省掉
+（60 宽放不下），型号与运行状态放在 HTML `title` 里，口名 / RX / ONT / VLAN 用 SVG `<title>` 悬停看。
+没插板的槽位画成虚线空槽位。
+槽位数默认 12，有板子插在更大槽位号上自动补齐；整框约 760 宽，一屏放得下 12 个槽位；
+点槽位高亮该槽位与下导轨上的槽位号，点端口展开 ONT 明细。
 
-端口列表不再单独占一块：面板布局固定的型号，`P0`-`P7` 这 8 行直接**钉在示意图右侧对应物理口的高度上**
-（一行对一个箭头），连一条细线指向该口；`PORT_MARKERS` 里按百分比写死位置，H807GPBD 是上排 0-3、
-下排 4-7，中间那条是激光警告贴。点某一行展开的 ONT 明细显示在图下方，不会把其它行挤开。
-没配布局的型号（或没图）仍按普通列表排在示意图下面，不影响原来的展示。
-新增型号要钉的，量一下端口中心占图片高度的比例填进去即可。
+板卡面板：前端用 SVG 现画（`OltBoardPanel.vue`），复刻 MA5683T 机框业务板外观——板卡**竖着插在机框导轨里**、
+**板卡宽 55、槽位（机框）高 700**（面板 viewBox `237×700`：`SLOT_H = 76 + 8×72 = 652`，
+加上底部汇总 24 与丝印 24 = **700**，端口少的板下面就是空白金属面板；
+底部的「N ONT 在线」汇总行也固定占一格，有没有 ONT 高度都一样），
+深灰金属底板、拉丝纹理、四角螺丝、顶部助拔器、型号/槽位丝印与 RUN/ALM/ACT/ENV 板卡灯；端口**自上而下一列竖排**
+（GPON/EPON 业务板 8 个 PON 口，PON 0 在最上面），每个口画出光口笼（GE 口画 RJ45）+ 口序号丝印 +
+一个圆形指示灯：**绿色闪烁=在线、红色常亮=告警**（光模块异常或注册过 ONT 但全部离线）、**灰色=离线**。
+
+主控板（`controlBoard` 的型号，如 H802SCUN）在板卡灯下面多画一段**管理区**，和真板卡一样：
+`RESET` 复位孔 + `CON` 控制台串口 + `ETH` 管理网口（右侧绿=Link、黄=Act 两颗灯）+ `ESC` 级联扩展口，
+口名用竖排丝印贴在口的右边，标注列写明各自是什么口；管理区下面的 4 个 GE 口照常带数据标注。
+
+右边是**每口的标注列**，用细引出线连到对应的物理口，一口三行：
+`PON 0 … -8.12 dBm`（口名 + 接收光功率）、`27 / 28 ONT 在线`（或上行口的 `链路 在线`）、
+`0/1/0 · VLAN 1、46`（接口号 + 上行口放通的 VLAN，来自 `display port vlan` 快照，PON 口一般没有）。
+标注列表头是板卡运行状态与温度；`N ONT 在线` 的整板汇总嵌在**板卡底部金属面上（底部丝印上方）**，
+跟着板卡走而不是挂在标注列下面，这样各块板在机框里对齐时徽标也在同一条线上。点某个口在面板下方展开这个口下的 ONT 明细。
+
+面板样式由 `boardProfiles.js` 的 `panel` 字段决定：`pon`（PON 业务板）/ `ge`（主控板、以太网上行）/
+`xge`（10GE 上联）/ `generic`（未知型号按端口数画）。已建档：H807GPBD、H801XGBD、H808EPSD（8 口 PON）、
+H802SCUN（主控板 4 个 GE 口）、H801X2CS（2 路 10GE）、HSGQ-E04（4 口 EPON 整机）；
+没建档的板卡按端口类型推断样式，不再依赖任何图片资源。
 
 型号、版本、板卡均为宽松解析：解析不出就留空（页面显示 `-`），不阻断同步。
 解析不符合现场设备时，用 `GET /{id}/records` 拿到原始回显（前 8000 字符）再补正则。
+
+## OLT 首屏两段式同步（板卡先出来，慢数据后台补）
+
+打开一台 OLT 时页面等的是机框：板卡插在哪个槽位、什么型号。这部分只要一条命令——华为
+`display board 0`（一两秒就回完），所以 `POST /api/olt/{id}/quick-sync` 只做这一件事：
+
+1. 按台账里已认出的厂商直接发对应板卡命令（华为 `display board 0`、第三方 `show card`），
+   不再探测版本与命令风格；型号优先取登录横幅，横幅里没有才补一条版本命令；
+2. 板卡写库后**立即返回**详情（含 `deepSyncing: true`），本次没采到的端口 / 温度沿用上次留下的，
+   不会把页面正显示着的数据抹成空；
+3. 温度、逐板端口状态与光模块、ONT 明细、VLAN、DBA/线路模板交给后台线程池补采，
+   跑完覆盖写库；页面轮询 `GET /api/olt/{id}` 即可看到补齐的数据，`deepSyncing` 变回 false。
+
+完整采集（`POST /api/olt/{id}/sync`、`POST /api/olt/{id}/refresh`）保持原样，一次把所有数据采回来，
+给「同步ONT状态」这类明确要慢数据的操作、以及后台定时任务用。
+
+## OLT 厂商适配：新增一家 / 一个型号要改哪些地方
+
+各家 OLT 的命令根本不同：华为是 `display`、第三方是 `show`；华为 MA5600 关分页是 `scroll`，
+其它家是 `terminal length 0`；中兴要认 `show card`，而鸿升光这类一体化设备压根没有板卡概念。
+这些差别集中在 `src/main/java/com/tr069/acs/olt/vendor/` 下的厂商 profile 里：
+
+| 文件 | 作用 |
+| --- | --- |
+| `OltVendorProfile` | 厂商能力接口：识别、命令清单、型号怎么抠、有没有板卡、怎么进配置视图、配置视图里补采什么 |
+| `AbstractOltVendorProfile` | 默认实现（第三方 OLT 的常见样子），继承它只覆写不一样的那几个方法 |
+| `HuaweiOltProfile` / `ZteOltProfile` / `FiberhomeOltProfile` / `HsgqOltProfile` | 已接入的品牌 |
+| `GenericOltProfile` | 认不出厂商时的兜底：两套命令都试，型号挨家问一遍（新品牌注册进来自动认得） |
+| `OltVendorProfiles` | 注册表，会话按厂商取 profile、按回显认厂商 |
+
+**加一家品牌的完整改动：**
+
+1. `src/main/java/com/tr069/acs/olt/vendor/XxxOltProfile.java`——继承 `AbstractOltVendorProfile`，
+   通常只要写 `vendor()`、`matches()`（回显关键字）、几条命令和型号正则；
+2. `OltVendor` 枚举加一个取值（库里存的厂商编号、页面下拉用它）；
+3. `OltVendorProfiles.register()` 里加一行。
+
+会话主流程（登录、探测风格、采板卡、深度采集编排）和 `OltInfoParser` 都不用动。
+
+**同一个品牌加型号**通常在自家 profile 内部就能解决：鸿升光的 PON 口数在 `HsgqOltProfile.PON_PORT_COUNT`
+里加一行；像 `HSGQ-E08A` 这种「字母 + 数字」的型号不用加，`ponPortCount` 会自己从型号里抠出口数。
+需要在页面上出现新型号的示意图时，另外往 `web/src/views/olt/boardProfiles.js` 里加一条。
+
+## OLT 命令动作目录（手册里的命令怎么变成页面上的功能）
+
+鸿升光两台设备、两份手册加起来六百多条命令（EPON 13 章 332 条、GPON 15 章 300 余条），
+一条一个接口写不完也维护不了，所以它们被登记成「动作目录」：
+
+| 设备 | 厂商码 | 目录 | 手册 |
+| --- | --- | --- | --- |
+| 鸿升光 EPON（E04/E08/E16） | `HSGQ` | `HsgqActionCatalog` | 13 章 141 页 |
+| 鸿升光 GPON（4/8/16 口，Neutral-G04/G08/G16） | `HSGQ_GPON` | `HsgqGponActionCatalog` | 15 章 157 页 |
+
+一条动作 = 章节 + 功能名 + 命令模板 + 参数定义 + 执行视图 + 是否查询 + 是否高风险；
+页面（「设备配置」页签）按目录自动生成表单，服务端按同一份定义校验参数、拼视图、下发、留档。
+两台设备共用同一套界面：`GET /{id}/actions` 取哪份目录由设备的 `vendor` 决定。
+
+**GPON 与 EPON 的差别**（写动作时别照抄）：PON 口关键字是 `gpon`、PON 口不做二层成员端口
+（业务靠 `service-port` 绑 GEM Port）、多了第 5 章模板（DBA / 线路模板 / 业务模板）与第 6 章虚端口、
+ONT 按 SN/LOID 注册且第 9 章命令全在 GPON 口视图里、第 3 章多一节风扇管理。
+
+**加一条命令**就是加一行：
+
+```java
+list.add(config("vlan.create", CH_VLAN, "创建单个 VLAN", "端口 VLAN，取值 1-4094",
+        List.of(vlanId), "vlan standard {vlanId}"));
+list.add(query("sys.cpu", CH_CPU, "查看 CPU 利用率", null, "show cpu-usage"));
+list.add(in(OltAction.View.PON, "pon.mac.bind", CH_PON_AUTH, "MAC 认证：添加白名单并绑定 ONU", null,
+        List.of(ponId, mac), "bind-onu[{ onuId}] mac {mac}"));
+```
+
+**执行视图**（命令在哪个提示符下发，`exit` 自动补）：
+
+| view | 进入命令 | 提示符 |
+| --- | --- | --- |
+| `CONFIG` | — | `OLT(config)#` |
+| `VLAN` | `vlan standard <vlanId>` | `OLT(config-vlan-100)#` |
+| `PORT` | `interface <portType> <portNo>` | `OLT(config-ge-1)#` |
+| `PON` | `interface epon <ponId>` | `OLT(config-epon-1)#`（EPON） |
+| `GPON` | `interface gpon <ponId>` | `OLT(config-gpon-1)#`（GPON） |
+| `LINE_PROFILE` | `ont-lineprofile gpon profile-id <profileId>` | `OLT(config-gpon-lineprofile-1)#`（GPON） |
+| `SRV_PROFILE` | `ont-srvprofile gpon profile-id <profileId>` | `OLT(config-gpon-srvprofile-1)#`（GPON） |
+| `ONU` | `interface onu <ponId>/<onuId>` | `OLT(config-onu-1/1)#`（EPON） |
+| `MANAGE` | `interface manage` | `OLT(config-manage)#` |
+| `ACL` | `acl <aclId>` | `OLT(acl-basic-2000)#` |
+| `MCAST` | `multicast-vlan <vlanId>` | `OLT(multicast-vlan-100)#` |
+| `VLANIF` | `interface vlanif <vlanId>` | `OLT(config-vlanif-1)#` |
+
+**可选参数**写成方括号段，参数没填就整段去掉：`ntp enable ntp-server-ip {serverIp}[ backup-server-ip {backupIp}]`、
+`user add {userName} {password} {level}[ reenter {reenter}][ {info}]`。
+
+**参数校验**：`number` 卡范围、`ports` 只认 `1,3,4-8`、`enum` 只认下拉值、`text` 拒绝换行与分号
+（命令是一条条发的，参数里混进换行等于多发一条命令）。
+
+**查询 vs 配置**：`query`/`queryWith`/`queryIn` 只把回显返回页面；配置类下发成功后会自动重采一次
+（`dispatchConfig`），页面直接换成新数据。
+
+两份手册里还剩缩写术语那一章（EPON 第 13 章、GPON 第 15 章）没有动作——那是名词表，不是命令。
 
 ## OLT 自动采集（不用手点同步）
 
@@ -704,6 +864,7 @@ X-ACS-Signature: 8Z3k...（Base64）
 
 **OLT**：`GET /api/olt/list`、`GET /api/olt/{id}`、`POST /api/olt/save`、`POST /api/olt/delete`、
 `POST /api/olt/test`、`POST /api/olt/{id}/test`、`POST /api/olt/{id}/sync`、
+`POST /api/olt/{id}/quick-sync`、`POST /api/olt/{id}/refresh`、
 `GET /api/olt/{id}/records`、`GET /api/olt/web-accounts`
 
 **北向查询**：`GET /openapi/v1/devices`、`GET /openapi/v1/devices/{sn}`、

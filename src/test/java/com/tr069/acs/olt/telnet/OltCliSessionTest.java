@@ -20,6 +20,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -112,6 +113,104 @@ class OltCliSessionTest {
     }
 
     /**
+     * 快速采集（页面第一次打开 OLT 走这条）：板卡、型号、槽位一次带回来，
+     * 进配置视图才能问到的温度 / 端口 / ONT / VLAN / 模板一条都不发——那些由后台补采。
+     */
+    @Test
+    void shouldCollectBoardsOnlyForFirstScreen() throws Exception {
+        try (FakeOltServer server = new FakeOltServer()) {
+            OltDevice device = new OltDevice();
+            device.setHost("127.0.0.1");
+            device.setPort(server.getPort());
+            device.setProtocol("TELNET");
+            device.setUsername("root");
+            device.setPassword("admin");
+
+            OltSnapshot snapshot;
+            try (OltCliSession session = OltCliSession.open(
+                    device, StandardCharsets.UTF_8, 3000, 5000, 4000)) {
+                snapshot = session.collectBoardsOnly();
+            }
+            server.await();
+
+            assertEquals(OltVendor.HUAWEI, snapshot.getVendor());
+            assertEquals("MA5600T", snapshot.getModel());
+            assertEquals(2, snapshot.getBoards().size());
+            assertEquals(Integer.valueOf(2), snapshot.getSlotCount(), "机框槽位数跟着板卡表走");
+            assertTrue(snapshot.getTranscript().contains("display board 0"));
+            // 慢命令都没发：这些要进配置视图逐板逐口问，首屏等不起
+            assertFalse(snapshot.getTranscript().contains("(config)"));
+            assertFalse(snapshot.getTranscript().contains("display ont info"));
+            assertFalse(snapshot.getTranscript().contains("display vlan all"));
+        }
+    }
+
+    /**
+     * 台账里已经认出华为、登录横幅里又带着型号时，快速采集只发一条板卡命令：
+     * 版本探测、另一套命令风格的尝试全部省掉，首屏就等这一个来回。
+     */
+    @Test
+    void shouldSkipProbeWhenVendorAndModelAlreadyKnown() throws Exception {
+        try (FakeOltServer server = new FakeOltServer()) {
+            server.setBannerTail("\r\nMA5683T");
+            OltDevice device = new OltDevice();
+            device.setHost("127.0.0.1");
+            device.setPort(server.getPort());
+            device.setProtocol("TELNET");
+            device.setUsername("root");
+            device.setPassword("admin");
+            // 上次采集认出来的厂商，这次直接按它的命令集走
+            device.setVendor("HUAWEI");
+
+            OltSnapshot snapshot;
+            try (OltCliSession session = OltCliSession.open(
+                    device, StandardCharsets.UTF_8, 3000, 5000, 4000)) {
+                snapshot = session.collectBoardsOnly();
+            }
+            server.await();
+
+            assertEquals(OltVendor.HUAWEI, snapshot.getVendor());
+            assertEquals("MA5683T", snapshot.getModel());
+            assertEquals(2, snapshot.getBoards().size());
+            assertFalse(snapshot.getTranscript().contains("display version"), "横幅里有型号就不必再问版本");
+            assertFalse(snapshot.getTranscript().contains("show card"), "已知是华为就不试第三方命令");
+            assertFalse(snapshot.getTranscript().contains("terminal length 0"), "只发华为自己的关分页命令");
+            assertTrue(snapshot.getTranscript().contains("scroll"));
+        }
+    }
+
+    /**
+     * 鸿升光被外网扫描后，登录成功会先打一屏 telnet 登录记录表并停在那儿：
+     * 客户端要自动补回车才进得了命令行，否则登录超时（现场「账号密码对却连不上」）。
+     */
+    @Test
+    void shouldPushEnterWhenLoginBannerStalls() throws Exception {
+        try (FakeOltServer server = new FakeOltServer()) {
+            server.setHsgq(true);
+            server.setLoginBannerEnters(2);
+            OltDevice device = new OltDevice();
+            device.setHost("127.0.0.1");
+            device.setPort(server.getPort());
+            device.setProtocol("TELNET");
+            device.setUsername("root");
+            device.setPassword("admin");
+
+            OltSnapshot snapshot;
+            try (OltCliSession session = OltCliSession.open(
+                    device, StandardCharsets.UTF_8, 3000, 8000, 4000)) {
+                snapshot = session.collect(true);
+            }
+            server.await();
+
+            assertEquals(OltVendor.HSGQ, snapshot.getVendor());
+            assertTrue(snapshot.getTranscript().contains("info all login users"));
+            assertTrue(snapshot.getTranscript().contains("suc login!"));
+            assertTrue(snapshot.getTranscript().contains("[补回车]"));
+            assertEquals("HSGQ-E04", snapshot.getModel());
+        }
+    }
+
+    /**
      * 鸿升光 HSGQ-E04（EPON 一体机）：show version 认出厂商后就够了——
      * 现场不需要采集板卡信息（show pon-info 只回命令回显），直接按型号生成整机卡片出图。
      */
@@ -146,6 +245,20 @@ class OltCliSessionTest {
             assertFalse(snapshot.getTranscript().contains("show vlan all"));
             assertTrue(snapshot.getNotes().isEmpty());
 
+            // VLAN 快照走 show running-config：VLAN 1（PON01-04 + GE01-08 不带标）与 VLAN 41（GE01,2 带标）
+            assertTrue(snapshot.getTranscript().contains("show running-config"));
+            assertNotNull(snapshot.getVlanInfo());
+            assertEquals(2, snapshot.getVlanInfo().getVlans().size());
+            assertEquals(Integer.valueOf(1), snapshot.getVlanInfo().getVlans().get(0).getVlanId());
+            assertEquals("EPON01,EPON02,EPON03,EPON04,GE01,GE02,GE03,GE04,GE05,GE06,GE07,GE08",
+                    snapshot.getVlanInfo().getVlans().get(0).getUntaggedPorts());
+            assertEquals("GE01,GE02", snapshot.getVlanInfo().getVlans().get(1).getTaggedPorts());
+
+            // 「创建 VLAN」弹窗的可勾选端口：4 个 PON + 8 个 GE，顺序与面板一致
+            assertEquals(12, snapshot.getVlanInfo().getMemberPorts().size());
+            assertEquals("PON01", snapshot.getVlanInfo().getMemberPorts().get(0).getLabel());
+            assertEquals("GE08", snapshot.getVlanInfo().getMemberPorts().get(11).getLabel());
+
             // 整机卡片：型号即板卡型号（页面按它找示意图），4 个 PON 口
             assertEquals(1, snapshot.getBoards().size());
             OltBoard board = snapshot.getBoards().get(0);
@@ -154,6 +267,8 @@ class OltCliSessionTest {
             assertEquals(4, board.getPorts().size());
             assertEquals("PON01", board.getPorts().get(0).getPortName());
             assertEquals("PON04", board.getPorts().get(3).getPortName());
+            // 整机就是一个槽位：页面（第三方界面）按 slotCount 画机框，别画成 12 个空槽位
+            assertEquals(1, snapshot.getSlotCount());
 
             // show pon-info：PON01 5/5、PON02 2/3、PON03/PON04 0/0
             assertEquals(Integer.valueOf(5), board.getPorts().get(0).getOnuOnline());
@@ -167,6 +282,14 @@ class OltCliSessionTest {
             assertEquals("C8:21:DA:F8:2F:70", board.getPorts().get(0).getOnts().get(0).getSn());
             assertTrue(board.getPorts().get(0).getOnts().get(0).getOnline());
             assertFalse(board.getPorts().get(1).getOnts().get(1).getOnline());
+
+            // 手册 6.4 / 6.5：进 PON 口视图补的设备类型、ONU 类型与接收光功率
+            OltOnt first = board.getPorts().get(0).getOnts().get(0);
+            assertEquals("HGU", first.getDeviceType());
+            assertEquals("1ge", first.getOnuType());
+            assertEquals("-7.3119 dBm", first.getRxPower());
+            // 离线那条没有光功率回显，留空让页面显示「-」
+            assertNull(board.getPorts().get(1).getOnts().get(1).getRxPower());
         }
     }
 
@@ -356,8 +479,17 @@ class OltCliSessionTest {
         /** 模拟鸿升光 HSGQ-E04：OLT> 提示符，show version / pon-info / onu-info all */
         private volatile boolean hsgq;
 
+        /**
+         * 登录后打印的 telnet 登录记录表需要几次回车才出提示符（模拟被外网扫描：
+         * 表很长，打完一屏就停下等人按回车），0 表示不打印登录表。
+         */
+        private volatile int loginBannerEnters;
+
         /** 额外插一块上联板（H801X2CS），用来验证上行口 VLAN 采集 */
         private volatile String uplinkBoard;
+
+        /** 追加在登录横幅后面的内容：真实 OLT 的横幅里往往就带着型号（MA5683T） */
+        private volatile String bannerTail = "";
 
         FakeOltServer() throws IOException {
             serverSocket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
@@ -394,8 +526,16 @@ class OltCliSessionTest {
             this.hsgq = hsgq;
         }
 
+        void setLoginBannerEnters(int loginBannerEnters) {
+            this.loginBannerEnters = loginBannerEnters;
+        }
+
         void setUplinkBoard(String uplinkBoard) {
             this.uplinkBoard = uplinkBoard;
+        }
+
+        void setBannerTail(String bannerTail) {
+            this.bannerTail = bannerTail == null ? "" : bannerTail;
         }
 
         void await() throws Exception {
@@ -419,7 +559,7 @@ class OltCliSessionTest {
                 out.write(new byte[]{(byte) IAC, (byte) DO, 3});
                 out.flush();
 
-                write(out, "Welcome to Fake OLT\r\nUsername:");
+                write(out, "Welcome to Fake OLT" + bannerTail + "\r\nUsername:");
                 assertEquals("root", readLine(in));
                 write(out, "\r\nPassword:");
                 String password = readLine(in);
@@ -429,7 +569,28 @@ class OltCliSessionTest {
                     return;
                 }
                 assertEquals("admin", password);
-                write(out, showStyle ? "\r\nZXAN#" : hsgq ? "\r\nOLT>" : "\r\n<HUAWEI>");
+                if (loginBannerEnters > 0) {
+                    // 被外网扫描的鸿升光：登录成功先打一屏 telnet 登录记录表，
+                    // 打完停在那一屏，客户端补几个回车才给提示符
+                    write(out, "\r\n telnet login / info all login users\r\n"
+                            + " userName       Source IP        Time                Type     Login time\r\n"
+                            + " admin          149.88.64.57     2026/10/25 00:59:26 https    2026/10/25 00:59:26\r\n"
+                            + " admin          43.249.31.19     2026/10/26 23:19:43 telnet   2026/10/26 23:19:43\r\n"
+                            + " admin          45.128.232.234   2026/10/26 23:22:16 telnet   2026/10/26 23:22:16\r\n");
+                    int enters = 0;
+                    while (enters < loginBannerEnters) {
+                        String line = readLine(in);
+                        if (line == null) {
+                            return;
+                        }
+                        if (line.isEmpty()) {
+                            enters++;
+                        }
+                    }
+                    write(out, " suc login!\r\nOLT>");
+                } else {
+                    write(out, showStyle ? "\r\nZXAN#" : hsgq ? "\r\nOLT>" : "\r\n<HUAWEI>");
+                }
 
                 // display version 停在参数提示上时，等客户端补回车再吐正文
                 boolean pendingVersion = false;
@@ -480,6 +641,34 @@ class OltCliSessionTest {
                                     + "   2026/10/25 00:46:11   ONU02/02   NO-DESCRIPTI\r\n"
                                     + " Total: 8  Online:7  Offline:1\r\n"
                                     + "OLT>");
+                        } else if ("show running-config".equals(command)) {
+                            // 鸿升光采 VLAN 用的就是这条：vlan standard 一行一个 VLAN，
+                            // 紧跟的 port epon/ge ... tagged|untagged 是成员端口
+                            write(out, "!\r\n"
+                                    + "vlan standard 1\r\n"
+                                    + " port epon 1-4 untagged\r\n"
+                                    + " port ge 1-8 untagged\r\n"
+                                    + "!\r\n"
+                                    + "vlan standard 41\r\n"
+                                    + " port ge 1,2 tagged\r\n"
+                                    + "!\r\n"
+                                    + "OLT>");
+                        } else if ("show port state all".equals(command)) {
+                            // 「创建 VLAN」弹窗的勾选项来自这条：4 个 PON 口 + 8 个上联 GE
+                            write(out, "Port       Status    Speed     MTU\r\n"
+                                    + "epon1      Up        1000      1500\r\n"
+                                    + "epon2      Up        1000      1500\r\n"
+                                    + "epon3      Down      1000      1500\r\n"
+                                    + "epon4      Down      1000      1500\r\n"
+                                    + "ge1        Up        1000      1500\r\n"
+                                    + "ge2        Up        1000      1500\r\n"
+                                    + "ge3        Down      1000      1500\r\n"
+                                    + "ge4        Down      1000      1500\r\n"
+                                    + "ge5        Down      1000      1500\r\n"
+                                    + "ge6        Down      1000      1500\r\n"
+                                    + "ge7        Down      1000      1500\r\n"
+                                    + "ge8        Down      1000      1500\r\n"
+                                    + "OLT>");
                         } else if ("show vlan all".equals(command)) {
                             write(out, "----------------------------------------\r\n"
                                     + " VLAN ID            : 1\r\n"
@@ -498,6 +687,27 @@ class OltCliSessionTest {
                                     + " Default Vlan Ports :\r\n"
                                     + "----------------------------------------\r\n"
                                     + "OLT(config)#");
+                        } else if (command.startsWith("interface epon ")) {
+                            write(out, "OLT(config-epon-" + command.substring("interface epon ".length()) + ")#");
+                        } else if ("show onu-version all".equals(command)) {
+                            // 手册 6.4：设备类型与 ONU 类型（1ge / 1ge1fe）都在这一条里
+                            write(out, "PON/ONU ONU-Name  Mac-Address   Vendor Serial DevType Type"
+                                    + "   Version   ONU-DESC\r\n"
+                                    + " 1/1 ONU01/01 38:3a:21:28:8d:ad HSGQ 0000 HGU 1ge V1.9.0-200326 NO-DESCRIPTION\r\n"
+                                    + " 1/2 ONU01/02 38:3a:21:28:06:66 HSGQ 0000 HGU 1ge1fe M221-210105 NO-DESCRIPTION\r\n"
+                                    + " 2/1 ONU02/01 38:3a:21:28:0c:11 HSGQ 0000 HGU 1ge V1.9.0-200326 NO-DESCRIPTION\r\n"
+                                    + " 2/2 ONU02/02 38:3a:21:28:0c:22 HSGQ 0000 SFU 1fe V1.9.0-200326 NO-DESCRIPTION\r\n"
+                                    + "OLT(config-epon-1)#");
+                        } else if ("show optical-info".equals(command)) {
+                            // 手册 6.5：先发光（Tx）后收光（Rx），页面要最后那个
+                            write(out, "PON/ONU ONU-Name Mac-address Temperature Voltage Bias"
+                                    + "   Tx power  Rx power\r\n"
+                                    + " 1/1 ONU01/01 38:3a:21:28:8d:ad 47 C 3.30 V 14 mA 2.0194 dBm -7.3119 dBm\r\n"
+                                    + " 1/2 ONU01/02 38:3a:21:28:06:66 37 C 3.34 V 16 mA 2.6477 dBm -16.4975 dBm\r\n"
+                                    + " 2/1 ONU02/01 38:3a:21:28:0c:11 45 C 3.28 V 15 mA 2.1000 dBm -21.4267 dBm\r\n"
+                                    + "OLT(config-epon-1)#");
+                        } else if ("exit".equals(command)) {
+                            write(out, "OLT(config)#");
                         } else if ("enable".equals(command)) {
                             write(out, "OLT#");
                         } else if ("configure".equals(command)) {

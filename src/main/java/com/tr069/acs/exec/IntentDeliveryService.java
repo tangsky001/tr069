@@ -36,9 +36,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -130,9 +132,52 @@ public class IntentDeliveryService {
      */
     private static final Pattern WAN_DEVICE = Pattern.compile("WANConnectionDevice\\.(\\d+)\\.");
 
+    /**
+     * 每台设备一把清理锁：同一批次的多个业务任务不能同时清点、删除连接。
+     *
+     * <p>批量下发 Internet + VoIP 是两个任务，各自跑在 {@link #EXECUTOR} 的不同线程上，
+     * 不加锁就会「一个在建、一个在删」，删掉对方刚建好的连接。</p>
+     */
+    private final Map<String, Object> wanCleanupLocks = new ConcurrentHashMap<>();
+
+    /**
+     * 每台设备的清理台账：批次窗口内不重复清理，本批次新建的连接永不进删除清单。
+     *
+     * <p>这是「删除只跑一次」的落点。窗口只解决前后脚的两个任务，
+     * 新建清单解决窗口过期后再来一单的情况：只要是我们建的，什么时候都不删。</p>
+     */
+    private final Map<String, WanCleanupState> wanCleanupLedger = new ConcurrentHashMap<>();
+
     /** 下发等待设备回应的超时（秒）。 */
     @Value("${acs.exec.request-timeout-seconds:90}")
     private long requestTimeoutSeconds;
+
+    /**
+     * 同一台设备两次 WAN 清理之间的最小间隔（秒）：间隔内的第二单视为同一批次，不再清理。
+     *
+     * <p>批量下发两条业务时，第二单开工时第一单的连接刚建好，
+     * 此时再清一次就把它删了——这正是「下发两条只剩一条」的根因。</p>
+     */
+    @Value("${acs.exec.wan-cleanup-window-seconds:600}")
+    private long wanCleanupWindowSeconds;
+
+    /**
+     * 下发前反向唤醒后，最多等多少秒设备上来建链。
+     *
+     * <p>设备收到连接请求一般在几秒内上来。等满这个时间还没建链就先发，
+     * 指令留在队列里，不把「暂时叫不醒」直接判成失败。</p>
+     */
+    @Value("${acs.exec.wakeup-wait-seconds:30}")
+    private long wakeupWaitSeconds;
+
+    /**
+     * 单条清理指令（DeleteObject）等设备回应的秒数。
+     *
+     * <p>比 {@link #requestTimeoutSeconds} 短：清理是尽力而为，设备不在线时
+     * 为它等满下发窗口，整包后面几个成员就全被拖住了。</p>
+     */
+    @Value("${acs.exec.wan-cleanup-timeout-seconds:30}")
+    private long wanCleanupTimeoutSeconds;
 
     // ==================== 受理 ====================
 
@@ -160,16 +205,39 @@ public class IntentDeliveryService {
             eventPublisher.publishEvent(new TaskFinishedEvent(this, task));
             return task;
         }
-        // 计划已定稿，剩下的就是等设备取走指令——那可能要等它下一次周期上报，
-        // 不能堵在调用方的 HTTP 线程上，丢给后台线程推进状态
+        // 计划已定稿，剩下的就是等设备取走指令——不能堵在调用方的 HTTP 线程上，
+        // 丢给后台线程推进状态
         if (DeviceTask.STATUS_RUNNING.equals(task.getStatus())) {
-            // 工单与业务模板下发是「人点了就要它生效」，等周期上报要十几分钟。
-            // 先发连接请求叫设备上来，这一轮会话就把指令带下去；叫不醒也无所谓，
-            // 指令照旧排在队列里。唤醒是网络往返，与执行并行，不拖慢任务推进
-            EXECUTOR.execute(() -> capabilityService.wakeUp(request.sn()));
-            EXECUTOR.execute(() -> execute(task));
+            // 指令只能捎带在设备自己发起的那轮会话里：先反向唤醒，等它上来建链再提交。
+            // 以前是「提交指令」与「发连接请求」并行，会话还没建立指令就进了队列，
+            // 只能干等下一次周期上报（十几分钟），于是每条指令都撞满超时
+            EXECUTOR.execute(() -> {
+                awaitSession(request.sn(), task.getTaskNo());
+                execute(task);
+            });
         }
         return task;
+    }
+
+    /**
+     * 先反向唤醒设备，等它建链再返回。
+     *
+     * <p>CWMP 的指令只能捎在设备主动发起的那轮会话里下发：连接请求发出后，设备会上来
+     * Inform 并紧接着发空 POST 把队列里的指令取走。会话没建立就提交指令，设备这轮
+     * 取不到，只能等下一次周期上报才有机会——周期通常是十几分钟，
+     * 于是每条指令都撞满 {@code request-timeout-seconds} 超时，整单判死。</p>
+     *
+     * <p>等待有上限：叫不醒就照旧下发，指令留在队列里，设备下次上报仍会取走，
+     * 不至于把「设备暂时不上线」直接判成下发失败。</p>
+     */
+    private void awaitSession(String sn, String taskNo) {
+        // 唤醒 + 等建链的判定统一放在 DeviceCapabilityService，采集/刷新走的是同一套
+        if (capabilityService.wakeUpAndAwait(sn, wakeupWaitSeconds)) {
+            log.info("设备已建链，开始下发: sn={}, taskNo={}", sn, taskNo);
+        } else {
+            log.warn("等待设备建链超时，按原样下发（指令留在队列里等设备上报，可能超时）: sn={}, taskNo={}, 已等={}s",
+                    sn, taskNo, wakeupWaitSeconds);
+        }
     }
 
     /**
@@ -296,7 +364,8 @@ public class IntentDeliveryService {
             tplFields.forEach((k, v) -> overrides.putIfAbsent(k, v == null ? null : String.valueOf(v)));
         }
 
-        Device model = findAdaptedModel(device, bizObject);
+        // 重启这类设备管理意图是标准 RPC，不依赖型号适配：没做过适配的设备也应该能重启
+        Device model = "Device_Mgmt".equals(bizObject) ? null : findAdaptedModel(device, bizObject);
         // 数据模型对不上时宁可不发：把 IGD 的路径写进 TR-181 设备，设备只会回 9005
         checkDataModel(model, device);
 
@@ -812,6 +881,10 @@ public class IntentDeliveryService {
     }
 
     private void checkDataModel(Device model, CpeDevice device) {
+        // 型号档案为 null 是允许的：重启这类标准 RPC 不依赖适配，没有型号档案可比
+        if (model == null || device == null) {
+            return;
+        }
         String modelRoot = model.getRootNode();
         String deviceRoot = device.getRootNode();
         if (modelRoot == null || modelRoot.isBlank()
@@ -837,12 +910,12 @@ public class IntentDeliveryService {
 
     private void execute(DeviceTask task, IntentPlan plan) {
         try {
-            // 动 WAN 的业务：先把旧连接清干净再按模板重建，否则残留连接会和新业务抢路由
+            // 动 WAN 的业务：先删后建——清理必须发生在任何 AddObject 之前，
+            // 且一个批次只清一次（见 cleanupWan 的台账），否则第二个业务会把
+            // 第一个刚建好的连接当成残留删掉
             if (isWan(task.getCategory())) {
                 plan = alignWanDevice(task, plan);
-                if (!cleanupWan(task)) {
-                    return;
-                }
+                cleanupWan(task);
             }
             // AddObject 的实例号是设备分配的，可能和计划渲染时占的号不同，
             // 必须回填进参数路径，否则会写到错误的实例上去
@@ -857,6 +930,10 @@ public class IntentDeliveryService {
                 Integer instance = parseInstance(CwmpRpcService.instanceNumberOf(resp));
                 if (instance != null) {
                     allocated.put(objectName, instance);
+                    // 记进清理台账：这是本次新建的连接，之后任何清理都不得删它。
+                    // 实例号必须是设备响应里的这个号——删过一轮后设备会重排编号，
+                    // 照模板里的固定号找会找到别人头上
+                    rememberCreated(task.getSn(), objectName, instance);
                 }
                 log.info("已创建业务对象: sn={}, object={}, instance={}",
                         task.getSn(), objectName, instance);
@@ -894,8 +971,9 @@ public class IntentDeliveryService {
                     refreshDeliveredValues(task.getSn(), plan);
                     if (needReboot(task)) {
                         reboot(task);
+                    } else {
+                        refreshCapability(task.getSn());
                     }
-                    refreshCapability(task.getSn());
                     finish(task, DeviceTask.STATUS_SUCCESS, located.skipped.isEmpty() ? null
                             : "已跳过设备不接受的参数: " + String.join(" | ", located.skipped));
                     return;
@@ -907,9 +985,11 @@ public class IntentDeliveryService {
             // 页面这会儿早刷新过了——先把本次写下去的参数读回来落库，列表立刻对得上现场
             refreshDeliveredValues(task.getSn(), plan);
             if (needReboot(task)) {
+                // 马上要重启了，补采只会采到重启前的一瞬，设备上报 0 BOOTSTRAP 时自然会再采
                 reboot(task);
+            } else {
+                refreshCapability(task.getSn());
             }
-            refreshCapability(task.getSn());
             finish(task, DeviceTask.STATUS_SUCCESS, null);
         } catch (Exception e) {
             log.warn("下发异常: sn={}, taskNo={}, err={}", task.getSn(), task.getTaskNo(), e.getMessage());
@@ -1075,50 +1155,153 @@ public class IntentDeliveryService {
     /**
      * WAN 下发前清理旧业务连接：TR069 管理通道保留，其余逐个删除。
      *
-     * <p>认不出管理通道时整体中止——宁可本次下发失败，也不冒设备脱管的险。
-     * 失败原因会写进工单，运维看到就知道是「判读不出来」，而不是配置本身有问题。</p>
+     * <p><strong>先删后建，且一个批次只删一次</strong>。批量下发 Internet + VoIP 是两个
+     * 任务，各跑各的线程：第二个任务开工时若再清一次，第一个刚建好的连接就在存量快照里，
+     * 会被当成出厂残留删掉——现场看到的就是「两条都下发成功了，最后只剩一条」。
+     * 所以这里用 {@link #wanCleanupLedger} 记账：窗口内来过的第二单直接跳过清理，
+     * 台账里已记的新建连接无论何时都不进删除清单。</p>
      *
-     * @return true 表示可以继续下发
+     * <p>识不出管理通道时不删任何一条，照常继续下发：删错管理通道设备就脱管了，
+     * 那比旧连接抢路由严重得多。</p>
+     *
+     * <p><strong>清理失败不判死整单</strong>：设备不回、删不动、快照读不全都是
+     * 「没清掉」，不是「不能发」。清不掉就留着旧连接继续下发，业务起来了比什么都强；
+     * 真要清理由下一次下发或人工处理。只有清理这一步，绝不能反过来拖垮下发。</p>
      */
-    private boolean cleanupWan(DeviceTask task) {
-        try {
-            WanCleanup.Plan clean = WanCleanup.plan(fetchWanLinks(task.getSn()));
-            if (clean.delete().isEmpty()) {
-                return true;
+    private void cleanupWan(DeviceTask task) {
+        String sn = task.getSn();
+        // 同一台设备串行：一个任务在建、另一个在删是最难复现也最难查的故障
+        synchronized (wanCleanupLocks.computeIfAbsent(sn, k -> new Object())) {
+            WanCleanupState state = wanCleanupLedger.computeIfAbsent(sn, k -> new WanCleanupState());
+            if (state.fresh(wanCleanupWindowSeconds * 1000L)) {
+                log.info("本批次已清理过 WAN，本次跳过（避免删掉同批次刚建的业务连接）: sn={}, taskNo={}, 窗口={}s",
+                        sn, task.getTaskNo(), wanCleanupWindowSeconds);
+                return;
             }
-            log.info("下发前清理旧 WAN: sn={}, 保留={}条, 删除={}条, 明细={}",
-                    task.getSn(), clean.keep().size(), clean.delete().size(), describe(clean));
+            List<WanCleanup.WanLink> existing;
+            String managementHint;
+            WanCleanup.Plan clean;
+            try {
+                // 1. 存量快照：只删这次读到的连接，本次要新建的此刻还不存在，不参与判断
+                existing = fetchWanLinks(sn);
+                // 2. 管理通道线索：按 ManagementServer 的指向认，不按实例编号认
+                managementHint = findManagementWanPath(sn);
+                clean = WanCleanup.plan(existing, managementHint, state.createdPaths());
+            } catch (Exception e) {
+                // 现场读不清就不知道该保住哪条：一条都不删，但也不中止下发——
+                // 不删就不会误删管理通道，业务照发。台账照样记账，免得整包里
+                // 每个成员都再干等一轮采集超时
+                log.warn("读取现有 WAN 失败，本次跳过清理继续下发: sn={}, taskNo={}, err={}",
+                        sn, task.getTaskNo(), textOf(e));
+                state.markCleaned(System.currentTimeMillis());
+                return;
+            }
+            if (clean.delete().isEmpty()) {
+                log.info("下发前清理旧 WAN: sn={}, 存量={}条, 不删任何连接（{}）",
+                        sn, existing.size(), clean.reason());
+                state.markCleaned(System.currentTimeMillis());
+                return;
+            }
+            log.info("下发前清理旧 WAN: sn={}, 保留={}条, 删除={}条, 管理通道线索={}, 原因={}, 明细={}",
+                    sn, clean.keep().size(), clean.delete().size(), managementHint,
+                    clean.reason(), describe(clean));
             List<String> skipped = new ArrayList<>();
+            // 3. 存量里不在保留集合的，一次删完
             for (WanCleanup.WanLink victim : clean.delete()) {
-                SoapMessage resp = await(rpcService.deleteObject(
-                        task.getSn(), victim.path(), task.getTaskNo()));
-                String error = failureOf(resp, "DeleteObject " + victim.path());
-                if (error != null) {
-                    // 设备拒绝删除（实测回 9002 Internal error）就是最硬的「占用」证据：
-                    // 这条连接要么正在承载业务，要么是内置不允许删的。清理是尽力而为——
-                    // 删不掉就留着继续下发，总比整单判死、新业务一条都发不下去强
-                    log.warn("清理旧 WAN 被设备拒绝，跳过该连接继续下发: sn={}, path={}, err={}",
-                            task.getSn(), victim.path(), error);
+                try {
+                    SoapMessage resp = awaitCleanup(rpcService.deleteObject(
+                            sn, victim.path(), task.getTaskNo()));
+                    String error = failureOf(resp, "DeleteObject " + victim.path());
+                    if (error != null) {
+                        // 设备拒绝删除（实测回 9002 Internal error）就是最硬的「占用」证据：
+                        // 这条连接要么正在承载业务，要么是内置不允许删的。清理是尽力而为——
+                        // 删不掉就留着继续下发，总比整单判死、新业务一条都发不下去强
+                        log.warn("清理旧 WAN 被设备拒绝，跳过该连接继续下发: sn={}, path={}, err={}",
+                                sn, victim.path(), error);
+                        skipped.add(victim.path());
+                    }
+                } catch (Exception e) {
+                    // 设备不回（等满 request-timeout-seconds 的 TimeoutException）也是「没清掉」，
+                    // 不能当成致命错误：把整单判死了，新业务一条都发不下去
+                    log.warn("清理旧 WAN 未拿到设备回应，跳过该连接继续下发: sn={}, path={}, err={}",
+                            sn, victim.path(), textOf(e));
                     skipped.add(victim.path());
                 }
             }
             if (!skipped.isEmpty()) {
                 log.warn("旧 WAN 未清理干净，继续下发新业务（可能残留冲突路由）: sn={}, 未清理={}",
-                        task.getSn(), String.join(", ", skipped));
+                        sn, String.join(", ", skipped));
             }
-            return true;
-        } catch (WanCleanup.Tr069NotFound e) {
-            log.warn("中止下发: sn={}, taskNo={}, 原因={}", task.getSn(), task.getTaskNo(), e.getMessage());
-            finish(task, DeviceTask.STATUS_FAILED, e.getMessage());
-            return false;
-        } catch (Exception e) {
-            // 现场都读不清就不知道该保住哪条，此时删任何一条都可能命中管理通道
-            log.warn("读取现有 WAN 失败，中止下发: sn={}, taskNo={}, err={}",
-                    task.getSn(), task.getTaskNo(), e.getMessage());
-            finish(task, DeviceTask.STATUS_FAILED,
-                    "读取现有 WAN 连接失败，中止下发以免误删管理通道: " + e.getMessage());
-            return false;
+            // 4. 清理只此一次；后面的 AddObject 与 SetParameterValues 不再触发任何删除
+            state.markCleaned(System.currentTimeMillis());
         }
+    }
+
+    /** 异常的可读描述：超时类异常没有 message，只打 null 现场没法排查。 */
+    private static String textOf(Throwable e) {
+        if (e == null) {
+            return "未知原因";
+        }
+        String msg = e.getMessage();
+        return msg == null || msg.isBlank() ? e.getClass().getSimpleName() : msg;
+    }
+
+    /**
+     * 记下本次新建的连接路径，后续任何清理都不许删它。
+     *
+     * <p>路径按「对象名 + 响应返回的实例号」拼：删过一轮后设备会重排实例号，
+     * 只有响应里那个号是准的。</p>
+     */
+    private void rememberCreated(String sn, String objectName, int instance) {
+        String prefix = objectName.endsWith(".") ? objectName + instance + "." : objectName + "." + instance + ".";
+        wanCleanupLedger.computeIfAbsent(sn, k -> new WanCleanupState()).remember(prefix);
+        log.info("已登记本次新建的 WAN 连接（后续清理不再删它）: sn={}, path={}", sn, prefix);
+    }
+
+    /**
+     * 设备 {@code ManagementServer} 指向的那条 WAN 连接。
+     *
+     * <p>管理通道不能按「第几个实例」认：出厂自带的实例号会漂移，换批设备就可能认错。
+     * 这里取设备自己申报的指向——{@code ManagementServer} 下哪个参数的值带
+     * {@code WANIPConnection.n.} / {@code WANPPPConnection.n.}，那条就是管理通道；
+     * 只给了实例号的（有些厂商只写 {@code 9}）也照收，由
+     * {@link WanCleanup#matchesManagement(String, String)} 按号比对。</p>
+     *
+     * @return 连接片段（{@code WANIPConnection.9.}）或实例号（{@code 9}），认不出返回 null
+     */
+    String findManagementWanPath(String sn) {
+        try {
+            List<CpeParameter> rows = parameterMapper.selectList(
+                    new LambdaQueryWrapper<CpeParameter>()
+                            .eq(CpeParameter::getSn, sn)
+                            .like(CpeParameter::getParamPath, "ManagementServer.")
+                            .last("LIMIT 200"));
+            // ManagementServer 下还有 PeriodicInformInterval 这类纯数字参数，
+            // 它们跟管理通道无关，所以先找「带连接片段」的值，找不到才退到纯数字
+            String numeric = null;
+            for (CpeParameter row : rows) {
+                String value = row.getParamValue();
+                if (value == null || value.isBlank()) {
+                    continue;
+                }
+                String text = value.trim();
+                String segment = WanCleanup.connectionSegmentOf(text);
+                if (segment != null) {
+                    return segment;
+                }
+                if (numeric == null && text.matches("\\d+")) {
+                    numeric = text;
+                }
+            }
+            if (numeric != null) {
+                return numeric;
+            }
+            log.warn("未能从 ManagementServer 认出管理通道，改按 ServiceList 判定: sn={}", sn);
+        } catch (Exception e) {
+            log.warn("读取 ManagementServer 参数失败，改按 ServiceList 判定: sn={}, err={}",
+                    sn, e.getMessage());
+        }
+        return null;
     }
 
     /**
@@ -1225,13 +1408,25 @@ public class IntentDeliveryService {
     /**
      * 读出设备上现有的 WAN 连接及其参数。
      *
-     * <p>取设备上报时存下的快照，不再为此发一轮 RPC：设备能连上来上报，
-     * 这些参数就必然已经采过，拿快照比临时 GPN 更快也更稳。</p>
+     * <p>先取库里的快照（{@code summary}），库里没有（这台设备还没采过）才向设备要一轮。
+     * 清理要的只是「有哪些存量连接」，快照足够；每次清理都真采一轮是几百条路径的
+     * GetParameterValues，会把设备这一轮的下发窗口占满，设备回应不过来就是整轮超时、
+     * 指令被重排队列，后面的业务全被拖垮。</p>
+     *
+     * <p>快照陈旧只会「少删」（漏掉新出现的连接），不会「误删」，方向是安全的。</p>
      */
-    @SuppressWarnings("unchecked")
     private List<WanCleanup.WanLink> fetchWanLinks(String sn) {
-        Map<String, Object> data = businessService.collect(sn);
-        Object wanObj = data.get("wan");
+        List<WanCleanup.WanLink> cached = wanLinksFrom(businessService.summary(sn));
+        if (!cached.isEmpty()) {
+            return cached;
+        }
+        log.info("库里没有 WAN 快照，向设备采一轮再清点存量: sn={}", sn);
+        return wanLinksFrom(businessService.collect(sn));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<WanCleanup.WanLink> wanLinksFrom(Map<String, Object> data) {
+        Object wanObj = data == null ? null : data.get("wan");
         if (!(wanObj instanceof List<?> list)) {
             return List.of();
         }
@@ -1379,6 +1574,11 @@ public class IntentDeliveryService {
         return future.get(requestTimeoutSeconds, TimeUnit.SECONDS);
     }
 
+    /** 清理指令的等待：短于正式下发，见 {@link #wanCleanupTimeoutSeconds}。 */
+    private SoapMessage awaitCleanup(CompletableFuture<SoapMessage> future) throws Exception {
+        return future.get(wanCleanupTimeoutSeconds, TimeUnit.SECONDS);
+    }
+
     private List<List<PlanItem>> chunks(List<PlanItem> items) {
         List<List<PlanItem>> chunks = new ArrayList<>();
         for (int i = 0; i < items.size(); i += VALUE_BATCH) {
@@ -1464,5 +1664,39 @@ public class IntentDeliveryService {
 
     private static String str(Object raw) {
         return raw == null ? null : String.valueOf(raw);
+    }
+
+    /**
+     * 一台设备的 WAN 清理台账：上次清理时间 + 本批次新建的连接路径。
+     *
+     * <p>「删除只跑一次」靠它落地：批量下发第二条业务时，{@link #fresh(long)} 为真
+     * 说明同批次已经清过，直接跳过；{@link #createdPaths()} 里的连接无论隔多久都不删——
+     * 下发完会补采快照，它们随后就会出现在存量里，只靠时间窗口挡不住。</p>
+     */
+    private static final class WanCleanupState {
+
+        private volatile long lastCleanedAtMillis;
+
+        private final Set<String> created = ConcurrentHashMap.newKeySet();
+
+        /** 距上次清理还没超过窗口：视为同一批次，不再清理。 */
+        boolean fresh(long windowMillis) {
+            long last = lastCleanedAtMillis;
+            return last > 0 && System.currentTimeMillis() - last < windowMillis;
+        }
+
+        void markCleaned(long nowMillis) {
+            lastCleanedAtMillis = nowMillis;
+        }
+
+        void remember(String createdPath) {
+            if (createdPath != null && !createdPath.isBlank()) {
+                created.add(createdPath);
+            }
+        }
+
+        Set<String> createdPaths() {
+            return Set.copyOf(created);
+        }
     }
 }

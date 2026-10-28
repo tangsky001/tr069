@@ -24,8 +24,10 @@
       <div class="olt-tip">
         鸿升光是一体化设备，没有板卡概念：认出厂商后按型号生成整机卡片，端口固定 4 个 PON 口。
         采集时进配置视图（<code>enable</code> → <code>config</code>）跑
-        <code>show onu-info all</code> 与 <code>show pon-info</code>，
-        把每口的 ONU 在线数与每条 ONU 的 MAC、在线状态补上去。
+        <code>show onu-info all</code>、<code>show pon-info</code> 与
+        <code>show running-config</code>，把每口的 ONU 在线数、每条 ONU 的 MAC 与在线状态、
+        VLAN（含成员端口）补上去。VLAN 页签里可以直接新增 <code>vlan standard</code>、
+        勾选删除 <code>no vlan</code>，下发成功后自动重采。
       </div>
 
       <el-tabs v-model="activeTab">
@@ -46,17 +48,18 @@
             <span v-if="boardSummary" class="board-summary">{{ boardSummary }}</span>
           </div>
 
-          <olt-board-cards
-            :slots="slots"
+          <!-- 整机不是板卡：一台设备画一块前面板，PON 口 + 上联 GE/XGE + NMS/CONSOLE -->
+          <olt-hsgq-faceplate
+            v-if="slots.length"
+            :board="slots[0]"
+            :model="device.model"
             :expanded-onts="expandedOnts"
             :hover-port="hoverPort"
-            :missing-images="missingImages"
-            empty-text="尚无整机数据。点击「同步」登录设备采集。"
             @toggle="onToggleOnts"
             @hover="hoverOn"
             @leave="hoverOff"
-            @image-error="markImageMissing"
           />
+          <div v-else class="olt-empty">尚无整机数据。点击「同步」登录设备采集。</div>
         </el-tab-pane>
 
         <el-tab-pane label="PON 口状态" name="pon">
@@ -89,8 +92,8 @@
         </el-tab-pane>
 
         <el-tab-pane label="ONU 列表" name="onu">
-          <!-- show onu-info all 采回来的 ONU：按 PON 口分表，展开看该口下每条 ONU 的 MAC 与状态 -->
-          <olt-ont-board
+          <!-- show onu-info all 采回来的 ONU：一条一行全平铺出来，按 PON 口排序 -->
+          <olt-ont-list
             :ont-boards="ontBoards"
             sn-label="MAC 地址"
             empty-text="尚未采集到 ONU 数据。点上面的「同步」，采集时会跑 show onu-info all。"
@@ -107,13 +110,27 @@
         </el-tab-pane>
 
         <el-tab-pane label="VLAN" name="vlan">
-          <olt-vlan-panel
-            :vlan-list="vlanList"
-            :port-vlans="portVlans"
-            :vlan-ip-interfaces="vlanIpInterfaces"
-            :static-routes="staticRoutes"
-            :vlan-group-rows="vlanGroupRows"
-            empty-text="尚未采集到 VLAN 信息。这台设备的 VLAN 还没有接对应的解析规则。"
+          <olt-hsgq-vlan-panel
+            :olt-id="detailId"
+            :vlans="vlanList"
+            :member-ports="memberPorts"
+            :create-handler="createVlan"
+            :delete-handler="deleteVlan"
+          />
+        </el-tab-pane>
+
+        <el-tab-pane label="TR069模板" name="tr069" lazy>
+          <!-- 不落库：进页签就实时读设备，增加是当场下发 onu-tr069-profile add -->
+          <olt-hsgq-tr069-panel :olt-id="detailId" />
+        </el-tab-pane>
+
+        <el-tab-pane label="设备配置" name="commands">
+          <olt-command-center
+            :olt-id="detailId"
+            :actions="commandActions"
+            :exec-handler="execAction"
+            :ports="memberPorts"
+            :setup-handler="handleQuickSetup"
           />
         </el-tab-pane>
 
@@ -134,9 +151,11 @@
 <script>
 import OltDeviceBar from './components/OltDeviceBar'
 import OltDeviceInfo from './components/OltDeviceInfo'
-import OltBoardCards from './components/OltBoardCards'
-import OltOntBoard from './components/OltOntBoard'
-import OltVlanPanel from './components/OltVlanPanel'
+import OltHsgqFaceplate from './components/OltHsgqFaceplate'
+import OltOntList from './components/OltOntList'
+import OltHsgqVlanPanel from './components/OltHsgqVlanPanel'
+import OltHsgqTr069Panel from './components/OltHsgqTr069Panel'
+import OltCommandCenter from './components/OltCommandCenter'
 import OltRecords from './components/OltRecords'
 import OltFormDialog from './components/OltFormDialog'
 import { oltDetailMixin } from './mixins/oltDetail'
@@ -154,9 +173,11 @@ export default {
   components: {
     OltDeviceBar,
     OltDeviceInfo,
-    OltBoardCards,
-    OltOntBoard,
-    OltVlanPanel,
+    OltHsgqFaceplate,
+    OltOntList,
+    OltHsgqVlanPanel,
+    OltHsgqTr069Panel,
+    OltCommandCenter,
     OltRecords,
     OltFormDialog
   },

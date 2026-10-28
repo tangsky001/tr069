@@ -14,6 +14,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -223,6 +224,16 @@ class OltInfoParserTest {
     }
 
     @Test
+    void shouldCountChassisSlotsFromBoardTable() {
+        // 槽位表是 0..12：空槽位也占一行，机框要画 13 格，不能只画到 8 号
+        assertEquals(13, OltInfoParser.parseSlotCount(REAL_MA5683T_BOARDS).intValue());
+        assertEquals(13, OltInfoParser.parseSlotCount(MA5683T_BOARDS).intValue());
+        assertNull(OltInfoParser.parseSlotCount(""));
+        // 只有表头没有槽位行，认不出槽位数
+        assertNull(OltInfoParser.parseSlotCount("SlotID  BoardName  Status"));
+    }
+
+    @Test
     void shouldSkipBackplaneRow() {
         String withBackplane = String.join("\n",
                 "  0       H802MABO   Normal",
@@ -343,6 +354,68 @@ class OltInfoParserTest {
 
         assertEquals(2, counts.get(0)[0]);
         assertEquals(1, counts.get(0)[1]);
+    }
+
+    @Test
+    void shouldFillPortsWithoutSummaryFromRows() {
+        // 只有 0 口带汇总行，1 口只有表格行（版本差异 / 分页截断）：
+        // 1 口不能记成 0 个 ONT，否则页面把明明有 ONT 在线的口画成离线
+        String text = String.join("\n",
+                "  0/ 1/0    0  534B5957A89FE02A  active      online   normal   match    no",
+                "  0/ 1/0    1  534B5957A88C62DA  active      offline  initial  initial  no",
+                "  0/ 1/1    0  534B5957A88C9CCD  active      online   normal   match    no",
+                "  0/ 1/1    1  534B5957A88C9CCE  active      online   normal   match    no",
+                "  In port 0/ 1/0 , the total of ONTs are: 2, online: 1");
+
+        Map<Integer, int[]> counts = OltInfoParser.parseOntCounts(text);
+
+        assertEquals(2, counts.get(0)[0]);
+        assertEquals(1, counts.get(0)[1]);
+        assertEquals(2, counts.get(1)[0], "没有汇总行的口要按明细行补上总数");
+        assertEquals(2, counts.get(1)[1], "没有汇总行的口要按明细行补上在线数");
+    }
+
+    @Test
+    void shouldParsePortOpticsFromDisplayPortState() {
+        // 现场 MA5683T：interface gpon 0/1 下 display port state 0
+        String text = String.join("\n",
+                "  -------------------------------------------------------------",
+                "  Port Information",
+                "  -------------------------------------------------------------",
+                "  F/S/P                       : 0/1/0",
+                "  Port state                  : Online",
+                "  Last down cause             : -",
+                "  -------------------------------------------------------------",
+                "  Optical Module State",
+                "  -------------------------------------------------------------",
+                "  Optical Module status       : Online",
+                "  Laser state                 : Normal",
+                "  TX fault                    : Normal",
+                "  Temperature(C)              : 35",
+                "  TX Bias current(mA)         : 92",
+                "  Supply Voltage(V)           : 3.22",
+                "  TX power(dBm)               : 4.23",
+                "  -------------------------------------------------------------",
+                "  Optical Module Manufacturer Information",
+                "  -------------------------------------------------------------");
+
+        OltPort optics = OltInfoParser.parsePortStateOptics(text);
+
+        assertNotNull(optics);
+        assertEquals("Online", optics.getModuleStatus());
+        assertEquals("Normal", optics.getLaserState());
+        assertEquals("Normal", optics.getTxFault());
+        assertEquals("35 ℃", optics.getOpticTemperature());
+        assertEquals("92 mA", optics.getBiasCurrent());
+        assertEquals("3.22 V", optics.getSupplyVoltage());
+        assertEquals("4.23 dBm", optics.getTxPower());
+    }
+
+    @Test
+    void shouldIgnorePortStateTextWithoutOptics() {
+        // 命令不认 / 端口不存在时的回显：一个光模块字段都没有，返回 null 让采集层别继续问
+        assertNull(OltInfoParser.parsePortStateOptics(
+                "  % Unknown command, the error locates at '^'\n  MA5683T(config)#"));
     }
 
     @Test

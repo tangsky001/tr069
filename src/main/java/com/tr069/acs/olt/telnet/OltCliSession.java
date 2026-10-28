@@ -15,6 +15,8 @@ import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltPortVlan;
 import com.tr069.acs.olt.model.OltVlan;
 import com.tr069.acs.olt.model.OltVlanInfo;
+import com.tr069.acs.olt.vendor.OltVendorProfile;
+import com.tr069.acs.olt.vendor.OltVendorProfiles;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.Closeable;
@@ -77,9 +79,6 @@ public class OltCliSession implements Closeable {
     /** 板卡探测顺序：华为 → 中兴/烽火。不用不带参数的 display board，那会停在 Parameter 提示上 */
     private static final List<String> BOARD_COMMANDS = List.of("display board 0", "show card", "show slot");
 
-    /** 版本探测顺序：华为 display → 第三方 show，谁回了内容就用谁的命令风格 */
-    private static final List<String> VERSION_COMMANDS = List.of("display version", "show version");
-
     /** 设备不认这条命令时的回显，说明风格发错了，换另一套再试 */
     private static final Pattern COMMAND_REJECTED = Pattern.compile(
             "(?i)(unknown\\s+command|unrecognized\\s+command|invalid\\s+(command|input)"
@@ -89,13 +88,36 @@ public class OltCliSession implements Closeable {
     /** 单条版本命令的超时上限：认厂商要快，不能让它把后面板卡的时间吃掉 */
     private static final int VERSION_PROBE_TIMEOUT_MS = 8000;
 
-    private static final List<Pattern> LOGIN_STOPS = List.of(USERNAME_PROMPT, PASSWORD_PROMPT, SHELL_PROMPT);
+    /** 快速采集（只要板卡）时单条命令的超时上限：首屏等不起 20 秒 */
+    private static final int BOARD_PROBE_TIMEOUT_MS = 8000;
 
     private static final List<Pattern> COMMAND_STOPS = List.of(SHELL_PROMPT, PARAM_PROMPT);
+
+    /**
+     * 登录过程中设备停下来要回车时，最多补几次。
+     *
+     * <p>鸿升光（HSGQ）登录成功后会把 {@code telnet login / info all login users}
+     * 的登录记录表打出来——被外网扫描的设备这张表有几十上百行，打完（或打满一屏）
+     * 就停在那儿，要按回车才继续出 {@code suc login!} 和 {@code OLT>} 提示符。
+     * 不补回车就只能等到登录超时，现场看到的是「账号密码都对却连不上」。</p>
+     */
+    private static final int MAX_LOGIN_ENTER = 5;
+
+    /** 判定「这一屏打完了」的静默时间，以及单次读取的上限 */
+    private static final long LOGIN_IDLE_MS = 400L;
+    private static final long LOGIN_IDLE_MAX_MS = 2000L;
 
     private final TelnetClient client;
 
     private final int commandTimeoutMs;
+
+    /**
+     * 台账里已经认出来的厂商（上次采集写进去的）。
+     *
+     * <p>已知厂商时不必再探测版本/命令风格：华为直接发 {@code display board 0}，
+     * 第三方直接发 {@code show card}，省掉一整轮探测来回。</p>
+     */
+    private final OltVendor vendorHint;
 
     private final StringBuilder transcript = new StringBuilder();
 
@@ -106,9 +128,10 @@ public class OltCliSession implements Closeable {
 
     private IOException lastError;
 
-    private OltCliSession(TelnetClient client, int commandTimeoutMs) {
+    private OltCliSession(TelnetClient client, int commandTimeoutMs, OltVendor vendorHint) {
         this.client = client;
         this.commandTimeoutMs = commandTimeoutMs;
+        this.vendorHint = vendorHint == null ? OltVendor.GENERIC : vendorHint;
     }
 
     /**
@@ -129,7 +152,7 @@ public class OltCliSession implements Closeable {
         int port = device.getPort() == null || device.getPort() <= 0 ? 23 : device.getPort();
         TelnetClient client = TelnetClient.connect(device.getHost(), port, device.getBindLocalIp(),
                 charset, connectTimeoutMs, Math.min(commandTimeoutMs, 3000));
-        OltCliSession session = new OltCliSession(client, commandTimeoutMs);
+        OltCliSession session = new OltCliSession(client, commandTimeoutMs, OltVendor.of(device.getVendor()));
         try {
             session.login(usernameOf(device), passwordOf(device), loginTimeoutMs);
             return session;
@@ -163,12 +186,17 @@ public class OltCliSession implements Closeable {
         List<String> notes = new ArrayList<>();
 
         // 先关分页，否则版本/板卡回显都可能停在第一页
-        prepareTerminal();
+        prepareTerminal(vendorHint);
 
-        // 第一步：判定命令风格与厂商。display version 有回显就是华为，show version
-        // 有回显就是第三方；认出厂商后后面的命令只走这一套，不再发另一套去讨一句报错
+        // 第一步：判定命令风格与厂商。display version 有回显说明命令走 display 那一套
+        // （华为用它，第三方也有用的），show version 有回显就走 show；厂商另外按回显关键字认
         VersionProbe probe = probeVersion();
-        OltVendor vendor = detectVendor(probe.style(), probe.text());
+        OltVendor vendor = detectVendor(probe.text());
+        if (vendor == OltVendor.GENERIC && vendorHint != OltVendor.GENERIC) {
+            // 这次没认出来（版本命令没回显之类）就沿用台账里上次认出的厂商，
+            // 不然页面会当场从华为界面掉到第三方界面
+            vendor = vendorHint;
+        }
         String versionText = probe.text();
         if (versionText.isBlank()) {
             notes.add("display version / show version 均无回显（命令超时或连接被断开）");
@@ -178,7 +206,7 @@ public class OltCliSession implements Closeable {
         String boardText = "";
         List<OltBoard> boards = List.of();
         List<String> boardCommands = boardCommands(vendor, probe.style());
-        if (withBoards && vendor != OltVendor.HSGQ) {
+        if (withBoards && !OltVendorProfiles.of(vendor).wholeDevice()) {
             for (String command : boardCommands) {
                 String out = runCommand(command);
                 if (out != null && !out.isBlank()) {
@@ -196,16 +224,15 @@ public class OltCliSession implements Closeable {
             }
         }
 
-        vendor = detectVendor(probe.style(), versionText, boardText);
+        vendor = detectVendor(versionText, boardText);
         String model = OltInfoParser.extractModel(vendor, versionText);
         if (model == null) {
             // 版本命令没回来时，登录横幅里通常也有型号（Huawei MA5683T ...）
             model = OltInfoParser.extractModel(vendor, banner.toString());
         }
-        if (withBoards && vendor == OltVendor.HSGQ) {
-            // 现场确认：鸿升光不需要采集板卡信息，识别出厂商后直接按型号生成整机卡片出图
-            // （E04 固定 4 个 PON 口；show pon-info 部分固件只回命令回显，采不到数据）
-            boards = List.of(OltInfoParser.buildHsgqBoard(model));
+        if (withBoards && OltVendorProfiles.of(vendor).wholeDevice()) {
+            // 一体化整机（鸿升光 HSGQ 这类）：不采板卡，识别出厂商后直接按型号生成整机卡片出图
+            boards = List.of(OltVendorProfiles.of(vendor).buildWholeDevice(model));
             boardText = "";
         }
 
@@ -223,10 +250,12 @@ public class OltCliSession implements Closeable {
 
         if (withBoards) {
             if (vendor == OltVendor.HUAWEI && !boards.isEmpty()) {
+                // 华为那套（温度 / 逐板端口与光模块 / ONT / VLAN / 模板）还在这里逐条编排，
+                // 没搬到 profile 里；别的新厂商在自己的 profile.collectDetails 里接管
                 collectFromConfigView(boards, notes, snapshot);
-            }
-            if (vendor == OltVendor.HSGQ && !boards.isEmpty()) {
-                collectHsgq(boards.get(0), notes);
+            } else if (!boards.isEmpty()) {
+                OltVendorProfiles.of(vendor)
+                        .collectDetails(this::runCommand, snapshot, boards, notes, Math.min(commandTimeoutMs, 8000));
             }
             if (snapshot.getBackplane() == null && vendor == OltVendor.HUAWEI) {
                 // MA5683T 这类设备的 display version 不带 PCB/Backplane 段，
@@ -241,6 +270,9 @@ public class OltCliSession implements Closeable {
                 snapshot.setBackplane(OltInfoParser.extractBackplaneBoard(boardText));
             }
             snapshot.setBoards(boards);
+            // 机框槽位数跟着 display board 0 的槽位表走（空槽位也在表里），页面按它画整框；
+            // 一体化整机由 profile 给（那类设备没有槽位表，也不该画成一圈空槽位围一台机器）
+            snapshot.setSlotCount(OltVendorProfiles.of(vendor).slotCount(boardText, boards));
         }
 
         if (lastError != null) {
@@ -252,12 +284,125 @@ public class OltCliSession implements Closeable {
     }
 
     /**
-     * 配置视图里的一次性采集：温度、各端口 ONT 数量。
+     * 快速采集：只要板卡——型号、板卡类型、所在槽位、机框槽位数，别的都不采。
+     *
+     * <p>页面第一次打开一台 OLT，等的就是机框长什么样：板卡插在哪个槽位、什么型号，
+     * 华为一条 {@code display board 0} 就都说清楚了（一两个来回、一两秒）。
+     * 温度、每块板的端口状态与光模块数值、ONT 明细、VLAN、模板那些要进配置视图
+     * 逐板逐口问，几十条命令下来十几秒，跟首屏没关系，交给后台慢慢补
+     * （{@code OltService} 的异步深度采集）。</p>
+     *
+     * <p>已知厂商时一条命令就够：登录横幅里通常带型号，横幅和板卡回显都没有时才补
+     * 一条版本命令——那是要型号，不是要探测命令风格。</p>
+     */
+    public OltSnapshot collectBoardsOnly() {
+        OltSnapshot snapshot = new OltSnapshot();
+        List<String> notes = new ArrayList<>();
+        OltVendor vendor = vendorHint != OltVendor.GENERIC ? vendorHint : detectVendor(banner.toString());
+        int timeout = Math.min(commandTimeoutMs, BOARD_PROBE_TIMEOUT_MS);
+        prepareTerminal(vendor, true);
+
+        String boardText = "";
+        List<OltBoard> boards = List.of();
+        List<String> commands = boardCommands(vendor, cliStyleOf(vendor, null));
+        // 一体化整机没有板卡命令可问，别为一个必然没有结果的来回付钱
+        if (!OltVendorProfiles.of(vendor).wholeDevice()) {
+            for (String command : commands) {
+                String out = runCommand(command, timeout);
+                if (out == null || out.isBlank()) {
+                    continue; // 这条不认（命令风格不对），换下一条
+                }
+                // 有回显就收手：解析不出板卡再问一遍拿到的还是同一段文本，只白等一个超时
+                boardText = out;
+                boards = OltInfoParser.parseBoards(out);
+                break;
+            }
+        }
+        if (vendor == OltVendor.GENERIC) {
+            vendor = detectVendor(boardText);
+        }
+        if (boards.isEmpty() && boardText.isBlank()
+                && vendor != OltVendor.GENERIC && !OltVendorProfiles.of(vendor).wholeDevice()) {
+            // 台账里的厂商跟这台设备对不上（换过设备 / 手填错）：换另一套命令再试一条
+            for (String command : BOARD_COMMANDS) {
+                if (commands.contains(command)) {
+                    continue;
+                }
+                String out = runCommand(command, timeout);
+                if (out != null && !out.isBlank()) {
+                    boardText = out;
+                    boards = OltInfoParser.parseBoards(out);
+                    OltVendor detected = OltVendor.detect(out);
+                    if (detected != OltVendor.GENERIC) {
+                        vendor = detected;
+                    }
+                }
+                break;
+            }
+        }
+
+        String model = OltInfoParser.extractModel(vendor, banner.toString());
+        if (model == null) {
+            model = OltInfoParser.extractModel(vendor, boardText);
+        }
+        String versionText = "";
+        if (model == null || OltVendorProfiles.of(vendor).wholeDevice()) {
+            // 横幅和板卡回显里都没有型号（部分版本横幅只有版权声明），补一条版本命令；
+            // 一体化整机没有板卡回显，型号只能从版本命令里来
+            for (String command : versionCommands(vendor)) {
+                String out = runCommand(command, Math.min(commandTimeoutMs, VERSION_PROBE_TIMEOUT_MS));
+                if (out != null && !out.isBlank() && !isRejected(out)) {
+                    versionText = out;
+                    break;
+                }
+            }
+            if (model == null) {
+                model = OltInfoParser.extractModel(vendor, versionText);
+            }
+            if (vendor == OltVendor.GENERIC) {
+                vendor = detectVendor(versionText);
+            }
+        }
+        if (OltVendorProfiles.of(vendor).wholeDevice()) {
+            // 一体化整机没有板卡概念：按型号生成一张卡片，PON 口与 ONU 数据留给深度采集
+            boards = List.of(OltVendorProfiles.of(vendor).buildWholeDevice(model));
+            boardText = "";
+        }
+        if (boards.isEmpty()) {
+            notes.add(boardText.isBlank()
+                    ? commands.get(0) + " 无回显（命令超时或连接被断开）"
+                    : commands.get(0) + " 回显无法解析：" + headLine(boardText));
+        }
+
+        snapshot.setVendor(vendor);
+        snapshot.setCliStyle(cliStyleOf(vendor, null));
+        snapshot.setModel(model);
+        snapshot.setVersionText(versionText);
+        snapshot.setBoardText(boardText);
+        snapshot.setPrompt(prompt);
+        if (!versionText.isBlank()) {
+            snapshot.setSoftwareVersion(OltInfoParser.extractSoftwareVersion(versionText));
+            snapshot.setPatchVersion(OltInfoParser.extractPatchVersion(versionText));
+            snapshot.setUptime(OltInfoParser.extractUptime(versionText));
+            snapshot.setMacAddress(OltInfoParser.extractMacAddress(versionText));
+        }
+        snapshot.setBoards(boards);
+        snapshot.setSlotCount(OltVendorProfiles.of(vendor).slotCount(boardText, boards));
+        if (lastError != null) {
+            notes.add("命令异常：" + lastError.getMessage());
+        }
+        snapshot.setNotes(notes);
+        snapshot.setTranscript(transcript.toString());
+        return snapshot;
+    }
+
+    /**
+     * 配置视图里的一次性采集：温度、端口状态、ONT 数量、光模块数值、VLAN、模板。
      *
      * <p>现场这台 MA5683T 的这几条命令都只在 config 视图下认，用户视图直接
-     * {@code % Unknown command}。这一版的 {@code display port} 只有
-     * desc/mode/statistics/vlan，没有端口光模块状态，所以不发 display port 命令，
-     * 页面上只看得到端口的 ONT 数量。</p>
+     * {@code % Unknown command}。光模块数值（发光/收光/温度/偏置/电压）还要再往下一层，
+     * 在 {@code interface gpon 0/<槽位>} 接口视图里发 {@code display port state <口>}，
+     * 见 {@link #collectPortOptics}。</p>
      */
     private void collectFromConfigView(List<OltBoard> boards, List<String> notes, OltSnapshot snapshot) {
         int timeout = Math.min(commandTimeoutMs, 8000);
@@ -271,6 +416,8 @@ public class OltCliSession implements Closeable {
             // 先把每块板的端口（含光模块不在位、链路离线的空口）建出来，ONT 再往上面挂
             collectBoardPortStates(boards, timeout);
             ontOk = collectOnts(boards, timeout);
+            // 光模块数值（发光/收光/温度/偏置/电压）：端口建好之后再逐口问
+            collectPortOptics(boards, timeout);
             collectVlans(boards, snapshot, timeout);
             collectTemplates(snapshot, timeout);
         } finally {
@@ -328,6 +475,85 @@ public class OltCliSession implements Closeable {
         port.setOpticalPresent(present);
         port.setLinkStatus(link);
         ports.sort(Comparator.comparing(item -> item.getPortNo() == null ? 0 : item.getPortNo()));
+    }
+
+    /**
+     * 逐口采光模块数值：{@code interface gpon 0/<槽位>} 进接口视图，再
+     * {@code display port state <口>}（用户视图/config 视图直接发不认，必须在接口视图里）。
+     *
+     * <p>只对 PON 业务板发；某块板第一个口就没有光模块回显，说明这版设备/这块板不认这条命令，
+     * 立刻跳过这块板，不挨个口等超时。</p>
+     */
+    private void collectPortOptics(List<OltBoard> boards, int timeout) {
+        for (OltBoard board : boards) {
+            if (board.getSlotNo() == null
+                    || !OltInfoParser.BoardKind.SERVICE.name().equals(board.getBoardKind())) {
+                continue;
+            }
+            int count = portCount(board);
+            if (count <= 0) {
+                continue;
+            }
+            String ponType = "EPON".equalsIgnoreCase(board.getPortMode()) ? "epon" : "gpon";
+            String enter = runQuietly("interface " + ponType + " 0/" + board.getSlotNo(), timeout);
+            if (enter == null || !enter.contains("-if-")) {
+                // 没进接口视图就别继续发（quit 会把 config 视图也退掉）
+                continue;
+            }
+            try {
+                int missed = 0;
+                for (int portNo = 0; portNo < count; portNo++) {
+                    OltPort optics = OltInfoParser.parsePortStateOptics(
+                            runCommand("display port state " + portNo, timeout));
+                    if (optics == null) {
+                        if (++missed >= 2) {
+                            break;
+                        }
+                        continue;
+                    }
+                    missed = 0;
+                    applyPortOptics(board, portNo, optics);
+                }
+            } finally {
+                runQuietly("quit", timeout);
+            }
+        }
+    }
+
+    /** 光模块数值挂到端口上：补空字段，不覆盖 display board 采到的在位状态和链路状态 */
+    private static void applyPortOptics(OltBoard board, int portNo, OltPort optics) {
+        List<OltPort> ports = board.getPorts();
+        if (ports == null) {
+            ports = new ArrayList<>();
+            board.setPorts(ports);
+        }
+        OltPort port = findPort(ports, portNo);
+        if (port == null) {
+            port = new OltPort();
+            port.setFrameNo(0);
+            port.setSlotNo(board.getSlotNo());
+            port.setPortNo(portNo);
+            port.setPortName("P" + portNo);
+            ports.add(port);
+            ports.sort(Comparator.comparing(item -> item.getPortNo() == null ? 0 : item.getPortNo()));
+        }
+        port.setTxPower(optics.getTxPower());
+        port.setOpticTemperature(optics.getOpticTemperature());
+        port.setBiasCurrent(optics.getBiasCurrent());
+        port.setSupplyVoltage(optics.getSupplyVoltage());
+        port.setModuleStatus(optics.getModuleStatus());
+        port.setLaserState(optics.getLaserState());
+        port.setTxFault(optics.getTxFault());
+        if (port.getRxPower() == null) {
+            port.setRxPower(optics.getRxPower());
+        }
+        // Optical Module status 顺带把「在位」补上：display board 没给出状态时用它兜底
+        String moduleStatus = optics.getModuleStatus();
+        if (port.getOpticalPresent() == null && moduleStatus != null) {
+            String state = moduleStatus.toLowerCase(Locale.ROOT);
+            port.setOpticStatus(state);
+            port.setOpticalPresent(!(state.contains("offline") || state.contains("absent")));
+        }
     }
 
     /**
@@ -642,17 +868,17 @@ public class OltCliSession implements Closeable {
                 || OltInfoParser.BoardKind.CONTROL.name().equals(boardKind);
     }
 
-    /** enable → config。enable 在已是特权视图时会回一句报错，忽略即可。 */
+    /**
+     * 进配置视图，写法由厂商 profile 决定（华为 {@code enable}→{@code config} 后还要补一条
+     * scroll；鸿升光有的固件只认 {@code configure}）。
+     */
     private boolean enterConfigView(int timeout) {
-        runQuietly("enable", timeout);
-        String out = runQuietly("config", timeout);
-        if (out == null || !out.contains("(config)#")) {
-            return false;
-        }
-        // scroll 在特权视图才生效（登录后的用户视图发了也不认），进 config 后补一次，
-        // 后面 display ont info / service-port 这类长回显就不分页了
-        runQuietly("scroll", timeout);
-        return true;
+        return profile().enterConfigView(this::runQuietly, timeout);
+    }
+
+    /** 台账里认出来的这家设备对应的 profile（写操作、单条查询这些按设备走缓存里的厂商） */
+    private OltVendorProfile profile() {
+        return OltVendorProfiles.of(vendorHint);
     }
 
     /**
@@ -665,7 +891,7 @@ public class OltCliSession implements Closeable {
      * 命令报错时两种写法互为兜底。每次查询都新开一次登录，按需点才触发，不进轮询采集。</p>
      */
     public String queryOntDetail(int slot, int port, int ontId, String subcommand) {
-        prepareTerminal();
+        prepareTerminal(vendorHint);
         int timeout = commandTimeoutMs;
         if (!enterConfigView(timeout)) {
             // config 都进不去（权限不够之类）：直接试端口视图
@@ -720,7 +946,7 @@ public class OltCliSession implements Closeable {
      * 老版本不认 {@code ont} 过滤时退回整口查询，由上层按 VPI（ONT ID）筛。</p>
      */
     public String[] queryOntConfigAndServicePorts(int slot, int port, int ontId) {
-        prepareTerminal();
+        prepareTerminal(vendorHint);
         int timeout = commandTimeoutMs;
         if (!enterConfigView(timeout)) {
             throw new IllegalStateException("进不了 config 视图，查不到 ONT 配置");
@@ -737,7 +963,7 @@ public class OltCliSession implements Closeable {
      * <p>老版本不认 {@code ont} 过滤时退回整口查询，由上层按 VPI（ONT ID）筛。</p>
      */
     public String queryServicePorts(int slot, int port, int ontId) {
-        prepareTerminal();
+        prepareTerminal(vendorHint);
         int timeout = commandTimeoutMs;
         if (!enterConfigView(timeout)) {
             throw new IllegalStateException("进不了 config 视图，查不到业务流");
@@ -760,7 +986,7 @@ public class OltCliSession implements Closeable {
      * 全部成功返回每条的回显。</p>
      */
     public List<String> sendConfigCommands(List<String> commands) {
-        prepareTerminal();
+        prepareTerminal(vendorHint);
         if (!enterConfigView(commandTimeoutMs)) {
             throw new IllegalStateException("进不了 config 视图，无法下发配置");
         }
@@ -776,8 +1002,35 @@ public class OltCliSession implements Closeable {
         return outputs;
     }
 
-    /** OLT 拒绝命令时的回显特征，返回拒绝原因那一行，没拒绝返回 null */
-    private static final Pattern REJECT_ROW = Pattern.compile("(?im)^.*(Error:|错误[:：]|无效|非法|existed|not exist).*$");
+    /**
+     * 只读查询：进 config 视图后逐条执行 show 类命令，返回每条的回显。
+     *
+     * <p>和 {@link #sendConfigCommands} 的区别是不把回显里的 Error 当异常抛——
+     * 查询命令在这台设备上不认时只会回一行 Unknown，由调用方决定怎么提示，
+     * 不该把一个「没有这个功能」说成下发失败。</p>
+     */
+    public List<String> queryCommands(List<String> commands) {
+        prepareTerminal(vendorHint);
+        if (!enterConfigView(commandTimeoutMs)) {
+            throw new IllegalStateException("进不了 config 视图，无法查询");
+        }
+        List<String> outputs = new ArrayList<>();
+        for (String command : commands) {
+            outputs.add(runCommand(command, commandTimeoutMs));
+        }
+        return outputs;
+    }
+
+    /**
+     * OLT 拒绝命令时的回显特征，返回拒绝原因那一行，没拒绝返回 null。
+     *
+     * <p>不能只认 {@code Error:}：这台设备配置命令被拒时写的是
+     * {@code Error, PORT trunk vlan set fail, reason: ...}（逗号），
+     * 还会把 exists 拼成 {@code exsits}。按行首的 error / fail 兜住，
+     * 否则下发全被设备顶回来、页面却显示成功。</p>
+     */
+    private static final Pattern REJECT_ROW = Pattern.compile(
+            "(?im)^.*(\\berror\\b|\\bfail(?:ed|ure)?\\b|错误[:：]?|无效|非法|not\\s+exist|exsits|不存在).*$");
 
     private String commandRejected(String out) {
         if (out == null || out.isBlank()) {
@@ -794,70 +1047,6 @@ public class OltCliSession implements Closeable {
         return null;
     }
 
-    /**
-     * 鸿升光进配置视图：{@code enable} → {@code config}，有的固件只认 {@code configure}，
-     * 所以两条都试（不支持的那条只回一句报错，代价是一个来回）。
-     * 判据是提示符变成 {@code OLT(config)#}。
-     */
-    private boolean enterHsgqConfigView(int timeout) {
-        runQuietly("enable", timeout);
-        String out = runQuietly("config", timeout);
-        if (out != null && out.contains("(config)#")) {
-            return true;
-        }
-        out = runQuietly("configure", timeout);
-        return out != null && out.contains("(config)#");
-    }
-
-    /**
-     * 鸿升光整机采集：配置视图下 {@code show onu-info all}（每条 ONU 的 MAC 与在线状态）
-     * 与 {@code show pon-info}（每口在线/总数），按 PON 号挂到对应端口上。
-     *
-     * <p>整机没有板卡概念，卡片是按型号生成的（{@link OltInfoParser#buildHsgqBoard}），
-     * 这里只把这两条命令带回来的真实数据补进去；采不到就留空，页面显示「-」，
-     * 不会把没采到当成 0，也不会打乱按型号生成的端口。</p>
-     */
-    private void collectHsgq(OltBoard board, List<String> notes) {
-        int timeout = Math.min(commandTimeoutMs, 8000);
-        if (!enterHsgqConfigView(timeout)) {
-            notes.add("进不了配置视图（enable → config/configure），PON 口与 ONU 未采到");
-            return;
-        }
-        try {
-            String ponText = runCommand("show pon-info", timeout);
-            String onuText = runCommand("show onu-info all", timeout);
-            Map<Integer, int[]> counts = OltInfoParser.parseHsgqPonInfo(ponText);
-            Map<Integer, List<OltOnt>> onts = OltInfoParser.parseHsgqOnuInfo(onuText);
-            if (counts.isEmpty() && onts.isEmpty()) {
-                notes.add("ONU 数量未采到：show pon-info / show onu-info all 无有效回显");
-                return;
-            }
-            List<OltPort> ports = board.getPorts();
-            if (ports == null) {
-                ports = new ArrayList<>();
-                board.setPorts(ports);
-            }
-            for (OltPort port : ports) {
-                Integer ponNo = port.getPortNo();
-                if (ponNo == null) {
-                    continue;
-                }
-                int[] stat = counts.get(ponNo);
-                if (stat != null) {
-                    port.setOnuOnline(stat[0]);
-                    port.setOnuTotal(stat[1]);
-                }
-                // 明细优先用 onu-info 的列表；只有 pon-info 时留空，免得列表和计数对不上
-                List<OltOnt> list = onts.get(ponNo);
-                if (list != null) {
-                    port.setOnts(list);
-                }
-            }
-        } finally {
-            // 只退到特权视图：再 quit 一次就是 logout，设备会停下来问 y/n
-            runQuietly("quit", timeout);
-        }
-    }
 
     /**
      * ONT 数量：config 视图下 {@code display ont info 0 <槽位> all}，参数是空格分隔。
@@ -892,7 +1081,19 @@ public class OltCliSession implements Closeable {
                 }
             }
             for (int portNo = 0; portNo < total; portNo++) {
-                applyOntCount(board, portNo, counts.getOrDefault(portNo, new int[]{0, 0}), details.get(portNo));
+                List<OltOnt> list = details.get(portNo);
+                int[] stat = counts.get(portNo);
+                // 汇总行缺失时用明细兜底：有 ONT 明细就不能记成 0/0，否则页面把这个口画成离线
+                if (stat == null && list != null) {
+                    int online = 0;
+                    for (OltOnt ont : list) {
+                        if (Boolean.TRUE.equals(ont.getOnline())) {
+                            online++;
+                        }
+                    }
+                    stat = new int[]{list.size(), online};
+                }
+                applyOntCount(board, portNo, stat == null ? new int[]{0, 0} : stat, list);
                 any = true;
             }
         }
@@ -946,24 +1147,25 @@ public class OltCliSession implements Closeable {
     /**
      * 厂商判定：版本回显 → 板卡回显 → 登录横幅 → 提示符，前面的认不出再用后面的兜底。
      *
-     * <p>过程中带上命令风格：{@code display} 有回显认作华为，{@code show} 有回显认作
-     * 第三方（厂商仍记通用，但命令走 show）。</p>
+     * <p>只认回显里的厂商关键字，命令风格不参与判定——风格是 display 的第三方 OLT
+     * 不能被记成华为，否则页面走华为界面、命令走华为那一套，在第三方设备上全是报错。
+     * 风格单独由 {@link #cliStyleOf} 决定，认不出厂商时按探测到的那条命令走。</p>
      */
-    private OltVendor detectVendor(OltVendor.CliStyle style, String... texts) {
+    private OltVendor detectVendor(String... texts) {
         for (String text : texts) {
             if (text == null || text.isBlank()) {
                 continue;
             }
-            OltVendor vendor = OltVendor.detect(style, text);
+            OltVendor vendor = OltVendor.detect(text);
             if (vendor != OltVendor.GENERIC) {
                 return vendor;
             }
         }
-        OltVendor fromBanner = OltVendor.detect(style, banner.toString());
+        OltVendor fromBanner = OltVendor.detect(banner.toString());
         if (fromBanner != OltVendor.GENERIC) {
             return fromBanner;
         }
-        return OltVendor.detect(style, prompt == null ? "" : prompt);
+        return OltVendor.detect(prompt == null ? "" : prompt);
     }
 
     /**
@@ -980,8 +1182,9 @@ public class OltCliSession implements Closeable {
      * 板卡命令：按厂商/风格挑一套，只有风格完全没定下来才两套都试。
      */
     private static List<String> boardCommands(OltVendor vendor, OltVendor.CliStyle style) {
+        List<String> own = OltVendorProfiles.of(vendor).boardCommands();
         if (vendor != OltVendor.GENERIC) {
-            return vendor.getBoardCommands();
+            return own;
         }
         if (style == OltVendor.CliStyle.DISPLAY) {
             return List.of("display board 0");
@@ -989,7 +1192,7 @@ public class OltCliSession implements Closeable {
         if (style == OltVendor.CliStyle.SHOW) {
             return List.of("show card", "show slot");
         }
-        return BOARD_COMMANDS;
+        return own;
     }
 
     /**
@@ -1003,7 +1206,7 @@ public class OltCliSession implements Closeable {
         int timeout = Math.min(commandTimeoutMs, VERSION_PROBE_TIMEOUT_MS);
         String versionText = "";
         OltVendor.CliStyle style = null;
-        for (String command : VERSION_COMMANDS) {
+        for (String command : versionCommands(vendorHint)) {
             String out = runCommand(command, timeout);
             if (out == null || out.isBlank() || isRejected(out)) {
                 continue;
@@ -1015,6 +1218,14 @@ public class OltCliSession implements Closeable {
             }
         }
         return new VersionProbe(versionText, style);
+    }
+
+    /** 版本命令清单：认出厂商就用厂商自己的，省掉一整轮探测来回 */
+    private static List<String> versionCommands(OltVendor vendor) {
+        if (vendor != null && vendor != OltVendor.GENERIC) {
+            return OltVendorProfiles.of(vendor).versionCommands();
+        }
+        return OltVendorProfiles.of(OltVendor.GENERIC).versionCommands();
     }
 
     /** 设备不认这条命令（风格发错了） */
@@ -1053,23 +1264,20 @@ public class OltCliSession implements Closeable {
 
     private void login(String username, String password, long timeoutMs) throws IOException {
         long deadline = System.currentTimeMillis() + Math.max(1000, timeoutMs);
-        String out = client.readUntilAny(LOGIN_STOPS, remaining(deadline));
-        transcript.append(out);
-        banner.append(out).append('\n');
+        String out = readLoginScreen(List.of(USERNAME_PROMPT, PASSWORD_PROMPT, SHELL_PROMPT), deadline);
+        record(out);
 
         if (USERNAME_PROMPT.matcher(out).find()) {
             client.sendLine(username);
             client.resetBuffer();
-            out = client.readUntilAny(List.of(PASSWORD_PROMPT, SHELL_PROMPT, LOGIN_FAILED), remaining(deadline));
-            transcript.append(out);
-            banner.append(out).append('\n');
+            out = readLoginScreen(List.of(PASSWORD_PROMPT, SHELL_PROMPT, LOGIN_FAILED), deadline);
+            record(out);
         }
         if (PASSWORD_PROMPT.matcher(out).find()) {
             client.sendLine(password);
             client.resetBuffer();
-            out = client.readUntilAny(List.of(SHELL_PROMPT, LOGIN_FAILED, USERNAME_PROMPT), remaining(deadline));
-            transcript.append(out);
-            banner.append(out).append('\n');
+            out = readLoginScreen(List.of(SHELL_PROMPT, LOGIN_FAILED, USERNAME_PROMPT), deadline);
+            record(out);
         }
         if (LOGIN_FAILED.matcher(out).find()) {
             throw new OltTelnetException("登录失败（账号 " + username + "）：" + lastLine(out));
@@ -1078,6 +1286,64 @@ public class OltCliSession implements Closeable {
             throw new OltTelnetException("登录后未发现命令行提示符，实际回显：" + lastLine(out));
         }
         prompt = lastLine(out);
+    }
+
+    /** 把这一屏登录回显记进 transcript 与登录横幅（横幅用于版本命令没回显时兜底认型号）。 */
+    private void record(String out) {
+        transcript.append(out);
+        banner.append(out).append('\n');
+    }
+
+    /**
+     * 读登录过程中的一屏，设备停在登录信息页上要回车时自动补。
+     *
+     * <p>先等回显静默（横幅是分几包慢慢来的），没命中任何预期提示就补一个回车再读，
+     * 最多补 {@link #MAX_LOGIN_ENTER} 次。补完还是不出提示，就按超时读一把，
+     * 让 {@code 等待设备回显超时} 连同已收到的文本一起抛出去。</p>
+     */
+    private String readLoginScreen(List<Pattern> stops, long deadline) throws IOException {
+        String out = readLoginOutput(stops, deadline);
+        for (int round = 0; !matchesAny(stops, out); round++) {
+            if (round >= MAX_LOGIN_ENTER || remaining(deadline) < 2000) {
+                return client.readUntilAny(stops, remaining(deadline));
+            }
+            log.info("登录回显未出现预期提示（设备可能停在登录信息页），补一个回车: 第{}次", round + 1);
+            transcript.append("[补回车] ");
+            client.sendLine("");
+            out = readLoginOutput(stops, deadline);
+        }
+        return out;
+    }
+
+    /**
+     * 读一段登录回显：等它静默再返回（不命中提示也不报错）。
+     *
+     * <p>设备说完就断开连接不算错——登录失败被踢、只回一句横幅就关连接都很常见，
+     * 缓冲里已经能判定状态（登录失败提示、提示符）时按已收到的文本收尾，
+     * 让调用方去判断该抛「登录失败」还是继续。</p>
+     */
+    private String readLoginOutput(List<Pattern> stops, long deadline) throws IOException {
+        try {
+            return client.readIdle(LOGIN_IDLE_MS, Math.min(LOGIN_IDLE_MAX_MS, remaining(deadline)));
+        } catch (IOException e) {
+            String text = client.getText();
+            if (matchesAny(stops, text)) {
+                return text;
+            }
+            throw e;
+        }
+    }
+
+    private static boolean matchesAny(List<Pattern> stops, String text) {
+        if (text == null || text.isEmpty()) {
+            return false;
+        }
+        for (Pattern stop : stops) {
+            if (stop.matcher(text).find()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static long remaining(long deadline) {
@@ -1116,15 +1382,42 @@ public class OltCliSession implements Closeable {
     }
 
     /**
-     * 关分页。此时还不知道是哪家设备，华为和中兴的命令各试一条，
-     * 不支持的那条只会回一句报错，代价是一个来回。
+     * 关分页。
+     *
+     * <p>认出厂商就只发那一家的命令（华为 {@code scroll} 一条就够）；认不出时
+     * 华为和中兴的命令各试一条，不支持的那条只会回一句报错，代价是一个来回。</p>
      */
-    private void prepareTerminal() {
-        for (String command : OltVendor.HUAWEI.getPagingCommands()) {
-            runQuietly(command, Math.min(commandTimeoutMs, 4000));
+    private void prepareTerminal(OltVendor vendor) {
+        prepareTerminal(vendor, false);
+    }
+
+    /**
+     * @param firstOnly true 时每套命令只发第一条（快速采集用：少一个来回就少几百毫秒）。
+     *                  {@code display board 0} 顶多二十来行，一条 scroll 关掉分页就够了。
+     */
+    private void prepareTerminal(OltVendor vendor, boolean firstOnly) {
+        int timeout = Math.min(commandTimeoutMs, 4000);
+        if (vendor != null && vendor != OltVendor.GENERIC) {
+            List<String> commands = OltVendorProfiles.of(vendor).pagingCommands();
+            for (String command : firstOnly && !commands.isEmpty() ? commands.subList(0, 1) : commands) {
+                runQuietly(command, timeout);
+            }
+            return;
         }
-        for (String command : OltVendor.ZTE.getPagingCommands()) {
-            runQuietly(command, Math.min(commandTimeoutMs, 4000));
+        List<String> huawei = OltVendorProfiles.of(OltVendor.HUAWEI).pagingCommands();
+        List<String> thirdParty = OltVendorProfiles.of(OltVendor.ZTE).pagingCommands();
+        List<String> generic = OltVendorProfiles.of(OltVendor.GENERIC).pagingCommands();
+        if (firstOnly) {
+            // 认不出厂商：华为的 scroll 与第三方通用的 terminal length 0 各来一条
+            runQuietly(huawei.get(0), timeout);
+            runQuietly(generic.get(0), timeout);
+            return;
+        }
+        for (String command : huawei) {
+            runQuietly(command, timeout);
+        }
+        for (String command : thirdParty) {
+            runQuietly(command, timeout);
         }
     }
 

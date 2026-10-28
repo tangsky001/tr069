@@ -8,6 +8,9 @@ import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -94,8 +97,35 @@ public class CwmpMultiPortConfig {
             if (port == serverPort) {
                 continue;
             }
+            if (!portBindable(port)) {
+                // 千万别让它去连：额外连接器绑定失败会让整个 Tomcat 起不来，
+                // 一个端口冲突就把管理端和其余上报端口全拖垮，
+                // 现场表现是「多配了一个端口，设备全不上报了」
+                log.error("CPE 上报端口 {} 无法绑定（已被占用或无权监听），已跳过该端口，"
+                                + "其余端口照常监听。请检查端口是否被别的进程占用：netstat -ano | findstr :{}",
+                        port, port);
+                continue;
+            }
             extra.add(port);
         }
         return extra;
+    }
+
+    /**
+     * 端口能否绑定：启动前先探一次。
+     *
+     * <p>只看配置看不出端口冲突，而额外连接器是在 Tomcat 启动时才绑定的，
+     * 绑定失败会冒泡成「嵌入式 Tomcat 启动失败」，整个应用起不来。
+     * 这里提前探一次，绑不上就跳过并报 ERROR——宁可少监听一个端口，
+     * 也不能因为一个端口把主端口和管理端一起搞挂。</p>
+     */
+    private static boolean portBindable(int port) {
+        try (ServerSocket probe = new ServerSocket()) {
+            probe.setReuseAddress(true);
+            probe.bind(new InetSocketAddress(port));
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 }

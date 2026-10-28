@@ -11,7 +11,7 @@ target/
 .mvn/timing.properties
 #configuration/
 deploy/
-
+abc/
 #############
 ## 前端（server/web，vue-admin-template）
 #############
@@ -49,3 +49,6 @@ src/main/resources/application-dev.yml
 ## 本文件优先级更高，这里显式放行（需先放行目录，目录内的文件才不会被连带忽略）。
 #############
 
+
+## 前端构建产物（vue.config.js outputDir 直出到这里）
+src/main/resources/static/

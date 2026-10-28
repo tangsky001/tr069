@@ -41,20 +41,33 @@
           </div>
 
           <div class="olt-section-title">
-            板卡信息
+            {{ isHsgq ? '整机信息' : '板卡信息' }}
             <span v-if="boardSummary" class="board-summary">{{ boardSummary }}</span>
           </div>
 
-          <olt-board-cards
-            :slots="slots"
+          <olt-hsgq-faceplate
+            v-if="isHsgq && slots.length"
+            :board="slots[0]"
+            :model="device.model"
             :expanded-onts="expandedOnts"
             :hover-port="hoverPort"
-            :missing-images="missingImages"
+            empty-text="尚无板卡数据。点击「同步」登录设备采集。"
+            @toggle="onToggleOnts"
+            @hover="hoverOn"
+            @leave="hoverOff"
+          />
+          <olt-board-cards
+            v-else
+            :slots="slots"
+            :slot-count="chassisSlotCount"
+            :model="device.model"
+            :brand="device.vendorLabel"
+            :expanded-onts="expandedOnts"
+            :hover-port="hoverPort"
             empty-text="尚无板卡数据。点击「同步」登录设备采集；若同步成功仍为空，说明这台设备的命令与现有解析规则不匹配，可到「采集记录」看原始回显再补规则。"
             @toggle="onToggleOnts"
             @hover="hoverOn"
             @leave="hoverOff"
-            @image-error="markImageMissing"
           />
         </el-tab-pane>
 
@@ -68,22 +81,46 @@
         </el-tab-pane>
 
         <el-tab-pane label="VLAN" name="vlan">
-          <div class="olt-summary">
-            <div>
-              VLAN <b>{{ vlanList.length }}</b> 个，上行口 <b>{{ portVlans.length }}</b> 个，
-              三层接口 <b>{{ vlanIpInterfaces.length }}</b> 个，静态路由 <b>{{ staticRoutes.length }}</b> 条
-              <span v-if="vlanInfo && vlanInfo.collectedAt">；快照时间 {{ vlanInfo.collectedAt }}</span>
+          <!-- 鸿升光：没有 vlanif / 静态路由那一套，用它能真正增删的 VLAN 面板 -->
+          <template v-if="isHsgq">
+            <div class="olt-summary">
+              <div>
+                VLAN <b>{{ vlanList.length }}</b> 个（按 <code>show running-config</code> 采集）
+                <span v-if="vlanInfo && vlanInfo.collectedAt">；快照时间 {{ vlanInfo.collectedAt }}</span>
+              </div>
             </div>
-          </div>
+            <olt-hsgq-vlan-panel
+              :olt-id="detailId"
+              :vlans="vlanList"
+              :member-ports="memberPorts"
+              :create-handler="createVlan"
+              :delete-handler="deleteVlan"
+            />
+          </template>
 
-          <olt-vlan-panel
-            :vlan-list="vlanList"
-            :port-vlans="portVlans"
-            :vlan-ip-interfaces="vlanIpInterfaces"
-            :static-routes="staticRoutes"
-            :vlan-group-rows="vlanGroupRows"
-            empty-text="尚未采集到 VLAN 信息，也可以点上面的「同步」立即刷新。"
-          />
+          <template v-else>
+            <div class="olt-summary">
+              <div>
+                VLAN <b>{{ vlanList.length }}</b> 个，上行口 <b>{{ portVlans.length }}</b> 个，
+                三层接口 <b>{{ vlanIpInterfaces.length }}</b> 个，静态路由 <b>{{ staticRoutes.length }}</b> 条
+                <span v-if="vlanInfo && vlanInfo.collectedAt">；快照时间 {{ vlanInfo.collectedAt }}</span>
+              </div>
+            </div>
+
+            <olt-vlan-panel
+              :vlan-list="vlanList"
+              :port-vlans="portVlans"
+              :vlan-ip-interfaces="vlanIpInterfaces"
+              :static-routes="staticRoutes"
+              :vlan-group-rows="vlanGroupRows"
+              empty-text="尚未采集到 VLAN 信息，也可以点上面的「同步」立即刷新。"
+            />
+          </template>
+        </el-tab-pane>
+
+        <!-- TR-069（ACS）模板只有鸿升光接过命令，别的厂商不显示这个页签 -->
+        <el-tab-pane v-if="isHsgq" label="TR069模板" name="tr069" lazy>
+          <olt-hsgq-tr069-panel :olt-id="detailId" />
         </el-tab-pane>
 
         <el-tab-pane label="ONT 配置/状态" name="ont">
@@ -94,9 +131,28 @@
             </div>
           </div>
 
+          <!-- 鸿升光：ONU 数量本来就少（一台几十条），平铺成一张表比按 PON 口折叠好查 -->
+          <olt-ont-list
+            v-if="isHsgq"
+            :ont-boards="ontBoards"
+            :sn-label="device.vendor === 'HSGQ' ? 'MAC 地址' : 'SN'"
+            empty-text="尚未采集到 ONU 数据。点上面的「同步」，采集时会跑 show onu-info all。"
+          />
           <olt-ont-board
+            v-else
             :ont-boards="ontBoards"
             empty-text="尚未采集到端口/ONT 数据，点上面的「同步」立即刷新。"
+          />
+        </el-tab-pane>
+
+        <!-- 命令动作目录只有接入了手册的厂商才有（鸿升光），其它厂商不显示这个页签 -->
+        <el-tab-pane v-if="commandActions.length" label="设备配置" name="commands">
+          <olt-command-center
+            :olt-id="detailId"
+            :actions="commandActions"
+            :exec-handler="execAction"
+            :ports="memberPorts"
+            :setup-handler="handleQuickSetup"
           />
         </el-tab-pane>
 
@@ -118,8 +174,13 @@
 import OltDeviceBar from './components/OltDeviceBar'
 import OltDeviceInfo from './components/OltDeviceInfo'
 import OltBoardCards from './components/OltBoardCards'
+import OltHsgqFaceplate from './components/OltHsgqFaceplate'
 import OltOntBoard from './components/OltOntBoard'
+import OltOntList from './components/OltOntList'
 import OltVlanPanel from './components/OltVlanPanel'
+import OltHsgqVlanPanel from './components/OltHsgqVlanPanel'
+import OltHsgqTr069Panel from './components/OltHsgqTr069Panel'
+import OltCommandCenter from './components/OltCommandCenter'
 import OltRecords from './components/OltRecords'
 import OltFormDialog from './components/OltFormDialog'
 import { oltDetailMixin } from './mixins/oltDetail'
@@ -127,10 +188,11 @@ import { detailRoute } from './vendors'
 import { deleteOlt } from '@/api/olt'
 
 /**
- * 通用详情页：没认出来的设备、以及中兴、烽火这些还没有专属视图的厂商都走这里。
+ * 通用详情页：没认出来的设备、以及中兴、烽火、鸿升光这些厂商都走这里。
  *
  * 只摆命令普遍通用的东西：板卡、端口 ONT、VLAN、配置信息、采集记录。
  * 华为那套 DBA、线路模板、主备、保护之类的面板不在这儿——那些标签页换个厂商就是错的。
+ * 鸿升光是整机，板卡区换成按真机正面画的横向面板（OltHsgqFaceplate）。
  */
 export default {
   name: 'OltGeneric',
@@ -138,8 +200,13 @@ export default {
     OltDeviceBar,
     OltDeviceInfo,
     OltBoardCards,
+    OltHsgqFaceplate,
     OltOntBoard,
+    OltOntList,
     OltVlanPanel,
+    OltHsgqVlanPanel,
+    OltHsgqTr069Panel,
+    OltCommandCenter,
     OltRecords,
     OltFormDialog
   },
