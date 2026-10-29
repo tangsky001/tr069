@@ -100,7 +100,7 @@
 同一个人今天用网页、明天用 App，来源不同但能干的事一样。
 
 同一次登录还会把 IP 记下来（`X-Forwarded-For` 的第一段，其次 `X-Real-IP`，都没有才用连接的地址），
-并落一条登录日志；失败的那次也记。用户列表上能看到时间与来源，完整记录在 §4.14.5。
+并落一条登录日志；失败的那次也记。用户列表上能看到时间与来源，完整记录在 §4.13.5。
 
 ### 2.2 当前用户信息
 
@@ -142,8 +142,7 @@
 | OLT 管理（Telnet 采集） | `/api/olt` | §4.10 |
 | 设备预设（引擎内部） | 无接口 | §4.11 |
 | 文件与固件 | `/api/files` | §4.12 |
-| 设备标签 | `/api/device-tags` | §4.13 |
-| 系统管理（用户与角色权限） | `/api/system` | §4.14 |
+| 系统管理（用户与角色权限） | `/api/system` | §4.13 |
 
 ---
 
@@ -155,7 +154,7 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/page` | 分页列表，参数 `page`(默认1)、`size`(默认20)、`sn`(模糊)、`isp`(精确)、`deviceType`(精确)，按最近上报时间倒序 |
+| GET | `/page` | 分页列表，参数 `page`(默认1)、`size`(默认20)、`sn`(模糊)、`roomNo`(房间号，模糊)、`isp`(精确)、`deviceType`(精确)，按最近上报时间倒序 |
 | GET | `/{sn}` | 详情：`{device, session}`，`session` 含 `online`/`state`/`lastContactTime`/`pendingCount`（设备离线时没有 `session` 字段） |
 | GET | `/{sn}/status` | 在线状态：`{sn, online, state}` |
 | GET | `/online` | 全部在线会话明细列表 |
@@ -841,74 +840,11 @@ ACS 会回 `TransferCompleteResponse`——不回的话设备会以为 ACS 没�
 
 ---
 
-## 4.13 设备标签
-
-基础路径 `/api/device-tags`。
-
-标签是型号、运营商之外的分群维度：试点组、VIP、故障批次都往这里放。
-批量升级、批量打标签都能先按标签把设备挑出来。
-
-### 4.13.1 接口
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/device-tags` | 全部标签，带每个标签下的设备数 |
-| GET | `/api/device-tags/tag/{tag}/devices` | 带这个标签的设备序列号 |
-| DELETE | `/api/device-tags/tag/{tag}` | 删掉这个标签（从所有设备身上摘掉，不是删设备） |
-| GET | `/api/device-tags/{sn}` | 这台设备身上的标签 |
-| PUT | `/api/device-tags/{sn}` | 给设备打标签 |
-| DELETE | `/api/device-tags/{sn}` | 取消标签 |
-| POST | `/api/device-tags/batch` | 批量打标签 |
-| DELETE | `/api/device-tags/batch` | 批量取消标签 |
-
-### 4.13.2 打标签
-
-```bash
-curl -X PUT 'http://127.0.0.1:8888/api/device-tags/ZXHN000001' -H 'X-Token: <token>' \
-  -H 'Content-Type: application/json' -d '["试点组","VIP"]'
-```
-
-请求体是标签数组。已经打过的不会重复，返回实际新增的条数。
-取消标签走 `DELETE` + 同样的请求体，只取消传进来的那些。
-
-标签名打错了，把它整体删掉——摘掉所有设备身上的这一条，**设备不受影响**：
-
-```bash
-curl -X DELETE 'http://127.0.0.1:8888/api/device-tags/tag/试点组' -H 'X-Token: <token>'
-```
-
-没有改名接口，改名字就是删掉重打。
-
-### 4.13.3 批量打标签
-
-```bash
-curl -X POST 'http://127.0.0.1:8888/api/device-tags/batch' -H 'X-Token: <token>' \
-  -H 'Content-Type: application/json' \
-  -d '{"sns":["ZXHN000001","ZXHN000002"],"tags":["试点组"]}'
-```
-
-返回 `{"devices":2,"added":1}`，`added` 常常小于 设备数 × 标签数——多数设备早就打过了。
-`sns` 也接受逗号分隔，`tags` 同理。批量取消走 `DELETE /api/device-tags/batch`，请求体一样。
-
-### 4.13.4 按标签筛设备
-
-```bash
-curl 'http://127.0.0.1:8888/api/device/page?tag=试点组' -H 'X-Token: <token>'
-```
-
-设备台账的 `GET /api/device/page` 多了 `tag` 参数，与 `sn` / `isp` / `deviceType` 一样是筛选条件。
-
-标签单独放在 `(sn, tag)` 表里，不是在设备上拼一个逗号字段：
-「哪些设备带这个标签」是标签这边的高频问法，拼字段只能靠模糊匹配，
-标签名互相包含时会串——`VIP` 会把 `VIP-2` 一起钓出来。
-
----
-
-## 4.14 系统管理
+## 4.13 系统管理
 
 基础路径 `/api/system`。角色、权限、用户都在这里。
 
-### 4.14.1 权限模型
+### 4.13.1 权限模型
 
 权限点是**代码里的功能清单**，不落库，也不允许增删：删掉一个权限点、代码还在判它，
 那个功能就变成谁也点不动的死按钮。清单由 `GET /api/system/permissions` 给出，
@@ -926,7 +862,7 @@ curl 'http://127.0.0.1:8888/api/device/page?tag=试点组' -H 'X-Token: <token>'
 模块一共十个：dashboard / device / template / biz / model / worklist / olt / file / tag / system，
 每个一读一写，共 20 个权限点。
 
-### 4.14.2 两个默认角色
+### 4.13.2 两个默认角色
 
 | 角色 | 说明 |
 | --- | --- |
@@ -940,7 +876,7 @@ curl 'http://127.0.0.1:8888/api/device/page?tag=试点组' -H 'X-Token: <token>'
 其它角色的权限随便勾，**整份覆盖**：传进去的就是这个角色的全部权限，没传的就没了。
 清单外的权限点会被直接丢掉。
 
-### 4.14.3 接口
+### 4.13.3 接口
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -955,7 +891,7 @@ curl 'http://127.0.0.1:8888/api/device/page?tag=试点组' -H 'X-Token: <token>'
 | DELETE | `/api/system/users/{id}` | 删用户 |
 | GET | `/api/system/login-logs` | 登录日志，失败的也在里面 |
 
-### 4.14.4 改密码要二次验证
+### 4.13.4 改密码要二次验证
 
 改密码（改谁的都算，包括改自己的）除了新密码，还得把操作者**自己**的当前密码一起提交：
 
@@ -968,7 +904,7 @@ curl 'http://127.0.0.1:8888/api/device/page?tag=试点组' -H 'X-Token: <token>'
 理由：拿到会话不等于拿到密码。会话被借走的人改不了密码，改不了就等于拿不走账号。
 只改昵称、只改角色不需要这步。
 
-### 4.14.5 登录日志
+### 4.13.5 登录日志
 
 `GET /api/system/login-logs?limit=50`，传 `userId` 只看某一个人。
 
@@ -985,7 +921,7 @@ IP 取自 `X-Forwarded-For` 的第一段（前面挂反代时，那才是真正�
 其次 `X-Real-IP`，都没有才用连接的地址。反代没配好时别指望它准。
 日志只留每个人最近 50 条，超出的把最旧的删掉——它是个只增不查的表。
 
-### 4.14.6 权限不止菜单
+### 4.13.6 权限不止菜单
 
 页面上的按钮也按权限摆：没有 `device:manage` 的人，设备台账上"重启""恢复出厂""批量下发模版"
 这些按钮根本不出现；没有 `olt:manage` 就看不到 OLT 的增删改。
@@ -996,7 +932,7 @@ IP 取自 `X-Forwarded-For` 的第一段（前面挂反代时，那才是真正�
   这是默认拒绝：漏登记会立刻暴露成"功能打不开"，而不是变成"所有人都能访问"。
 - 免检的只有登录三件套：`/api/user/login`、`/api/user/info`、`/api/user/logout`。
 
-### 4.14.7 几条规矩
+### 4.13.7 几条规矩
 
 - **初始系统账号 `admin` 删不掉**，接口返回「系统用户禁止删除」。它是建库脚本写进去的种子账号，
   删完没有人能进系统。应用层挡一道，**数据库里还有一个 `BEFORE DELETE` 触发器兜底**——
@@ -1008,7 +944,7 @@ IP 取自 `X-Forwarded-For` 的第一段（前面挂反代时，那才是真正�
 - 改角色**立即生效**，不用让对方重新登录——每次请求都按库里的角色判，不缓存在令牌里。
 - 没有权限的请求返回 **403**，业务码 `50403`，消息里带着缺的那个权限点。
 
-### 4.14.8 老版本升级
+### 4.13.8 老版本升级
 
 升级前 `sys_user.role` 存的是 `admin` / `operator` / `viewer` 三个字符串。
 首次用到角色时会自动迁：`admin` → `SUPER_ADMIN`，`operator` / `viewer` / 空 → `OPS_ADMIN`。
@@ -1016,7 +952,7 @@ IP 取自 `X-Forwarded-For` 的第一段（前面挂反代时，那才是真正�
 **不迁的话老账号会因为角色不存在而一个权限都没有**，等于被锁在门外——
 所以迁移放在每次都走得到的路径上（`RoleService.migrateLegacyRoles`），不指望人工跑脚本。
 
-### 4.14.9 例子
+### 4.13.9 例子
 
 ```bash
 # 建一个只能看的角色
@@ -1306,10 +1242,6 @@ CWMP 是短连接：光猫报完一轮就把 TCP 断了。**连接断开不等�
 
 **文件**：`GET /api/files`、`GET /api/files/{id}`、`GET /api/files/{id}/url`、`POST /api/files`、
 `POST /api/files/{id}/deliver`、`DELETE /api/files/{id}`
-
-**标签**：`GET /api/device-tags`、`GET /api/device-tags/tag/{tag}/devices`、`GET /api/device-tags/{sn}`、
-`PUT /api/device-tags/{sn}`、`DELETE /api/device-tags/{sn}`、
-`POST /api/device-tags/batch`、`DELETE /api/device-tags/batch`、`DELETE /api/device-tags/tag/{tag}`
 
 **OLT**：`GET /api/olt/list`、`GET /api/olt/{id}`、`POST /api/olt/save`、`POST /api/olt/delete`、
 `POST /api/olt/test`、`POST /api/olt/{id}/test`、`POST /api/olt/{id}/sync`、

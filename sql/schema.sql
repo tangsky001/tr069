@@ -588,16 +588,8 @@ CREATE TABLE IF NOT EXISTS `cpe_file` (
     KEY `idx_file_type` (`file_type`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '文件：固件与配置';
 
--- 设备标签：按型号 / 运营商之外的维度分群，预设也能按标签命中
-CREATE TABLE IF NOT EXISTS `cpe_device_tag` (
-    `id`         BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `sn`         VARCHAR(64) NOT NULL COMMENT '设备序列号',
-    `tag`        VARCHAR(64) NOT NULL COMMENT '标签',
-    `created_at` DATETIME    DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_sn_tag` (`sn`, `tag`),
-    KEY `idx_tag_sn` (`tag`, `sn`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '设备标签';
+-- 已下线的设备标签表（cpe_device_tag）：分群改用台账上的房间号 room_no，
+-- 建库脚本不再建这张表；历史库里还留着的可以直接 DROP TABLE cpe_device_tag;
 
 SET FOREIGN_KEY_CHECKS = 1;
 
@@ -620,9 +612,7 @@ INSERT IGNORE INTO `sys_role_permission` (`role_code`, `permission`) VALUES
 ('OPS_ADMIN', 'olt:view'),
 ('OPS_ADMIN', 'olt:manage'),
 ('OPS_ADMIN', 'file:view'),
-('OPS_ADMIN', 'file:manage'),
-('OPS_ADMIN', 'tag:view'),
-('OPS_ADMIN', 'tag:manage');
+('OPS_ADMIN', 'file:manage');
 
 -- ---------------------------- 初始化管理员 ----------------------------
 INSERT IGNORE INTO `sys_user` (`id`, `username`, `password`, `nickname`, `role`, `status`)

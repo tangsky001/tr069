@@ -35,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class RoleService {
 
-    /** 运维管理员的默认权限：能看全部，能改设备、工单、文件、标签、OLT，不能动系统管理。 */
+    /** 运维管理员的默认权限：能看全部，能改设备、工单、文件、OLT，不能动系统管理。 */
     private static final List<String> OPS_DEFAULT = List.of(
             "dashboard:view",
             "device:view", "device:manage",
@@ -44,8 +44,7 @@ public class RoleService {
             "model:view",
             "worklist:view", "worklist:manage",
             "olt:view", "olt:manage",
-            "file:view", "file:manage",
-            "tag:view", "tag:manage");
+            "file:view", "file:manage");
 
     private final SysRoleMapper roleMapper;
 

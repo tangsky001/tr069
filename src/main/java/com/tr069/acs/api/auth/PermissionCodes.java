@@ -46,7 +46,6 @@ public final class PermissionCodes {
             new String[]{"worklist", "工单管理"},
             new String[]{"olt", "OLT 管理"},
             new String[]{"file", "文件与固件"},
-            new String[]{"tag", "设备标签"},
             new String[]{"system", "系统管理"});
 
     /** 免检：登进来就是为了用这几个，再问一次权限就成了自己挡自己。 */
@@ -65,7 +64,6 @@ public final class PermissionCodes {
             new String[]{"/api/worklist", "worklist"},
             new String[]{"/api/olt", "olt"},
             new String[]{"/api/files", "file"},
-            new String[]{"/api/device-tags", "tag"},
             new String[]{"/api/system", "system"});
 
     private PermissionCodes() {

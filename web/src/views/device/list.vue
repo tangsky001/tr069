@@ -17,11 +17,8 @@
         <el-form-item label="设备类型">
           <el-input v-model="query.deviceType" placeholder="如 ADSL_4+1" clearable style="width:160px" />
         </el-form-item>
-        <el-form-item label="标签">
-          <el-select v-model="query.tag" clearable placeholder="全部" style="width:140px">
-            <el-option v-for="t in tagAll" :key="t.tag" :label="t.tag" :value="t.tag" />
-          </el-select>
-          <el-button v-if="canTagManage" type="text" style="margin-left: 4px" @click="openTagManage">管理</el-button>
+        <el-form-item label="房间号">
+          <el-input v-model="query.roomNo" placeholder="支持模糊匹配" clearable style="width:140px" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" icon="el-icon-search" @click="handleSearch">查询</el-button>
@@ -65,7 +62,6 @@
             <span class="remark-label">备注</span>
             <span class="remark-value remark-value-text">{{ row.remark || '-' }}</span>
             <el-link type="primary" class="remark-edit" @click="openRemark(row)">修改</el-link>
-            <el-link type="primary" class="remark-edit" @click="openTags(row)">标签</el-link>
           </div>
         </template>
       </el-table-column>
@@ -266,13 +262,6 @@
         plain
         @click="batchDispatchTemplate"
       >批量下发模版</el-button>
-      <el-button
-        v-if="canTagManage"
-        size="small"
-        plain
-        icon="el-icon-collection-tag"
-        @click="openBatchTags"
-      >打标签</el-button>
 
       <el-dropdown v-if="canWorklistManage" trigger="click" @command="cmd => handleBatchCommand(cmd)">
         <el-button size="small">一键工单<i class="el-icon-caret-top el-icon--right" /></el-button>
@@ -695,88 +684,6 @@
       </span>
     </el-dialog>
 
-    <!-- 标签管理：改名没有单独接口，打错了就删掉重打 -->
-    <el-dialog title="标签管理" :visible.sync="tagManageVisible" width="420px" append-to-body>
-      <el-table :data="tagAll" size="small" border max-height="360">
-        <el-table-column prop="tag" label="标签" min-width="140" />
-        <el-table-column label="设备数" width="80" align="center">
-          <template slot-scope="{ row }">{{ row.deviceCount }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="80" align="center">
-          <template slot-scope="{ row }">
-            <el-button type="text" class="danger-text" @click="onRemoveTag(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="tip">删的是标签本身，不是删设备</div>
-      <span slot="footer">
-        <el-button type="primary" @click="tagManageVisible = false">关闭</el-button>
-      </span>
-    </el-dialog>
-
-    <!-- 批量标签：勾选的设备一起打 / 一起取消 -->
-    <el-dialog title="批量标签" :visible.sync="batchTagVisible" width="500px" append-to-body>
-      <el-form label-width="72px">
-        <el-form-item label="设备">
-          <span>
-            {{ selectedSns().length ? '已勾选 ' + selectedSns().length + ' 台设备' : '未勾选设备' }}
-          </span>
-        </el-form-item>
-        <el-form-item label="标签">
-          <el-select
-            v-model="batchTagPicked"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            placeholder="选或敲一个新标签"
-            style="width:320px"
-          >
-            <el-option v-for="t in tagAll" :key="t.tag" :label="t.tag" :value="t.tag" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="操作">
-          <el-radio-group v-model="batchTagMode">
-            <el-radio label="add">打标签</el-radio>
-            <el-radio label="remove">取消标签</el-radio>
-          </el-radio-group>
-        </el-form-item>
-      </el-form>
-      <span slot="footer">
-        <el-button @click="batchTagVisible = false">取消</el-button>
-        <el-button type="primary" :loading="batchTagSaving" @click="submitBatchTags">确定</el-button>
-      </span>
-    </el-dialog>
-
-    <!-- 标签：型号 / 运营商之外的分群维度，按它筛设备、批量打标签 -->
-    <el-dialog title="设备标签" :visible.sync="tagVisible" width="460px" append-to-body>
-      <el-form label-width="72px">
-        <el-form-item label="序列号">
-          <span class="remark-sn">{{ tagRow ? tagRow.sn : '-' }}</span>
-        </el-form-item>
-        <el-form-item label="已有标签">
-          <el-checkbox-group v-model="tagChecked">
-            <el-checkbox v-for="t in tagAll" :key="t.tag" :label="t.tag" />
-          </el-checkbox-group>
-          <div v-if="!tagAll.length" class="cell-empty">还没有标签，先在下面建一个</div>
-        </el-form-item>
-        <el-form-item label="新建标签">
-          <el-input
-            v-model="tagNew"
-            placeholder="如 试点组，回车添加"
-            maxlength="64"
-            clearable
-            @keyup.enter.native="addTag"
-          >
-            <el-button slot="append" icon="el-icon-plus" @click="addTag" />
-          </el-input>
-        </el-form-item>
-      </el-form>
-      <span slot="footer">
-        <el-button @click="tagVisible = false">取消</el-button>
-        <el-button type="primary" :loading="tagSaving" @click="submitTags">保存</el-button>
-      </span>
-    </el-dialog>
   </div>
 </template>
 
@@ -791,9 +698,6 @@ import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
 import { fetchBizTemplates, executeBizTemplate } from '@/api/bizTemplate'
 import { createWorklist } from '@/api/worklist'
-import {
-  tagList, tagsOfDevice, addTags, removeTags, addTagsBatch, removeTagsBatch, removeTagEverywhere
-} from '@/api/tag'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
 import DeviceRuntimeCell from '@/components/DeviceRuntimeCell.vue'
@@ -875,21 +779,9 @@ export default {
         sn: '',
         isp: '',
         deviceType: '',
-        tag: ''
+        // 房间号：台账上登记的分群依据，下发时替换模板 %room% 的取值来源
+        roomNo: ''
       },
-      // 标签：型号 / 运营商之外的分群维度，按它筛设备、批量打标签
-      tagAll: [],
-      tagVisible: false,
-      tagRow: null,
-      tagChecked: [],
-      tagNew: '',
-      tagSaving: false,
-      // 批量标签：勾选的设备一起打 / 一起取消
-      batchTagVisible: false,
-      batchTagPicked: [],
-      batchTagMode: 'add',
-      batchTagSaving: false,
-      tagManageVisible: false,
       // 房间号 / 备注弹窗
       remarkVisible: false,
       remarkRow: null,
@@ -901,9 +793,6 @@ export default {
     // 页面上的写操作按模块分权限摆，系统管理员这些全是真
     canDeviceManage() {
       return this.$has('device:manage')
-    },
-    canTagManage() {
-      return this.$has('tag:manage')
     },
     canModelManage() {
       return this.$has('model:manage')
@@ -996,7 +885,6 @@ export default {
         this.loading = true
       }
       try {
-        this.loadTagOptions()
         const res = await fetchDevicePage(this.query)
         const data = res.data || {}
         this.list = data.items || []
@@ -1367,142 +1255,8 @@ export default {
       this.query.page = 1
       this.load()
     },
-    // ---------------- 标签管理 ----------------
-    openTagManage() {
-      this.loadTagOptions()
-      this.tagManageVisible = true
-    },
-    async onRemoveTag(row) {
-      try {
-        await this.$confirm(
-          '删掉标签「' + row.tag + '」？它身上 ' + row.deviceCount + ' 台设备的这个标签会一起没，设备不受影响。',
-          '提示',
-          { type: 'warning' }
-        )
-      } catch (e) {
-        return
-      }
-      removeTagEverywhere(row.tag)
-        .then(res => {
-          this.$message.success('已从 ' + (res.data || 0) + ' 台设备上摘掉')
-          this.tagAll = this.tagAll.filter(x => x.tag !== row.tag)
-          if (this.query.tag === row.tag) {
-            this.query.tag = ''
-            this.load()
-          }
-        })
-        .catch(err => {
-          this.$message.error((err && err.message) || '删除失败')
-        })
-    },
-
-    // ---------------- 批量标签 ----------------
-    openBatchTags() {
-      if (!this.selectedSns().length) {
-        this.$message.warning('先在列表里勾选设备')
-        return
-      }
-      this.batchTagPicked = []
-      this.batchTagMode = 'add'
-      this.batchTagVisible = true
-    },
-    async submitBatchTags() {
-      const sns = this.selectedSns()
-      const tags = this.batchTagPicked.map(t => String(t).trim()).filter(Boolean)
-      if (!sns.length || !tags.length) {
-        this.$message.warning('勾了设备还要选标签')
-        return
-      }
-      this.batchTagSaving = true
-      try {
-        const res = this.batchTagMode === 'add'
-          ? await addTagsBatch(sns, tags)
-          : await removeTagsBatch(sns, tags)
-        const data = res.data || {}
-        // 打标签的条数常常小于 设备数 × 标签数，多数设备早就打过了
-        const adding = this.batchTagMode === 'add'
-        const done = adding ? (data.added || 0) : (data.removed || 0)
-        const skipped = sns.length * tags.length - done
-        const tail = skipped > 0 ? '，' + skipped + ' 条本来就' + (adding ? '有' : '没有') : ''
-        this.$message.success((adding ? '打上 ' : '取消 ') + done + ' 条' + tail)
-        // 新建的标签当场进候选，不必关了弹窗再重拉
-        if (adding) {
-          tags.forEach(t => {
-            if (!this.tagAll.some(x => x.tag === t)) {
-              this.tagAll = this.tagAll.concat([{ tag: t, deviceCount: sns.length }])
-            }
-          })
-        }
-        this.batchTagVisible = false
-      } catch (e) {
-        // 错误信息由拦截器统一提示
-      } finally {
-        this.batchTagSaving = false
-      }
-    },
-
-    // ---------------- 标签 ----------------
-    // 标签清单只拉一次，筛选下拉与打标签弹窗共用
-    async loadTagOptions() {
-      if (this.tagAll.length) return
-      try {
-        const res = await tagList()
-        this.tagAll = (res.data || []).map(x => ({ tag: x.tag, deviceCount: x.deviceCount }))
-      } catch (e) {
-        this.tagAll = []
-      }
-    },
-    async openTags(row) {
-      this.tagRow = row
-      this.tagChecked = []
-      this.tagNew = ''
-      this.tagVisible = true
-      try {
-        const res = await tagsOfDevice(row.sn)
-        this.tagChecked = res.data || []
-      } catch (e) {
-        this.tagChecked = []
-      }
-    },
-    // 新建的标签当场加进候选里，不必先关弹窗再重拉
-    addTag() {
-      const name = (this.tagNew || '').trim()
-      if (!name) return
-      if (!this.tagAll.some(x => x.tag === name)) {
-        this.tagAll = this.tagAll.concat([{ tag: name, deviceCount: 0 }])
-      }
-      if (!this.tagChecked.includes(name)) {
-        this.tagChecked = this.tagChecked.concat([name])
-      }
-      this.tagNew = ''
-    },
-    async submitTags() {
-      if (!this.tagRow) return
-      this.tagSaving = true
-      try {
-        const now = this.tagChecked
-        const before = (await tagsOfDevice(this.tagRow.sn)).data || []
-        // 只提交差异：打标签的接口是幂等的，但取消必须指明取消哪些
-        const added = now.filter(t => !before.includes(t))
-        const removed = before.filter(t => !now.includes(t))
-        if (added.length) await addTags(this.tagRow.sn, added)
-        if (removed.length) await removeTags(this.tagRow.sn, removed)
-        this.$message.success(
-          (added.length ? '新增 ' + added.length + ' 个' : '') +
-          (added.length && removed.length ? '，' : '') +
-          (removed.length ? '取消 ' + removed.length + ' 个' : '') +
-          (added.length || removed.length ? '' : '没有变化')
-        )
-        this.tagVisible = false
-      } catch (e) {
-        // 错误信息由拦截器统一提示
-      } finally {
-        this.tagSaving = false
-      }
-    },
-
     resetQuery() {
-      this.query = { page: 1, size: 20, sn: '', isp: '', deviceType: '', tag: '' }
+      this.query = { page: 1, size: 20, sn: '', isp: '', deviceType: '', roomNo: '' }
       this.load()
     },
     // 完整详情：跳原来的设备详情页（能力树采集、RPC、参数树在那里）

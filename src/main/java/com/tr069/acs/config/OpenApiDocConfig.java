@@ -46,7 +46,6 @@ public class OpenApiDocConfig {
         CLASS_TAG.put("AuthController", "鉴权");
         CLASS_TAG.put("OltController", "OLT 管理");
         CLASS_TAG.put("FileManageController", "文件台账");
-        CLASS_TAG.put("DeviceTagController", "设备标签");
         CLASS_TAG.put("SystemController", "系统管理");
         CLASS_TAG.put("DeviceController", "设备台账");
         CLASS_TAG.put("DeviceCapabilityController", "设备能力树");
@@ -183,24 +182,6 @@ public class OpenApiDocConfig {
                         + "每台设备各排一条 Download，队列是按设备分流的，多设备之间不会互相堵。\n"
                         + "返回每台设备的 `taskId`，结果用 `GET /api/rpc/{taskId}` 查。");
         doc("DELETE /api/files/{id}", "删除文件", "连带清掉磁盘上的内容。");
-
-        // 设备标签
-        doc("GET /api/device-tags", "全部标签", "带每个标签下的设备数。");
-        doc("GET /api/device-tags/tag/{tag}/devices", "带这个标签的设备", "按标签把设备挑出来。");
-        doc("DELETE /api/device-tags/tag/{tag}", "删掉这个标签",
-                "把它从所有设备身上摘掉——**删的是标签，不是设备**。标签名打错时用。\n"
-                        + "返回摘掉的记录条数。");
-        doc("GET /api/device-tags/{sn}", "这台设备身上的标签", "按名称排序。");
-        doc("PUT /api/device-tags/{sn}", "给设备打标签",
-                "请求体是标签数组，如 `[\"试点组\",\"VIP\"]`；已经打过的不会重复。\n"
-                        + "返回新增的条数。");
-        doc("DELETE /api/device-tags/{sn}", "取消标签",
-                "请求体同上，只取消传进来的那些。返回实际删掉的条数。");
-        doc("POST /api/device-tags/batch", "批量打标签",
-                "`{\"sns\":[\"SN1\",\"SN2\"],\"tags\":[\"试点组\"]}`，sns 也接受逗号分隔。\n"
-                        + "返回 `{devices, added}`；已经在身上的不会重复，\n"
-                        + "added 常常小于 设备数 × 标签数——多数设备早就打过了。");
-        doc("DELETE /api/device-tags/batch", "批量取消标签", "请求体同上。返回 `{devices, removed}`。");
 
         // 系统管理
         doc("GET /api/system/permissions", "权限点清单",

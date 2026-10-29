@@ -97,20 +97,18 @@
         <el-form-item label="延迟秒数">
           <el-input-number v-model="delaySeconds" :min="0" :max="86400" />
         </el-form-item>
-        <el-form-item label="按标签挑">
-          <el-select v-model="tagPicked" clearable placeholder="选个标签" style="width: 220px">
-            <el-option
-              v-for="t in tagOptions"
-              :key="t.tag"
-              :label="t.tag + '（' + t.deviceCount + ' 台）'"
-              :value="t.tag"
-            />
-          </el-select>
+        <el-form-item label="按房间号挑">
+          <el-input
+            v-model="roomNoPicked"
+            placeholder="支持模糊匹配，如 0001"
+            clearable
+            style="width: 220px"
+          />
           <el-button
             size="mini"
             style="margin-left: 8px"
-            :disabled="!tagPicked"
-            @click="pickByTag"
+            :disabled="!roomNoPicked"
+            @click="pickByRoomNo"
           >填进设备</el-button>
         </el-form-item>
       </el-form>
@@ -126,7 +124,7 @@
 import {
   fetchFiles, fetchFileUrl, uploadFile, deliverFile, deleteFile
 } from '@/api/file'
-import { tagList, devicesOfTag } from '@/api/tag'
+import { fetchDevicePage } from '@/api/device'
 
 export default {
   name: 'FileList',
@@ -143,14 +141,12 @@ export default {
       delivering: null,
       snsText: '',
       delaySeconds: 0,
-      // 按标签挑设备：型号之外最省事的分群方式
-      tagOptions: [],
-      tagPicked: ''
+      // 按房间号挑设备：台账上登记的分群依据，型号之外最省事的分法
+      roomNoPicked: ''
     }
   },
   created() {
     this.load()
-    this.loadTagOptions()
   },
   methods: {
     load() {
@@ -222,20 +218,16 @@ export default {
       this.dialogVisible = true
     },
 
-    loadTagOptions() {
-      tagList()
-        .then(res => { this.tagOptions = (res && res.data) || [] })
-        .catch(() => {})
-    },
-
-    // 按标签把设备挑出来，追加到已有的序列号后面，不清掉手填的
-    pickByTag() {
-      if (!this.tagPicked) return
-      devicesOfTag(this.tagPicked)
+    // 按房间号把设备挑出来，追加到已有的序列号后面，不清掉手填的
+    pickByRoomNo() {
+      const roomNo = (this.roomNoPicked || '').trim()
+      if (!roomNo) return
+      fetchDevicePage({ page: 1, size: 200, roomNo })
         .then(res => {
-          const sns = (res && res.data) || []
+          const data = (res && res.data) || {}
+          const sns = (data.items || []).map(d => d.sn).filter(Boolean)
           if (!sns.length) {
-            this.$message.warning('这个标签下面还没有设备')
+            this.$message.warning('这个房间号下面还没有设备')
             return
           }
           const current = this.snsText
@@ -244,10 +236,10 @@ export default {
             .filter(Boolean)
           const merged = current.concat(sns.filter(s => !current.includes(s)))
           this.snsText = merged.join('\n')
-          this.$message.success('标签「' + this.tagPicked + '」下 ' + sns.length + ' 台设备已填上')
+          this.$message.success('房间号「' + roomNo + '」下 ' + sns.length + ' 台设备已填上')
         })
         .catch(err => {
-          this.$message.error((err && err.message) || '按标签取设备失败')
+          this.$message.error((err && err.message) || '按房间号取设备失败')
         })
     },
 

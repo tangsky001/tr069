@@ -6,7 +6,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.service.DeviceAccountService;
 import com.tr069.acs.acs.service.DeviceBusinessService;
-import com.tr069.acs.acs.service.DeviceTagService;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.agent.RpcDispatchService;
@@ -43,7 +42,6 @@ import java.util.Map;
 public class DeviceController {
 
     private final CpeDeviceMapper cpeDeviceMapper;
-    private final DeviceTagService tagService;
     private final SessionManager sessionManager;
     private final RpcDispatchService rpcDispatchService;
     private final RpcTaskQueue rpcTaskQueue;
@@ -70,7 +68,10 @@ public class DeviceController {
     }
 
     /**
-     * 设备分页查询，支持按序列号模糊匹配与运营商筛选。
+     * 设备分页查询，支持按序列号、房间号模糊匹配与运营商筛选。
+     *
+     * <p>房间号是台账侧登记的分群依据（下发时替换模板 {@code %room%} 的取值来源），
+     * 与序列号一样按模糊匹配：填 10 就能把 1001、1002 这一串房间一起捞出来。</p>
      */
     @GetMapping("/page")
     public Result<PageResult<CpeDevice>> page(
@@ -79,21 +80,13 @@ public class DeviceController {
             @RequestParam(required = false) String sn,
             @RequestParam(required = false) String isp,
             @RequestParam(required = false) String deviceType,
-            @RequestParam(required = false) String tag) {
+            @RequestParam(required = false) String roomNo) {
         LambdaQueryWrapper<CpeDevice> wrapper = new LambdaQueryWrapper<>();
         wrapper.like(isNotBlank(sn), CpeDevice::getSn, sn)
+                .like(isNotBlank(roomNo), CpeDevice::getRoomNo, roomNo)
                 .eq(isNotBlank(isp), CpeDevice::getIsp, isp)
                 .eq(isNotBlank(deviceType), CpeDevice::getDeviceType, deviceType)
                 .orderByDesc(CpeDevice::getLastContactTime);
-        if (isNotBlank(tag)) {
-            // 标签在另一张表，先按标签把序列号取出来再筛；
-            // 标签下面一台设备都没有就直接回空页，不必把台账扫一遍
-            List<String> sns = tagService.devicesOf(tag);
-            if (sns.isEmpty()) {
-                return Result.success(PageResult.of(List.of(), 0, page, size));
-            }
-            wrapper.in(CpeDevice::getSn, sns);
-        }
 
         IPage<CpeDevice> result = cpeDeviceMapper.selectPage(new Page<>(page, size), wrapper);
         return Result.success(PageResult.of(result.getRecords(), result.getTotal(), page, size));
