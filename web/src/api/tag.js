@@ -27,12 +27,12 @@ export function removeTags(sn, tags) {
 
 // 批量打标签，返回 { devices, added }
 export function addTagsBatch(sns, tags) {
-  return request({ url: '/device-tags/batch', method: 'post', data: { sns, tags } })
+  return request({ url: '/device-tags/batch', method: 'post', data: { sns, tags }})
 }
 
 // 批量取消标签，返回 { devices, removed }
 export function removeTagsBatch(sns, tags) {
-  return request({ url: '/device-tags/batch', method: 'delete', data: { sns, tags } })
+  return request({ url: '/device-tags/batch', method: 'delete', data: { sns, tags }})
 }
 
 // 删掉这个标签本身（把它从所有设备身上摘掉），返回摘掉的条数
