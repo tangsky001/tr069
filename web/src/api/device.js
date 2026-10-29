@@ -176,3 +176,43 @@ export const RPC_METHODS = [
   'ScheduleInform',
   'ChangeDUState'
 ]
+
+/**
+ * 下发 IPPing 诊断。
+ *
+ * 诊断对象在 TR-098 与 TR-181 下的挂载位置完全不同，这个分支由后端按设备
+ * 登记的数据模型选，页面只提交目标地址。
+ * 返回 data：{ taskId, target, path }，path 是实际下发的路径前缀，便于核对型号。
+ */
+export function pingDiagnostics(sn, host) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/diagnostics/ping',
+    method: 'post',
+    data: { host }
+  })
+}
+
+/**
+ * 手动设置若干 CWMP 参数。
+ *
+ * @param {Array} items [{ name, value, type }]，type 为 xsd 类型，如 unsignedInt
+ * SetParameterValues 的报文结构由后端拼，页面只给三元组。
+ */
+export function setDeviceParams(sn, items) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/params/set',
+    method: 'post',
+    data: { items }
+  })
+}
+
+/**
+ * 机型能力申报的候选值（运营商 / 网口数量 / 网口速率 / WIFI 规格）。
+ * 取值口径由后端定义，页面下拉直接用这些候选，不再自己写一份。
+ */
+export function fetchCapabilityOptions() {
+  return request({
+    url: '/models/capability-options',
+    method: 'get'
+  })
+}

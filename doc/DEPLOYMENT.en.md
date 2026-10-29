@@ -14,7 +14,7 @@ Everything ships as a single Spring Boot fat-jar; the frontend is packaged into 
 | --- | --- |
 | Admin console | `http://<ip>:8888` (`server.port`, pages live in `BOOT-INF/classes/static` inside the jar) |
 | Admin API | Same origin, `/api/**` |
-| CPE report | `http://<ip>:9090`, `:8082` (`acs.cwmp.listen-ports`, add or remove as needed) |
+| CPE report | `http://<ip>:9090` (Huawei), `:8012` (ZTE), `:8080` (FiberHome), `:8082`, `:8172`, `:5481`, `:6060` (`acs.cwmp.listen-ports`, add or remove as needed) |
 | Database | MySQL 8 / MariaDB 10.6+, database name `tr_acs` |
 | Cache / queue | Redis 6+ (report peak shaving and command queue; without Redis the queue can be disabled to run in degraded mode) |
 | Work order templates | Jar-external directory `configuration/`; file changes are hot-reloaded, no restart needed |
@@ -99,7 +99,9 @@ spring:
 acs:
   public-host: <ACS IP>        # connection request address delivered to the ONU; must be the real address
   cwmp:
-    listen-ports: 9090,8082       # CPE report ports; listing extra ports is harmless
+    listen-ports: 9090,8082,6060,8012,8080,8172,5481   # CPE report ports; listing extra ports is harmless
+    # 9090 Huawei / 8012 ZTE / 8080 FiberHome, the rest are common vendor fallbacks
+    # Alcatel's usual 8888 collides with server.port (skipped if listed) — move the admin port first
 ```
 
 You can also skip the file entirely and override via environment variables (native Spring Boot name mapping):
@@ -227,7 +229,7 @@ If you do not need northbound integration, set `acs.openapi.port` to `0`; `/open
 | `spring.datasource.*` | local `tr_acs` | Database connection; the connection string character set must be `UTF-8` — `utf8mb4` throws an exception |
 | `spring.data.redis.*` | `127.0.0.1:6379` | Queue storage |
 | `acs.public-host` | `127.0.0.1` | **Must be changed in production**; the address ACS advertises to the ONU |
-| `acs.cwmp.listen-ports` | `9090,8082` | CPE report ports, comma separated; duplicates of the main port are skipped automatically |
+| `acs.cwmp.listen-ports` | `9090,8082,6060,8012,8080,8172,5481` | CPE report ports, comma separated; duplicates of the main port are skipped automatically (so Alcatel's 8888 cannot be served) |
 | `acs.cwmp.cpe-path` | `/ACS-server/ACS` | Primary CPE report path |
 | `acs.cwmp.extra-cpe-paths` | `/acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/` | Compatible report paths; append new variants seen on site |
 | `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | Digest credentials the ONU uses to reach the ACS; `auto` or empty disables authentication and accepts any credentials |

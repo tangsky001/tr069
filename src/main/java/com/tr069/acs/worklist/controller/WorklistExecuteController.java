@@ -9,6 +9,7 @@ import com.tr069.acs.domain.entity.Worklist;
 import com.tr069.acs.domain.entity.WorklistStepRecord;
 import com.tr069.acs.mapper.WorklistMapper;
 import com.tr069.acs.mapper.WorklistStepMapper;
+import com.tr069.acs.worklist.model.WifiEdit;
 import com.tr069.acs.worklist.service.WorklistDeliveryService;
 import com.tr069.acs.worklist.tpl.TemplateVariables;
 import lombok.Data;
@@ -58,14 +59,37 @@ public class WorklistExecuteController {
      */
     @PostMapping("/instances")
     public Result<Worklist> create(@RequestBody CreateRequest body) {
+        String category = body.getCategory();
+        Map<String, String> values = body.getValues();
+        WifiEdit wifi = body.getWifi();
+        if (wifi != null) {
+            // WiFi 编辑只提交业务字段：业务类型与意图键名都在后端翻译，
+            // 页面不必知道 wpa_mode / wpa_key 这些键，也不会把频段选到另一条 SSID 上
+            if (wifi.getSsid() == null || wifi.getSsid().isBlank()) {
+                return Result.failure("SSID 名称不能为空");
+            }
+            category = wifi.toCategory();
+            values = wifi.toValues();
+        }
         Worklist created = deliveryService.create(
                 body.getSn(),
-                body.getCategory(),
+                category,
                 body.getWorklistDesc(),
-                body.getValues(),
+                values,
                 body.getUsername(),
                 body.getTemplateId());
         return Result.success(created);
+    }
+
+    /**
+     * 工单状态全集。
+     *
+     * <p>状态流转定义在 {@link Worklist} 上，筛选下拉直接取它，不另行维护一份——
+     * 两边各写一份的后果是：后端加了状态，页面的筛选下拉里永远选不到它。</p>
+     */
+    @GetMapping("/statuses")
+    public Result<List<String>> statuses() {
+        return Result.success(Worklist.STATUSES);
     }
 
     /** 建单入参。 */
@@ -83,6 +107,11 @@ public class WorklistExecuteController {
         private String username;
         /** 开通模板 id；不传则按业务类型自动取第一条模板 */
         private Long templateId;
+        /**
+         * WiFi 编辑的业务字段。传了它就不必再传 category 与 values：
+         * 业务类型与意图键由后端翻译，页面只管提交「改成什么」。
+         */
+        private WifiEdit wifi;
     }
 
     /**

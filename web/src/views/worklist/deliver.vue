@@ -22,9 +22,9 @@
           >
             <el-option
               v-for="item in categories"
-              :key="item.value"
+              :key="item.code"
               :label="item.label"
-              :value="item.value"
+              :value="item.code"
             />
           </el-select>
         </el-form-item>
@@ -48,14 +48,13 @@
         </template>
 
         <el-form-item label="工单流水号">
-          <el-input v-model="form.worklistDesc" placeholder="留空则自动生成" clearable>
-            <el-button slot="append" @click="genDesc">生成</el-button>
-          </el-input>
+          <el-input v-model="form.worklistDesc" placeholder="留空由后端自动发号" clearable />
           <div class="tip">同一流水号重复提交只受理一次，用于防止重复下发</div>
         </el-form-item>
 
         <el-form-item>
-          <el-button type="primary" :loading="submitting" @click="submit">提交下发</el-button>
+          <!-- 下发业务要工单的写权限：只有查看权的人在这里不该有这个按钮 -->
+          <el-button v-if="$has('worklist:manage')" type="primary" :loading="submitting" @click="submit">提交下发</el-button>
           <el-button @click="reset">重置</el-button>
         </el-form-item>
       </el-form>
@@ -73,28 +72,18 @@
 </template>
 
 <script>
-import { fetchVariables, createWorklist, newWorklistDesc } from '@/api/worklist'
+import { fetchVariables, createWorklist, fetchTemplateMeta } from '@/api/worklist'
 
 /**
  * 下发业务：选设备 + 选业务 + 填变量 -> 生成工单。
  *
  * 变量清单由后端 TemplateVariables 定义，这里只负责渲染，新增业务不用改页面。
  */
-const CATEGORIES = [
-  { value: 'WIFI_24G', label: 'WiFi 2.4G' },
-  { value: 'WIFI_58G', label: 'WiFi 5.8G' },
-  { value: 'SIP', label: 'SIP 语音' },
-  { value: 'WAN_DHCP', label: 'WAN 自动获取' },
-  { value: 'WAN_PPPOE', label: 'WAN 拨号' },
-  { value: 'WAN_STATIC', label: 'WAN 静态地址' },
-  { value: 'WAN_BRIDGE', label: 'WAN 桥接' }
-]
-
 export default {
   name: 'WorklistDeliver',
   data() {
     return {
-      categories: CATEGORIES,
+      categories: [],
       variables: [],
       form: {
         sn: '',
@@ -111,6 +100,13 @@ export default {
     }
   },
   created() {
+    // 业务类型清单由后端维护：后端加一个类型，页面下拉自动多一项。
+    // 之前这里写死了一份常量，后端新增业务时下拉里没有，运维根本选不到
+    fetchTemplateMeta()
+      .then(res => {
+        this.categories = (res && res.data && res.data.categories) || []
+      })
+      .catch(() => {})
     // 支持从设备详情/列表携带 SN 跳进来
     const sn = this.$route.query.sn
     if (sn) {
@@ -137,9 +133,6 @@ export default {
           this.$message.warning('该业务类型暂未定义变量清单')
         })
     },
-    genDesc() {
-      this.form.worklistDesc = newWorklistDesc(this.form.category)
-    },
     submit() {
       this.$refs.form.validate((valid) => {
         if (!valid) {
@@ -147,11 +140,12 @@ export default {
         }
         this.submitting = true
         this.result = null
+        // 流水号（幂等键）不传，由后端统一发号：前端只能用 Math.random 凑，
+        // 撞号时两单合成一单，后一单被幂等掉，运维以为开成功了其实没发
         const payload = {
           sn: this.form.sn,
           category: this.form.category,
           values: this.form.values,
-          worklistDesc: this.form.worklistDesc || newWorklistDesc(this.form.category),
           username: (this.$store.getters.name) || 'admin'
         }
         createWorklist(payload)

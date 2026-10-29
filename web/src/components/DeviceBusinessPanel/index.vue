@@ -36,25 +36,25 @@
     <template v-if="wanItems.length">
       <el-card v-for="item in wanItems" :key="item.path" shadow="never" class="wan-card">
         <div slot="header" class="wan-head">
-          <span class="wan-name">WAN - {{ wanTitle(item) }}</span>
-          <span :class="isUp(item) ? 'status-ok' : 'status-bad'">
-            <i :class="isUp(item) ? 'el-icon-success' : 'el-icon-error'" />
-            {{ uptime(item.params.Uptime) }}
+          <span class="wan-name">WAN - {{ item.title }}</span>
+          <span :class="item.up ? 'status-ok' : 'status-bad'">
+            <i :class="item.up ? 'el-icon-success' : 'el-icon-error'" />
+            {{ item.uptimeText }}
           </span>
         </div>
         <div class="wan-body">
           <div class="wan-row">
             <span class="k">连接模式/地址类型:</span>
             <span class="v">
-              {{ connMode(item.params) }}
+              {{ item.connMode }}
               <el-tag v-if="item.params.ExternalIPAddress" size="mini" type="success">IPv4</el-tag>
-              <el-tag v-if="isNat(item.params)" size="mini">NAT</el-tag>
+              <el-tag v-if="item.natEnabled" size="mini">NAT</el-tag>
               <el-tag v-if="item.params.ExternalMTU" size="mini">MTU/{{ item.params.ExternalMTU }}</el-tag>
             </span>
           </div>
           <div class="wan-row">
             <span class="k">业务模式:</span>
-            <span class="v v-strong">{{ serviceMode(item) }}</span>
+            <span class="v v-strong">{{ item.service }}</span>
           </div>
           <div class="wan-row">
             <span class="k">MAC地址:</span>
@@ -146,10 +146,10 @@
         <div class="wifi-bar">
           <template v-if="wifi24Items.length">
             <div v-for="item in wifi24Items" :key="item.path" class="wifi-chip">
-              <span class="wifi-ssid">{{ show(item.params.SSID) }}</span>
-              <i v-if="wifiEncrypted(item.params)" class="el-icon-lock" />
+              <span class="wifi-ssid">{{ show(item.ssid) }}</span>
+              <i v-if="item.encrypted" class="el-icon-lock" />
               <span class="wifi-clients">{{ show(item.params.TotalAssociations, '0') }} 终端</span>
-              <span :class="isUp(item) ? 'status-ok' : 'status-bad'">{{ wanStatus(item.params.Status) }}</span>
+              <span :class="item.up ? 'status-ok' : 'status-bad'">{{ item.statusText }}</span>
             </div>
           </template>
           <span v-else class="wifi-band-empty">-</span>
@@ -160,10 +160,10 @@
         <div class="wifi-bar">
           <template v-if="wifi58Items.length">
             <div v-for="item in wifi58Items" :key="item.path" class="wifi-chip">
-              <span class="wifi-ssid">{{ show(item.params.SSID) }}</span>
-              <i v-if="wifiEncrypted(item.params)" class="el-icon-lock" />
+              <span class="wifi-ssid">{{ show(item.ssid) }}</span>
+              <i v-if="item.encrypted" class="el-icon-lock" />
               <span class="wifi-clients">{{ show(item.params.TotalAssociations, '0') }} 终端</span>
-              <span :class="isUp(item) ? 'status-ok' : 'status-bad'">{{ wanStatus(item.params.Status) }}</span>
+              <span :class="item.up ? 'status-ok' : 'status-bad'">{{ item.statusText }}</span>
             </div>
           </template>
           <span v-else class="wifi-band-empty">-</span>
@@ -176,12 +176,10 @@
       <div class="section-title">SIP 语音（{{ sipItems.length }}）</div>
       <div class="wifi-bar">
         <div v-for="item in sipItems" :key="item.path" class="wifi-chip">
-          <i :class="sipRegistered(item.params) ? 'el-icon-phone status-ok' : 'el-icon-phone-outline status-bad'" />
-          <span class="wifi-ssid">{{ sipDisplay(item.params) }}</span>
-          <span :class="sipRegistered(item.params) ? 'status-ok' : 'status-bad'">
-            {{ show(item.params.SIPRegisterStatus || item.params.Status, '未知') }}
-          </span>
-          <span class="wifi-clients">{{ sipServer(item.params) }}</span>
+          <i :class="item.registered ? 'el-icon-phone status-ok' : 'el-icon-phone-outline status-bad'" />
+          <span class="wifi-ssid">{{ item.number }}</span>
+          <span :class="item.registered ? 'status-ok' : 'status-bad'">{{ item.statusText }}</span>
+          <span class="wifi-clients">{{ item.server }}</span>
         </div>
       </div>
     </template>
@@ -189,8 +187,7 @@
 </template>
 
 <script>
-import { fetchDeviceBusiness, collectDeviceBusiness, dispatchRpc } from '@/api/device'
-import { wifiBandOf } from '@/utils/wifi'
+import { fetchDeviceBusiness, collectDeviceBusiness, pingDiagnostics } from '@/api/device'
 
 // 后端每 5 分钟自动刷新一次 LAN 网口状态，这里按 1 分钟回读业务快照：
 // 页面开着就能看到网口插拔变化，不必手动点「重新采集」
@@ -214,26 +211,23 @@ export default {
     wanItems() { return this.summary.wan || [] },
     // 详情页保留设备全部 WiFi 能力：启用的、未启用的都列出来，不做过滤
     wifiItems() { return this.summary.wifi || [] },
+    // 频段由后端判定：RFBand → 频段参数 → 制式列表 → SSID 名 → 实例号，前端只按结果分行
     wifi24Items() {
-      return this.wifiItems.filter(item => wifiBandOf(item) === '2.4G')
+      return this.wifiItems.filter(item => item.band === '2.4G')
     },
     wifi58Items() {
-      return this.wifiItems.filter(item => wifiBandOf(item) === '5.8G')
+      return this.wifiItems.filter(item => item.band === '5.8G')
     },
     lanItems() { return this.summary.lan || [] },
     sipItems() { return this.summary.sip || [] },
     devTitle() {
-      const info = this.summary.device || []
-      // 组合第一条 WAN 设备里的 OUI 前缀，拿不到就用纯 SN
-      const oui = this.paramValue(info, 'ManufacturerOUI') || this.paramValue(info, 'Manufacturer')
-      return oui ? String(oui).slice(0, 6) + '-' + this.sn : this.sn
+      // OUI 前 6 位 + SN 由后端拼好，前端不再自己切片
+      return this.summary.title || this.sn
     },
     deviceRows() {
-      const info = this.summary.device || []
-      const upTime = this.paramValue(info, 'UpTime')
       // 按参考图顺序：运行时长 / 注册时间 / 最近上报 / 上报 IP
       return [
-        { label: '运行时长', value: upTime ? this.uptime(upTime) : '-', strong: false },
+        { label: '运行时长', value: this.summary.uptimeText || '-', strong: false },
         { label: '注册时间', value: this.formatTs(this.summary.registerTime), strong: false },
         { label: '最近上报', value: this.formatTs(this.summary.lastContactTime), strong: false },
         { label: '上报IP', value: this.summary.ip || '-', strong: true }
@@ -272,65 +266,12 @@ export default {
     }
   },
   methods: {
-    paramValue(list, name) {
-      const item = (list || []).find(x => x.params && x.params[name] !== undefined)
-      return item ? item.params[name] : undefined
-    },
     display(value) {
       return value === undefined || value === null || value === '' ? '-' : value
     },
     show(value, fallback) {
       const v = this.display(value)
       return v === '-' ? (fallback || '-') : v
-    },
-    isUp(item) {
-      const s = String(item.params.ConnectionStatus || item.params.Status || '').toLowerCase()
-      return s === 'connected' || s === 'up'
-    },
-    wanTitle(item) {
-      // 设备报了 Name（如 1_TR069_R_VID_46）就用它，否则用实例序号
-      if (item.params.Name) return item.params.Name
-      const m = item.path.match(/(WANPPPConnection|WANIPConnection)\.(\d+)\.$/)
-      return m ? m[2] : item.path
-    },
-    connMode(params) {
-      const type = String(params.ConnectionType || '')
-      const mode = type.toLowerCase().includes('bridged') ? '桥接' : '路由'
-      const addr = params.AddressingType || (type.toLowerCase().includes('ppp') ? 'PPPoE' : '-')
-      return mode + ' / ' + addr
-    },
-    isNat(params) {
-      // CWMP 布尔回来是 "1"/"0" 字符串，只认 === true 会把开着 NAT 的连接显示成关闭
-      return this.boolOf(params.NATEnabled, false)
-    },
-    /** 识别 CWMP 的布尔写法："1"/"0"、true/false、Up/Down、Enabled/Disabled 都算。 */
-    boolOf(value, fallback = true) {
-      if (value === undefined || value === null || value === '') return fallback
-      const s = String(value).trim().toLowerCase()
-      if (['0', 'false', 'no', 'off', 'disabled', 'down'].includes(s)) return false
-      if (['1', 'true', 'yes', 'on', 'enabled', 'up'].includes(s)) return true
-      return fallback
-    },
-    // 业务模式：优先设备报的 ServiceList，没有就从连接名里猜（TR069/VOIP/INTERNET）
-    serviceMode(item) {
-      const params = item.params
-      const declared = params.ServiceList || params['X_CT-COM_ServiceList']
-      if (declared) return declared
-      const name = String(params.Name || item.path).toUpperCase()
-      if (name.includes('TR069')) return 'TR069'
-      if (name.includes('VOIP') || name.includes('VOICE')) return 'VOIP'
-      if (name.includes('IPTV') || name.includes('OTHER')) return 'IPTV'
-      if (name.includes('INTERNET')) return 'INTERNET'
-      return '-'
-    },
-    uptime(seconds) {
-      const n = parseInt(seconds, 10)
-      if (!n || n < 0) return ''
-      const d = Math.floor(n / 86400)
-      const h = Math.floor((n % 86400) / 3600)
-      const m = Math.floor((n % 3600) / 60)
-      const s = n % 60
-      return (d ? d + '天' : '') + h + '小时' + m + '分' + s + '秒'
     },
     // 诊断 = 下发 IPPing 诊断对象，设备执行后把结果写回诊断参数
     async doPing(item) {
@@ -339,19 +280,11 @@ export default {
         this.$message.warning('请输入要诊断的 IP 或域名')
         return
       }
-      const base = String(this.summary.rootNode || 'InternetGatewayDevice.').startsWith('Device.')
-        ? 'Device.IP.Diagnostics.IPPing.'
-        : 'InternetGatewayDevice.IPPingDiagnostics.'
       this.pingingPath = item.path
       try {
-        await dispatchRpc(this.sn, 'SetParameterValues', {
-          ParameterKey: 'acs-ui-ping',
-          ParameterList: [
-            { Name: base + 'Host', Value: host, Value_type: 'string' },
-            { Name: base + 'NumberOfRepetitions', Value: '4', Value_type: 'unsignedInt' },
-            { Name: base + 'DiagnosticsState', Value: 'Requested', Value_type: 'string' }
-          ]
-        })
+        // 诊断对象的挂载位置在 TR-098 与 TR-181 下完全不同，由后端按设备数据模型选；
+        // 页面只提交目标地址，不再自己拼 CWMP 报文
+        await pingDiagnostics(this.sn, host)
         this.$message.success(
           '诊断指令已下发，设备将对 ' + host + ' 发起 4 次 ping；设备执行完成后可在下次上报里读到结果')
       } catch (e) {
@@ -359,38 +292,6 @@ export default {
       } finally {
         this.pingingPath = ''
       }
-    },
-    wifiEncrypted(params) {
-      const enc = String(params.BasicEncryptionModes || params.BeaconType || '').toLowerCase()
-      return !(enc.includes('none') || enc.includes('open'))
-    },
-    wanStatus(status) {
-      const s = String(status || '').toLowerCase()
-      if (s === 'up' || s === 'enabled') return '正常'
-      if (s === 'disabled') return '已禁用'
-      return status || '未知'
-    },
-    sipRegistered(params) {
-      const s = String(params.SIPRegisterStatus || params.Status || '').toLowerCase()
-      return s === 'registered' || s === 'ok' || s === '成功'
-    },
-    sipServer(params) {
-      const host = params.RegistrarServer || params.ProxyServer
-      if (!host) return '-'
-      const port = params.RegistrarServerPort || params.ProxyServerPort
-      return host + (port ? ':' + port : '')
-    },
-    /**
-     * SIP 线路展示：优先用认证名/用户名/号码；没有就从 URI 里截 @ 前面的号码。
-     * 设备上有时只有 AuthUserName 和 URI，没有 UserName，不能直接拿 URI 当号码，
-     * 否则号码/用户名会显示成 "2026@192.168.xxx" 这种带域名的东西。
-     */
-    sipDisplay(params) {
-      const name = params.AuthUserName || params.UserName || params.DirectoryNumber || params.PhoneNumber
-      if (name) return name
-      const uri = params.URI || ''
-      const m = uri.match(/^([^@]+)@/)
-      return m ? m[1] : (uri || '未配置')
     },
     async load() {
       this.loading = true

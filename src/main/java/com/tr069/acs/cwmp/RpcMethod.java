@@ -22,22 +22,24 @@ public enum RpcMethod {
     GET_PARAMETER_NAMES("GetParameterNames"),
     SET_PARAMETER_ATTRIBUTES("SetParameterAttributes"),
     GET_PARAMETER_ATTRIBUTES("GetParameterAttributes"),
-    ADD_OBJECT("AddObject"),
-    DELETE_OBJECT("DeleteObject"),
-    DOWNLOAD("Download"),
-    UPLOAD("Upload"),
-    REBOOT("Reboot"),
+    /** 建两次会多出一个实例 */
+    ADD_OBJECT("AddObject", false),
+    /** 删第二次会报对象不存在 */
+    DELETE_OBJECT("DeleteObject", false),
+    DOWNLOAD("Download", false),
+    UPLOAD("Upload", false),
+    REBOOT("Reboot", false),
     /** 空结构 */
-    FACTORY_RESET("FactoryReset"),
-    SCHEDULE_INFORM("ScheduleInform"),
-    SCHEDULE_DOWNLOAD("ScheduleDownload"),
-    CANCEL_TRANSFER("CancelTransfer"),
-    CHANGE_DU_STATE("ChangeDUState"),
+    FACTORY_RESET("FactoryReset", false),
+    SCHEDULE_INFORM("ScheduleInform", false),
+    SCHEDULE_DOWNLOAD("ScheduleDownload", false),
+    CANCEL_TRANSFER("CancelTransfer", false),
+    CHANGE_DU_STATE("ChangeDUState", false),
     /** 请求与响应均无参数的流失转移查询 */
     GET_QUEUED_TRANSFERS("GetQueuedTransfers"),
     /** 请求与响应均无参数，同 GET_QUEUED_TRANSFERS */
     GET_ALL_QUEUED_TRANSFERS("GetAllQueuedTransfers"),
-    SET_VOUCHERS("SetVouchers"),
+    SET_VOUCHERS("SetVouchers", false),
     GET_OPTIONS("GetOptions"),
 
     // ---------------- CPE -> ACS（请求） ----------------
@@ -62,8 +64,19 @@ public enum RpcMethod {
 
     private final String value;
 
+    /**
+     * 没收到回应时能不能重发：设值与取值再发一次结果一样，
+     * 重启 / 下载这类再发一次就是真的干了第二次。
+     */
+    private final boolean retriable;
+
     RpcMethod(String value) {
+        this(value, true);
+    }
+
+    RpcMethod(String value, boolean retriable) {
         this.value = value;
+        this.retriable = retriable;
     }
 
     /**

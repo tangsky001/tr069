@@ -8,7 +8,7 @@ import java.io.Serializable;
  * 管理端统一响应体。
  *
  * <p>字段与状态码严格对齐 vue-admin-template 的约定：
- * 前端响应式拦截器判定 {@code code === 20000} 为成功，错误消息取自 {@code message}。</p>
+ * 前端响应式拦截器判定 {@code code === 200} 为成功，错误消息取自 {@code message}。</p>
  *
  * @see <a href="javaacs/web/src/utils/request.js">request.js 响应拦截器</a>
  */

@@ -11,13 +11,13 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * WAN 连接实例 DAO。一行 = 一条 WAN 连接的全部下发路径与变量值。
+ * WAN 杩炴帴瀹炰緥 DAO銆備竴琛?= 涓€鏉?WAN 杩炴帴鐨勫叏閮ㄤ笅鍙戣矾寰勪笌鍙橀噺鍊笺€?
  *
- * <p><b>实例号不同型号差别很大</b>：中兴 P22g-CIac 实测是 9-12，别的型号可能从 1 开始，
- * 所以按设备实际采集值存，不做任何"从 1 连续编号"的假设。</p>
+ * <p><b>瀹炰緥鍙蜂笉鍚屽瀷鍙峰樊鍒緢澶?/b>锛氫腑鍏?P22g-CIac 瀹炴祴鏄?9-12锛屽埆鐨勫瀷鍙峰彲鑳戒粠 1 寮€濮嬶紝
+ * 鎵€浠ユ寜璁惧瀹為檯閲囬泦鍊煎瓨锛屼笉鍋氫换浣?浠?1 杩炵画缂栧彿"鐨勫亣璁俱€?/p>
  *
- * <p>{@code conn_type} 标出这条连接的业务类别（IPoE / PPPoE / Bridge），
- * 下发入口据此挑该用哪套模板。</p>
+ * <p>{@code conn_type} 鏍囧嚭杩欐潯杩炴帴鐨勪笟鍔＄被鍒紙IPoE / PPPoE / Bridge锛夛紝
+ * 涓嬪彂鍏ュ彛鎹鎸戣鐢ㄥ摢濂楁ā鏉裤€?/p>
  */
 @Repository
 public class DeviceWanDao {
@@ -29,7 +29,7 @@ public class DeviceWanDao {
             "object_path, path_enable, val_enable, path_conn_type, val_conn_type, " +
             "path_addr_type, val_addr_type, path_nat, val_nat, path_bind_port, val_bind_port, " +
             "path_username, val_username, path_password, val_password, path_ip, val_ip, " +
-            "path_mask, val_mask, path_gw, val_gw, path_dns, val_dns";
+            "path_mask, val_mask, path_gw, val_gw, path_dns, val_dns, path_mtu, val_mtu";
 
     private static final RowMapper<DeviceWan> ROW_MAPPER = (rs, n) -> {
         DeviceWan r = new DeviceWan();
@@ -62,6 +62,8 @@ public class DeviceWanDao {
         r.setValGw(rs.getString("val_gw"));
         r.setPathDns(rs.getString("path_dns"));
         r.setValDns(rs.getString("val_dns"));
+        r.setPathMtu(rs.getString("path_mtu"));
+        r.setValMtu(rs.getString("val_mtu"));
         return r;
     };
 
@@ -93,7 +95,7 @@ public class DeviceWanDao {
         return jdbc.update("DELETE FROM device_wan WHERE device_id = ?", deviceId);
     }
 
-    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体。 */
+    /** 鎸?(device_id, instance_no) 鏂板鎴栨洿鏂帮紝杩斿洖涓婚敭骞跺洖濉埌瀹炰綋銆?*/
     public long upsert(DeviceWan r) {
         Optional<DeviceWan> exist = findOne(r.getDeviceId(), r.getInstanceNo());
         if (exist.isPresent()) {
@@ -104,14 +106,15 @@ public class DeviceWanDao {
                             "path_bind_port=?, val_bind_port=?, " +
                             "path_username=?, val_username=?, path_password=?, val_password=?, " +
                             "path_ip=?, val_ip=?, path_mask=?, val_mask=?, path_gw=?, val_gw=?, " +
-                            "path_dns=?, val_dns=? WHERE id=?",
+                            "path_dns=?, val_dns=?, path_mtu=?, val_mtu=? WHERE id=?",
                     r.getConnType(), r.getAction(), r.getVerified(), r.getObjectPath(),
                     r.getPathEnable(), r.getValEnable(), r.getPathConnType(), r.getValConnType(),
                     r.getPathAddrType(), r.getValAddrType(), r.getPathNat(), r.getValNat(),
                     r.getPathBindPort(), r.getValBindPort(),
                     r.getPathUsername(), r.getValUsername(), r.getPathPassword(), r.getValPassword(),
                     r.getPathIp(), r.getValIp(), r.getPathMask(), r.getValMask(),
-                    r.getPathGw(), r.getValGw(), r.getPathDns(), r.getValDns(), id);
+                    r.getPathGw(), r.getValGw(), r.getPathDns(), r.getValDns(),
+                    r.getPathMtu(), r.getValMtu(), id);
             r.setId(id);
             return id;
         }
@@ -120,8 +123,9 @@ public class DeviceWanDao {
                         "object_path, path_enable, val_enable, path_conn_type, val_conn_type, " +
                         "path_addr_type, val_addr_type, path_nat, val_nat, path_bind_port, val_bind_port, " +
                         "path_username, val_username, path_password, val_password, path_ip, val_ip, " +
-                        "path_mask, val_mask, path_gw, val_gw, path_dns, val_dns) " +
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "path_mask, val_mask, path_gw, val_gw, path_dns, val_dns, " +
+                        "path_mtu, val_mtu) " +
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 id, r.getDeviceId(), r.getInstanceNo(), r.getConnType(), r.getAction(), r.getVerified(),
                 r.getObjectPath(),
                 r.getPathEnable(), r.getValEnable(), r.getPathConnType(), r.getValConnType(),
@@ -129,7 +133,8 @@ public class DeviceWanDao {
                 r.getPathBindPort(), r.getValBindPort(),
                 r.getPathUsername(), r.getValUsername(), r.getPathPassword(), r.getValPassword(),
                 r.getPathIp(), r.getValIp(), r.getPathMask(), r.getValMask(),
-                r.getPathGw(), r.getValGw(), r.getPathDns(), r.getValDns());
+                r.getPathGw(), r.getValGw(), r.getPathDns(), r.getValDns(),
+                r.getPathMtu(), r.getValMtu());
         r.setId(id);
         return id;
     }

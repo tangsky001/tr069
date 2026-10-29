@@ -264,6 +264,7 @@ public class SqlitePlanRenderer {
         put(items, errors, "Internet_WAN", "wan_mask", row.getPathMask(), row.getValMask(), values, instance, overrides);
         put(items, errors, "Internet_WAN", "wan_gw", row.getPathGw(), row.getValGw(), values, instance, overrides);
         put(items, errors, "Internet_WAN", "wan_dns", row.getPathDns(), row.getValDns(), values, instance, overrides);
+        putMtu(items, errors, device, row, values, instance, overrides);
 
         Vlan vlan = vlanDao.findOne(device.getId(), slot).orElse(null);
         if (vlan != null) {
@@ -271,6 +272,46 @@ public class SqlitePlanRenderer {
             put(items, errors, "Internet_WAN", "vlan_8021p", vlan.getPath8021p(), vlan.getVal8021p(), values, instance, overrides);
             put(items, errors, "Internet_WAN", "vlan_mode", vlan.getPathVlanMode(), vlan.getValVlanMode(), values, instance, overrides);
         }
+    }
+
+    /**
+     * MTU 单独走一段，不直接 put——这是个填错了会把网搞断的字段。
+     *
+     * <p>留空表示不动设备的现有值：各现网 MTU 取值不同（PPPoE 常见 1492、IPoE/静态常见 1500），
+     * 模板没明确要求就不替现场决定。</p>
+     *
+     * <p><b>填 0 一律按下发失败处理</b>：MaxMTUSize 收到 0 会被设备真的按 0 处理，
+     * 触发 9003 并可能直接断网。不下发最多是 MTU 保持原样，下发了 0 是整台设备失联，
+     * 两害相权取下不下。</p>
+     */
+    private void putMtu(List<PlanItem> items, List<String> errors, Device device, DeviceWan row,
+                        Map<String, Object> values, int instance, Map<String, String> overrides) {
+        // 先判值再判路径：没填 MTU 就完全不碰路径，存量型号的行为与改动前一致
+        String mtu = effectiveValue(row.getValMtu(), overrides, "mtu");
+        if (mtu == null || mtu.isBlank()) {
+            log.debug("MTU 未填写，保持设备原值: model={}", device.getModelKey());
+            return;
+        }
+        if ("0".equals(mtu.trim())) {
+            log.warn("MTU 填了 0，按不下发处理（下发 0 会触发 9003 并可能断网）: model={}",
+                    device.getModelKey());
+            return;
+        }
+        String path = row.getPathMtu();
+        if (path == null || path.isBlank()) {
+            // 适配库里登记过的最准（实测参数名，可能是厂商私有写法）；
+            // 没登记的按标准路径兜底：MaxMTUSize 在 TR-098 与 TR-181 下同名，
+            // 而 objectPath 已经带了根节点，两个数据模型都直接拼得出来
+            if (row.getObjectPath() == null || row.getObjectPath().isBlank()) {
+                log.warn("该型号没有 MTU 登记也没有 WAN 对象路径，跳过 MTU 下发: model={}",
+                        device.getModelKey());
+                return;
+            }
+            path = row.getObjectPath() + TemplateBuilder.INSTANCE_PLACEHOLDER + ".MaxMTUSize";
+            log.warn("型号未登记 MTU 路径，按标准路径兜底下发，建议重新适配核实: model={}, path={}",
+                    device.getModelKey(), path);
+        }
+        put(items, errors, "Internet_WAN", "mtu", path, mtu, values, instance, overrides);
     }
 
     /** 各宽带业务在模板库里的排位号，与 {@link TemplateBuilder} 生成时一致。 */
@@ -465,7 +506,10 @@ public class SqlitePlanRenderer {
      */
     private static final Pattern NUMERIC_LEAF = Pattern.compile(
             "(?i)(channel|port|count|numberofentries|index|interval|seconds|"
-                    + "timeout|priority|gain|tail|vlanid|status|mode|level|length|rate|limit)$");
+                    + "timeout|priority|gain|tail|vlanid|status|mode|level|length|rate|limit|"
+                    // MaxMTUSize 不在这个清单里就会被当成 string 下发 1500，
+                    // 设备不认字符串形式的 MTU，直接回 9007
+                    + "mtusize)$");
 
     /**
      * 设备参数名里这些是布尔：{@code Enable} / {@code SSIDAdvertisementEnabled} 等。

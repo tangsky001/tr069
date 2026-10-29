@@ -28,15 +28,6 @@ import java.util.regex.Pattern;
 
 /**
  * 设备本地账号（超管 telecomadmin 等）查询。
- *
- * <p>运维日常要登光猫后台改配置，超管口令每台都不一样又常被装维改过，
- * 只能到设备上现读。这里对在线设备下发 {@code GetParameterValues} 读
- * {@code InternetGatewayDevice.User.{i}.Username} / {@code Password}
- * （TR-181 设备是 {@code Device.User.{i}.}），把读到的账号原样返回。</p>
- *
- * <p>与 {@link DeviceBusinessService} 不同，这里不与能力树快照绑定：快照里
- * 采不到也要能查（很多设备压根不把 User 子树报给 GetParameterNames），
- * 所以快照有路径就按快照读，没有就按标准路径逐个试，试不到就是设备不支持。</p>
  */
 @Slf4j
 @Service
@@ -63,13 +54,6 @@ public class DeviceAccountService {
 
     /**
      * 本地账号所在的父路径形态。
-     *
-     * <p>{@code User.{i}} 是标准，华为/中兴 Web 管理账号在 {@code WebUserInfo.{i}}，
-     * 各运营商的超管节点 {@code X_*_TeleComAccount.} 没有实例号。WAN 连接的
-     * {@code WANPPPConnection.1.Username} 都不匹配，不会被当成超管显示出来。</p>
-     *
-     * <p>节点名前面那个分隔点是 {@code .} 还是 {@code _} 要看厂商怎么拼：华为写的是
-     * {@code X_HW_WebUserInfo}，用下划线连接私有前缀，只认点会把它整条漏掉。</p>
      */
     private static final Pattern LOCAL_ACCOUNT_PARENT =
             Pattern.compile("[._](User|WebUserInfo|TeleComAccount)\\.(\\d+\\.)?$");
@@ -85,9 +69,6 @@ public class DeviceAccountService {
 
     /**
      * 查询某台设备的本地账号（含超管）。
-     *
-     * @return {@code accounts} 为账号列表，每项含 instance / path / username / password；
-     *         {@code status}：success / empty / timeout / fail / offline
      */
     public Map<String, Object> queryAdminAccount(String sn) {
         Map<String, Object> data = new LinkedHashMap<>();
@@ -201,10 +182,6 @@ public class DeviceAccountService {
 
     /**
      * 运营商定制固件的超管节点：叶子名与标准 User 实例一致。
-     *
-     * <p>本地 {@code User.1} 通常只是普通运维账号，真正的超管放在这里，而且这些节点
-     * 基本不对 GetParameterNames 暴露——能力树快照里根本采不到，必须显式按路径去
-     * GetParameterValues。设备不支持时被二分拆批单独剔掉，不影响其余路径。</p>
      */
     private static final Map<String, String> ADMIN_NODE_BY_ISP = Map.of(
             "CT", "DeviceInfo.X_CT-COM_TeleComAccount.",    // 电信定制
@@ -213,10 +190,6 @@ public class DeviceAccountService {
 
     /**
      * 华为公开版（未做运营商定制）固件的 Web 管理账号节点。
-     *
-     * <p>定制版走 {@link #ADMIN_NODE_BY_ISP} 里那套，只有适配时没选运营商、
-     * 按通用型号建档的华为设备才用这条。超管常挂在实例 2，
-     * 叶子名是 {@code UserName}，不是标准的 {@code Username}。</p>
      */
     private static final String HUAWEI_WEB_USER_NODE = "UserInterface.X_HW_WebUserInfo.";
 
@@ -272,9 +245,6 @@ public class DeviceAccountService {
 
     /**
      * 能力树快照里形如 {@code ...User.{i}.Username} 的参数行。
-     *
-     * <p>{@code like} 会生成 {@code LIKE '%.User.%'}，WAN 连接的
-     * {@code WANPPPConnection.1.Username} 不含 {@code .User.} 段，不会被误收进来。</p>
      */
     private List<CpeParameter> snapshotUserParams(String sn) {
         try {
@@ -291,9 +261,7 @@ public class DeviceAccountService {
 
     /**
      * 把读到的路径按 User 实例配对成账号。
-     *
-     * <p>TreeMap 保证实例按序号排列；同一实例里 Username / Password 各取一次，
-     * 设备同时报标准节点与厂商私有节点时保留先到的那个。</p>
+
      */
     static List<Map<String, Object>> assemble(Map<String, String> values) {
         Map<String, Map<String, String>> grouped = new TreeMap<>();
@@ -344,9 +312,6 @@ public class DeviceAccountService {
 
     /**
      * 设备台账登记的运营商。
-     *
-     * <p>适配时不选运营商就按通用型号建档，这类固件没有运营商定制节点，
-     * 超管走华为公开版那条路径；这里遇到 {@code standard} 一律当作没选。</p>
      */
     private String resolveIsp(String sn) {
         try {

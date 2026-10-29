@@ -17,6 +17,12 @@
         <el-form-item label="设备类型">
           <el-input v-model="query.deviceType" placeholder="如 ADSL_4+1" clearable style="width:160px" />
         </el-form-item>
+        <el-form-item label="标签">
+          <el-select v-model="query.tag" clearable placeholder="全部" style="width:140px">
+            <el-option v-for="t in tagAll" :key="t.tag" :label="t.tag" :value="t.tag" />
+          </el-select>
+          <el-button v-if="canTagManage" type="text" style="margin-left: 4px" @click="openTagManage">管理</el-button>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" icon="el-icon-search" @click="handleSearch">查询</el-button>
           <el-button icon="el-icon-refresh" @click="resetQuery">重置</el-button>
@@ -59,6 +65,7 @@
             <span class="remark-label">备注</span>
             <span class="remark-value remark-value-text">{{ row.remark || '-' }}</span>
             <el-link type="primary" class="remark-edit" @click="openRemark(row)">修改</el-link>
+            <el-link type="primary" class="remark-edit" @click="openTags(row)">标签</el-link>
           </div>
         </template>
       </el-table-column>
@@ -111,7 +118,7 @@
             </div>
             <!-- 机型适配入口：未适配的给适配入口，已适配的给绿标 -->
             <div v-if="!adaptOf(row.sn).adapted" class="adapt-line">
-              <el-button type="text" size="mini" class="adapt-btn" @click="openAdapt(row)">
+              <el-button v-if="canModelManage" type="text" size="mini" class="adapt-btn" @click="openAdapt(row)">
                 <i class="el-icon-cpu" /> 适配
               </el-button>
             </div>
@@ -157,10 +164,10 @@
           <template slot-scope="{ row }">
             <template v-if="sipList(row.sn).length">
               <div v-for="item in sipList(row.sn)" :key="item.path" class="biz-row">
-                <el-tag size="mini" :type="sipTagType(item.params)">
-                  {{ sipStatusText(item.params) }}
+                <el-tag size="mini" :type="sipTagType(item)">
+                  {{ item.statusText }}
                 </el-tag>
-                <span class="biz-name">{{ sipNumber(item.params) }}</span>
+                <span class="biz-name">{{ item.number }}</span>
               </div>
             </template>
             <span v-else class="cell-empty">-</span>
@@ -195,10 +202,11 @@
               业务/操作<i class="el-icon-arrow-down el-icon--right" />
             </el-button>
             <el-dropdown-menu slot="dropdown">
+              <!-- 查业务信息是读；往下三条都会真的动设备，没有写权限就别摆出来 -->
               <el-dropdown-item command="business" icon="el-icon-connection">业务信息</el-dropdown-item>
-              <el-dropdown-item command="probe" icon="el-icon-search">诊断(GetRPCMethods)</el-dropdown-item>
-              <el-dropdown-item command="reboot" icon="el-icon-refresh-right" divided>重启设备</el-dropdown-item>
-              <el-dropdown-item command="factoryReset" icon="el-icon-delete">恢复出厂</el-dropdown-item>
+              <el-dropdown-item v-if="canDeviceManage" command="probe" icon="el-icon-search">诊断(GetRPCMethods)</el-dropdown-item>
+              <el-dropdown-item v-if="canDeviceManage" command="reboot" icon="el-icon-refresh-right" divided>重启设备</el-dropdown-item>
+              <el-dropdown-item v-if="canDeviceManage" command="factoryReset" icon="el-icon-delete">恢复出厂</el-dropdown-item>
             </el-dropdown-menu>
           </el-dropdown>
         </template>
@@ -250,9 +258,23 @@
           </el-option>
         </el-option-group>
       </el-select>
-      <el-button size="small" type="primary" plain @click="batchDispatchTemplate">批量下发模版</el-button>
+      <!-- 批量操作条上每个按钮各管各的权限：能看台账不等于能重启设备 -->
+      <el-button
+        v-if="canDeviceManage"
+        size="small"
+        type="primary"
+        plain
+        @click="batchDispatchTemplate"
+      >批量下发模版</el-button>
+      <el-button
+        v-if="canTagManage"
+        size="small"
+        plain
+        icon="el-icon-collection-tag"
+        @click="openBatchTags"
+      >打标签</el-button>
 
-      <el-dropdown trigger="click" @command="cmd => handleBatchCommand(cmd)">
+      <el-dropdown v-if="canWorklistManage" trigger="click" @command="cmd => handleBatchCommand(cmd)">
         <el-button size="small">一键工单<i class="el-icon-caret-top el-icon--right" /></el-button>
         <el-dropdown-menu slot="dropdown">
           <el-dropdown-item command="worklist-record" icon="el-icon-tickets">工单记录</el-dropdown-item>
@@ -261,7 +283,7 @@
         </el-dropdown-menu>
       </el-dropdown>
 
-      <el-dropdown trigger="click" @command="cmd => handleBatchCommand(cmd)">
+      <el-dropdown v-if="canDeviceManage" trigger="click" @command="cmd => handleBatchCommand(cmd)">
         <el-button size="small">更多...<i class="el-icon-caret-top el-icon--right" /></el-button>
         <el-dropdown-menu slot="dropdown">
           <el-dropdown-item command="query-admin-pwd">查询超管密码</el-dropdown-item>
@@ -284,7 +306,7 @@
         </el-dropdown-menu>
       </el-dropdown>
 
-      <el-dropdown trigger="click" @command="cmd => handleAdvancedCommand(cmd)">
+      <el-dropdown v-if="canDeviceManage" trigger="click" @command="cmd => handleAdvancedCommand(cmd)">
         <el-button size="small">高级...<i class="el-icon-caret-top el-icon--right" /></el-button>
         <el-dropdown-menu slot="dropdown">
           <el-dropdown-item command="export">导出设备</el-dropdown-item>
@@ -301,7 +323,7 @@
         </el-dropdown-menu>
       </el-dropdown>
 
-      <el-dropdown trigger="click" @command="cmd => handleOltCommand(cmd)">
+      <el-dropdown v-if="canOltManage" trigger="click" @command="cmd => handleOltCommand(cmd)">
         <el-button size="small">OLT融合管理<i class="el-icon-caret-top el-icon--right" /></el-button>
         <el-dropdown-menu slot="dropdown">
           <el-dropdown-item command="olt-mgr" icon="el-icon-s-platform">OLT/ONU 管理</el-dropdown-item>
@@ -309,7 +331,7 @@
         </el-dropdown-menu>
       </el-dropdown>
 
-      <el-button size="small" type="warning" plain @click="batchReboot">重启</el-button>
+      <el-button v-if="canDeviceManage" size="small" type="warning" plain @click="batchReboot">重启</el-button>
     </div>
 
     <!-- 下发自定义 TR069 参数弹窗 -->
@@ -436,15 +458,15 @@
         class="wan-param-card"
       >
         <div slot="header" class="wan-param-head">
-          <span class="wan-param-name">WAN - {{ item.params.Name || wanShort(item.path) }}</span>
-          <el-tag size="mini" :type="wanTagType(item.params.ConnectionStatus)">
-            {{ wanText(item.params.ConnectionStatus) }}
+          <span class="wan-param-name">WAN - {{ item.title }}</span>
+          <el-tag size="mini" :type="wanTagType(item)">
+            {{ item.statusText }}
           </el-tag>
-          <span v-if="uptimeText(item.params.Uptime)" class="wan-uptime">{{ uptimeText(item.params.Uptime) }}</span>
+          <span v-if="item.uptimeText" class="wan-uptime">{{ item.uptimeText }}</span>
         </div>
         <div class="wan-param-row">
           <span class="k">连接模式/地址类型:</span>
-          <span class="v">{{ connMode(item.params) }}</span>
+          <span class="v">{{ item.connMode }}</span>
         </div>
         <div class="wan-param-row">
           <span class="k">业务模式:</span>
@@ -672,6 +694,89 @@
         <el-button type="primary" :loading="remarkSaving" @click="submitRemark">保存</el-button>
       </span>
     </el-dialog>
+
+    <!-- 标签管理：改名没有单独接口，打错了就删掉重打 -->
+    <el-dialog title="标签管理" :visible.sync="tagManageVisible" width="420px" append-to-body>
+      <el-table :data="tagAll" size="small" border max-height="360">
+        <el-table-column prop="tag" label="标签" min-width="140" />
+        <el-table-column label="设备数" width="80" align="center">
+          <template slot-scope="{ row }">{{ row.deviceCount }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" align="center">
+          <template slot-scope="{ row }">
+            <el-button type="text" class="danger-text" @click="onRemoveTag(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="tip">删的是标签本身，不是删设备</div>
+      <span slot="footer">
+        <el-button type="primary" @click="tagManageVisible = false">关闭</el-button>
+      </span>
+    </el-dialog>
+
+    <!-- 批量标签：勾选的设备一起打 / 一起取消 -->
+    <el-dialog title="批量标签" :visible.sync="batchTagVisible" width="500px" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="设备">
+          <span>
+            {{ selectedSns().length ? '已勾选 ' + selectedSns().length + ' 台设备' : '未勾选设备' }}
+          </span>
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-select
+            v-model="batchTagPicked"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选或敲一个新标签"
+            style="width:320px"
+          >
+            <el-option v-for="t in tagAll" :key="t.tag" :label="t.tag" :value="t.tag" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="操作">
+          <el-radio-group v-model="batchTagMode">
+            <el-radio label="add">打标签</el-radio>
+            <el-radio label="remove">取消标签</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button @click="batchTagVisible = false">取消</el-button>
+        <el-button type="primary" :loading="batchTagSaving" @click="submitBatchTags">确定</el-button>
+      </span>
+    </el-dialog>
+
+    <!-- 标签：型号 / 运营商之外的分群维度，按它筛设备、批量打标签 -->
+    <el-dialog title="设备标签" :visible.sync="tagVisible" width="460px" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="序列号">
+          <span class="remark-sn">{{ tagRow ? tagRow.sn : '-' }}</span>
+        </el-form-item>
+        <el-form-item label="已有标签">
+          <el-checkbox-group v-model="tagChecked">
+            <el-checkbox v-for="t in tagAll" :key="t.tag" :label="t.tag" />
+          </el-checkbox-group>
+          <div v-if="!tagAll.length" class="cell-empty">还没有标签，先在下面建一个</div>
+        </el-form-item>
+        <el-form-item label="新建标签">
+          <el-input
+            v-model="tagNew"
+            placeholder="如 试点组，回车添加"
+            maxlength="64"
+            clearable
+            @keyup.enter.native="addTag"
+          >
+            <el-button slot="append" icon="el-icon-plus" @click="addTag" />
+          </el-input>
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button @click="tagVisible = false">取消</el-button>
+        <el-button type="primary" :loading="tagSaving" @click="submitTags">保存</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
@@ -679,18 +784,19 @@
 import {
   fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch,
   fetchAdaptStatus, testAdaptation, saveAdaptation, updateDeviceRemark,
-  fetchAdminAccounts, fetchDeviceStat
+  fetchAdminAccounts, fetchDeviceStat, fetchCapabilityOptions, setDeviceParams,
+  RPC_METHODS
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
 import { fetchBizTemplates, executeBizTemplate } from '@/api/bizTemplate'
-import { createWorklist, newWorklistDesc } from '@/api/worklist'
-import { RPC_METHODS } from '@/api/device'
+import { createWorklist } from '@/api/worklist'
+import {
+  tagList, tagsOfDevice, addTags, removeTags, addTagsBatch, removeTagsBatch, removeTagEverywhere
+} from '@/api/tag'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
 import DeviceRuntimeCell from '@/components/DeviceRuntimeCell.vue'
-import { ponTypeOf, opticStateOf } from '@/utils/deviceOptic'
-import { wifiBandOf } from '@/utils/wifi'
 
 // 业务概要自动回读间隔：与后端 LAN 网口状态自动刷新（5 分钟）同频
 const BIZ_AUTO_REFRESH_MS = 300000
@@ -717,14 +823,12 @@ export default {
       adaptSaving: false,
       adaptResult: null,
       adaptForm: { isp: 'standard', lanPorts: '1', lanSpeed: '自动', sipCount: '无', wifiSpec: '2.4G' },
-      ispOptions: [
-        { v: 'CT', t: '电信' }, { v: 'CU', t: '联通' },
-        { v: 'CMCC', t: '移动' }, { v: 'CBN', t: '广电' },
-        { v: 'standard', t: '标准/通用' }
-      ],
-      portOptions: ['无', '1', '2', '3', '4', '8'],
-      speedOptions: ['无', '自动', '100M', '1000M', '2500M'],
-      wifiOptions: ['无', '2.4G', '2.4G+5.8G'],
+      // 候选值由后端给：后端逐项比对时按这些取值解析，页面下拉里多一个
+      // 后端不认的值会按「不申报」处理，等于白填
+      ispOptions: [],
+      portOptions: [],
+      speedOptions: [],
+      wifiOptions: [],
       wanVisible: false,
       wanDialogSn: '',
       wifiEditVisible: false,
@@ -770,8 +874,22 @@ export default {
         size: 20,
         sn: '',
         isp: '',
-        deviceType: ''
+        deviceType: '',
+        tag: ''
       },
+      // 标签：型号 / 运营商之外的分群维度，按它筛设备、批量打标签
+      tagAll: [],
+      tagVisible: false,
+      tagRow: null,
+      tagChecked: [],
+      tagNew: '',
+      tagSaving: false,
+      // 批量标签：勾选的设备一起打 / 一起取消
+      batchTagVisible: false,
+      batchTagPicked: [],
+      batchTagMode: 'add',
+      batchTagSaving: false,
+      tagManageVisible: false,
       // 房间号 / 备注弹窗
       remarkVisible: false,
       remarkRow: null,
@@ -780,6 +898,22 @@ export default {
     }
   },
   computed: {
+    // 页面上的写操作按模块分权限摆，系统管理员这些全是真
+    canDeviceManage() {
+      return this.$has('device:manage')
+    },
+    canTagManage() {
+      return this.$has('tag:manage')
+    },
+    canModelManage() {
+      return this.$has('model:manage')
+    },
+    canWorklistManage() {
+      return this.$has('worklist:manage')
+    },
+    canOltManage() {
+      return this.$has('olt:manage')
+    },
     // 自定义参数/调试指令弹窗里的目标设备描述
     customParamScope() {
       const sns = this.selectedSns()
@@ -795,7 +929,8 @@ export default {
     displayList() {
       let rows = this.list
       if (this.opticFilter) {
-        rows = rows.filter(r => opticStateOf(this.bizOf(r.sn)) === this.opticFilter)
+        // 有没有光功率数据由后端判定：它才知道哪些参数名算 power、换算不出来算没有
+        rows = rows.filter(r => this.bizOf(r.sn).opticState === this.opticFilter)
       }
       if (this.sortKey) {
         const key = this.sortKey
@@ -811,6 +946,7 @@ export default {
     this.loadOnline()
     this.loadStat()
     this.loadTemplates()
+    this.loadCapabilityOptions()
     // 后端每 5 分钟自动刷新一次 LAN 网口状态，这里同频回读当前页的业务概要，
     // 网口图标不用手动刷新就能跟上插拔变化
     this.bizTimer = setInterval(() => {
@@ -860,6 +996,7 @@ export default {
         this.loading = true
       }
       try {
+        this.loadTagOptions()
         const res = await fetchDevicePage(this.query)
         const data = res.data || {}
         this.list = data.items || []
@@ -994,33 +1131,16 @@ export default {
     wifiList(sn) {
       return this.bizOf(sn).wifi || []
     },
+    // 开关与频段都由后端判定，前端只按结果过滤：
+    // 频段那套优先级（RFBand → 频段参数 → 制式列表 → SSID 名 → 实例号）只有后端一份
     enabledWifiList(sn) {
-      return this.wifiList(sn).filter(item => this.isWifiEnabled(item.params))
+      return this.wifiList(sn).filter(item => item.enabled)
     },
     enabledWifi24(sn) {
-      return this.enabledWifiList(sn).filter(item => wifiBandOf(item) === '2.4G')
+      return this.enabledWifiList(sn).filter(item => item.band === '2.4G')
     },
     enabledWifi58(sn) {
-      return this.enabledWifiList(sn).filter(item => wifiBandOf(item) === '5.8G')
-    },
-    // 判断 WiFi 是否启用：Status=Disabled/Down 或 Enable 为假都算禁用
-    isWifiEnabled(params) {
-      if (!params) return true
-      const status = String(params.Status || '').toLowerCase()
-      if (status === 'disabled' || status === 'down') return false
-      return this.boolOf(params.Enable, true)
-    },
-    /**
-     * CWMP 的布尔参数回来是字符串 "1"/"0"，不是 JS 的 true/false。
-     * 早先只认 === true，Enable="1" 会被判成禁用，整条 WiFi 就从列表里消失了
-     * ——参数采到了、数据库里也有，页面上却只有一个「-」。
-     */
-    boolOf(value, fallback = true) {
-      if (value === undefined || value === null || value === '') return fallback
-      const s = String(value).trim().toLowerCase()
-      if (['0', 'false', 'no', 'off', 'disabled', 'down'].includes(s)) return false
-      if (['1', 'true', 'yes', 'on', 'enabled', 'up'].includes(s)) return true
-      return fallback
+      return this.enabledWifiList(sn).filter(item => item.band === '5.8G')
     },
     lanList(sn) {
       return this.bizOf(sn).lan || []
@@ -1032,61 +1152,47 @@ export default {
       return 'LAN' + (item.instance || '') + ' ' + state + mac
     },
 
-    /**
-     * 从 path 里解析 WiFi 实例号，决定下发时写第几个 SSID。
-     * 常见形式：...WLANConfiguration.1. 或 ...SSID.1.
-     */
-    wifiInstanceOf(path) {
-      const m = String(path || '').match(/(?:WLANConfiguration|WLAN|SSID)\.?(\d+)/i)
-      return m ? parseInt(m[1], 10) : 1
-    },
-
     openWifiEdit(row, item) {
       const params = item && item.params || {}
-      const band = wifiBandOf(item)
       // 必须读 IEEE11iEncryptionModes：下发写的是这个参数，
       // 拿 BeaconType 的值（Basic / 11i / WPAand11i）填进去设备会回 9003
       const encryption = params.IEEE11iEncryptionModes ||
         params.BasicEncryptionModes || params.WPAEncryptionModes || ''
       const password = params.KeyPassphrase || params.PreSharedKey || params.WPA_PSK || ''
-      const status = String(params.Status || '').toLowerCase()
-      const enabled = status === 'disabled' || status === 'down'
-        ? false
-        : this.boolOf(params.Enable, true)
       this.wifiEditForm = {
         sn: row.sn,
-        band,
+        // 频段、实例号、开关都取后端判好的，前端不再自己解析路径与猜状态
+        band: item.band,
         path: item.path || '',
-        instance: this.wifiInstanceOf(item.path),
-        ssid: params.SSID || '',
+        instance: item.instance,
+        ssid: item.ssid || '',
         encryption: String(encryption).replace(/None/i, 'None'),
         password: String(password),
-        enabled
+        enabled: item.enabled
       }
       this.wifiEditVisible = true
     },
 
     async submitWifiEdit() {
       const form = this.wifiEditForm
-      const category = form.band === '5.8G' ? 'WIFI_58G' : 'WIFI_24G'
-      const values = {
-        instance: form.instance,
-        ssid: form.ssid,
-        wpa_mode: form.encryption,
-        wpa_key: form.password,
-        enable: form.enabled ? 'true' : 'false'
-      }
       if (!form.ssid) {
         this.$message.warning('SSID 名称不能为空')
         return
       }
       this.wifiSubmitting = true
       try {
+        // 直接提交业务字段：业务类型（WIFI_24G / WIFI_58G）与意图键
+        // （wpa_mode / wpa_key / enable）都由后端翻译，页面不必知道下发引擎认哪些键
         await createWorklist({
           sn: form.sn,
-          category,
-          values,
-          worklistDesc: newWorklistDesc(category),
+          wifi: {
+            instance: form.instance,
+            ssid: form.ssid,
+            encryption: form.encryption,
+            password: form.password,
+            enabled: form.enabled,
+            band: form.band
+          },
           username: this.$store.getters.name || 'admin'
         })
         this.$message.success('WLAN 修改工单已提交')
@@ -1101,30 +1207,12 @@ export default {
     sipList(sn) {
       return this.bizOf(sn).sip || []
     },
-    sipRegistered(params) {
-      const s = String(params.SIPRegisterStatus || params.Status || '').toLowerCase()
-      return s === 'registered' || s === 'ok' || s === 'up' || s === '成功'
-    },
-    sipStatusText(params) {
-      const raw = params.SIPRegisterStatus || params.Status
-      if (!raw) {
-        // 有号码但没注册状态时显示"未注册"，只有号码也没有才显示"未配置"
-        return this.sipNumber(params) !== '-' ? '未注册' : '未配置'
-      }
-      return this.sipRegistered(params) ? '已注册' : '未注册'
-    },
-    sipTagType(params) {
-      if (this.sipRegistered(params)) return 'success'
-      if (this.sipStatusText(params) === '未配置') return 'info'
+    // 注册判定与号码截取都在后端（URI 带 @ 时截前面，避免显示成 2026@192.168.x.x），
+    // 前端只剩标签颜色：已注册绿、未配置灰、其余黄
+    sipTagType(item) {
+      if (item.registered) return 'success'
+      if (item.statusText === '未配置') return 'info'
       return 'warning'
-    },
-    sipNumber(params) {
-      const name = params.AuthUserName || params.UserName || params.DirectoryNumber || params.PhoneNumber
-      if (name) return name
-      const uri = params.URI || ''
-      const m = uri.match(/^([^@]+)@/)
-      // URI 现在只存号码，不带 @服务器；有 @ 就截前面，没有就直接是号码
-      return m ? m[1] : (uri || '-')
     },
     // 管理地址：由后端从 WAN_TR069 通道算出（业务快照的 ip 字段），前端不做判定
     wanIp(sn) {
@@ -1134,22 +1222,12 @@ export default {
       const status = String(row.status || '').toLowerCase()
       return status.includes('online') || status.includes('在线') || row.online === true
     },
-    // ...WANPPPConnection.1. -> PPP 1，设备没上报 Name 时的兜底叫法
-    wanShort(path) {
-      const matched = path.match(/WAN(PPP|IP)Connection\.(\d+)\.$/)
-      return matched ? 'WAN ' + matched[1] + ' ' + matched[2] : 'WAN'
-    },
-    wanTagType(status) {
-      const s = String(status || '').toLowerCase()
-      if (s === 'connected' || s === 'up') return 'success'
-      if (s === 'disconnected' || s === 'down') return 'danger'
-      return 'info'
-    },
-    wanText(status) {
-      const s = String(status || '').toLowerCase()
-      if (s === 'connected' || s === 'up') return '已连接'
-      if (s === 'disconnected' || s === 'down') return '未连接'
-      return status || '-'
+    // 连接名与状态文案都由后端给（没报 Name 时用「WAN PPP 1」这类兜底叫法），
+    // 前端只决定标签颜色
+    wanTagType(item) {
+      if (item.up) return 'success'
+      if (item.statusText === '-') return 'info'
+      return 'danger'
     },
 
     // ---------------- WAN 连接参数弹窗 ----------------
@@ -1167,7 +1245,7 @@ export default {
       if (!row) return []
       const biz = this.bizOf(row.sn)
       const adapt = this.adaptOf(row.sn) || {}
-      const mac = this.paramValue(biz.device || [], 'MACAddress')
+      const mac = biz.mac
       // 目录名与原始申报值都映射：适配档目录用归一化的 CM/CT/CU，
       // yml profile 里的 isp 是申报时的原始值（如 CMCC）
       const ispNames = {
@@ -1207,8 +1285,8 @@ export default {
     capabilityText(biz) {
       const parts = []
       const wifi = biz.wifi || []
-      if (wifi.some(w => wifiBandOf(w) === '2.4G')) parts.push('2.4G WiFi')
-      if (wifi.some(w => wifiBandOf(w) === '5.8G')) parts.push('5.8G WiFi')
+      if (wifi.some(w => w.band === '2.4G')) parts.push('2.4G WiFi')
+      if (wifi.some(w => w.band === '5.8G')) parts.push('5.8G WiFi')
       if ((biz.sip || []).length) parts.push('1电话')
       return parts.join('、') || null
     },
@@ -1229,39 +1307,18 @@ export default {
       const tail = p.sample_sn ? '（ ' + p.sample_sn + '）' : ''
       return parts.join('、') + tail
     },
-    paramValue(list, name) {
-      const item = (list || []).find(x => x.params && x.params[name] !== undefined)
-      return item ? item.params[name] : undefined
-    },
-    connMode(params) {
-      const type = String(params.ConnectionType || '')
-      const mode = type.toLowerCase().includes('bridged') ? '桥接' : '路由'
-      const addr = params.AddressingType || (type.toLowerCase().includes('ppp') ? 'PPPoE' : '-')
-      return mode + ' / ' + addr
-    },
     // 业务类型由后端判定（键名含 ServiceList，不区分厂商前缀）
     serviceMode(item) {
       return item.service || '-'
-    },
-    uptimeText(seconds) {
-      const n = parseInt(seconds, 10)
-      if (!n || n < 0) return ''
-      const d = Math.floor(n / 86400)
-      const h = Math.floor((n % 86400) / 3600)
-      const m = Math.floor((n % 3600) / 60)
-      return (d ? d + '天' : '') + h + '小时' + m + '分'
     },
     showVal(value) {
       return value === undefined || value === null || value === '' ? '-' : value
     },
 
     sortVal(row, key) {
-      if (key === 'pon') return ponTypeOf(row, this.bizOf(row.sn))
-      if (key === 'upTime') {
-        const info = this.bizOf(row.sn).device || []
-        const item = info.find(x => x.params && x.params.UpTime !== undefined)
-        return String(item ? item.params.UpTime : '')
-      }
+      if (key === 'pon') return this.bizOf(row.sn).ponType || 'GE'
+      // 排序比的是秒数，格式化后的「1天2小时」是字符串，没法比大小
+      if (key === 'upTime') return this.bizOf(row.sn).uptimeSeconds || ''
       if (key === 'ip') return String(this.bizOf(row.sn).ip || '')
       return String(row[key] || '')
     },
@@ -1310,8 +1367,142 @@ export default {
       this.query.page = 1
       this.load()
     },
+    // ---------------- 标签管理 ----------------
+    openTagManage() {
+      this.loadTagOptions()
+      this.tagManageVisible = true
+    },
+    async onRemoveTag(row) {
+      try {
+        await this.$confirm(
+          '删掉标签「' + row.tag + '」？它身上 ' + row.deviceCount + ' 台设备的这个标签会一起没，设备不受影响。',
+          '提示',
+          { type: 'warning' }
+        )
+      } catch (e) {
+        return
+      }
+      removeTagEverywhere(row.tag)
+        .then(res => {
+          this.$message.success('已从 ' + (res.data || 0) + ' 台设备上摘掉')
+          this.tagAll = this.tagAll.filter(x => x.tag !== row.tag)
+          if (this.query.tag === row.tag) {
+            this.query.tag = ''
+            this.load()
+          }
+        })
+        .catch(err => {
+          this.$message.error((err && err.message) || '删除失败')
+        })
+    },
+
+    // ---------------- 批量标签 ----------------
+    openBatchTags() {
+      if (!this.selectedSns().length) {
+        this.$message.warning('先在列表里勾选设备')
+        return
+      }
+      this.batchTagPicked = []
+      this.batchTagMode = 'add'
+      this.batchTagVisible = true
+    },
+    async submitBatchTags() {
+      const sns = this.selectedSns()
+      const tags = this.batchTagPicked.map(t => String(t).trim()).filter(Boolean)
+      if (!sns.length || !tags.length) {
+        this.$message.warning('勾了设备还要选标签')
+        return
+      }
+      this.batchTagSaving = true
+      try {
+        const res = this.batchTagMode === 'add'
+          ? await addTagsBatch(sns, tags)
+          : await removeTagsBatch(sns, tags)
+        const data = res.data || {}
+        // 打标签的条数常常小于 设备数 × 标签数，多数设备早就打过了
+        const adding = this.batchTagMode === 'add'
+        const done = adding ? (data.added || 0) : (data.removed || 0)
+        const skipped = sns.length * tags.length - done
+        const tail = skipped > 0 ? '，' + skipped + ' 条本来就' + (adding ? '有' : '没有') : ''
+        this.$message.success((adding ? '打上 ' : '取消 ') + done + ' 条' + tail)
+        // 新建的标签当场进候选，不必关了弹窗再重拉
+        if (adding) {
+          tags.forEach(t => {
+            if (!this.tagAll.some(x => x.tag === t)) {
+              this.tagAll = this.tagAll.concat([{ tag: t, deviceCount: sns.length }])
+            }
+          })
+        }
+        this.batchTagVisible = false
+      } catch (e) {
+        // 错误信息由拦截器统一提示
+      } finally {
+        this.batchTagSaving = false
+      }
+    },
+
+    // ---------------- 标签 ----------------
+    // 标签清单只拉一次，筛选下拉与打标签弹窗共用
+    async loadTagOptions() {
+      if (this.tagAll.length) return
+      try {
+        const res = await tagList()
+        this.tagAll = (res.data || []).map(x => ({ tag: x.tag, deviceCount: x.deviceCount }))
+      } catch (e) {
+        this.tagAll = []
+      }
+    },
+    async openTags(row) {
+      this.tagRow = row
+      this.tagChecked = []
+      this.tagNew = ''
+      this.tagVisible = true
+      try {
+        const res = await tagsOfDevice(row.sn)
+        this.tagChecked = res.data || []
+      } catch (e) {
+        this.tagChecked = []
+      }
+    },
+    // 新建的标签当场加进候选里，不必先关弹窗再重拉
+    addTag() {
+      const name = (this.tagNew || '').trim()
+      if (!name) return
+      if (!this.tagAll.some(x => x.tag === name)) {
+        this.tagAll = this.tagAll.concat([{ tag: name, deviceCount: 0 }])
+      }
+      if (!this.tagChecked.includes(name)) {
+        this.tagChecked = this.tagChecked.concat([name])
+      }
+      this.tagNew = ''
+    },
+    async submitTags() {
+      if (!this.tagRow) return
+      this.tagSaving = true
+      try {
+        const now = this.tagChecked
+        const before = (await tagsOfDevice(this.tagRow.sn)).data || []
+        // 只提交差异：打标签的接口是幂等的，但取消必须指明取消哪些
+        const added = now.filter(t => !before.includes(t))
+        const removed = before.filter(t => !now.includes(t))
+        if (added.length) await addTags(this.tagRow.sn, added)
+        if (removed.length) await removeTags(this.tagRow.sn, removed)
+        this.$message.success(
+          (added.length ? '新增 ' + added.length + ' 个' : '') +
+          (added.length && removed.length ? '，' : '') +
+          (removed.length ? '取消 ' + removed.length + ' 个' : '') +
+          (added.length || removed.length ? '' : '没有变化')
+        )
+        this.tagVisible = false
+      } catch (e) {
+        // 错误信息由拦截器统一提示
+      } finally {
+        this.tagSaving = false
+      }
+    },
+
     resetQuery() {
-      this.query = { page: 1, size: 20, sn: '', isp: '', deviceType: '' }
+      this.query = { page: 1, size: 20, sn: '', isp: '', deviceType: '', tag: '' }
       this.load()
     },
     // 完整详情：跳原来的设备详情页（能力树采集、RPC、参数树在那里）
@@ -1489,16 +1680,29 @@ export default {
       ).then(() => {
         const username = this.$store.getters.name || 'admin'
         const tasks = sns.map(sn => {
+          // 流水号不传：后端发号自带自增段与随机段，多台的工单不会互相被幂等掉
           return createWorklist({
             sn,
             category: category || '',
             values: {},
-            worklistDesc: newWorklistDesc(category || 'biz'),
             username
           }).then(() => null).catch(err => ({ sn, err: (err && err.message) || '创建失败' }))
         })
         Promise.all(tasks).then(results => this.reportBatchResult(results, sns.length))
       }).catch(() => {})
+    },
+
+    /** 机型适配申报的候选值，由后端维护，页面只负责选。 */
+    loadCapabilityOptions() {
+      fetchCapabilityOptions()
+        .then(res => {
+          const data = (res && res.data) || {}
+          this.ispOptions = data.isp || []
+          this.portOptions = data.ports || []
+          this.speedOptions = data.speeds || []
+          this.wifiOptions = data.wifiSpecs || []
+        })
+        .catch(() => {})
     },
 
     /** 批量提交的汇总提示：全成功给个轻提示，有失败则列出每台的原因。 */
@@ -1585,10 +1789,13 @@ export default {
       }
       const sns = this.requireSelection()
       if (!sns) return
-      const values = rows.map(r => [r.name, r.value, r.type])
+      // 走专用接口：SetParameterValues 的报文结构由后端拼。
+      // 原先这里自己拼 { parameterValues: [[...]] } 发给通用 RPC 通道，
+      // 而那个键名后端根本不认——报文里的 ParameterList 是空的，
+      // 设备收到的是一条啥参数都没有的 SetParameterValues，页面却提示下发成功
+      const items = rows.map(r => ({ name: r.name, value: r.value || '', type: r.type }))
       sns.forEach(sn => {
-        dispatchRpc(sn, 'SetParameterValues', { parameterValues: values })
-          .catch(() => {})
+        setDeviceParams(sn, items).catch(() => {})
       })
       this.$message.success('已向 ' + sns.length + ' 台设备下发 SetParameterValues')
     },

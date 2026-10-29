@@ -7,13 +7,16 @@
       </div>
       <div class="create-bar">
         <span class="create-label">新增模板：</span>
-        <el-button
-          v-for="c in categories"
-          :key="c.code"
-          size="small"
-          :class="['cat-btn', 'cat-' + c.code]"
-          @click="openCreate(c.code)"
-        >{{ c.label }}</el-button>
+        <!-- 建模板、改模板、删模板：没有配置模板的写权限就只剩看 -->
+        <template v-if="$has('template:manage')">
+          <el-button
+            v-for="c in categories"
+            :key="c.code"
+            size="small"
+            :class="['cat-btn', 'cat-' + c.code]"
+            @click="openCreate(c.code)"
+          >{{ c.label }}</el-button>
+        </template>
       </div>
     </el-card>
 
@@ -73,8 +76,8 @@
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template slot-scope="{ row }">
-          <el-button type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
-          <el-button type="text" size="mini" icon="el-icon-delete" @click="handleDelete(row)">删除</el-button>
+          <el-button v-if="$has('template:manage')" type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="$has('template:manage')" type="text" size="mini" icon="el-icon-delete" class="danger-text" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -171,7 +174,7 @@
 
       <span slot="footer">
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
+        <el-button v-if="$has('template:manage')" type="primary" :loading="saving" @click="submit">保存</el-button>
       </span>
     </el-dialog>
   </div>
@@ -207,32 +210,9 @@ export default {
       categories: [],
       // 类型 -> 该类型的意图字段定义
       fieldDefMap: {},
-      // 绑定端口勾选组的分组展示，v 为存储值（下发时逗号拼接），t 为显示文字
-      portGroups: [
-        {
-          code: 'lan', label: 'LAN',
-          ports: [
-            { v: 'LAN1', t: 'LAN1' }, { v: 'LAN2', t: 'LAN2' }, { v: 'LAN3', t: 'LAN3' },
-            { v: 'LAN4', t: 'LAN4' }, { v: 'LAN5', t: 'LAN5' }, { v: 'LAN6', t: 'LAN6' },
-            { v: 'LAN7', t: 'LAN7' }, { v: 'LAN8', t: 'LAN8' }
-          ]
-        },
-        {
-          code: 'wifi24', label: '2.4G',
-          ports: [
-            { v: 'SSID1', t: 'SSID1' }, { v: 'SSID2', t: 'SSID2' },
-            { v: 'SSID3', t: 'SSID3' }, { v: 'SSID4', t: 'SSID4' }
-          ]
-        },
-        {
-          code: 'wifi58', label: '5.8G',
-          ports: [
-            { v: 'SSID5', t: 'SSID5' }, { v: 'SSID6', t: 'SSID6' },
-            { v: 'SSID7', t: 'SSID7' }, { v: 'SSID8', t: 'SSID8' }
-          ]
-        },
-        { code: 'pon', label: 'PON', ports: [{ v: 'PON', t: 'PON（FFTR从光猫下行PON口）' }] }
-      ],
+      // 绑定端口候选由后端给：选中值要直接写进型号的绑定节点，
+      // 页面自己造一个 LAN9 会把整条下发拖成 9003
+      portGroups: [],
       query: { category: '', keyword: '' },
       dialogVisible: false,
       dialogTitle: '新增配置模板',
@@ -255,8 +235,10 @@ export default {
         const meta = res.data || {}
         this.categories = meta.categories || []
         this.fieldDefMap = meta.fields || {}
+        this.portGroups = meta.bindPortGroups || []
       } catch (e) {
         this.categories = []
+        this.portGroups = []
       }
     },
     async load() {

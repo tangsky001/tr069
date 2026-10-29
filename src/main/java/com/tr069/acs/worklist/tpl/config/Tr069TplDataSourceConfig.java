@@ -94,6 +94,7 @@ public class Tr069TplDataSourceConfig {
             LOG.warn("模板库 PRAGMA 设置时遇到非致命异常: {}", e.getMessage());
         }
         initSchema(t, tr069TplDataSource, resourceLoader);
+        migrateColumns(t);
         logState(t, absPath);
         return t;
     }
@@ -115,6 +116,43 @@ public class Tr069TplDataSourceConfig {
             populator.execute(ds);
         } catch (Exception e) {
             LOG.error("模板库建表失败: {} —— 模板库不可用，型号适配与下发都会失败", e.getMessage());
+        }
+    }
+
+    /**
+     * 存量模板库补列。
+     *
+     * <p>建表脚本对已有表不起作用——{@code CREATE TABLE IF NOT EXISTS} 看到表在就跳过，
+     * 后加的列永远补不上。而模板库是随仓库走的便携库，现场那份常常比代码老，
+     * 缺列的后果是「保存适配成功、下发时才报 no such column」，很难回查。</p>
+     *
+     * <p>SQLite 的 {@code ADD COLUMN} 同样没有 {@code IF NOT EXISTS}，
+     * 只能先查 {@code PRAGMA table_info} 再决定，与主库补列一个套路。
+     * 每次启动都跑一遍，成本是几次元数据查询。</p>
+     */
+    private void migrateColumns(JdbcTemplate t) {
+        for (String[] col : EXTRA_COLUMNS) {
+            addColumnIfMissing(t, col[0], col[1], col[2]);
+        }
+    }
+
+    /** 表名、列名、列类型——补列的登记处，加新字段时在这里加一行。 */
+    private static final List<String[]> EXTRA_COLUMNS = List.of(
+            new String[]{"device_wan", "path_mtu", "TEXT"},
+            new String[]{"device_wan", "val_mtu", "TEXT"});
+
+    private void addColumnIfMissing(JdbcTemplate t, String table, String column, String type) {
+        try {
+            List<String> cols = t.query("PRAGMA table_info(" + table + ")",
+                    (rs, n) -> rs.getString("name"));
+            if (cols.contains(column)) {
+                return;
+            }
+            t.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
+            LOG.info("模板库已补列: {}.{}", table, column);
+        } catch (Exception e) {
+            LOG.error("模板库补列失败: {}.{} —— 该字段下发时会被跳过: {}",
+                    table, column, e.getMessage());
         }
     }
 

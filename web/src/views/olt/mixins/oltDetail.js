@@ -19,8 +19,7 @@ import { compressVlans as compressVlanRange } from '../utils'
  * OLT 详情页公共逻辑：取台账、板卡、VLAN、采集记录，翻成页面上要显示的样子。
  *
  * 华为（huawei.vue）与第三方（generic.vue，鸿升光/中兴/烽火都走它）共用这一份：
- * 数据怎么拉、板卡和端口怎么折算、状态怎么翻中文，都在这里。
- * 各页只负责按自家的面板结构摆，新增一个厂商时复制一份视图组件即可。
+
  *
  * 依赖宿主页面提供一个 detailId（通常取路由上的 id），来源由页面自己决定。
  */

@@ -23,18 +23,6 @@ import java.util.concurrent.TimeoutException;
  * 设备不会主动上报，页面上的网口图标就会一直停在旧状态，只能人工点「重新采集」。
  * 这里按固定间隔对在线设备重读一遍网口状态叶子（{@link DeviceBusinessService#lanStatusPaths}），
  * 库里的值被刷成最新，前端照常读业务快照就能看到变化。</p>
- *
- * <p>几个刻意的取舍：</p>
- * <ul>
- *   <li><strong>只读网口状态</strong>，不做全量业务采集——每 5 分钟对每台设备读几百个参数
- *       没必要，网口就那几个叶子。</li>
- *   <li><strong>只刷在线设备</strong>：离线的设备指令要等它上线才可能被执行，
- *       每轮都排进去只会把队列撑大。</li>
- *   <li><strong>等回值但不强等</strong>：TR-069 是反向轮询，指令要等设备下一次空 POST
- *       才带下去。超时不代表失败，指令仍在队列里，回应到达时会正常回库。</li>
- *   <li><strong>并发下发、统一收口</strong>：每台设备的 future 先全部发起再一起等，
- *       不串行等待——否则设备一多，一轮就跑不完。</li>
- * </ul>
  */
 @Slf4j
 @Service

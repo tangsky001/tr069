@@ -4,7 +4,7 @@
 
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
-- **仓库地址：[Gitee](https://gitee.com/kangweft/tr069) ｜  [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图加载不出来就去 Gitee 看）
+- **仓库地址：国内 [Gitee](https://gitee.com/kangweft/tr069) ｜ 国外 [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图在国内加载不出来就去 Gitee 看）
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
 - 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
@@ -238,7 +238,10 @@ VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN �
 | **OLT 单条 ONT 按需查询（只读）** | 点 SN / 模板列 → 一次会话发三条：`display current-configuration ont 0/<槽位>/<端口> <ONT ID>`（授权行：SN / 线路模板 / 业务模板 / 描述）+ `display service-port port 0/<槽位>/<端口> ont <ONT ID>`（业务流表格）+ `display ont info 0 <槽位> <端口> <ONT ID>`（管理 IP）；点 ONT ID → `display ont capability 0/<槽位> <端口> <ONT ID>`（硬件能力/状态）；行图标 → 光信息 / 版本 / 注册历史。老版本不认 `ont` 过滤时退回整口查询按 VPI（ONT ID）筛 | `olt/telnet/OltCliSession`（`queryOntConfigAndServicePorts`、`queryServicePorts`、`queryOntDetail`）、`olt/telnet/OltInfoParser`（`parseOntBindInfo`、`parseServicePorts`、`parseOntKeyValueBlocks`）、`olt/service/OltService#queryOnt` |
 | **OLT 命令行健壮性** | ① 华为续页提示 `( Press 'Q' to break ) ----` 纳入分页识别，提示与正文挤同一行时只清提示不送空格，避免误触发翻页卡死；② 关分页按设备来：华为发 `scroll`（`screen-length` 是 VRP 交换机的，OLT 不认），进 config 视图后重发一次；③ 参数补全提示（含无 `<cr>` 的 `{ all<K>\|bound-info<K> }:`）识别后自动补回车取默认/执行，不再干等 8 秒超时 | `olt/telnet/TelnetClient#handlePagination`、`olt/telnet/OltVendor#getPagingCommands`、`olt/telnet/OltCliSession#readToPrompt` |
 | **在线接口文档** | springdoc 扫接口 + Knife4j 中文界面：启动后浏览器打开 `http://127.0.0.1:8888/doc.html` 查看全部接口的用途、请求参数与返回结构，可在线调试；`http://127.0.0.1:8888/v3/api-docs` 是 OpenAPI 3.0 JSON，可导入 Apifox / Postman。接口清单从 Controller 签名自动扫出，中文说明集中在 `config/OpenApiDocConfig` 的 `DOC` 表 | `config/OpenApiDocConfig`、`pom.xml`（`springdoc-openapi-starter-webmvc-ui` + `knife4j-openapi3-jakarta-spring-boot-starter`） |
-| 管理端鉴权 | JWT 登录、`sys_user` 查库、首次启动写入初始管理员、JWT 拦截器 | `api/controller/AuthController`、`config/AdminAuthInterceptor` |
+| 管理端鉴权 | JWT 登录、`sys_user` 查库、首次启动写入初始管理员；JWT 拦截器除了验令牌，**还按请求 URL 与方法算出需要的权限点再验权限**（`GET` 要 `xxx:view`，写方法要 `xxx:manage`），够不着返回 403 | `api/controller/AuthController`、`config/AdminAuthInterceptor`、`api/auth/PermissionCodes` |
+| **角色权限** | `sys_role` + `sys_role_permission`：20 个权限点（10 个模块 × 读/写）由代码清单给出、**不落库**；角色勾权限，改完**立即生效**（每次请求查库判权限，不缓存在令牌里）；系统管理员在代码里短路放行全部权限，库里没有它的行，也改不了 | `api/auth/PermissionCodes`、`api/service/RoleService`、`api/controller/SystemController` |
+| **用户管理** | `/api/system` 九个接口：用户的增删改查、改角色、改口令（**改别人的口令要先验证操作者自己的口令**）、启停；自己删不了自己 | `api/service/UserAdminService` |
+| **登录日志** | 每次尝试落到 `sys_login_log`：成败与失败原因、**真实 IP**（取 `X-Forwarded-For` 首段，内网地址不用）、**登录标识**（网页端 / 客户端 / 移动端，按 `X-Client-Type` 或 UA 认）、UA；按用户各留最近 50 条 | `api/service/LoginLogService`、`api/auth/ClientIpResolver`、`api/auth/LoginSourceResolver` |
 | 启动自检 | 各业务表补建/初始化、可选只读表存在性校验 | `common/startup/*` |
 
 ### 1.2 前端（`web/`）
@@ -255,6 +258,9 @@ VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN �
 | OLT 详情 · 华为 | `/olt/huawei/:id` | 已实现（**真实 Telnet 采集，只读**：OLT 状态（板卡/温度/端口 ONT/SVG 板卡面板）、配置信息、VLAN、**DBA/线路模板**、**业务/TR069/流量模板**、ONT 配置与状态、采集记录；板卡竖放、端口竖排画在面板上（点端口看该口 ONT）；ONT 配置/状态表列含 认证码 / 运行标志 / **管理IP** / **MAC** / **业务流** / **线路模板** / **业务模板**，行可勾选，右下角**重启ONU / 删除注册**按钮；按需查询弹窗：点 SN → 授权信息 + 改授权，点 ONT ID → 硬件能力/状态，点业务流「查看」→ 业务流表；除 VLAN 增删、DBA 模板增删、一键开局外**不能改设备配置**，业务模板页的「新增/删除」、批量运维按钮、业务流四个操作按钮仍为占位；ONT 注册、OLA、ONU 后板编辑面板、OLT 升级、主备、保护仍为占位） |
 | OLT 详情 · 鸿升光 | `/olt/hsgq/:id` | 已实现（**整机前面板**：按型号画出 PON 口 + 上联 GE / XGE + NMS / CONSOLE，顶部显示规格 `8 × GPON + 4 × GE + 4 × XGE`；PON 口状态、ONU 列表、配置信息、VLAN（可增删）、一键开局、采集记录） |
 | OLT 详情 · 通用 | `/olt/generic/:id` | 已实现（未识别厂商、中兴、烽火走这里：板卡、ONT、VLAN、配置信息、采集记录；**只读**，识别出来后可编辑重测并自动分流到对应厂商页） |
+| **用户管理** | `/system/users` | 已实现（增删改用户、改角色即时生效、改密码、启停；列表带**最近登录 / 登录地址 / 登录标识**；初始 `admin` 账号的删除按钮按死） |
+| **角色权限** | `/system/roles` | 已实现（按模块勾选「查看 / 管理」；**系统管理员那排是禁用的**；还有人在用的角色删不掉） |
+| **登录日志** | `/system/login-logs` | 已实现（成功与失败都记；可按**登录地址 / 登录时间 / 登录标识**筛选） |
 
 设备列表右下角工具条（`web/src/views/device/list.vue`，需先勾选设备）：
 
@@ -418,6 +424,39 @@ DBA 模板增删、TR-069 模板新增、一键开局（改端口 VLAN 模式 + 
 
 ---
 
+### 1.7 管理端权限体系
+
+**权限点是代码里的功能清单，不落库，也不允许用户增删**：删掉一个权限点、代码还在判它，
+那个功能就变成谁也点不动的死按钮。清单由 `GET /api/system/permissions` 给出，页面按它勾选，
+勾的结果才落到 `sys_role_permission` 里。
+
+| 模块 | 查看 | 管理 |
+| --- | --- | --- |
+| dashboard / device / template / biz / model / worklist / olt / file / tag / system | `xxx:view` | `xxx:manage` |
+
+判定按 URL 自动映射，**不给每个接口加注解**：`GET /api/device/**` 要 `device:view`，写方法要
+`device:manage`。认不出模块的路径（如 `/api/user/info`）不拦——登进来就能看自己是谁，没必要再配权限。
+
+**两个默认角色**：
+
+| 角色 | 说明 |
+| --- | --- |
+| `SUPER_ADMIN` 系统管理员 | 内置，**拥有全部权限**，不可删除、权限不可改 |
+| `OPS_ADMIN` 运维管理员 | 默认能看全部、能改设备与工单，权限可调整 |
+
+系统管理员的「全权限」在代码里短路，**权限表里没有它的行**——存一份就要操心
+「表里那行和代码里那句不一致时谁说了算」。
+
+**初始 `admin` 账号有三道锁**：应用层 `UserAdminService` 拒绝删除（返回「系统用户禁止删除」），
+数据库 `BEFORE DELETE` 触发器兜底（手工在 MySQL 里 `delete` 同样删不掉），前端的删除按钮也是按死的。
+系统管理员只剩一个时同样删不得、停不得、也降不成别的角色——没人能改权限的系统等于锁死。
+
+改别人的口令要先验证操作者**自己**的口令，这是为了防止会话被借用后批量改口令扩大战果。
+
+> 升级说明：旧版本的 `sys_user.role` 存的是 `admin` / `operator` / `viewer`，
+> 首次用到角色时由 `RoleService` 自动迁移（`admin` → `SUPER_ADMIN`，其余 → `OPS_ADMIN`），
+> 不用手工跑脚本。接口细节见 [API.md §4.14](./API.md)。
+
 ## 2. 待实现 / 进行中
 
 | # | 事项 | 当前状态 | 说明 |
@@ -429,7 +468,7 @@ DBA 模板增删、TR-069 模板新增、一键开局（改端口 VLAN 模式 + 
 | 5 | 设备批量运维指令后端 | 部分接通（**超管密码已接通**） | Telnet 开关与命令执行、WAN 侧访问、WiFi 开关、禁用 SIP、删除 WAN 连接、解除上网限制、SSID 前缀清理、配置文件导出/克隆、强制上报等需逐个按厂商/型号补齐参数路径（统一走型号映射，不写死路径）。超管账号查询已可用，但依赖设备在线且该型号把 `User.{i}.Username/Password` 暴露给 TR-069 |
 | 6 | ~~OLT 融合管理真实数据~~ | **已实现（只读）** | Telnet **采集**已接通（华为 MA5683T 实测）：台账、板卡与温度、端口与每条 ONT 明细、VLAN 与三层接口 / 静态路由、**DBA/线路模板**、**业务/TR069/流量模板**（含 TR069 服务器模板与流量限速模板）、业务流明细均真实入库；页面「同步」与后台 5 分钟定时刷新。发往设备的采集命令只有 `display` / `show`；**配置下发已实现**（建/删 VLAN、DBA 模板增删、TR-069 模板新增、一键开局），增删 ONT 与重启板卡仍未实现，见 #15。剩余占位：ONT 注册（`display ont autofind all`）、OLA、ONU 后板编辑面板、OLT 升级、主备、保护，以及各模板页的「新增/删除」按钮。光模块数值（Tx 发光 / 收光 / 温度 / 偏置电流 / 供电电压）另走接口视图：`interface gpon 0/<槽位>` 下的 `display port state <口>`，已逐口采集入库。逐页状态见 [1.5 节](#15-olt-标签页已实现--占位) |
 | 7 | 存量数据迁移 | 未开始 | 存量 `biz_template_item.template_key` 仍是旧文件 key，`BizTemplateService.parseId` 会判定为“配置模板不存在”，需迁移脚本改为 `config_template.id` |
-| 8 | 意图字段扩展 | 进行中 | 现 WAN 类仅 IP 协议 / VLAN 使用与否 / 是否绑定端口；待补 WAN IP 获取方式、PPPoE 账号、SIP 服务器/账号、WiFi SSID/密码等意图（VLAN ID、具体端口仍不落库，由下发时决定） |
+| 8 | 意图字段扩展 | 进行中 | **WAN 已接通**：连接模式 / 地址获取方式 / VLAN / NAT / 绑定端口 / 静态地址四项 / PPPoE 账号口令 / **MTU**（TR-098 与 TR-181 同名参数，留空＝不改、填 0 拒发）；**WiFi 已接通** SSID / 密码 / 信道 / 隐藏 / 加密方式；**SIP 已接通** 注册与代理服务器、端口、号码、密码。待补：SIP 出局代理与备用注册服务器、数图规则、WiFi 带宽与功率、设备管理类私有节点（见 #5） |
 | 9 | 旧机制彻底清理 | 基本完成 | 旧文件模板 / 向导编译 / 旧工单编排引擎已删，工单改走 `IntentDeliveryService`；`worklist` 包中保留档案、型号映射、能力树导出与工单建单/查询，收尾时可再审视命名。**UDP 连接请求（TR-111 打洞）已删**：内网部署下设备直连可达，用不到穿透，且它「发出即算成功」会顶掉 HTTP 那条，唤醒失败还看不出来 |
 | 10 | 其它 | 未开始 | 下发操作审计日志细化、权限角色细化、设备告警（光功率劣化、离线批量提醒）、离线判定阈值按设备实际周期上报间隔（`PeriodicInformInterval`）动态计算（当前固定 120 秒）。纳管已把上报间隔统一下发为 300 秒，这条可以按台账读回的实际间隔算，不必再手调 |
 | 11 | 界面展示收尾 | 未开始 | ① 设备列表 LAN 网口超过 4 个时的折叠（`+N`）或横向滚动，当前会横向溢出；② 业务**采集**阶段跳过未启用的 SSID（现在只是展示层过滤，采集仍全量读）；③ 详情页未启用 SSID 的视觉区分，当前只靠状态列文案「已禁用」；④ 运行信息列的排序只作用于当前页（后端分页排序暂未打通） |
@@ -458,7 +497,7 @@ DBA 模板增删、TR-069 模板新增、一键开局（改端口 VLAN 模式 + 
 | --- | --- | --- |
 | 8888 | 管理端页面与 `/api` | `server.port` |
 | 8899 | **北向接口** `/openapi/v1/**`（上层系统对接），与管理端端口隔离 | `acs.openapi.port` |
-| 9090 / 8082 | 光猫上报监听 | `acs.cwmp.listen-ports` |
+| 9090 / 8012 / 8080 / 8082 / 8172 / 5481 | 光猫上报监听（华为 / 中兴 / 烽火 / 通用），另有 6060 | `acs.cwmp.listen-ports` |
 | 9528 | 前端开发服务器（代理 `/dev-api` → `http://127.0.0.1:8888/api`） | `web/vue.config.js` |
 
 ## 5. 目录结构
@@ -509,7 +548,7 @@ configuration/
 | `biz` | 业务模板：编排实体、成员视图、执行记录、下发前自检 |
 | `worklist` | 光猫档案（`loader`/`registry`/`model`）、型号语义映射（`ModelMappingService`）、能力树导出（`ModelTreeStore`）、机型适配（`ModelAdaptationService`）、工单建单与查询（`WorklistDeliveryService`、`controller/WorklistExecuteController`） |
 | `olt` | **OLT 管理（采集 + 下发）**：Telnet 会话与命令编排（`telnet/OltCliSession`，只发 `display` / `show` / `enable` / `config` / `quit`）、回显解析（`telnet/OltInfoParser`，板卡 / VLAN / ONT / DBA / 线路模板 / 业务与 TR069 模板 / 流量模板 / 业务流）、厂商命令差异（`vendor/OltVendorProfile` 及各家实现、命令动作目录 `vendor/Hsgq*ActionCatalog`）、设备知识（`vendor/HsgqModelCatalog` 整机型号规格、`vendor/OltBoardCatalog` 板卡型号档案与状态翻译）、原始连接（`telnet/TelnetClient`，分页提示与续页）、模板与采集数据模型（`model/*`）、台账与同步（`service/OltService`）、定时刷新（`service/OltAutoRefreshService`）、Controller 与模型。开发约定见 [doc/BACKEND.md](doc/BACKEND.md) |
-| `api` | 管理端接口：设备、能力、业务、RPC 任务、统计、登录及其 Service |
+| `api` | 管理端接口：设备、能力、业务、RPC 任务、统计、登录，以及**系统管理**（用户 / 角色权限 / 登录日志）及其 Service；`auth` 子包放权限点清单、登录来源识别、真实 IP 识别 |
 | `exec` | **意图下发执行器**：下发计划渲染（`IntentPlanRenderer`）、执行与任务表（`IntentDeliveryService`、`DeviceTask`）、任务结束事件 |
 | `openapi` | **北向接口**：端口与路径隔离（`config`）、查询/下发/事件订阅三个 Controller、Webhook 推送与事件投递、设备上下线侦测（`watch`） |
 | `domain` / `mapper` | 主库实体与 Mapper |
@@ -520,7 +559,7 @@ configuration/
 
 ```
 web/src/
-├── api/            device / rpc / configTemplate / bizTemplate / dashboard / worklist / user
+├── api/            device / rpc / configTemplate / bizTemplate / dashboard / worklist / user / system
 ├── views/
 │   ├── dashboard/  首页概览
 │   ├── device/     设备列表 list.vue、设备详情 detail.vue
@@ -541,6 +580,7 @@ web/src/
 │   │   │                       OltServicePanel（业务 / TR069 / 流量模板 + 业务流明细）、
 │   │   │                       OltVlanPanel（VLAN）、OltRecords（采集记录）
 │   │   └── 板卡型号档案已移到后端 vendor/OltBoardCatalog，随板卡返回，前端不再保存
+│   ├── system/      用户管理 users.vue、角色权限 roles.vue、登录日志 login-logs.vue
 │   └── login/ 404.vue
 ├── components/     DeviceBusinessPanel（业务面板）、DeviceIdentityCell（终端信息列）、DeviceRuntimeCell（运行信息列）等
 └── router/         菜单与路由
@@ -553,6 +593,8 @@ web/src/
 mysql -u root -p -e "CREATE DATABASE tr_acs DEFAULT CHARACTER SET utf8mb4;"
 mysql -u root -p tr_acs < sql/schema.sql
 # 脚本幂等（CREATE TABLE IF NOT EXISTS）；存量库漏表时启动会自动补齐
+# 注意：脚本里有含 DELIMITER 的触发器（禁止删掉初始管理员 / 最后一个系统管理员），
+# 请用 mysql 客户端执行整份脚本，别用按分号拆语句的程序喂它
 
 # 2) 启动后端（8888），按需改 src/main/resources/application.yml
 mvn spring-boot:run
@@ -586,7 +628,7 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
-| `acs.cwmp.listen-ports` | `9090,8082` | 光猫上报端口，逗号分隔 |
+| `acs.cwmp.listen-ports` | `9090,8082,6060,8012,8080,8172,5481` | 光猫上报端口，逗号分隔。按厂商出厂端口覆盖：9090 华为 / 8012 中兴 / 8080 烽火 / 8082、8172、5481、6060 通用。贝尔常用的 8888 与 `server.port` 撞车，加了也会被自动跳过，要收这类设备先把管理端口挪走 |
 | `acs.cwmp.cpe-path` | `/ACS-server/ACS` | 上报主路径 |
 | `acs.cwmp.extra-cpe-paths` | `/acs,/cwmp,/tr069,/` 等 | 兼容的上报路径，遇到 405 时在此追加 |
 | `acs.auth.cpe-to-acs-username/password` | `auto` | 光猫连 ACS 的账号；`auto`/留空即免认证，上线前改回真实账号 |
@@ -688,10 +730,10 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 
 | 访问 | 地址 |
 | --- | --- |
-| **GITEE** | https://gitee.com/kangweft/tr069 |
-| **GITHUB** | https://github.com/tangsky001/tr069 |
+| **国内** | https://gitee.com/kangweft/tr069 |
+| **国外** | https://github.com/tangsky001/tr069 |
 
-截图都放在 [`doc/Display/`](./doc/Display)，加载不出来时直接到 **Gitee** 仓库看（图片与 README 同源，
+截图都放在 [`doc/Display/`](./doc/Display)，国内加载不出来时直接到 **Gitee** 仓库看（图片与 README 同源，
 不用翻墙）。README 里的相对路径在两个平台都能正常渲染。
 
 **欢迎有兴趣的大佬一起来做。** 这个项目是照着真实现网设备（华为 MA5683T、各类光猫）一条命令一条命令啃出来的，

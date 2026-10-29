@@ -401,7 +401,16 @@ public class TemplateBuilder {
         return r;
     }
 
-    /** 一条 WAN 模板行的公共部分：挂载位置、开关、连接类型。 */
+    /**
+     * 一条 WAN 模板行的公共部分：挂载位置、开关、连接类型、MTU。
+     *
+     * <p>MTU 三种业务共用同一个参数名 {@code MaxMTUSize}（标准 TR-098 参数），
+     * 挂在各自的连接对象下，所以放在这里统一写；PPPoE 那行的前缀会自动指向
+     * {@code WANPPPConnection.}，不需要各业务再写一遍。</p>
+     *
+     * <p><b>值一律留空＝不修改</b>：PPPoE 常用 1492、IPoE/静态常用 1500，各现网不一样，
+     * 模板不替现场决定。要改就在配置模板上填 MTU，填 0 会被按下发失败处理（见渲染器）。</p>
+     */
     private static DeviceWan newWan(Device device, int slot, String connType, String objectSuffix) {
         DeviceWan wan = new DeviceWan();
         wan.setDeviceId(device.getId());
@@ -416,6 +425,8 @@ public class TemplateBuilder {
         wan.setValEnable("1");
         wan.setPathConnType(p + "ConnectionType");
         wan.setValConnType("IP_Routed");
+        wan.setPathMtu(p + "MaxMTUSize");
+        wan.setValMtu("");
         return wan;
     }
 

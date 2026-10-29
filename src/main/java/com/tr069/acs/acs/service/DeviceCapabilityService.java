@@ -52,31 +52,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * 设备能力采集。
- *
- * <p>一次采集分两步，全程跑在「Inform -> InformResponse -> 空 POST 捎带下发」这条链路上：</p>
- * <ol>
- *   <li>{@code GetParameterNames(子树, NextLevel=false)}：逐个子树递归拿到设备支持的路径，
- *       路径以句点结尾的是对象，其余是普通参数，同时带回读写权限。子树只取
- *       WAN / WiFi / LAN 网口 / SIP 电话四类，清单按运营商的采集标准取，
- *       见 {@link CapabilityProfiles}</li>
- *   <li>{@code GetParameterValues}：把上一步得到的参数路径分批读值，回填进同一张表</li>
- * </ol>
- *
- * <p>子树按什么姿势问，各家运营商的定制机答案不一样：移动定制机一次递归就给全量，电信定制机
- * 对 {@code InternetGatewayDevice.WANDevice.} 直接回 9002 Internal error，得换成
- * {@code InternetGatewayDevice.WANDevice.1.} 才认。所以每棵子树依次试「递归 → 逐层 →
- * 按实例号 1..N 探测 → 已知路径 GPV」，哪种成了用哪种，策略本身也写在采集标准里。</p>
- *
- * <p>关键在于「抢窗口」：Inform 的响应体只能是 InformResponse，不能夹带下发；CPE 收到
- * InformResponse 后会立刻在<strong>同一条 TCP 连接</strong>上空 POST 一次，ACS 的指令就是在
- * 这次空 POST 的响应体里捎带出去的。所以采集指令必须在回复 InformResponse 之前就排进下发队列，
- * 空 POST 到达时才能被立即取走，否则就要等设备下一次周期上报。</p>
- *
- * <p>两步之间用 {@link CompletableFuture} 串联，等待设备的那段时间不占线程：
- * 指令从 {@link RpcDispatchService} 入队即返回，设备回应后凭据完成，后续批次才提交。</p>
- */
+/** 设备能力采集。*/
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -101,29 +77,7 @@ public class DeviceCapabilityService {
      */
     private static final String DEFAULT_ROOT = DataModel.TR098.getRoot();
 
-    /**
-     * 只采集这些子树，相对数据模型根节点书写。
-     *
-     * <p>整机参数树动辄上万节点，而平台真正用到的只有 WAN、WiFi、LAN 网口、SIP 电话四类业务，
-     * 全量拉一遍既慢又占库，所以只在子树上发 GetParameterNames，拼成一棵够用的树。</p>
-     *
-     * <p>前缀同时覆盖 TR-098（{@code InternetGatewayDevice.}）与 TR-181（{@code Device.}）两种
-     * 数据模型：前者用 {@code WANDevice./LANDevice.}，后者用 {@code WAN./Ethernet.Interface./WiFi.}；
-     * TR-098 的 WiFi（{@code WLANConfiguration}）挂在 {@code LANDevice.} 下面，一并随 LAN 子树取回。
-     * 某块子树取不到由 {@link #collectSubtree} 兜底处理，不影响其它子树。</p>
-     *
-     * <p>这两份是<strong>内置默认</strong>：只在采集标准没配子树时兜底，
-     * 各运营商真正生效的清单在 {@code acs.device.capability.profiles}。</p>
-     */
-    /**
-     * TR-098（{@code InternetGatewayDevice.}）下的业务子树。
-     *
-     * <p>子树名和根节点是绑定的：TR-098 的网口叫 {@code LANDevice.}、语音挂在
-     * {@code Services.VoiceService.} 下面；TR-181 则是 {@code Ethernet.Interface.} / {@code WiFi.}。
-     * 早先两类名字混在一个列表里无差别往根节点上拼，TR-098 设备就会收到
-     * {@code InternetGatewayDevice.LAN.} 这种根本不存在的路径，每次采集必定回一串
-     * 9005 Invalid parameter name，还白白多跑一轮逐层展开兜底。</p>
-     */
+    /** 只采集这些子树，相对数据模型根节点书写。 */
     private static final List<String> SUBTREES_TR098 = List.of(
             // WAN
             "WANDevice.",
@@ -223,15 +177,7 @@ public class DeviceCapabilityService {
     @Value("${acs.device.capability.export-model-tree:true}")
     private boolean exportModelTree;
 
-    /**
-     * 是否按能力树里的厂商私有前缀（X_CMCC_ / X_CT-COM_ / X_CU_）回写设备运营商。
-     *
-     * <p>台账的运营商原本只有人工适配时才会填，而采集发生在适配之前：设备刚进来时运营商
-     * 是空的，只能按通用档采。认出前缀后写回台账，下一轮采集与型号归档就按这家运营商走。</p>
-     *
-     * <p>写死开启：这是「设备进来就能认出是哪家的运营商」的唯一自动来源，关掉后未适配设备
-     * 会一直停在通用档。要临时关掉改这里。</p>
-     */
+    /** 是否按能力树里的厂商私有前缀（X_CMCC_ / X_CT-COM_ / X_CU_）回写设备运营商。*/
     private boolean autoDetectIsp = true;
 
     /** 下发前补采时最多等这么久，超时就按现有参数拼路径。 */
@@ -244,27 +190,13 @@ public class DeviceCapabilityService {
     /** 正在采集中的设备，避免同一台设备被并发采集。 */
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
 
-    /**
-     * 自适应档设备「连续扫不动参数树」的次数（sn → 连续失败次数）。
-     *
-     * <p>连续两次扫不动才降级为只读关键字段。为什么要两次：9002 不一定是设备不支持，
-     * 也可能只是它当时状态不对（正在重启、CWMP 模块忙）。只凭一次就把设备永久判成
-     * 「扫不动」，会让本该采到完整能力树的设备从此只剩十几条关键字段，
-     * 型号档案也跟着停更——这个代价太大，宁可多试一轮。</p>
-     */
+    /** 自适应档设备「连续扫不动参数树」的次数（sn → 连续失败次数）。*/
     private final Map<String, Integer> treeFailures = new ConcurrentHashMap<>();
 
     /** 连续扫不动多少次才降级。 */
     private static final int TREE_FAIL_THRESHOLD = 2;
 
-    /**
-     * 一轮采集的总时长上限（毫秒）。
-     *
-     * <p>设备不在下发窗口时（比如手动点采集，而设备的下一次上报要十几分钟后），
-     * 指令只会压在队列里，等响应的 future 就一直挂着。没有上限的话这个 future
-     * 永远不完成，{@link #inFlight} 也跟着不释放——这台设备从此再也采不了，
-     * 只能重启 ACS。到点就结束本轮，指令清掉或留到下一轮。</p>
-     */
+    /**一轮采集的总时长上限（毫秒）。*/
     @Value("${acs.capability.collect-timeout-ms:600000}")
     private long collectTimeoutMillis;
 
@@ -280,24 +212,13 @@ public class DeviceCapabilityService {
 
     private static final String AUTH_AUTO = "auto";
 
-    /**
-     * 连接请求凭据的最后兜底（电信 ITMS 现场通用 itms/itms）。
-     *
-     * <p>各批次光猫出厂的 CR 密码互不相同，台账、采集参数与全局配置都拿不到时，
-     * 按纳管写进设备的那个默认值试一次。</p>
-     */
+    /** 连接请求凭据的最后兜底（电信 ITMS 现场通用 itms/itms）。*/
     private static final String DEFAULT_CR_USER = "itms";
 
     private static final String DEFAULT_CR_PASSWORD = "itms";
 
     /**
-     * 是否在手动采集前主动唤醒设备（连接请求）。
-     *
-     * <p>不是每家的猫都吃这一套：有的设备对这个请求要求 HTTP 认证，ACS 手上没有凭据就
-     * 只能拿到 401，而它的采集本来靠周期上报也跑得好好的。现场确认不需要就整个关掉。</p>
-     */
-    // 键名与 application.yml 里的 acs.device.capability.wakeup-enabled 对齐：
-    // 之前写的是 acs.capability.*，yml 里改了不生效，关也关不掉
+     * 是否在手动采集前主动唤醒设备（连接请求）。*/
     @Value("${acs.device.capability.wakeup-enabled:true}")
     private boolean wakeupEnabled;
 

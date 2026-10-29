@@ -45,6 +45,9 @@ public class OpenApiDocConfig {
     static {
         CLASS_TAG.put("AuthController", "鉴权");
         CLASS_TAG.put("OltController", "OLT 管理");
+        CLASS_TAG.put("FileManageController", "文件台账");
+        CLASS_TAG.put("DeviceTagController", "设备标签");
+        CLASS_TAG.put("SystemController", "系统管理");
         CLASS_TAG.put("DeviceController", "设备台账");
         CLASS_TAG.put("DeviceCapabilityController", "设备能力树");
         CLASS_TAG.put("DeviceBusinessController", "设备业务快照");
@@ -163,6 +166,73 @@ public class OpenApiDocConfig {
                 "`code` 取动作目录里的编号，`params` 是 `{占位符: 值}`，如 `{\"vlanId\":\"100\"}`。\n"
                         + "查询类返回设备回显 `outputs`；配置类下发后重采，`detail` 是最新详情。");
         doc("POST /api/olt/{id}/actions/preview", "动作命令预览（不下发）", "把这次动作会执行的完整命令（含进视图与 exit）算出来。");
+
+        // 文件台账
+        doc("GET /api/files", "文件清单", "固件与配置，新的在前。");
+        doc("GET /api/files/{id}", "文件详情", "含字节数与内容摘要。");
+        doc("GET /api/files/{id}/url", "设备取这个文件用的地址",
+                "下发给设备 Download 时填的就是它。由 `acs.file.base-url` 决定；\n"
+                        + "留空则按 `acs.public-host` + 上报端口拼。\n"
+                        + "**ACS 的地址与设备能通的网段常常不是一回事**，现场对不上就把 base-url 配成设备真正能访问的地址。");
+        doc("POST /api/files", "上传文件（multipart/form-data）",
+                "`file` 是文件本身；`fileType` 取 FIRMWARE 固件 / CONFIG 配置 / VENDOR 厂商文件，不填按固件；\n"
+                        + "`version` 是版本号。单个文件上限 512MB。\n"
+                        + "上传走 `/api` 要令牌；设备取文件走 `/files/{id}`，不要令牌。");
+        doc("POST /api/files/{id}/deliver", "把文件下发给一批设备（Download）",
+                "`sns` 是设备序列号，数组或逗号分隔都行；`delaySeconds` 让设备延迟多少秒再取。\n"
+                        + "每台设备各排一条 Download，队列是按设备分流的，多设备之间不会互相堵。\n"
+                        + "返回每台设备的 `taskId`，结果用 `GET /api/rpc/{taskId}` 查。");
+        doc("DELETE /api/files/{id}", "删除文件", "连带清掉磁盘上的内容。");
+
+        // 设备标签
+        doc("GET /api/device-tags", "全部标签", "带每个标签下的设备数。");
+        doc("GET /api/device-tags/tag/{tag}/devices", "带这个标签的设备", "按标签把设备挑出来。");
+        doc("DELETE /api/device-tags/tag/{tag}", "删掉这个标签",
+                "把它从所有设备身上摘掉——**删的是标签，不是设备**。标签名打错时用。\n"
+                        + "返回摘掉的记录条数。");
+        doc("GET /api/device-tags/{sn}", "这台设备身上的标签", "按名称排序。");
+        doc("PUT /api/device-tags/{sn}", "给设备打标签",
+                "请求体是标签数组，如 `[\"试点组\",\"VIP\"]`；已经打过的不会重复。\n"
+                        + "返回新增的条数。");
+        doc("DELETE /api/device-tags/{sn}", "取消标签",
+                "请求体同上，只取消传进来的那些。返回实际删掉的条数。");
+        doc("POST /api/device-tags/batch", "批量打标签",
+                "`{\"sns\":[\"SN1\",\"SN2\"],\"tags\":[\"试点组\"]}`，sns 也接受逗号分隔。\n"
+                        + "返回 `{devices, added}`；已经在身上的不会重复，\n"
+                        + "added 常常小于 设备数 × 标签数——多数设备早就打过了。");
+        doc("DELETE /api/device-tags/batch", "批量取消标签", "请求体同上。返回 `{devices, removed}`。");
+
+        // 系统管理
+        doc("GET /api/system/permissions", "权限点清单",
+                "按模块分组返回全部权限点，页面按它勾选。**权限点不落库，也不允许用户增删**。");
+        doc("GET /api/system/roles", "角色列表",
+                "带每个角色的权限点与人数。\n"
+                        + "系统管理员的权限是代码里短路出来的全权限，库里没有它的行。");
+        doc("POST /api/system/roles", "新建角色",
+                "`{\"code\":\"VIEWER\",\"name\":\"只读\"}`，code 统一成大写。\n"
+                        + "新角色一个权限都没有，建完去勾。");
+        doc("PUT /api/system/roles/{code}/permissions", "设置角色权限",
+                "`{\"permissions\":[\"device:view\",\"device:manage\"]}`，**整份覆盖**，\n"
+                        + "传进去的就是这个角色的全部权限。改系统管理员的会被拒。");
+        doc("DELETE /api/system/roles/{code}", "删角色",
+                "内置角色删不掉，还有人在用的也删不掉。");
+        doc("GET /api/system/users", "用户列表", "带最近登录时间与来源（WEB / CLIENT / MOBILE）。");
+        doc("POST /api/system/users", "新建用户",
+                "`{\"username\":\"wang\",\"password\":\"123456\",\"nickname\":\"老王\","
+                        + "\"role\":\"VIEWER\"}`。密码至少 6 位。");
+        doc("PUT /api/system/users/{id}", "改用户",
+                "昵称 / 角色 / 状态 / 密码都可选，传 null 的项不动。\n"
+                        + "**改密码要二次验证**：带 password 时必须同时带 currentPassword（操作者自己的当前密码），\n"
+                        + "少了或不对直接被拒。拿到会话不等于拿到密码，会话被借走的人改不了密码。\n"
+                        + "最后一个系统管理员既删不掉也停不掉、也降不成别的角色。");
+        doc("GET /api/system/login-logs", "登录日志",
+                "记时间、登录名、IP、来源、结果。**失败的也记**，连着一片失败是有人在试密码。\n"
+                        + "传 userId 只看某一个人，默认看全部最近 100 条。\n"
+                        + "IP 取自 X-Forwarded-For 的第一段，其次 X-Real-IP，都没有才用连接的地址。");
+        doc("DELETE /api/system/users/{id}", "删用户",
+                "不能删自己。**初始系统账号 admin 删不掉**，返回「系统用户禁止删除」；\\n"
+                        + "最后一个系统管理员也删不掉。这两条在数据库里都有触发器兜底，\\n"
+                        + "直接在 MySQL 里 delete 同样会被拦。");
 
         // 设备台账
         doc("GET /api/device/stat", "设备统计", "总数、在线数、离线数。");

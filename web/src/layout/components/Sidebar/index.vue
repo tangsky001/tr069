@@ -31,7 +31,13 @@ export default {
       'sidebar'
     ]),
     routes() {
+      // 系统管理员看全部，其余按各自角色勾的权限决定菜单里剩什么
+      if (this.$store.getters.isSuperAdmin) {
+        return this.$router.options.routes
+      }
       return this.$router.options.routes
+        .map(r => this.prune(r, this.$store.getters.permissions || []))
+        .filter(Boolean)
     },
     activeMenu() {
       const route = this.$route
@@ -50,6 +56,18 @@ export default {
     },
     isCollapse() {
       return !this.sidebar.opened
+    }
+  },
+  methods: {
+    /** 砍掉没权限的路：子菜单全没了，父菜单也没必要留着。 */
+    prune(route, permissions) {
+      const ok = r => !r.meta || !r.meta.permission ||
+        permissions.indexOf(r.meta.permission) >= 0
+      if (route.children && route.children.length) {
+        const kids = route.children.filter(ok)
+        return kids.length ? { ...route, children: kids } : null
+      }
+      return ok(route) ? route : null
     }
   }
 }
