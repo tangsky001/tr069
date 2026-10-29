@@ -298,9 +298,25 @@ export default {
         remark: row.remark || '',
         fields: Object.assign({}, row.fields || {})
       }
+      // 业务模式的历史值是混合大小写（Internet / Internet,TR069），先归一成设备口径，
+      // 否则新选项（INTERNET）匹配不上，下拉框会显示成一段裸值
+      this.normalizeServiceMode()
       this.applyFieldDefaults()
       this.dialogTitle = '编辑配置模板 - ' + row.name
       this.dialogVisible = true
+    },
+
+    /** 业务模式统一成设备口径（INTERNET / TR069 / VOIP / IPTV），兼容存量模板里的混合大小写。 */
+    normalizeServiceMode() {
+      const raw = this.form.fields.service_list
+      if (typeof raw !== 'string' || !raw) return
+      const tokens = raw.split(/[,，、+\/\s]+/)
+        .map(s => s.trim().toUpperCase())
+        .filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i)
+      if (tokens.length) {
+        this.$set(this.form.fields, 'service_list', tokens.join(','))
+      }
     },
 
     /** 未设置的意图字段按后端默认值补齐；默认值为 null 的（数字可空项）保持留空 */

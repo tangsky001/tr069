@@ -455,7 +455,13 @@
         </div>
         <div class="wan-param-row">
           <span class="k">连接模式/地址类型:</span>
-          <span class="v">{{ item.connMode }}</span>
+          <span class="v">
+            {{ item.connMode }}
+            <el-tag v-if="item.ipProtocol" size="mini" :type="ipTagType(item.ipProtocol)">
+              {{ item.ipProtocol }}
+            </el-tag>
+            <el-tag v-if="item.mtu" size="mini" type="info">MTU/{{ item.mtu }}</el-tag>
+          </span>
         </div>
         <div class="wan-param-row">
           <span class="k">业务模式:</span>
@@ -1116,6 +1122,12 @@ export default {
       if (item.up) return 'success'
       if (item.statusText === '-') return 'info'
       return 'danger'
+    },
+    // 地址协议徽标配色：单栈 IPv4 绿色，IPv6-only 橙色（少见，提醒留意），双栈灰色
+    ipTagType(protocol) {
+      if (protocol === 'IPv6') return 'warning'
+      if (protocol === 'IPv4+IPv6') return 'info'
+      return 'success'
     },
 
     // ---------------- WAN 连接参数弹窗 ----------------
@@ -1921,6 +1933,11 @@ export default {
 .wan-param-row .v {
   color: #303133;
   word-break: break-all;
+}
+/* 协议 / MTU 徽标跟在同一行文字后面，留一点间距 */
+.wan-param-row .v .el-tag {
+  margin-left: 6px;
+  vertical-align: middle;
 }
 .v-strong {
   font-weight: 600;

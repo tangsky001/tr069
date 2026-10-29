@@ -200,6 +200,7 @@ public class ConfigTemplateService {
      */
     private static List<Map<String, Object>> wanFieldDefs(String category) {
         List<Map<String, Object>> defs = new ArrayList<>();
+        boolean bridge = "WAN_BRIDGE".equalsIgnoreCase(category);
         defs.add(def(category, "ip_protocol", "IP 协议", "enum", "IPv4",
                 List.of(opt("IPv4", "IPv4 (默认)"), opt("IPv6", "IPv6"),
                         opt("IPv4+IPv6", "IPv4 + IPv6")), null));
@@ -207,12 +208,28 @@ public class ConfigTemplateService {
                 Map.of("tip", "如 201，为空表示无", "min", 0, "max", 4094)));
         defs.add(def(category, "vlan_priority", "802.1p QoS 优先级", "number", null, null,
                 Map.of("tip", "0-7，为空表示不下发", "min", 0, "max", 7)));
-        defs.add(def(category, "service_list", "业务模式", "enum", "Internet",
-                List.of(opt("Internet", "Internet 上网"), opt("TR069", "TR069 管理"),
-                        opt("VOIP", "VOIP 语音"), opt("IPTV", "IPTV 组播"),
-                        opt("Internet,TR069", "上网 + 管理"),
-                        opt("Internet,TR069,VOIP", "上网 + 管理 + 语音"),
-                        opt("Internet,TR069,VOIP,IPTV", "全业务")), null));
+        // 选项值用设备口径（大写）：设备上 X_CMCC_ServiceList 实测只有
+        // INTERNET / TR069 / VOIP / IPTV 这几种写法，发 "Internet" 过去会被判 9007
+        if (bridge) {
+            // 桥接的业务模式是「这条桥给谁用」，与路由业务不是一套取值：
+            // Other 是纯二层透传，不发业务绑定
+            defs.add(def(category, "service_list", "桥接业务模式", "enum", "OTHER",
+                    List.of(opt("OTHER", "其他 / Other（默认）"),
+                            opt("INTERNET", "上网 / Internet"),
+                            opt("IPTV", "电视 / IPTV"),
+                            opt("OTT", "OTT")), null));
+            // 桥接类型决定建哪个对象：IP→WANIPConnection(IP_Bridged)，
+            // PPPoE→WANPPPConnection(PPPoE_Bridged)
+            defs.add(def(category, "bridge_type", "桥接类型", "enum", "IP",
+                    List.of(opt("IP", "IP（默认）"), opt("PPPoE", "PPPoE")), null));
+        } else {
+            defs.add(def(category, "service_list", "业务模式", "enum", "INTERNET",
+                    List.of(opt("INTERNET", "Internet 上网"), opt("TR069", "TR069 管理"),
+                            opt("VOIP", "VOIP 语音"), opt("IPTV", "IPTV 组播"),
+                            opt("INTERNET,TR069", "上网 + 管理"),
+                            opt("INTERNET,TR069,VOIP", "上网 + 管理 + 语音"),
+                            opt("INTERNET,TR069,VOIP,IPTV", "全业务")), null));
+        }
         defs.add(def(category, "bind_ports", "绑定端口", "ports", List.of(), null,
                 Map.of("tip", "勾选该 WAN 绑定的端口 / SSID，留空表示不修改")));
         defs.add(def(category, "mtu", "MTU", "number", null, null,

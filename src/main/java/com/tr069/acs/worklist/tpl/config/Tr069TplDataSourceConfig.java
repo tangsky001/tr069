@@ -134,12 +134,94 @@ public class Tr069TplDataSourceConfig {
         for (String[] col : EXTRA_COLUMNS) {
             addColumnIfMissing(t, col[0], col[1], col[2]);
         }
+        backfillIpModePath(t);
+        backfillBridgeWan(t);
+    }
+
+    /**
+     * 存量型号补一条桥接模板行（{@code instance_no = 4}）。
+     *
+     * <p>桥接业务是后加的，之前适配过的型号只有 1/2/3 三行，下发桥接时直接报
+     * 「WAN 模板里没有 WAN_BRIDGE 对应的连接」。这里按 DHCP 那行复制：对象与路径同构，
+     * 只把连接类型换成 {@code IP_Bridged}、值留空——桥接没有地址获取方式与 NAT，
+     * 复制过来的那些列不填，渲染时自然不会带。</p>
+     *
+     * <p>用复制而不是让现场重新适配，是因为重新适配会按当前能力树重写全部 WAN 路径，
+     * 而现场可能已经手工校过；补一行只影响桥接本身。</p>
+     */
+    private void backfillBridgeWan(JdbcTemplate t) {
+        try {
+            int wanRows = t.update("""
+                    INSERT INTO device_wan (id, device_id, instance_no, conn_type, action, verified,
+                        object_path, path_enable, val_enable, path_conn_type, val_conn_type,
+                        path_bind_port, val_bind_port, path_mtu, val_mtu, path_ip_mode, val_ip_mode)
+                    SELECT (SELECT COALESCE(MAX(id), 0) FROM device_wan)
+                             + ROW_NUMBER() OVER (ORDER BY src.device_id),
+                        src.device_id, 4, 'Bridge', src.action, src.verified,
+                        replace(src.object_path, 'WANPPPConnection.', 'WANIPConnection.'),
+                        src.path_enable, src.val_enable,
+                        replace(src.path_conn_type, 'WANPPPConnection.', 'WANIPConnection.'),
+                        'IP_Bridged',
+                        src.path_bind_port, src.val_bind_port,
+                        src.path_mtu, src.val_mtu,
+                        replace(src.path_ip_mode, 'WANPPPConnection.', 'WANIPConnection.'),
+                        ''
+                    FROM device_wan src
+                    WHERE src.instance_no = 1
+                      AND src.object_path IS NOT NULL AND src.object_path <> ''
+                      AND NOT EXISTS (SELECT 1 FROM device_wan b
+                                      WHERE b.device_id = src.device_id AND b.instance_no = 4)
+                    """);
+            int vlanRows = t.update("""
+                    INSERT INTO vlan (id, device_id, wan_instance, action, verified,
+                        path_vlan_id, val_vlan_id, path_vlan_mode, val_vlan_mode,
+                        path_multicast, val_multicast, path_8021p, val_8021p)
+                    SELECT (SELECT COALESCE(MAX(id), 0) FROM vlan)
+                             + ROW_NUMBER() OVER (ORDER BY src.device_id),
+                        src.device_id, 4, src.action, src.verified,
+                        replace(src.path_vlan_id, 'WANPPPConnection.', 'WANIPConnection.'),
+                        src.val_vlan_id, src.path_vlan_mode, src.val_vlan_mode,
+                        src.path_multicast, src.val_multicast, src.path_8021p, src.val_8021p
+                    FROM vlan src
+                    WHERE src.wan_instance = 1
+                      AND NOT EXISTS (SELECT 1 FROM vlan b
+                                      WHERE b.device_id = src.device_id AND b.wan_instance = 4)
+                    """);
+            if (wanRows > 0 || vlanRows > 0) {
+                LOG.info("模板库已补桥接模板行: wan={} 行, vlan={} 行", wanRows, vlanRows);
+            }
+        } catch (Exception e) {
+            LOG.error("模板库补桥接模板行失败: {} —— 桥接下发会提示先重新适配", e.getMessage());
+        }
+    }
+
+    /**
+     * 存量 WAN 模板行补上 IP 模式路径。
+     *
+     * <p>列补上了不等于有值：路径是适配时写的，加这个字段之前适配过的型号
+     * 那两列全是空，字段照样不下发，现象还是「模板选了 IPv4、设备上还是 IPv4/v6」。
+     * 这里按 {@code object_path} 补出路径；<b>值仍然留空</b>＝不改设备现有地址族，
+     * 只有运维在模板上明确选了才下发。</p>
+     */
+    private void backfillIpModePath(JdbcTemplate t) {
+        try {
+            int rows = t.update("UPDATE device_wan SET path_ip_mode = object_path || '{i}.' || 'X_CMCC_IPMode' "
+                    + "WHERE (path_ip_mode IS NULL OR path_ip_mode = '') "
+                    + "AND object_path IS NOT NULL AND object_path <> ''");
+            if (rows > 0) {
+                LOG.info("模板库已补 IP 模式路径: {} 行", rows);
+            }
+        } catch (Exception e) {
+            LOG.error("模板库补 IP 模式路径失败: {} —— 该字段下发时会被跳过", e.getMessage());
+        }
     }
 
     /** 表名、列名、列类型——补列的登记处，加新字段时在这里加一行。 */
     private static final List<String[]> EXTRA_COLUMNS = List.of(
             new String[]{"device_wan", "path_mtu", "TEXT"},
-            new String[]{"device_wan", "val_mtu", "TEXT"});
+            new String[]{"device_wan", "val_mtu", "TEXT"},
+            new String[]{"device_wan", "path_ip_mode", "TEXT"},
+            new String[]{"device_wan", "val_ip_mode", "TEXT"});
 
     private void addColumnIfMissing(JdbcTemplate t, String table, String column, String type) {
         try {

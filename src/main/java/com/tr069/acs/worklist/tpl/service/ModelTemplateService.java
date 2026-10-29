@@ -44,7 +44,9 @@ public class ModelTemplateService {
         r.wanDhcp = templateBuilder.buildWanDhcp(device);
         r.wanPppoe = templateBuilder.buildWanPppoe(device);
         r.wanStatic = templateBuilder.buildWanStatic(device);
-        r.vlan = r.wanDhcp.getVlan() + r.wanPppoe.getVlan() + r.wanStatic.getVlan();
+        r.wanBridge = templateBuilder.buildWanBridge(device);
+        r.vlan = r.wanDhcp.getVlan() + r.wanPppoe.getVlan() + r.wanStatic.getVlan()
+                + r.wanBridge.getVlan();
         r.lan = templateBuilder.buildLan(device).getLan();
 
         log.info("生成型号模板: id={}, model={}, wifi={}, sip={}, wan={}, lan={}",
@@ -63,6 +65,7 @@ public class ModelTemplateService {
         private TemplateBuilder.WanResult wanDhcp;
         private TemplateBuilder.WanResult wanPppoe;
         private TemplateBuilder.WanResult wanStatic;
+        private TemplateBuilder.WanResult wanBridge;
         private int vlan;
         private int lan;
 
@@ -70,7 +73,7 @@ public class ModelTemplateService {
         public int total() {
             return wifi.total() + sip.getSip()
                     + wanDhcp.getWan() + wanPppoe.getWan() + wanStatic.getWan()
-                    + vlan + lan;
+                    + wanBridge.getWan() + vlan + lan;
         }
     }
 }

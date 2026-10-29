@@ -322,6 +322,8 @@ public class DeviceBusinessService {
             item.put("title", wanTitle(params, path));
             item.put("connMode", connModeOf(params));
             item.put("natEnabled", boolOf(params.get("NATEnabled"), false));
+            item.put("ipProtocol", ipProtocolOf(params));
+            item.put("mtu", mtuOf(params));
             item.put("uptimeText", uptimeText(firstNonBlank(params, "Uptime", "UpTime")));
             item.put("shortName", wanShortName(path));
             if (tr069 && ip == null) {
@@ -354,6 +356,62 @@ public class DeviceBusinessService {
     private static boolean isUp(Map<String, String> params) {
         String s = firstNonBlank(params, "ConnectionStatus", "Status").toLowerCase(Locale.ROOT);
         return "connected".equals(s) || "up".equals(s);
+    }
+
+    /**
+     * 地址协议类型：{@code IPv4} / {@code IPv6} / {@code IPv4+IPv6}，空串表示判不出来。
+     *
+     * <p>优先读厂商的 {@code X_CMCC_IPMode}（1=IPv4 / 2=IPv6 / 3=双栈）——这是设备自己
+     * 认定的地址族，比「有没有 IPv4 地址」这种猜测准；老型号没有这个节点，再按实际
+     * 地址兜底：两边都有地址算双栈，只有一边就报那一边。</p>
+     */
+    private static String ipProtocolOf(Map<String, String> params) {
+        String mode = firstNonBlank(params, "X_CMCC_IPMode", "IPMode");
+        switch (mode) {
+            case "1":
+                return "IPv4";
+            case "2":
+                return "IPv6";
+            case "3":
+                return "IPv4+IPv6";
+            default:
+                break;
+        }
+        boolean v4 = hasIpv4(params);
+        boolean v6 = hasIpv6(params);
+        if (v4 && v6) {
+            return "IPv4+IPv6";
+        }
+        if (v4) {
+            return "IPv4";
+        }
+        return v6 ? "IPv6" : "";
+    }
+
+    /** 是否拿到了可用的 IPv4 地址。 */
+    private static boolean hasIpv4(Map<String, String> params) {
+        String ip = firstNonBlank(params, "ExternalIPAddress", "IPAddress");
+        return !ip.isEmpty() && !"0.0.0.0".equals(ip);
+    }
+
+    /** IPv6 侧是否已起来：连接状态为 Connected，或已分配到 IPv6 地址。 */
+    private static boolean hasIpv6(Map<String, String> params) {
+        String status = firstNonBlank(params, "X_CMCC_IPv6ConnStatus", "IPv6ConnectionStatus");
+        if ("connected".equalsIgnoreCase(status) || "up".equalsIgnoreCase(status)) {
+            return true;
+        }
+        String addr = firstNonBlank(params, "X_CMCC_IPv6Address", "IPv6Address",
+                "X_CMCC_IPv6IPAddress");
+        return !addr.isEmpty() && !"::".equals(addr);
+    }
+
+    /**
+     * 该连接的 MTU：优先标准参数 {@code MaxMTUSize}，部分厂商只报 {@code ExternalMTU}。
+     * 取不到返回空串，页面据此不显示徽标。
+     */
+    private static String mtuOf(Map<String, String> params) {
+        String mtu = firstNonBlank(params, "MaxMTUSize", "ExternalMTU");
+        return "0".equals(mtu) ? "" : mtu;
     }
 
     /**

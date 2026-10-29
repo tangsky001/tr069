@@ -47,9 +47,11 @@
             <span class="k">连接模式/地址类型:</span>
             <span class="v">
               {{ item.connMode }}
-              <el-tag v-if="item.params.ExternalIPAddress" size="mini" type="success">IPv4</el-tag>
+              <el-tag v-if="item.ipProtocol" size="mini" :type="ipTagType(item.ipProtocol)">
+                {{ item.ipProtocol }}
+              </el-tag>
               <el-tag v-if="item.natEnabled" size="mini">NAT</el-tag>
-              <el-tag v-if="item.params.ExternalMTU" size="mini">MTU/{{ item.params.ExternalMTU }}</el-tag>
+              <el-tag v-if="item.mtu" size="mini">MTU/{{ item.mtu }}</el-tag>
             </span>
           </div>
           <div class="wan-row">
@@ -266,6 +268,12 @@ export default {
     }
   },
   methods: {
+    // 地址协议徽标配色：单栈 IPv4 绿色，IPv6-only 橙色，双栈灰色
+    ipTagType(protocol) {
+      if (protocol === 'IPv6') return 'warning'
+      if (protocol === 'IPv4+IPv6') return 'info'
+      return 'success'
+    },
     display(value) {
       return value === undefined || value === null || value === '' ? '-' : value
     },

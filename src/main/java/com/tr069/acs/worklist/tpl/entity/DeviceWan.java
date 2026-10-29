@@ -71,4 +71,11 @@ public class DeviceWan {
      */
     private String pathMtu;
     private String valMtu;
+
+    /**
+     * IP 协议版本，设备上多叫 {@code X_CMCC_IPMode}（int：1=IPv4 / 2=IPv6 / 3=IPv4+IPv6）。
+     * 值留空表示不修改——老型号没有这个节点时路径也留空。
+     */
+    private String pathIpMode;
+    private String valIpMode;
 }

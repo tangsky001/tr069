@@ -57,7 +57,7 @@ public final class SemanticSchema {
             new BizField("multicast_vlan", "组播 VLAN ID", "unsignedInt", false, "MulticastVlan"),
             new BizField("nat_enable", "NAT 开关", "boolean", false, "NATEnabled"),
             new BizField("mtu", "MTU", "unsignedInt", false, "MTU"),
-            new BizField("ip_protocol", "地址族", "string", false, "IPProtocol"),
+            new BizField("ip_protocol", "地址族", "string", false, "IPProtocol", "IPMode"),
             new BizField("external_ip", "静态 IP", "string", false, "ExternalIPAddress"),
             new BizField("subnet_mask", "子网掩码", "string", false, "SubnetMask"),
             new BizField("default_gateway", "默认网关", "string", false, "DefaultGateway"),

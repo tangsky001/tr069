@@ -35,6 +35,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -372,7 +373,7 @@ public class IntentDeliveryService {
         IntentPlan plan = renderer.render(bizObject, request.category(), model,
                 values, resolveInstance(values), overrides);
         plan = alignParameterNames(request.sn(), plan);
-        plan = ensureServiceBinding(request.sn(), plan, values);
+        plan = ensureServiceBinding(request.sn(), plan, values, overrides);
         plan = ensureVlanMode(request.sn(), plan);
         task.setIntentFields(writeJson(merge(intentFields, values)));
         task.setPlan(writeJson(planView(plan)));
@@ -452,17 +453,21 @@ public class IntentDeliveryService {
      * 去树上试，树上没有就不写——宁缺毋滥，写错名字比不写更糟。模板自己带了业务绑定的
      * 时候以模板为准，不重复加。</p>
      */
-    private IntentPlan ensureServiceBinding(String sn, IntentPlan plan, Map<String, Object> values) {
+    private IntentPlan ensureServiceBinding(String sn, IntentPlan plan, Map<String, Object> values,
+                                            Map<String, String> overrides) {
         if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
             return plan;
         }
         if (plan.parameters().stream().anyMatch(IntentDeliveryService::isServiceBinding)) {
             return plan;
         }
-        Object custom = values.get("service_list");
-        String service = custom != null && !custom.toString().isBlank()
-                ? custom.toString().trim()
-                : SERVICE_INTERNET;
+        String service = serviceOf(values, overrides);
+        if ("OTHER".equalsIgnoreCase(service)) {
+            // 桥接的「其他 / Other」是纯二层透传，不绑业务。本机型能力树里没采到过
+            // OTHER 这个取值，写上去被拒会把整批 SPV 拖掉、桥接反而建不起来
+            log.info("业务模式为 Other，跳过业务绑定补写（纯二层透传）: sn={}", sn);
+            return plan;
+        }
         String first = plan.parameters().get(0).path();
         int cut = first.lastIndexOf('.');
         String parent = cut < 0 ? first : first.substring(0, cut + 1);
@@ -748,8 +753,66 @@ public class IntentDeliveryService {
         }
     }
 
-    /** 业务绑定的取值：这一版只承接上网业务，网桥/路由两种写法的业务都是 INTERNET。 */
+    /** 业务绑定的默认取值：没指定业务模式时按上网处理。 */
     private static final String SERVICE_INTERNET = "INTERNET";
+
+    /** 设备认识的业务绑定取值，取型号能力树里 {@code X_CMCC_ServiceList} 的实测值。 */
+    private static final List<String> SERVICE_TOKENS = List.of("INTERNET", "TR069", "VOIP", "IPTV");
+
+    /**
+     * 桥接会用到、但本机型能力树里还没采到样本的取值。
+     *
+     * <p>{@code OTHER} 是桥接的默认业务模式（纯二层透传），{@code OTT} 是桥接选项之一；
+     * 移动规范里有这两个值，但这批样机只采到 INTERNET/TR069/VOIP/IPTV。照填下发并留一条
+     * 提示——被设备拒时日志里能直接看出是这两个值的问题，而不是静默改成 INTERNET。</p>
+     */
+    private static final List<String> SERVICE_TOKENS_UNVERIFIED = List.of("OTHER", "OTT");
+
+    /**
+     * 业务绑定的取值：本次显式传的值 &gt; 配置模板里保存的业务模式 &gt; 默认 INTERNET。
+     *
+     * <p>配置模板把「业务模式」存在 fields 里、调用方放进的是 overrides，只看 values 会让
+     * 模板上选的 VOIP 完全失效——每条连接都被绑成 INTERNET，语音通道被当成上网连接走。
+     * 实测过：模板 {@code WAN_DHCP_VOIP_45} 的业务模式选的是 VOIP，下发补写的却是 INTERNET。
+     * 这里按与参数覆盖一致的优先级取，再统一成设备认的大写写法。</p>
+     */
+    private static String serviceOf(Map<String, Object> values, Map<String, String> overrides) {
+        Object raw = values == null ? null : values.get("service_list");
+        if (raw == null || String.valueOf(raw).isBlank()) {
+            raw = overrides == null ? null : overrides.get("service_list");
+        }
+        return normalizeServiceList(raw == null ? null : String.valueOf(raw));
+    }
+
+    /**
+     * 业务模式归一成设备口径：{@code Internet / internet, VOIP} 变成 {@code INTERNET,VOIP}。
+     *
+     * <p>配置模板的选项是给人看的写法（{@code Internet}、{@code Internet,TR069}），设备上
+     * 实测只认 {@code INTERNET} / {@code TR069} / {@code VOIP} / {@code IPTV} 这几种大写写法，
+     * 混着大小写发过去会被判 9007。</p>
+     */
+    static String normalizeServiceList(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return SERVICE_INTERNET;
+        }
+        List<String> out = new ArrayList<>();
+        for (String token : raw.split("[,，、+/\\s]+")) {
+            String v = token.trim().toUpperCase(Locale.ROOT);
+            if (v.isEmpty()) {
+                continue;
+            }
+            if (!SERVICE_TOKENS.contains(v) && !SERVICE_TOKENS_UNVERIFIED.contains(v)) {
+                log.warn("业务模式取值不在设备口径内，按 INTERNET 处理: {}", token);
+                v = SERVICE_INTERNET;
+            } else if (SERVICE_TOKENS_UNVERIFIED.contains(v)) {
+                log.info("业务模式取值本机型未采样到，按填写值下发: {}", v);
+            }
+            if (!out.contains(v)) {
+                out.add(v);
+            }
+        }
+        return out.isEmpty() ? SERVICE_INTERNET : String.join(",", out);
+    }
 
     /** VLAN 模式的取值：2 = 打 802.1Q 标签，路由/桥接带 VLAN 的业务都要它。 */
     private static final String VLAN_TAG_MODE = "2";
