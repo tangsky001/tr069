@@ -46,22 +46,40 @@
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="42" align="center" />
-      <!-- 设备标识：SN 与在线状态，房间号 / 备注点「修改」弹窗编辑 -->
-      <el-table-column label="设备标识" min-width="270">
+      <!-- 设备标识：终端唯一标识（OUI-SN）为主，下面是 SN、房间号备注、
+           下发进度，铭牌 MAC 压在最后一行 -->
+      <el-table-column label="设备标识" min-width="280">
         <template slot-scope="{ row }">
           <div class="cell-main">
-            <el-link type="primary" @click="openDetail(row)">{{ row.sn }}</el-link>
+            <el-link type="primary" @click="openDetail(row)">{{ terminalId(row) }}</el-link>
             <el-tag :type="isOnline(row) ? 'success' : 'info'" size="mini">
               {{ isOnline(row) ? '在线' : '离线' }}
             </el-tag>
           </div>
-          <div class="cell-sub">{{ row.oui || '-' }} · {{ row.isp || '-' }} {{ row.ispVersion || '' }}</div>
+          <div class="cell-sub">
+            <span class="remark-label">SN</span>
+            <span class="cell-sn">{{ row.sn }}</span>
+          </div>
+          <!-- 下发进度：意图下发任务、本机提交的重启/恢复出厂、队列里压着的指令，都在这一行 -->
+          <div v-if="progressLines(row.sn).length" class="cell-tasks">
+            <div v-for="line in progressLines(row.sn)" :key="line.key" class="cell-task">
+              <i :class="line.icon" />
+              <span>{{ line.text }}</span>
+              <el-tag v-if="line.tag" size="mini" :type="line.status === 'running' ? 'warning' : 'info'">
+                {{ line.tag }}
+              </el-tag>
+            </div>
+          </div>
           <div class="cell-remark">
             <span class="remark-label">房间号</span>
             <span class="remark-value">{{ row.roomNo || '-' }}</span>
             <span class="remark-label">备注</span>
             <span class="remark-value remark-value-text">{{ row.remark || '-' }}</span>
             <el-link type="primary" class="remark-edit" @click="openRemark(row)">修改</el-link>
+          </div>
+          <!-- 铭牌 MAC：设备标签上印的那个，取 LAN 口地址（WAN 的每条连接各有一份，会随通道变） -->
+          <div v-if="macOf(row.sn)" class="cell-mac">
+            <i class="el-icon-postcard" /> {{ macOf(row.sn) }}
           </div>
         </template>
       </el-table-column>
@@ -698,6 +716,7 @@ import {
   fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch,
   fetchAdaptStatus, testAdaptation, saveAdaptation, updateDeviceRemark,
   fetchAdminAccounts, fetchDeviceStat, fetchCapabilityOptions, setDeviceParams,
+  fetchDeviceActiveTasks,
   RPC_METHODS
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
@@ -714,6 +733,10 @@ const BIZ_AUTO_REFRESH_MS = 300000
 // 设备列表自动刷新间隔：在线状态、顶栏统计都靠它跟上，不用手动点刷新
 const LIST_AUTO_REFRESH_MS = 15000
 
+// 下发任务进度刷新间隔：下发过程只有几秒到几十秒，跟 15 秒的列表刷新会慢半拍，
+// 单独按 5 秒回读任务表状态，「正在下发 xxx」才跟得上
+const TASK_AUTO_REFRESH_MS = 5000
+
 export default {
   name: 'DeviceList',
   components: { DeviceBusinessPanel, DeviceIdentityCell, DeviceRuntimeCell },
@@ -725,6 +748,11 @@ export default {
       bizMap: {},
       bizTimer: null,
       listTimer: null,
+      // 下发进度：sn -> { tasks: [{ label, phase, ... }], rpcPending: n }，只含还在跑的任务
+      taskMap: {},
+      taskTimer: null,
+      // 本机提交的单条 RPC（重启 / 恢复出厂）不进任务表，这里按 sn 记住它在干什么
+      rpcProgress: {},
       // 机型适配状态：sn -> { adapted, configPath, ... }
       adaptMap: {},
       adaptVisible: false,
@@ -849,6 +877,11 @@ export default {
         this.reloadBiz()
       }
     }, BIZ_AUTO_REFRESH_MS)
+    this.taskTimer = setInterval(() => {
+      if (!document.hidden) {
+        this.loadTasks()
+      }
+    }, TASK_AUTO_REFRESH_MS)
     // 列表每 15 秒自动刷新：在线状态、顶栏总数/在线/离线、业务概要一起跟上，
     // 不用手动点刷新。弹窗开着或勾了行时不刷，免得顶掉正在填的表单和选中的设备
     this.listTimer = setInterval(() => {
@@ -867,6 +900,10 @@ export default {
     if (this.listTimer) {
       clearInterval(this.listTimer)
       this.listTimer = null
+    }
+    if (this.taskTimer) {
+      clearInterval(this.taskTimer)
+      this.taskTimer = null
     }
   },
   /**
@@ -897,6 +934,7 @@ export default {
         this.total = data.total || 0
         this.loadBiz()
         this.loadAdaptStatus()
+        this.loadTasks()
       } catch (e) {
         if (!silent) {
           this.list = []
@@ -967,6 +1005,75 @@ export default {
     },
     bizOf(sn) {
       return this.bizMap[sn] || {}
+    },
+    // 终端唯一标识「OUI-序列号」由后端拼（设备不一定报 ManufacturerOUI，
+    // 台账里那份一定有），前端不再自己切片拼字符串
+    terminalId(row) {
+      return this.bizOf(row.sn).title || row.sn
+    },
+    // 铭牌 MAC：后端从 LAN 网口取，WAN 的 MAC 每条连接各有一份会随通道变，不能拿来认设备
+    macOf(sn) {
+      return this.bizOf(sn).mac || ''
+    },
+
+    // ---------------- 下发进度 ----------------
+    /**
+     * 回读每台设备正在进行的下发任务。
+     *
+     * <p>接口只返回还在跑的（PENDING / RUNNING），跑完自然从这一份里消失，
+     * 行上的进度条也就自己没了——不用额外去摘。</p>
+     */
+    async loadTasks() {
+      const sns = this.list.map(d => d.sn)
+      if (!sns.length) {
+        this.taskMap = {}
+        return
+      }
+      try {
+        const res = await fetchDeviceActiveTasks(sns)
+        if (res && res.data) {
+          this.taskMap = res.data
+        }
+      } catch (e) {
+        // 静默失败：进度是附加信息，拉不到不该把整列掏空
+      }
+    },
+    /**
+     * 这一行要显示的动态提示，按「正在做什么」排：
+     * 意图下发任务 → 本机提交的重启/恢复出厂 → 队列里压着的指令。
+     */
+    progressLines(sn) {
+      const lines = []
+      const row = this.taskMap[sn] || {}
+      const tasks = row.tasks || []
+      const task = tasks.length ? tasks[0] : null
+      if (task) {
+        lines.push({
+          key: 'task-' + (task.id || task.taskNo),
+          icon: 'el-icon-loading',
+          text: task.label,
+          tag: task.phase,
+          status: task.status === 'PENDING' ? 'queued' : 'running'
+        })
+        if (task.queuedOthers > 0) {
+          lines.push({
+            key: 'task-queued',
+            icon: 'el-icon-time',
+            text: '还有 ' + task.queuedOthers + ' 条任务排队',
+            status: 'queued'
+          })
+        }
+      }
+      const rpc = this.rpcProgress[sn]
+      if (rpc) {
+        lines.push({
+          key: 'rpc',
+          icon: rpc.status === 'running' ? 'el-icon-loading' : 'el-icon-circle-check',
+          text: rpc.label,
+          status: rpc.status
+        })
+      }
+      return lines
     },
     // 整页设备的机型适配状态一次拉回：有型号能力树 XML = 已适配
     async loadAdaptStatus() {
@@ -1317,12 +1424,18 @@ export default {
           return
         }
         this.$message.success('指令已受理' + (withTaskId ? '，任务号 ' + data.taskId : ''))
-        this.pollQuickRpc(data.taskId)
+        // 单条 RPC 不进下发任务表，行上的「正在重启」得由提交方自己记：
+        // 别的页面轮询任务表是看不到这次操作的
+        this.$set(this.rpcProgress, sn, {
+          label: this.rpcProgressLabel(rpcName),
+          status: 'running'
+        })
+        this.pollQuickRpc(sn, data.taskId)
       } catch (e) {
         this.$message.error('下发失败：' + (e.message || ''))
       }
     },
-    pollQuickRpc(taskId) {
+    pollQuickRpc(sn, taskId) {
       let count = 0
       const timer = setInterval(async() => {
         count += 1
@@ -1332,15 +1445,40 @@ export default {
           if (data && data.status === 'success') {
             clearInterval(timer)
             this.$message.success('执行成功（任务号 ' + taskId + '）')
+            this.markRpcDone(sn, 'success')
           } else if (data && data.status === 'fail') {
             clearInterval(timer)
             this.$message.warning('执行失败：' + (data.faultString || data.faultCode || ''))
+            this.markRpcDone(sn, 'fail')
           }
         } catch (e) { /* 单次失败不打断 */ }
         if (count >= 60) {
           clearInterval(timer)
+          this.clearRpc(sn)
         }
       }, 3000)
+    },
+    /** RPC 在设备上干什么：视角要给使用者看得懂的动词，不是 CWMP 方法名。 */
+    rpcProgressLabel(rpcName) {
+      const verbs = { Reboot: '正在重启', FactoryReset: '正在恢复出厂' }
+      return verbs[rpcName] || ('正在下发 ' + rpcName)
+    },
+    /**
+     * 出结果后把行上的提示换成完成时/失败时的说法，留 6 秒让人看到，
+     * 再自己消失——指令跑完一行字立刻不见，看的人会以为没执行。
+     */
+    markRpcDone(sn, result) {
+      const cur = this.rpcProgress[sn]
+      if (!cur) return
+      const base = String(cur.label).replace(/^正在/, '')
+      this.$set(this.rpcProgress, sn, {
+        label: result === 'success' ? base + '完成' : base + '失败',
+        status: result
+      })
+      setTimeout(() => this.clearRpc(sn), 6000)
+    },
+    clearRpc(sn) {
+      this.$delete(this.rpcProgress, sn)
     },
 
     formatTime(value) {
@@ -1740,6 +1878,35 @@ export default {
   color: #909399;
   font-size: 12px;
   margin-top: 2px;
+}
+.cell-sn {
+  color: #606266;
+  font-family: Consolas, Monaco, monospace;
+}
+/* 下发进度：整行淡底浅色高亮，别压过重——它只是暂时的状态，不是台账内容 */
+.cell-tasks {
+  margin-top: 4px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: #fdf6ec;
+}
+.cell-task {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #e6a23c;
+  font-size: 12px;
+  line-height: 18px;
+}
+.cell-task .el-tag {
+  margin-left: auto;
+}
+/* 铭牌 MAC：设备标签上印的，单独一行压在最下面 */
+.cell-mac {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
+  font-family: Consolas, Monaco, monospace;
 }
 /* 房间号 / 备注：就地编辑，失焦即保存 */
 .cell-remark {

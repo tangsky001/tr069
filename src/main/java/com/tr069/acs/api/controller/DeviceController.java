@@ -11,6 +11,7 @@ import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.agent.RpcDispatchService;
 import com.tr069.acs.common.PageResult;
 import com.tr069.acs.common.Result;
+import com.tr069.acs.exec.DeviceTaskProgressService;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.queue.RpcTaskQueue;
 import com.tr069.acs.domain.entity.CpeDevice;
@@ -47,6 +48,25 @@ public class DeviceController {
     private final RpcTaskQueue rpcTaskQueue;
     private final DeviceBusinessService businessService;
     private final DeviceAccountService accountService;
+    private final DeviceTaskProgressService taskProgressService;
+
+    /**
+     * 一批设备当前正在进行的下发任务，列表页每行用它显示「正在下发 xxx」。
+     *
+     * <p>顺带把每台设备指令队列里压着的条数一起给回来：重启 / 恢复出厂这类单条 RPC
+     * 不建任务，页面拿不到任务行，但至少能看出这台设备还有活没干完。</p>
+     */
+    @GetMapping("/tasks/active")
+    public Result<Map<String, Map<String, Object>>> activeTasks(@RequestParam String sns) {
+        List<String> snList = java.util.Arrays.stream(sns.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+        if (snList.isEmpty()) {
+            return Result.success(Map.of());
+        }
+        return Result.success(taskProgressService.activeBatch(snList));
+    }
 
     /**
      * 设备台账统计：总数 / 在线 / 离线。

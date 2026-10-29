@@ -65,6 +65,20 @@ export function fetchDeviceBusinessBatch(sns) {
 }
 
 /**
+ * 批量下发任务进度：设备列表页每行显示「正在下发 xxx」。
+ *
+ * 后端返回 sn -> { tasks: [{ label, phase, status, ... }], rpcPending: n }。
+ * 注意 tasks 只给还在跑的（PENDING / RUNNING），跑完就不在这一份里了。
+ */
+export function fetchDeviceActiveTasks(sns) {
+  return request({
+    url: '/device/tasks/active',
+    method: 'get',
+    params: { sns: sns.join(',') }
+  })
+}
+
+/**
  * 批量机型适配状态：库里有没有该型号的能力树 XML 文件。
  * 返回 sn -> { adapted, configPath, isp, productClass, ... }
  */

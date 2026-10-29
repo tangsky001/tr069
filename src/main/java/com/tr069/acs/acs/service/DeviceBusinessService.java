@@ -677,6 +677,7 @@ public class DeviceBusinessService {
         if (!(lanObj instanceof List<?> list)) {
             return;
         }
+        String faceplateMac = String.valueOf(data.getOrDefault("mac", ""));
         for (Object row : list) {
             if (!(row instanceof Map<?, ?> raw)) {
                 continue;
@@ -688,11 +689,19 @@ public class DeviceBusinessService {
             boolean connected = isLanConnected(params);
             item.put("connected", connected);
             String mac = params.get("MACAddress");
-            item.put("mac", mac == null ? "" : mac.trim());
+            mac = mac == null ? "" : mac.trim();
+            item.put("mac", mac);
+            // 铭牌 MAC = LAN 侧第一个网口的地址：设备标签上印的就是这个。
+            // WAN 的 MACAddress 是每条连接各自的，会随通道变，不能拿来认设备；
+            // 所以先在本分区取，WAN 段不再覆盖
+            if (faceplateMac.isEmpty()) {
+                faceplateMac = mac;
+            }
             String path = String.valueOf(item.getOrDefault("path", ""));
             Matcher m = LAN_INSTANCE.matcher(path);
             item.put("instance", m.find() ? m.group(1) : "");
         }
+        data.put("mac", faceplateMac);
     }
 
     /**
@@ -841,7 +850,6 @@ public class DeviceBusinessService {
         }
         String uptime = "";
         String oui = "";
-        String mac = "";
         for (Object row : list) {
             if (!(row instanceof Map<?, ?> raw)) {
                 continue;
@@ -853,15 +861,27 @@ public class DeviceBusinessService {
             if (oui.isEmpty()) {
                 oui = firstNonBlank(params, "ManufacturerOUI", "Manufacturer");
             }
-            if (mac.isEmpty()) {
-                mac = firstNonBlank(params, "MACAddress");
-            }
         }
         data.put("uptimeText", uptimeText(uptime));
         // 排序要的是原始秒数，格式化后的文案没法比大小
         data.put("uptimeSeconds", uptime);
-        data.put("mac", mac);
-        data.put("title", deviceTitle(String.valueOf(data.getOrDefault("sn", "")), oui));
+        data.put("title", deviceTitle(String.valueOf(data.getOrDefault("sn", "")),
+                oui.isEmpty() ? ledgerOui(String.valueOf(data.getOrDefault("sn", ""))) : oui));
+    }
+
+    /**
+     * 台账里的 OUI：设备 Inform 上报时就存下了。
+     *
+     * <p>{@code ManufacturerOUI} 这个参数很多设备不报，但「OUI-序列号」是现场核对
+     * 设备时最常用的写法，缺了就退化成光秃秃的 SN、认不出厂商。台账那份一定有。</p>
+     */
+    private String ledgerOui(String sn) {
+        if (sn.isBlank()) {
+            return "";
+        }
+        CpeDevice device = deviceMapper.selectOne(
+                new LambdaQueryWrapper<CpeDevice>().eq(CpeDevice::getSn, sn).last("LIMIT 1"));
+        return device == null || device.getOui() == null ? "" : device.getOui().trim();
     }
 
     /**
