@@ -32,10 +32,8 @@ export default {
   },
   computed: {
     runtimeText() {
-      const info = this.biz.device || []
-      const item = info.find(x => x.params && x.params.UpTime !== undefined)
-      const v = item ? item.params.UpTime : ''
-      return this.durationOf(v) || '-'
+      // 秒 →「1天2小时3分4秒」由后端统一格式化，页面不再各算一遍
+      return this.biz.uptimeText || '-'
     },
     reportIp() {
       return this.biz.ip || '-'
@@ -57,15 +55,6 @@ export default {
     },
     formatTime(value) {
       return value ? String(value).replace('T', ' ') : '-'
-    },
-    durationOf(seconds) {
-      const n = parseInt(seconds, 10)
-      if (!n || n < 0) return ''
-      const d = Math.floor(n / 86400)
-      const h = Math.floor((n % 86400) / 3600)
-      const m = Math.floor((n % 3600) / 60)
-      const s = n % 60
-      return (d ? d + '天' : '') + h + '小时' + m + '分' + s + '秒'
     }
   }
 }

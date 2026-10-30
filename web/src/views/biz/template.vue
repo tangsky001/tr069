@@ -6,7 +6,7 @@
         选好业务模板后对设备整包下发，成员按编排顺序串行执行。
       </div>
       <div class="action-bar">
-        <el-button type="primary" icon="el-icon-plus" size="small" @click="openCreate">新增业务模板</el-button>
+        <el-button v-if="$has('biz:manage')" type="primary" icon="el-icon-plus" size="small" @click="openCreate">新增业务模板</el-button>
         <el-input v-model="keyword" size="small" placeholder="名称 / 分组" clearable style="width:220px" @keyup.enter.native="load" />
         <el-button size="small" icon="el-icon-search" @click="load">搜索</el-button>
         <el-button size="small" icon="el-icon-refresh" @click="load">刷新</el-button>
@@ -53,9 +53,9 @@
       </el-table-column>
       <el-table-column label="编辑" width="230" fixed="right">
         <template slot-scope="{ row }">
-          <el-button type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
-          <el-button type="text" size="mini" icon="el-icon-copy-document" @click="openCopy(row)">复制</el-button>
-          <el-button type="text" size="mini" icon="el-icon-delete" class="danger-text" @click="handleDelete(row)">删除</el-button>
+          <el-button v-if="$has('biz:manage')" type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="$has('biz:manage')" type="text" size="mini" icon="el-icon-copy-document" @click="openCopy(row)">复制</el-button>
+          <el-button v-if="$has('biz:manage')" type="text" size="mini" icon="el-icon-delete" class="danger-text" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -141,7 +141,7 @@
 
       <span slot="footer">
         <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
+        <el-button v-if="$has('biz:manage')" type="primary" :loading="saving" @click="submit">保存</el-button>
       </span>
     </el-dialog>
 
@@ -402,9 +402,7 @@ export default {
 .param-row {
   margin-bottom: 6px;
 }
-.danger-text {
-  color: #f56c6c;
-}
+/* .danger-text 已提到全局样式 index.scss，这里不用再定义 */
 .issue-alert {
   margin-bottom: 4px;
 }

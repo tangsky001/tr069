@@ -21,10 +21,13 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 管理端下发工单：建单、转下发、记录步骤、推进状态。
@@ -54,6 +57,24 @@ public class WorklistDeliveryService {
     private final IntentDeliveryService intentDeliveryService;
     private final ConfigTemplateService configTemplateService;
 
+    /** 流水号自增段：同一秒内连开多单时靠它区分。 */
+    private static final AtomicLong DESC_SEQ = new AtomicLong();
+
+    private static final DateTimeFormatter DESC_STAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
+    /**
+     * 生成工单流水号（幂等键），格式 {@code ADMIN-{业务}-{时间戳}-{自增}-{随机}}。
+     *
+     * <p>自增段保证同进程内同一秒连开多单不撞号；随机段防的是多实例部署——
+     * 两个节点各自持有自增计数器，同一秒可能算到同一个号。</p>
+     */
+    private String newWorklistDesc(String category) {
+        String biz = category == null || category.isBlank() ? "biz" : category;
+        return String.format(Locale.ROOT, "ADMIN-%s-%s-%d-%03d",
+                biz, LocalDateTime.now().format(DESC_STAMP),
+                DESC_SEQ.incrementAndGet(), ThreadLocalRandom.current().nextInt(1000));
+    }
+
     /**
      * 创建下发工单。
      *
@@ -69,7 +90,10 @@ public class WorklistDeliveryService {
             throw new IllegalArgumentException("缺少设备序列号");
         }
         if (worklistDesc == null || worklistDesc.isBlank()) {
-            throw new IllegalArgumentException("缺少工单流水号");
+            // 页面上直接点提交时调用方不给流水号，这里按需生成一个——
+            // 流水号是幂等键，交给前端生成的话它只能用 Math.random，
+            // 撞号时两单合成一单，后一单被幂等掉，运维以为开成功了其实没发
+            worklistDesc = newWorklistDesc(category);
         }
 
         CpeDevice device = deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()

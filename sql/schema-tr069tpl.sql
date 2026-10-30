@@ -123,6 +123,10 @@ CREATE TABLE IF NOT EXISTS device_wan (
     path_mask      TEXT, val_mask      TEXT,
     path_gw        TEXT, val_gw        TEXT,
     path_dns       TEXT, val_dns       TEXT,
+    -- MaxMTUSize。默认留空＝不修改：MTU 各家现网取值不同（PPPoE 常见 1492、
+    -- IPoE/静态常见 1500），模板没明确要求就不动设备的现有值。
+    -- 填 0 更危险——设备会按 0 处理并可能直接断网，下发时按不填处理。
+    path_mtu       TEXT, val_mtu       TEXT,
     UNIQUE(device_id, instance_no)
 );
 

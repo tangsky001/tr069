@@ -240,6 +240,11 @@ public class SqlitePlanRenderer {
         if (slot <= 0) {
             return;
         }
+        boolean bridge = "WAN_BRIDGE".equalsIgnoreCase(category == null ? "" : category);
+        // 记下本业务新增条目的起点：桥接切 PPPoE 时要把对象名与参数前缀整体换掉
+        int itemStart = items.size();
+        int addStart = objectsToAdd.size();
+        String biz = bridge ? "Bridge_WAN" : "Internet_WAN";
         DeviceWan row = deviceWanDao.findOne(device.getId(), slot).orElse(null);
         if (row == null) {
             errors.add("WAN 模板里没有 " + category + " 对应的连接，请重新适配");
@@ -253,24 +258,121 @@ public class SqlitePlanRenderer {
         // 实例号必须用渲染时定的那个（plan.instance()），不能写死 1：
         // AddObject 返回的实例号是设备分配的，下发前还要按它回填参数路径，
         // 两处对不上就会把参数写到别的连接上去
-        put(items, errors, "Internet_WAN", "enable", row.getPathEnable(), row.getValEnable(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "conn_type", row.getPathConnType(), row.getValConnType(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "addr_type", row.getPathAddrType(), row.getValAddrType(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "nat", row.getPathNat(), row.getValNat(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "bind_port", row.getPathBindPort(), row.getValBindPort(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "pppoe_user", row.getPathUsername(), row.getValUsername(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "pppoe_pwd", row.getPathPassword(), row.getValPassword(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "wan_ip", row.getPathIp(), row.getValIp(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "wan_mask", row.getPathMask(), row.getValMask(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "wan_gw", row.getPathGw(), row.getValGw(), values, instance, overrides);
-        put(items, errors, "Internet_WAN", "wan_dns", row.getPathDns(), row.getValDns(), values, instance, overrides);
+        put(items, errors, biz, "enable", row.getPathEnable(), row.getValEnable(), values, instance, overrides);
+        if (bridge) {
+            // 桥接只有连接类型可写：IP→IP_Bridged、PPPoE→PPPoE_Bridged。
+            // 地址获取方式、NAT、拨号账号在桥接下不存在，带上会让设备整批回 9007
+            put(items, errors, biz, "bridge_type",
+                    row.getPathConnType(), row.getValConnType(), values, instance, overrides);
+        } else {
+            put(items, errors, biz, "conn_type", row.getPathConnType(), row.getValConnType(), values, instance, overrides);
+            put(items, errors, biz, "addr_type", row.getPathAddrType(), row.getValAddrType(), values, instance, overrides);
+            put(items, errors, biz, "nat", row.getPathNat(), row.getValNat(), values, instance, overrides);
+            put(items, errors, biz, "pppoe_user", row.getPathUsername(), row.getValUsername(), values, instance, overrides);
+            put(items, errors, biz, "pppoe_pwd", row.getPathPassword(), row.getValPassword(), values, instance, overrides);
+            put(items, errors, biz, "wan_ip", row.getPathIp(), row.getValIp(), values, instance, overrides);
+            put(items, errors, biz, "wan_mask", row.getPathMask(), row.getValMask(), values, instance, overrides);
+            put(items, errors, biz, "wan_gw", row.getPathGw(), row.getValGw(), values, instance, overrides);
+            put(items, errors, biz, "wan_dns", row.getPathDns(), row.getValDns(), values, instance, overrides);
+        }
+        put(items, errors, biz, "bind_port", row.getPathBindPort(), row.getValBindPort(), values, instance, overrides);
+        put(items, errors, biz, "ip_protocol", row.getPathIpMode(), row.getValIpMode(), values, instance, overrides);
+        putMtu(items, errors, device, row, values, instance, overrides);
 
         Vlan vlan = vlanDao.findOne(device.getId(), slot).orElse(null);
         if (vlan != null) {
-            put(items, errors, "Internet_WAN", "vlan_id", vlan.getPathVlanId(), vlan.getValVlanId(), values, instance, overrides);
-            put(items, errors, "Internet_WAN", "vlan_8021p", vlan.getPath8021p(), vlan.getVal8021p(), values, instance, overrides);
-            put(items, errors, "Internet_WAN", "vlan_mode", vlan.getPathVlanMode(), vlan.getValVlanMode(), values, instance, overrides);
+            put(items, errors, biz, "vlan_id", vlan.getPathVlanId(), vlan.getValVlanId(), values, instance, overrides);
+            put(items, errors, biz, "vlan_8021p", vlan.getPath8021p(), vlan.getVal8021p(), values, instance, overrides);
+            put(items, errors, biz, "vlan_mode", vlan.getPathVlanMode(), vlan.getValVlanMode(), values, instance, overrides);
         }
+
+        // 桥接类型选了 PPPoE：对象与整条前缀一起换成 WANPPPConnection。
+        // 只改 ConnectionType 会写到一台没有该对象的设备上，回 9005
+        if (bridge && isPppoeBridge(items, itemStart)) {
+            swapConnObject(items, objectsToAdd, itemStart, addStart);
+        }
+    }
+
+    /**
+     * 本段计划里的桥接类型是不是 PPPoE（值已被归一成 {@code PPPoE_Bridged}）。
+     */
+    private static boolean isPppoeBridge(List<PlanItem> items, int from) {
+        for (int i = from; i < items.size(); i++) {
+            PlanItem item = items.get(i);
+            if ("bridge_type".equalsIgnoreCase(item.bizField())) {
+                return item.value() != null
+                        && item.value().toLowerCase(Locale.ROOT).startsWith("pppoe");
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 把本段计划的 AddObject 对象名与参数前缀从 {@code WANIPConnection} 换成
+     * {@code WANPPPConnection}（PPPoE 桥接挂在后者下）。
+     */
+    private static void swapConnObject(List<PlanItem> items, List<String> objectsToAdd,
+                                       int itemStart, int addStart) {
+        for (int i = addStart; i < objectsToAdd.size(); i++) {
+            objectsToAdd.set(i, swapConnObject(objectsToAdd.get(i)));
+        }
+        for (int i = itemStart; i < items.size(); i++) {
+            PlanItem item = items.get(i);
+            String path = swapConnObject(item.path());
+            if (!path.equals(item.path())) {
+                items.set(i, new PlanItem(item.bizObject(), item.bizField(),
+                        path, item.value(), item.valueType()));
+            }
+        }
+    }
+
+    private static String swapConnObject(String path) {
+        if (path == null) {
+            return null;
+        }
+        return path.contains("WANIPConnection.")
+                ? path.replace("WANIPConnection.", "WANPPPConnection.")
+                : path;
+    }
+
+    /**
+     * MTU 单独走一段，不直接 put——这是个填错了会把网搞断的字段。
+     *
+     * <p>留空表示不动设备的现有值：各现网 MTU 取值不同（PPPoE 常见 1492、IPoE/静态常见 1500），
+     * 模板没明确要求就不替现场决定。</p>
+     *
+     * <p><b>填 0 一律按下发失败处理</b>：MaxMTUSize 收到 0 会被设备真的按 0 处理，
+     * 触发 9003 并可能直接断网。不下发最多是 MTU 保持原样，下发了 0 是整台设备失联，
+     * 两害相权取下不下。</p>
+     */
+    private void putMtu(List<PlanItem> items, List<String> errors, Device device, DeviceWan row,
+                        Map<String, Object> values, int instance, Map<String, String> overrides) {
+        // 先判值再判路径：没填 MTU 就完全不碰路径，存量型号的行为与改动前一致
+        String mtu = effectiveValue(row.getValMtu(), overrides, "mtu");
+        if (mtu == null || mtu.isBlank()) {
+            log.debug("MTU 未填写，保持设备原值: model={}", device.getModelKey());
+            return;
+        }
+        if ("0".equals(mtu.trim())) {
+            log.warn("MTU 填了 0，按不下发处理（下发 0 会触发 9003 并可能断网）: model={}",
+                    device.getModelKey());
+            return;
+        }
+        String path = row.getPathMtu();
+        if (path == null || path.isBlank()) {
+            // 适配库里登记过的最准（实测参数名，可能是厂商私有写法）；
+            // 没登记的按标准路径兜底：MaxMTUSize 在 TR-098 与 TR-181 下同名，
+            // 而 objectPath 已经带了根节点，两个数据模型都直接拼得出来
+            if (row.getObjectPath() == null || row.getObjectPath().isBlank()) {
+                log.warn("该型号没有 MTU 登记也没有 WAN 对象路径，跳过 MTU 下发: model={}",
+                        device.getModelKey());
+                return;
+            }
+            path = row.getObjectPath() + TemplateBuilder.INSTANCE_PLACEHOLDER + ".MaxMTUSize";
+            log.warn("型号未登记 MTU 路径，按标准路径兜底下发，建议重新适配核实: model={}, path={}",
+                    device.getModelKey(), path);
+        }
+        put(items, errors, "Internet_WAN", "mtu", path, mtu, values, instance, overrides);
     }
 
     /** 各宽带业务在模板库里的排位号，与 {@link TemplateBuilder} 生成时一致。 */
@@ -286,6 +388,8 @@ public class SqlitePlanRenderer {
                 return TemplateBuilder.WAN_SLOT_PPPOE;
             case "WAN_STATIC":
                 return TemplateBuilder.WAN_SLOT_STATIC;
+            case "WAN_BRIDGE":
+                return TemplateBuilder.WAN_SLOT_BRIDGE;
             default:
                 errors.add("该宽带业务还没有适配模板，请先对该型号做适配: " + category);
                 return -1;
@@ -379,6 +483,8 @@ public class SqlitePlanRenderer {
         return switch (field) {
             case "channel" -> normalizeChannel(value);
             case "wpa_mode" -> normalizeEncryptionModes(value);
+            case "ip_protocol" -> normalizeIpProtocol(value);
+            case "bridge_type" -> normalizeBridgeType(value);
             default -> value;
         };
     }
@@ -418,6 +524,55 @@ public class SqlitePlanRenderer {
         }
         String mapped = ENCRYPTION_MODES.get(v.toLowerCase(Locale.ROOT));
         return mapped != null ? mapped : "AESEncryption";
+    }
+
+    /**
+     * IP 协议版本：配置模板上给的是 {@code IPv4 / IPv6 / IPv4+IPv6}，
+     * 设备节点 {@code X_CMCC_IPMode} 认的是数字枚举，直接发字符串会回 9007。
+     *
+     * <p>枚举：{@code 1=IPv4 / 2=IPv6 / 3=IPv4+IPv6}。1 与 3 有实测样本（型号能力树里
+     * 采到过），2 是按枚举顺序推断的——拿到只跑 IPv6 的连接时可验证掉这个不确定性。
+     * 模板库里本来就是数字的（运维直接填 1/2/3）原样下发。</p>
+     */
+    private static final Map<String, String> IP_PROTOCOL_MODES = Map.of(
+            "ipv4", "1",
+            "ipv6", "2",
+            "ipv4+ipv6", "3",
+            "ipv4v6", "3",
+            "ipv4/v6", "3");
+
+    private static String normalizeIpProtocol(String value) {
+        String v = value.trim();
+        if (v.isEmpty() || v.matches("\\d+")) {
+            return v;
+        }
+        String mapped = IP_PROTOCOL_MODES.get(v.toLowerCase(Locale.ROOT).replace(" ", ""));
+        if (mapped == null) {
+            log.warn("IP 协议值无法识别，按 IPv4 下发: {}", value);
+            return "1";
+        }
+        return mapped;
+    }
+
+    /**
+     * 桥接类型：配置模板上给的是 {@code IP / PPPoE}，设备的 {@code ConnectionType}
+     * 只认 {@code IP_Bridged / PPPoE_Bridged}（TR-098 标准枚举）。
+     * 已经是标准值的原样放行，认不出的按 IP 桥接下发——桥接总比不建强。
+     */
+    private static String normalizeBridgeType(String value) {
+        String v = value.trim();
+        if (v.isEmpty()) {
+            return v;
+        }
+        String low = v.toLowerCase(Locale.ROOT).replace(" ", "");
+        if (low.startsWith("ppp")) {
+            return "PPPoE_Bridged";
+        }
+        if (low.startsWith("ip")) {
+            return "IP_Bridged";
+        }
+        log.warn("桥接类型无法识别，按 IP 桥接下发: {}", value);
+        return "IP_Bridged";
     }
 
     /**
@@ -465,7 +620,10 @@ public class SqlitePlanRenderer {
      */
     private static final Pattern NUMERIC_LEAF = Pattern.compile(
             "(?i)(channel|port|count|numberofentries|index|interval|seconds|"
-                    + "timeout|priority|gain|tail|vlanid|status|mode|level|length|rate|limit)$");
+                    + "timeout|priority|gain|tail|vlanid|status|mode|level|length|rate|limit|"
+                    // MaxMTUSize 不在这个清单里就会被当成 string 下发 1500，
+                    // 设备不认字符串形式的 MTU，直接回 9007
+                    + "mtusize)$");
 
     /**
      * 设备参数名里这些是布尔：{@code Enable} / {@code SSIDAdvertisementEnabled} 等。

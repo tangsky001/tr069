@@ -29,17 +29,7 @@ import java.util.regex.Pattern;
 /**
  * 设备业务信息解析与采集。
  *
- * <p>WiFi、SIP、WAN 这些业务参数在能力树里就是普通路径，业务含义靠<strong>路径形态</strong>区分。
- * 这里把 {@code cpe_parameter} 里的参数按 WAN 连接 / WLAN / SIP 语音三个分区归类，
- * 每个分区再按对象实例（{@code WLANConfiguration.1}、{@code SIP.1} 这种带序号的路径）分组，
- * 前端拿到的就是"一条 WAN 连接有哪些字段值"这样的业务视角，而不是一棵裸参数树。</p>
- *
- * <p>数据来源分两条路：</p>
- * <ul>
- *   <li>{@link #summary}：只读库，取最近一次能力采集回填的值，毫秒级返回</li>
- *   <li>{@link #collect}：先对在线设备下发 {@code GetParameterValues} 把这些路径的值刷一遍，
- *       再回库读，适合"设备刚改了配置、页面要最新值"的场景</li>
- * </ul>
+
  */
 @Slf4j
 @Service
@@ -96,9 +86,12 @@ public class DeviceBusinessService {
             data.put(section.key(), groupInstances(params, section));
         }
         data.put("pon", ponParams(sn));
+        enrichDevice(data);
         enrichWan(data);
+        enrichWifi(data);
         enrichLan(data);
         enrichSip(data);
+        enrichPon(data);
         return data;
     }
 
@@ -175,14 +168,7 @@ public class DeviceBusinessService {
 
     /**
      * 挑出需要向设备重新读取的路径：命中分区实例对象的叶子参数。
-     *
-     * <p>SIP 分区做特殊兜底：部分设备的能力树只枚举到 {@code Line.{n}.SIP} 对象节点，
-     * 不把 {@code AuthUserName}、{@code URI}、{@code Status} 等叶子列出来，导致业务刷新
-     * 读不到账号和注册状态，页面上永远显示"未配置"。这里把 SIP 常见叶子统一补进采集清单。</p>
-     *
-     * <p>LAN 网口同理：部分设备只枚举到 {@code LANEthernetInterfaceConfig.{i}} 对象，
-     * 叶子（Status / X_CT-COM-UpLineStatus / MACAddress）没列出来，导致刷新业务参数时
-     * 网口插入状态永远为空。这里把 LAN 常见叶子也统一补进采集清单。</p>
+ 
      */
     private List<String> collectiblePaths(List<CpeParameter> params) {
         Set<String> paths = new LinkedHashSet<>();
@@ -240,12 +226,7 @@ public class DeviceBusinessService {
 
     /**
      * 列出该设备 LAN 网口需要重读的状态参数路径，供定时自动刷新复用。
-     *
-     * <p>只从已采集的能力树里取网口实例（{@code LANEthernetInterfaceConfig.{i}.} /
-     * {@code Ethernet.Interface.{i}.}），再按 {@link #LAN_STATUS_LEAVES} 拼出叶子路径。
-     * 设备没采过 LAN 参数时返回空列表——定时刷新会跳过这台，不会凭空下发。</p>
-     *
-     * @return 网口实例数 × 状态叶子数；无 LAN 参数时为空
+
      */
     public List<String> lanStatusPaths(String sn) {
         Section lan = SECTIONS.stream()
@@ -316,15 +297,7 @@ public class DeviceBusinessService {
 
     /**
      * 给 WAN 连接补业务语义，并算出设备的管理地址。
-     *
-     * <p>光猫上通常有多条 WAN 连接（INTERNET / TR069 / VOIP / IPTV），设备真正与 ACS
-     * 通信的是 TR069 通道，"当前位置 IP"要的是它的地址，不能拿 INTERNET 通道的上网公网地址顶替。
-     * 判定在后端一次做完，前端只读 {@code ip} 与每条连接的 {@code service}，
-     * 避免同一套厂商适配规则在前端再写一遍。</p>
-     *
-     * <p>设备既然能上报上来，TR069 通道必然存在且带地址，因此不做任何兜底：
-     * 没识别出来就是这次快照没采到，{@code ip} 为 null，由前端显示 "-"，
-     * 而不是退回去取别的通道。</p>
+
      */
     @SuppressWarnings("unchecked")
     private void enrichWan(Map<String, Object> data) {
@@ -338,13 +311,21 @@ public class DeviceBusinessService {
                 continue;
             }
             Map<String, Object> item = (Map<String, Object>) raw;
-            Object paramObj = item.get("params");
-            Map<String, String> params = paramObj instanceof Map<?, ?>
-                    ? (Map<String, String>) paramObj : Map.of();
-            String service = serviceOf(params, String.valueOf(item.getOrDefault("path", "")));
+            Map<String, String> params = paramsOf(item);
+            String path = String.valueOf(item.getOrDefault("path", ""));
+            String service = serviceOf(params, path);
             item.put("service", service);
             boolean tr069 = "TR069".equalsIgnoreCase(service);
             item.put("tr069", tr069);
+            item.put("up", isUp(params));
+            item.put("statusText", wanStatusText(params));
+            item.put("title", wanTitle(params, path));
+            item.put("connMode", connModeOf(params));
+            item.put("natEnabled", boolOf(params.get("NATEnabled"), false));
+            item.put("ipProtocol", ipProtocolOf(params));
+            item.put("mtu", mtuOf(params));
+            item.put("uptimeText", uptimeText(firstNonBlank(params, "Uptime", "UpTime")));
+            item.put("shortName", wanShortName(path));
             if (tr069 && ip == null) {
                 String value = params.get("ExternalIPAddress");
                 if (value != null && !value.isBlank() && !"0.0.0.0".equals(value.trim())) {
@@ -368,6 +349,317 @@ public class DeviceBusinessService {
         return WanServiceClassifier.classify(params, path);
     }
 
+    /** WAN 连接实例：WANIPConnection.1. / WANPPPConnection.1. */
+    private static final Pattern WAN_CONN_INSTANCE = Pattern.compile("WAN(PPP|IP)Connection\\.(\\d+)\\.$");
+
+    /** WAN 连接是否联通：ConnectionStatus / Status 报 Connected / Up。 */
+    private static boolean isUp(Map<String, String> params) {
+        String s = firstNonBlank(params, "ConnectionStatus", "Status").toLowerCase(Locale.ROOT);
+        return "connected".equals(s) || "up".equals(s);
+    }
+
+    /**
+     * 地址协议类型：{@code IPv4} / {@code IPv6} / {@code IPv4+IPv6}，空串表示判不出来。
+     *
+     * <p>优先读厂商的 {@code X_CMCC_IPMode}（1=IPv4 / 2=IPv6 / 3=双栈）——这是设备自己
+     * 认定的地址族，比「有没有 IPv4 地址」这种猜测准；老型号没有这个节点，再按实际
+     * 地址兜底：两边都有地址算双栈，只有一边就报那一边。</p>
+     */
+    private static String ipProtocolOf(Map<String, String> params) {
+        String mode = firstNonBlank(params, "X_CMCC_IPMode", "IPMode");
+        switch (mode) {
+            case "1":
+                return "IPv4";
+            case "2":
+                return "IPv6";
+            case "3":
+                return "IPv4+IPv6";
+            default:
+                break;
+        }
+        boolean v4 = hasIpv4(params);
+        boolean v6 = hasIpv6(params);
+        if (v4 && v6) {
+            return "IPv4+IPv6";
+        }
+        if (v4) {
+            return "IPv4";
+        }
+        return v6 ? "IPv6" : "";
+    }
+
+    /** 是否拿到了可用的 IPv4 地址。 */
+    private static boolean hasIpv4(Map<String, String> params) {
+        String ip = firstNonBlank(params, "ExternalIPAddress", "IPAddress");
+        return !ip.isEmpty() && !"0.0.0.0".equals(ip);
+    }
+
+    /** IPv6 侧是否已起来：连接状态为 Connected，或已分配到 IPv6 地址。 */
+    private static boolean hasIpv6(Map<String, String> params) {
+        String status = firstNonBlank(params, "X_CMCC_IPv6ConnStatus", "IPv6ConnectionStatus");
+        if ("connected".equalsIgnoreCase(status) || "up".equalsIgnoreCase(status)) {
+            return true;
+        }
+        String addr = firstNonBlank(params, "X_CMCC_IPv6Address", "IPv6Address",
+                "X_CMCC_IPv6IPAddress");
+        return !addr.isEmpty() && !"::".equals(addr);
+    }
+
+    /**
+     * 该连接的 MTU：优先标准参数 {@code MaxMTUSize}，部分厂商只报 {@code ExternalMTU}。
+     * 取不到返回空串，页面据此不显示徽标。
+     */
+    private static String mtuOf(Map<String, String> params) {
+        String mtu = firstNonBlank(params, "MaxMTUSize", "ExternalMTU");
+        return "0".equals(mtu) ? "" : mtu;
+    }
+
+    /**
+     * 连接模式 + 地址类型的组合文案，如「路由 / DHCP」。
+     */
+    private static String connModeOf(Map<String, String> params) {
+        String type = firstNonBlank(params, "ConnectionType");
+        String typeLower = type.toLowerCase(Locale.ROOT);
+        String mode = typeLower.contains("bridged") ? "桥接" : "路由";
+        String addr = firstNonBlank(params, "IPAddressingType", "AddressingType");
+        if (addr.isBlank()) {
+            addr = typeLower.contains("ppp") ? "PPPoE" : "-";
+        }
+        return mode + " / " + addr;
+    }
+
+    /** 连接标题：设备报了 Name（如 1_TR069_R_VID_46）就用它，否则用实例序号。 */
+    private static String wanTitle(Map<String, String> params, String path) {
+        String name = firstNonBlank(params, "Name");
+        if (!name.isBlank()) {
+            return name;
+        }
+        Matcher m = WAN_CONN_INSTANCE.matcher(path);
+        return m.find() ? m.group(2) : path;
+    }
+
+    /** 设备没上报 Name 时的兜底叫法：WANPPPConnection.1. →「WAN PPP 1」。 */
+    private static String wanShortName(String path) {
+        Matcher m = WAN_CONN_INSTANCE.matcher(path);
+        return m.find() ? "WAN " + m.group(1) + " " + m.group(2) : "WAN";
+    }
+
+    /** 运行时长格式化：秒 →「1天2小时3分4秒」。页面三处各写一份且有两份漏了秒，统一到这一个。 */
+    private static String uptimeText(String seconds) {
+        if (seconds == null || seconds.isBlank()) {
+            return "";
+        }
+        long n;
+        try {
+            n = Long.parseLong(seconds.trim());
+        } catch (NumberFormatException e) {
+            return "";
+        }
+        if (n <= 0) {
+            return "";
+        }
+        long d = n / 86400;
+        long h = (n % 86400) / 3600;
+        long mi = (n % 3600) / 60;
+        long s = n % 60;
+        return (d > 0 ? d + "天" : "") + h + "小时" + mi + "分" + s + "秒";
+    }
+
+    /** WiFi 分区 key，与 SECTIONS 里的定义对应。 */
+    private static final String WIFI_KEY = "wifi";
+
+    private static final String BAND_24 = "2.4G";
+    private static final String BAND_58 = "5.8G";
+
+    /** 从 WLANConfiguration.1. / WiFi.SSID.1. 这类路径里取实例号。 */
+    private static final Pattern WIFI_INSTANCE = Pattern.compile(
+            "(?:WLANConfiguration|WLAN|SSID)\\.(\\d+)\\.$");
+
+    /** SSID 名里的 5G 后缀，运营商基本都这么命名。 */
+    private static final Pattern SSID_5G = Pattern.compile("(?i)-?5g(\\b|$)");
+
+    /**
+     * 给 WLAN 实例补业务语义：频段、开关、是否加密、SSID、实例号。
+
+     */
+    @SuppressWarnings("unchecked")
+    private void enrichWifi(Map<String, Object> data) {
+        Object wifiObj = data.get(WIFI_KEY);
+        if (!(wifiObj instanceof List<?> list)) {
+            return;
+        }
+        for (Object row : list) {
+            if (!(row instanceof Map<?, ?> raw)) {
+                continue;
+            }
+            Map<String, Object> item = (Map<String, Object>) raw;
+            Map<String, String> params = paramsOf(item);
+            String path = String.valueOf(item.getOrDefault("path", ""));
+            item.put("band", wifiBandOf(params, path));
+            item.put("enabled", isWifiEnabled(params));
+            item.put("encrypted", isWifiEncrypted(params));
+            item.put("ssid", firstNonBlank(params, "SSID"));
+            // WLAN 的开关是 Enable，但状态是 Status，两个字段说的不是一回事：
+            // 页面上行状态灯看 up，芯片开关看 enabled
+            item.put("up", isUp(params));
+            item.put("statusText", wifiStatusText(params));
+            Matcher m = WIFI_INSTANCE.matcher(path);
+            item.put("instance", m.find() ? m.group(1) : "");
+        }
+    }
+
+    /**
+     * 判定一条 WLAN 实例工作在哪个频段。
+
+     */
+    private static String wifiBandOf(Map<String, String> params, String path) {
+        // 1) RFBand：电信规范 0 = 2.4G、1 = 5G，华为 / 中兴 / 烽火都报，是最准的一级
+        String rfBand = params.get("RFBand");
+        if (rfBand != null && !rfBand.isBlank()) {
+            String v = rfBand.trim();
+            if ("0".equals(v)) {
+                return BAND_24;
+            }
+            if ("1".equals(v)) {
+                return BAND_58;
+            }
+        }
+        // 2) 设备直接报的频段
+        String band = firstNonBlank(params, "OperatingFrequencyBand", "FrequencyBand")
+                .toLowerCase(Locale.ROOT);
+        if (band.contains("5")) {
+            return BAND_58;
+        }
+        if (band.contains("2.4") || band.contains("24g") || band.contains("2g")) {
+            return BAND_24;
+        }
+        // 3) 支持制式：b/g/n 是 2.4G 射频，a/ac 是 5G 射频；只在报成列表时才可信
+        String std = firstNonBlank(params, "SupportedStandards", "Standard").toLowerCase(Locale.ROOT);
+        if (std.contains(",")) {
+            boolean has24 = false;
+            boolean has5 = false;
+            for (String p : std.split("[,|\\s]+")) {
+                if (p.isBlank()) {
+                    continue;
+                }
+                if ("b".equals(p) || "g".equals(p) || "11b".equals(p) || "11g".equals(p)) {
+                    has24 = true;
+                }
+                if ("a".equals(p) || "ac".equals(p) || "ax".equals(p)
+                        || "11a".equals(p) || "11ac".equals(p)) {
+                    has5 = true;
+                }
+            }
+            if (has24 && !has5) {
+                return BAND_24;
+            }
+            if (has5 && !has24) {
+                return BAND_58;
+            }
+        }
+        // 4) SSID 名带 5G 后缀
+        if (SSID_5G.matcher(firstNonBlank(params, "SSID")).find()) {
+            return BAND_58;
+        }
+        // 5) 兜底按实例号：电信/移动光猫约定前 4 个 SSID 是 2.4G，第 5 个起是 5G
+        Matcher m = WIFI_INSTANCE.matcher(path);
+        if (m.find()) {
+            try {
+                if (Integer.parseInt(m.group(1)) >= 5) {
+                    return BAND_58;
+                }
+            } catch (NumberFormatException e) {
+                // 实例号不是数字就走默认
+            }
+        }
+        return BAND_24;
+    }
+
+    /**
+     * WLAN 开关。状态字段优先：{@code Status} 明确是 disabled/down 才算关，
+     * 否则看 {@code Enable}——有些设备只报 Enable 不报 Status。
+     */
+    private static boolean isWifiEnabled(Map<String, String> params) {
+        String status = firstNonBlank(params, "Status").toLowerCase(Locale.ROOT);
+        if ("disabled".equals(status) || "down".equals(status)) {
+            return false;
+        }
+        return boolOf(params.get("Enable"), true);
+    }
+
+    /**
+     * 是否加密。{@code BasicEncryptionModes} / {@code BeaconType} 里含 None/Open 即判为不加密。
+
+     */
+    private static boolean isWifiEncrypted(Map<String, String> params) {
+        String enc = firstNonBlank(params, "BasicEncryptionModes", "BeaconType").toLowerCase(Locale.ROOT);
+        return !enc.contains("none") && !enc.contains("open");
+    }
+
+    /** WLAN 状态文案：Up/Enabled 为正常，Disabled 为已禁用，其余按设备原值显示。 */
+    private static String wifiStatusText(Map<String, String> params) {
+        String raw = firstNonBlank(params, "Status");
+        if (raw.isBlank()) {
+            return "未知";
+        }
+        String s = raw.toLowerCase(Locale.ROOT);
+        if ("up".equals(s) || "enabled".equals(s)) {
+            return "正常";
+        }
+        if ("disabled".equals(s)) {
+            return "已禁用";
+        }
+        return raw;
+    }
+
+    /** WAN 连接状态文案：Connected/Up 为已连接，Disconnected/Down 为未连接。 */
+    private static String wanStatusText(Map<String, String> params) {
+        String raw = firstNonBlank(params, "ConnectionStatus", "Status");
+        String s = raw.toLowerCase(Locale.ROOT);
+        if ("connected".equals(s) || "up".equals(s)) {
+            return "已连接";
+        }
+        if ("disconnected".equals(s) || "down".equals(s)) {
+            return "未连接";
+        }
+        return raw.isBlank() ? "-" : raw;
+    }
+
+    /**
+     * CWMP 的布尔写法不统一：{@code 1/0}、{@code true/false}、{@code Up/Down}、
+     * {@code Enabled/Disabled} 都会出现，只认 {@code "1"} 会把 "Up" 判成 false。
+     */
+    private static boolean boolOf(String value, boolean fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String s = value.trim().toLowerCase(Locale.ROOT);
+        if (List.of("0", "false", "no", "off", "disabled", "down").contains(s)) {
+            return false;
+        }
+        if (List.of("1", "true", "yes", "on", "enabled", "up").contains(s)) {
+            return true;
+        }
+        return fallback;
+    }
+
+    /** 取第一个有值的参数，都没有返回空串。 */
+    private static String firstNonBlank(Map<String, String> params, String... names) {
+        for (String name : names) {
+            String value = params.get(name);
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, String> paramsOf(Map<String, Object> item) {
+        Object obj = item.get("params");
+        return obj instanceof Map<?, ?> ? (Map<String, String>) obj : Map.of();
+    }
+
     /** LAN 分区 key，与 SECTIONS 里的定义对应。 */
     private static final String LAN_KEY = "lan";
 
@@ -377,10 +669,7 @@ public class DeviceBusinessService {
 
     /**
      * 给 LAN 网口补业务状态：是否插线、MAC 地址、实例序号。
-     *
-     * <p>光猫里表示网线插入的字段不统一，有的用 {@code Status=Up}，有的用
-     * {@code X_CT-COM-UpLineStatus=Up}，有的用 {@code X_CT-COM_LineStatus=Up}，
-     * 后端统一归成 {@code connected} 布尔，前端只负责按颜色展示。</p>
+
      */
     @SuppressWarnings("unchecked")
     private void enrichLan(Map<String, Object> data) {
@@ -388,6 +677,7 @@ public class DeviceBusinessService {
         if (!(lanObj instanceof List<?> list)) {
             return;
         }
+        String faceplateMac = String.valueOf(data.getOrDefault("mac", ""));
         for (Object row : list) {
             if (!(row instanceof Map<?, ?> raw)) {
                 continue;
@@ -399,11 +689,19 @@ public class DeviceBusinessService {
             boolean connected = isLanConnected(params);
             item.put("connected", connected);
             String mac = params.get("MACAddress");
-            item.put("mac", mac == null ? "" : mac.trim());
+            mac = mac == null ? "" : mac.trim();
+            item.put("mac", mac);
+            // 铭牌 MAC = LAN 侧第一个网口的地址：设备标签上印的就是这个。
+            // WAN 的 MACAddress 是每条连接各自的，会随通道变，不能拿来认设备；
+            // 所以先在本分区取，WAN 段不再覆盖
+            if (faceplateMac.isEmpty()) {
+                faceplateMac = mac;
+            }
             String path = String.valueOf(item.getOrDefault("path", ""));
             Matcher m = LAN_INSTANCE.matcher(path);
             item.put("instance", m.find() ? m.group(1) : "");
         }
+        data.put("mac", faceplateMac);
     }
 
     /**
@@ -436,14 +734,12 @@ public class DeviceBusinessService {
     private static final Pattern SIP_LINE_INSTANCE =
             Pattern.compile("VoiceService\\.\\d+\\.VoiceProfile\\.\\d+\\.(SIP\\.\\d+|Line\\.\\d+\\.SIP)\\.$");
 
+    /** URI 里 @ 前面的号码部分。 */
+    private static final Pattern SIP_URI_NUMBER = Pattern.compile("^([^@]+)@");
+
     /**
      * 过滤 SIP 分组里的非线路实例。
-     *
-     * <p>能力树里常常同时出现 {@code VoiceProfile.{n}.SIP.}（汇总对象，没有号码、状态等线路属性）
-     * 和 {@code VoiceProfile.{n}.SIP.{i}.} / {@code VoiceProfile.{n}.Line.{i}.SIP.}（真正的线路实例）。
-     * 当存在线路实例时，汇总对象会被当成一条空线路显示成"未配置"，需要剔除。</p>
-     *
-     * <p>如果整台设备只有汇总对象（某些老型号或全局 SIP 配置），则保留它，避免直接丢数据。</p>
+
      */
     @SuppressWarnings("unchecked")
     private void enrichSip(Map<String, Object> data) {
@@ -466,6 +762,8 @@ public class DeviceBusinessService {
             }
         }
         if (!hasLineInstance) {
+            // 只有汇总对象时保留它，避免直接丢数据；语义照常补，页面不至于显示成空白行
+            applySipSemantics(list);
             return;
         }
         List<Map<String, Object>> filtered = new ArrayList<>();
@@ -475,7 +773,250 @@ public class DeviceBusinessService {
                 filtered.add(row);
             }
         }
+        applySipSemantics(filtered);
         data.put(SIP_KEY, filtered);
+    }
+
+    /**
+     * 给 SIP 线路补业务语义：是否注册、状态文案、号码、服务器。
+
+     */
+    private static void applySipSemantics(List<Map<String, Object>> rows) {
+        for (Map<String, Object> row : rows) {
+            Map<String, String> params = paramsOf(row);
+            row.put("registered", isSipRegistered(params));
+            row.put("statusText", sipStatusText(params));
+            row.put("number", sipNumber(params));
+            row.put("server", sipServer(params));
+            row.put("enabled", boolOf(params.get("Enable"), true));
+        }
+    }
+
+    /** 注册状态：SIPRegisterStatus / Status 报 Registered / OK / Up / 成功 都算注册上。 */
+    private static boolean isSipRegistered(Map<String, String> params) {
+        String s = firstNonBlank(params, "SIPRegisterStatus", "Status").toLowerCase(Locale.ROOT);
+        return "registered".equals(s) || "ok".equals(s) || "up".equals(s) || "成功".equals(s);
+    }
+
+    /**
+     * 注册状态文案。有号码但没注册状态时是「未注册」，连号码都没有才是「未配置」——
+     * 刚开户还没放号的线路和配好了没注册上的，运维要能一眼分开，否则都会当成没配。
+     */
+    private static String sipStatusText(Map<String, String> params) {
+        String raw = firstNonBlank(params, "SIPRegisterStatus", "Status");
+        if (raw.isBlank()) {
+            return "-".equals(sipNumber(params)) ? "未配置" : "未注册";
+        }
+        return isSipRegistered(params) ? "已注册" : "未注册";
+    }
+
+    /**
+     * 线路号码：优先认证名 / 用户名 / 号码，都没有就从 URI 里截 @ 前面的部分。
+     */
+    private static String sipNumber(Map<String, String> params) {
+        String name = firstNonBlank(params, "AuthUserName", "UserName", "DirectoryNumber", "PhoneNumber");
+        if (!name.isBlank()) {
+            return name;
+        }
+        String uri = firstNonBlank(params, "URI");
+        if (uri.isBlank()) {
+            return "-";
+        }
+        Matcher m = SIP_URI_NUMBER.matcher(uri);
+        return m.find() ? m.group(1) : uri;
+    }
+
+    /** 注册/代理服务器：域名 + 端口，如「sip.example.com:5060」。 */
+    private static String sipServer(Map<String, String> params) {
+        String host = firstNonBlank(params, "RegistrarServer", "ProxyServer");
+        if (host.isBlank()) {
+            return "-";
+        }
+        String port = firstNonBlank(params, "RegistrarServerPort", "ProxyServerPort");
+        return port.isBlank() ? host : host + ":" + port;
+    }
+
+    /** 设备区 key，与 SECTIONS 里的定义对应。 */
+    private static final String DEVICE_KEY = "device";
+
+    /**
+     * 设备级语义：运行时长格式化。
+     */
+    @SuppressWarnings("unchecked")
+    private void enrichDevice(Map<String, Object> data) {
+        Object devObj = data.get(DEVICE_KEY);
+        if (!(devObj instanceof List<?> list)) {
+            return;
+        }
+        String uptime = "";
+        String oui = "";
+        for (Object row : list) {
+            if (!(row instanceof Map<?, ?> raw)) {
+                continue;
+            }
+            Map<String, String> params = paramsOf((Map<String, Object>) raw);
+            if (uptime.isEmpty()) {
+                uptime = firstNonBlank(params, "UpTime", "Uptime");
+            }
+            if (oui.isEmpty()) {
+                oui = firstNonBlank(params, "ManufacturerOUI", "Manufacturer");
+            }
+        }
+        data.put("uptimeText", uptimeText(uptime));
+        // 排序要的是原始秒数，格式化后的文案没法比大小
+        data.put("uptimeSeconds", uptime);
+        data.put("title", deviceTitle(String.valueOf(data.getOrDefault("sn", "")),
+                oui.isEmpty() ? ledgerOui(String.valueOf(data.getOrDefault("sn", ""))) : oui));
+    }
+
+    /**
+     * 台账里的 OUI：设备 Inform 上报时就存下了。
+     *
+     * <p>{@code ManufacturerOUI} 这个参数很多设备不报，但「OUI-序列号」是现场核对
+     * 设备时最常用的写法，缺了就退化成光秃秃的 SN、认不出厂商。台账那份一定有。</p>
+     */
+    private String ledgerOui(String sn) {
+        if (sn.isBlank()) {
+            return "";
+        }
+        CpeDevice device = deviceMapper.selectOne(
+                new LambdaQueryWrapper<CpeDevice>().eq(CpeDevice::getSn, sn).last("LIMIT 1"));
+        return device == null || device.getOui() == null ? "" : device.getOui().trim();
+    }
+
+    /**
+     * 设备标题：厂商 OUI 前 6 位 + 序列号，如 {@code A0B1C2-SN123}。
+
+     */
+    private static String deviceTitle(String sn, String oui) {
+        if (oui.isBlank()) {
+            return sn;
+        }
+        return oui.substring(0, Math.min(6, oui.length())) + "-" + sn;
+    }
+
+    /** 光功率参数名里含 power；收/发方向分别按 rx/receive 与 tx/transmit 认。 */
+    private static final Pattern POWER_KEY = Pattern.compile("(?i)power");
+    private static final Pattern RX_KEY = Pattern.compile("(?i)rx|receive");
+    private static final Pattern TX_KEY = Pattern.compile("(?i)tx|transmit");
+    private static final Pattern EPON_KEY = Pattern.compile("(?i)epon");
+    private static final Pattern GPON_KEY = Pattern.compile("(?i)gpon");
+    private static final Pattern DBM_SUFFIX = Pattern.compile("(?i)dbm");
+
+    /**
+     * PON / 光模块：把光功率统一换算成 dBm，并判出上联类型。
+     */
+    @SuppressWarnings("unchecked")
+    private void enrichPon(Map<String, Object> data) {
+        Object ponObj = data.get("pon");
+        if (!(ponObj instanceof Map<?, ?> raw)) {
+            return;
+        }
+        Map<String, String> pon = (Map<String, String>) ponObj;
+        String rx = null;
+        String tx = null;
+        boolean hasPower = false;
+        for (Map.Entry<String, String> e : pon.entrySet()) {
+            if (!POWER_KEY.matcher(e.getKey()).find()) {
+                continue;
+            }
+            String dbm = powerDbm(e.getValue());
+            if (dbm == null) {
+                continue;
+            }
+            hasPower = true;
+            if (rx == null && RX_KEY.matcher(e.getKey()).find()) {
+                rx = dbm;
+            } else if (tx == null && TX_KEY.matcher(e.getKey()).find()) {
+                tx = dbm;
+            }
+        }
+        if (rx == null && tx != null) {
+            rx = tx;
+        }
+        if (tx == null && rx != null) {
+            tx = rx;
+        }
+        data.put("opticState", hasPower ? "ok" : "none");
+        data.put("rxPower", rx);
+        data.put("txPower", tx);
+        data.put("opticText", rx == null || tx == null ? "" : rx + " / " + tx + " dBm");
+        data.put("ponType", ponTypeOf(deviceModelOf(data), String.join(" ", pon.keySet())));
+    }
+
+    /**
+     * 上联类型：先看型号里写没写（GPON_4+1 / EPON...），再看 PON 参数名，
+     * 都拿不到按 GE（以太网上联）兜底。
+     */
+    private static String ponTypeOf(String model, String ponKeys) {
+        String text = model + " " + ponKeys;
+        if (EPON_KEY.matcher(text).find()) {
+            return "EPON";
+        }
+        if (GPON_KEY.matcher(text).find()) {
+            return "GPON";
+        }
+        if (!ponKeys.isBlank()) {
+            return "PON";
+        }
+        return "GE";
+    }
+
+    /**
+     * PON 判定要用的型号文本。
+     *
+     * <p>台账登记的型号优先：那是入库时人工确认过的，比能力树里采到的可靠。
+     * 台账没登记才退到能力树的 DeviceInfo。</p>
+     */
+    @SuppressWarnings("unchecked")
+    private static String deviceModelOf(Map<String, Object> data) {
+        String ledger = (str(data.get("deviceType")) + " " + str(data.get("productClass"))).trim();
+        if (!ledger.isBlank()) {
+            return ledger;
+        }
+        Object devObj = data.get(DEVICE_KEY);
+        if (!(devObj instanceof List<?> list)) {
+            return "";
+        }
+        for (Object row : list) {
+            if (!(row instanceof Map<?, ?> raw)) {
+                continue;
+            }
+            Map<String, String> params = paramsOf((Map<String, Object>) raw);
+            String model = firstNonBlank(params, "ProductClass", "ModelName");
+            if (!model.isBlank()) {
+                return model;
+            }
+        }
+        return "";
+    }
+
+    private static String str(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    /**
+     * 光功率换算成 dBm，保留一位小数。
+     */
+    private static String powerDbm(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String s = value.trim();
+        try {
+            if (DBM_SUFFIX.matcher(s).find()) {
+                double d = Double.parseDouble(DBM_SUFFIX.matcher(s).replaceAll("").trim());
+                return String.format(Locale.ROOT, "%.1f", d);
+            }
+            double n = Double.parseDouble(s);
+            double mw = Math.abs(n) > 100 ? n * 0.0001 : n;
+            if (mw <= 0) {
+                return null;
+            }
+            return String.format(Locale.ROOT, "%.1f", 10 * Math.log10(mw));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** 厂商私有叶子前缀，形如 X_CMCC_、X_CT-COM_（中间可带连字符）。 */
@@ -483,11 +1024,6 @@ public class DeviceBusinessService {
 
     /**
      * 业务卡片用的参数名：剥掉厂商私有前缀，归一到标准名。
-     *
-     * <p>移动定制机的 VLAN ID 叫 {@code X_CMCC_VLANIDMark}，电信叫 {@code X_CT-COM_VLANIDMark}，
-     * 而前端按标准名 {@code VLANIDMark} 取值——不剥前缀的话页面上永远是 "-"。
-     * 同一实例里若设备同时报了标准节点与私有节点（按路径升序标准节点先到），
-     * {@code putIfAbsent} 保证标准值优先，不被私有值覆盖。</p>
      */
     static String normalizeLeaf(String leaf) {
         if (leaf == null) {
@@ -517,6 +1053,10 @@ public class DeviceBusinessService {
             if (device != null) {
                 data.put("registerTime", device.getCreatedAt());
                 data.put("lastContactTime", device.getLastContactTime());
+                // 台账登记的型号一起带上：PON 类型判定要读它。
+                // 能力树没采到 ProductClass 时，台账里登记的型号是唯一线索
+                data.put("deviceType", device.getDeviceType());
+                data.put("productClass", device.getProductClass());
             }
         } catch (Exception e) {
             log.warn("查询设备台账时间失败: sn={}, err={}", sn, e.getMessage());
@@ -527,10 +1067,6 @@ public class DeviceBusinessService {
     /**
      * PON / 光模块参数：能力快照里路径含 PON 的参数（MySQL 排序规则大小写不敏感，
      * GPON / EPON / Gpon / Pon 都能命中）。
-     *
-     * <p>返回完整参数路径到值的映射；设备没上报（GE 上联或快照未采集）返回空 map，
-     * 前端据此按 GE 设备兜底展示。光功率参数（如 X_CT-COM_TransceiverPower）通常以
-     * 0.1µW 为单位，换算 dBm 由前端负责。</p>
      */
     private Map<String, String> ponParams(String sn) {
         try {
@@ -552,10 +1088,7 @@ public class DeviceBusinessService {
 
     /**
      * 只取业务相关前缀下的参数行，避免把整棵能力树（上万行）拉进内存。
-     *
-     * <p>前缀由 {@link DataModel#businessPrefixes(String)} 给出，天然包含两种根数据模型的写法：
-     * 这里若只按 {@code root} 拼一种，TR-181 设备（路径是 {@code Device.WAN.}）的 WAN 分区
-     * 就一条都查不到，页面只会显示「暂无数据」而没有任何报错。</p>
+
      */
     private List<CpeParameter> selectBusinessParams(String sn) {
         List<String> prefixes = new ArrayList<>();

@@ -200,6 +200,7 @@ public class ConfigTemplateService {
      */
     private static List<Map<String, Object>> wanFieldDefs(String category) {
         List<Map<String, Object>> defs = new ArrayList<>();
+        boolean bridge = "WAN_BRIDGE".equalsIgnoreCase(category);
         defs.add(def(category, "ip_protocol", "IP 协议", "enum", "IPv4",
                 List.of(opt("IPv4", "IPv4 (默认)"), opt("IPv6", "IPv6"),
                         opt("IPv4+IPv6", "IPv4 + IPv6")), null));
@@ -207,12 +208,28 @@ public class ConfigTemplateService {
                 Map.of("tip", "如 201，为空表示无", "min", 0, "max", 4094)));
         defs.add(def(category, "vlan_priority", "802.1p QoS 优先级", "number", null, null,
                 Map.of("tip", "0-7，为空表示不下发", "min", 0, "max", 7)));
-        defs.add(def(category, "service_list", "业务模式", "enum", "Internet",
-                List.of(opt("Internet", "Internet 上网"), opt("TR069", "TR069 管理"),
-                        opt("VOIP", "VOIP 语音"), opt("IPTV", "IPTV 组播"),
-                        opt("Internet,TR069", "上网 + 管理"),
-                        opt("Internet,TR069,VOIP", "上网 + 管理 + 语音"),
-                        opt("Internet,TR069,VOIP,IPTV", "全业务")), null));
+        // 选项值用设备口径（大写）：设备上 X_CMCC_ServiceList 实测只有
+        // INTERNET / TR069 / VOIP / IPTV 这几种写法，发 "Internet" 过去会被判 9007
+        if (bridge) {
+            // 桥接的业务模式是「这条桥给谁用」，与路由业务不是一套取值：
+            // Other 是纯二层透传，不发业务绑定
+            defs.add(def(category, "service_list", "桥接业务模式", "enum", "OTHER",
+                    List.of(opt("OTHER", "其他 / Other（默认）"),
+                            opt("INTERNET", "上网 / Internet"),
+                            opt("IPTV", "电视 / IPTV"),
+                            opt("OTT", "OTT")), null));
+            // 桥接类型决定建哪个对象：IP→WANIPConnection(IP_Bridged)，
+            // PPPoE→WANPPPConnection(PPPoE_Bridged)
+            defs.add(def(category, "bridge_type", "桥接类型", "enum", "IP",
+                    List.of(opt("IP", "IP（默认）"), opt("PPPoE", "PPPoE")), null));
+        } else {
+            defs.add(def(category, "service_list", "业务模式", "enum", "INTERNET",
+                    List.of(opt("INTERNET", "Internet 上网"), opt("TR069", "TR069 管理"),
+                            opt("VOIP", "VOIP 语音"), opt("IPTV", "IPTV 组播"),
+                            opt("INTERNET,TR069", "上网 + 管理"),
+                            opt("INTERNET,TR069,VOIP", "上网 + 管理 + 语音"),
+                            opt("INTERNET,TR069,VOIP,IPTV", "全业务")), null));
+        }
         defs.add(def(category, "bind_ports", "绑定端口", "ports", List.of(), null,
                 Map.of("tip", "勾选该 WAN 绑定的端口 / SSID，留空表示不修改")));
         defs.add(def(category, "mtu", "MTU", "number", null, null,
@@ -228,11 +245,44 @@ public class ConfigTemplateService {
     // ==================== 元数据 ====================
 
     /**
+     * 绑定端口候选，供页面渲染勾选组。
+     *
+     * <p>取值形如 {@code LAN1} / {@code SSID1} / {@code PON}，与 {@link #wanFieldDefs} 里
+     * bind_port 的约定一致：选中的值以逗号拼接后直接写进型号的绑定节点。
+     * 页面若自行造一个 {@code LAN9}，型号不认这个端口，整条 SPV 会按 9003 拒回来。</p>
+     *
+     * <p>SSID5~8 归在 5.8G 组，与频段判定的约定一致（前 4 个 SSID 是 2.4G）。</p>
+     */
+    private static final List<Map<String, Object>> BIND_PORT_GROUPS = List.of(
+            portGroup("lan", "LAN", "LAN1", "LAN2", "LAN3", "LAN4", "LAN5", "LAN6", "LAN7", "LAN8"),
+            portGroup("wifi24", "2.4G", "SSID1", "SSID2", "SSID3", "SSID4"),
+            portGroup("wifi58", "5.8G", "SSID5", "SSID6", "SSID7", "SSID8"),
+            portGroup("pon", "PON", "PON"));
+
+    private static Map<String, Object> portGroup(String code, String label, String... ports) {
+        Map<String, Object> group = new LinkedHashMap<>();
+        group.put("code", code);
+        group.put("label", label);
+        List<Map<String, String>> list = new ArrayList<>();
+        for (String p : ports) {
+            Map<String, String> port = new LinkedHashMap<>();
+            port.put("v", p);
+            // PON 口是从光猫下行来的，页面上要标清楚，不然会被当成普通网口乱勾
+            port.put("t", "PON".equals(p) ? "PON（FFTR从光猫下行PON口）" : p);
+            list.add(port);
+        }
+        group.put("ports", list);
+        return group;
+    }
+
+    /**
      * 模板类型与各类别的意图字段定义，供页面按类型渲染表单。
      */
     public Map<String, Object> meta() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("categories", CATEGORIES);
+        // 绑定端口候选：与 bind_port 意图字段的取值同源，页面照它渲染勾选组
+        data.put("bindPortGroups", BIND_PORT_GROUPS);
         Map<String, List<Map<String, Object>>> fieldsByType = new LinkedHashMap<>();
         for (Map<String, Object> def : FIELD_DEFS) {
             fieldsByType.computeIfAbsent(String.valueOf(def.get("category")), k -> new ArrayList<>())

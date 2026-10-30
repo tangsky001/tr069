@@ -70,16 +70,32 @@ public class TemplateBuilder {
     /** AddObject 的对象名末段，末尾不带实例号——实例号由设备分配，事后才知道。 */
     public static final String WAN_PPP_CONN = "WANPPPConnection.";
 
+    /**
+     * IP 协议版本节点名（厂商私有，挂载在连接对象下）。
+     * 取值 {@code 1=IPv4 / 2=IPv6 / 3=IPv4+IPv6}，1 与 3 有实测样本，2 是按枚举顺序推断的。
+     */
+    public static final String WAN_IP_MODE = "X_CMCC_IPMode";
+
     /** 参数路径里的实例号占位符，下发引擎 AddObject 后回填真实值。 */
     public static final String INSTANCE_PLACEHOLDER = "{i}";
 
     /** LAN 网口挂载位置。 */
     private static final String LAN_BASE = "LANDevice.1.LANEthernetInterfaceConfig.";
 
-    /** 模板库里各业务 WAN 的排位号，用来区分 DHCP / PPPoE / Static 各自的模板行。 */
+    /** 模板库里各业务 WAN 的排位号，用来区分 DHCP / PPPoE / Static / Bridge 各自的模板行。 */
     public static final int WAN_SLOT_DHCP = 1;
     public static final int WAN_SLOT_PPPOE = 2;
     public static final int WAN_SLOT_STATIC = 3;
+    public static final int WAN_SLOT_BRIDGE = 4;
+
+    /**
+     * 桥接连接的 ConnectionType。
+     *
+     * <p>TR-098 里桥接不是独立对象，仍是 {@code WANIPConnection}，只是连接类型写成
+     * {@code IP_Bridged}；PPPoE 桥接则挂在 {@code WANPPPConnection} 下、值写
+     * {@code PPPoE_Bridged}，由配置模板上的「桥接类型」切换。</p>
+     */
+    public static final String WAN_BRIDGE_CONN_TYPE = "IP_Bridged";
 
     /** 默认数据模型根节点：TR-098。 */
     private static final String DEFAULT_ROOT = "InternetGatewayDevice.";
@@ -362,6 +378,39 @@ public class TemplateBuilder {
     }
 
     /**
+     * 生成 WAN 桥接下发模板。
+     *
+     * <p>桥接在 TR-098 里不是独立对象，仍是 {@code WANIPConnection}，只是
+     * {@code ConnectionType} 换成 {@code IP_Bridged}（PPPoE 桥接换成
+     * {@code WANPPPConnection + PPPoE_Bridged}，由配置模板上的「桥接类型」切换）。
+     * 所以这里复用 DHCP 那套对象与 VLAN 节点，只改连接类型、<b>不登记地址与 NAT 参数</b>
+     * ——桥接不做 NAT、也没有地址获取方式，把这两项带上设备会整批拒。</p>
+     *
+     * <p>业务绑定（上网 / IPTV / OTT / 其他）不在这里定：它跟着配置模板上的
+     * 「桥接业务模式」走，下发时由 {@code IntentDeliveryService} 补写
+     * {@code X_CMCC_ServiceList}。</p>
+     */
+    public WanResult buildWanBridge(Device device) {
+        WanResult r = new WanResult();
+        if (device == null || device.getId() == null) {
+            return r;
+        }
+        DeviceWan wan = newWan(device, WAN_SLOT_BRIDGE, "Bridge", WAN_IP_CONN);
+        String p = paramPrefix(wan);
+        wan.setValConnType(WAN_BRIDGE_CONN_TYPE);
+        wan.setPathBindPort(p + "X_CMCC_BindLANPort");
+        wan.setValBindPort("");
+        deviceWanDao.upsert(wan);
+        r.setWan(1);
+
+        upsertVlan(device, WAN_SLOT_BRIDGE, p + "X_CMCC_VLANID");
+        r.setVlan(1);
+
+        log.info("生成 WAN 桥接模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
+        return r;
+    }
+
+    /**
      * 生成 LAN 网口下发模板，几个网口写几行。
      *
      * <p>参数名都是能力树实测：{@code Enable} / {@code DuplexMode} / {@code MaxBitRate}。
@@ -401,7 +450,16 @@ public class TemplateBuilder {
         return r;
     }
 
-    /** 一条 WAN 模板行的公共部分：挂载位置、开关、连接类型。 */
+    /**
+     * 一条 WAN 模板行的公共部分：挂载位置、开关、连接类型、MTU。
+     *
+     * <p>MTU 三种业务共用同一个参数名 {@code MaxMTUSize}（标准 TR-098 参数），
+     * 挂在各自的连接对象下，所以放在这里统一写；PPPoE 那行的前缀会自动指向
+     * {@code WANPPPConnection.}，不需要各业务再写一遍。</p>
+     *
+     * <p><b>值一律留空＝不修改</b>：PPPoE 常用 1492、IPoE/静态常用 1500，各现网不一样，
+     * 模板不替现场决定。要改就在配置模板上填 MTU，填 0 会被按下发失败处理（见渲染器）。</p>
+     */
     private static DeviceWan newWan(Device device, int slot, String connType, String objectSuffix) {
         DeviceWan wan = new DeviceWan();
         wan.setDeviceId(device.getId());
@@ -416,6 +474,12 @@ public class TemplateBuilder {
         wan.setValEnable("1");
         wan.setPathConnType(p + "ConnectionType");
         wan.setValConnType("IP_Routed");
+        wan.setPathMtu(p + "MaxMTUSize");
+        wan.setValMtu("");
+        // IP 协议版本三种业务共用同一个节点，与 MTU 一样放在公共部分；
+        // 值留空＝不改设备的现有地址族，只有模板上明确选了才下发
+        wan.setPathIpMode(p + WAN_IP_MODE);
+        wan.setValIpMode("");
         return wan;
     }
 

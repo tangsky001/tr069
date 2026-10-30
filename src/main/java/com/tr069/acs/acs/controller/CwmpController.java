@@ -45,9 +45,6 @@ import java.util.regex.Pattern;
 
 /**
  * CWMP 接入端点，设备侧 HTTP 入口：接收 Inform、空 POST 与 RPC 响应。
- *
- * <p>上报只做解析、认证、建会话与回响应，参数处理交给 {@link ReportQueueService} 的消费者；
- * 下发从 {@link RpcTaskQueue} 取指令，搭在响应里捎带给设备。</p>
  */
 @Slf4j
 @RestController
@@ -337,6 +334,12 @@ public class CwmpController {
             handleInform(connId, body, request, response, message.getCwmpId());
             return;
         }
+        // TransferComplete 是设备下载完文件后的主动上报，与 Inform 一样由 CPE 发起，
+        // 必须给回应，否则设备会认为 ACS 没收到而反复重报
+        if ("TransferComplete".equals(methodName)) {
+            handleTransferComplete(connId, message, request, response);
+            return;
+        }
 
         // 其余均为 CPE 对我方下发的响应
         String sn = resolveSn(connId, request);
@@ -405,6 +408,59 @@ public class CwmpController {
             sessionMutex.release(sn, session.getSessionId());
         }
         sendStatus(response, 204);
+    }
+
+    /**
+     * 处理 TransferComplete：设备下载完文件后的主动上报。
+     *
+     * <p>下载结果不记在 Download 指令的账上：那条指令在设备回 DownloadResponse 时就已经结了，
+     * 这条上报是几分钟之后才到的独立结果，只用来确认这次下载到底成没成。</p>
+     */
+    private void handleTransferComplete(String connId, SoapMessage message,
+                                        HttpServletRequest request,
+                                        HttpServletResponse response) throws IOException {
+        String sn = resolveSn(connId, request);
+        if (sn == null) {
+            log.warn("TransferComplete 无法定位设备, conn={}", connId);
+            sendStatus(response, 400);
+            return;
+        }
+        CpeSession session = sessionManager.find(sn);
+        if (session == null) {
+            sendStatus(response, 400);
+            return;
+        }
+        session.touch();
+
+        String commandKey = message.stringValue("CommandKey");
+        String faultCode = nested(message, "FaultCode");
+        String faultString = nested(message, "FaultString");
+        if (faultCode.isEmpty() || "0".equals(faultCode)) {
+            log.info("设备下载完成: sn={}, commandKey={}", sn, commandKey);
+        } else {
+            log.warn("设备下载失败: sn={}, commandKey={}, fault={} {}",
+                    sn, commandKey, faultCode, faultString);
+        }
+
+        String soap = SoapEnvelopeBuilder.build(RpcMethod.TRANSFER_COMPLETE_RESPONSE, Map.of(),
+                message.getCwmpId(), session.getCwmpVersion());
+        writeXml(response, soap);
+        session.setState(SessionState.WAIT_POST_NULL);
+        armWaitPostNullTimer(session);
+    }
+
+    /** FaultStruct 有的设备摊平写、有的套一层 Fault，两种都取一遍。 */
+    private static String nested(SoapMessage message, String key) {
+        String value = message.stringValue(key);
+        if (!value.isEmpty()) {
+            return value;
+        }
+        Object fault = message.getBody().get("Fault");
+        if (fault instanceof Map<?, ?> inner) {
+            Object hit = inner.get(key);
+            return hit == null ? "" : String.valueOf(hit);
+        }
+        return "";
     }
 
     /**
@@ -542,7 +598,12 @@ public class CwmpController {
             log.warn("{}，本次不作处理: sn={}, rpc={}", reason, sn, rpc.getRpcName());
             return;
         }
-        if (!queueProperties.isEnabled() || rpc.getAttempts() >= maxDeliveryAttempts) {
+        // 没收到回应时并不知道设备执行了没有：设值与取值重发一次结果一样，
+        // 重启 / 下载这类重发就是真干了第二次，只能直接按失败结
+        RpcMethod method = RpcMethod.of(rpc.getRpcName());
+        if (!queueProperties.isEnabled()
+                || rpc.getAttempts() >= maxDeliveryAttempts
+                || (method != null && !method.isRetriable())) {
             rpcDispatchService.failTask(rpc.getRpcId(), "8002", reason);
             return;
         }

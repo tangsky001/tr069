@@ -42,7 +42,10 @@ export function fetchVariables(category) {
   })
 }
 
-/** 提交下发工单。worklistDesc 是幂等键，重复提交只受理一次 */
+/**
+ * 提交下发工单。
+ * worklistDesc 是幂等键，重复提交只受理一次；不传则由后端统一发号。
+ */
 export function createWorklist(data) {
   return request({
     url: '/worklist/instances',
@@ -52,12 +55,22 @@ export function createWorklist(data) {
 }
 
 /**
- * 生成幂等流水号。重复提交网络重试时带上同一个号，避免给设备重复开业务。
+ * 业务类型清单（代码 + 展示名），由后端维护。
+ * 后端加一个业务类型，页面的下拉就自动多一项，不用再改前端。
  */
-export function newWorklistDesc(category) {
-  const now = new Date()
-  const pad = n => String(n).padStart(2, '0')
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-    `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-  return `ADMIN-${category || 'biz'}-${stamp}-${Math.random().toString(36).slice(2, 8)}`
+export function fetchTemplateMeta() {
+  return request({
+    url: '/config-templates/meta',
+    method: 'get'
+  })
+}
+
+/**
+ * 工单状态全集，由后端维护（状态流转定义在 Worklist 实体上）。
+ */
+export function fetchWorklistStatuses() {
+  return request({
+    url: '/worklist/statuses',
+    method: 'get'
+  })
 }

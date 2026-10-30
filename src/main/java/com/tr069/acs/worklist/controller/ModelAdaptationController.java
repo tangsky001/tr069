@@ -44,6 +44,17 @@ public class ModelAdaptationController {
     }
 
     /**
+     * 能力申报的候选值（运营商 / 网口数量 / 网口速率 / WIFI 规格）。
+     *
+     * <p>后端逐项比对时按这些取值解析，页面下拉里冒出一个后端不认的值，
+     * 该项会按「不申报」处理，等于白填，所以候选由后端给。</p>
+     */
+    @GetMapping("/api/models/capability-options")
+    public Result<Map<String, Object>> capabilityOptions() {
+        return Result.success(service.capabilityOptions());
+    }
+
+    /**
      * 能力测试：向光猫下发采集 RPC，解析实测能力并与申报比对。
      * 申报单为 运营商 / 网口数量 / 网口速率 / SIP 数量 / WIFI 规格。
      */

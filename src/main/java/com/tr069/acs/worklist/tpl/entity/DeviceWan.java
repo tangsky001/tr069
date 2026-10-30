@@ -65,4 +65,17 @@ public class DeviceWan {
 
     private String pathDns;
     private String valDns;
+
+    /**
+     * MaxMTUSize。值留空表示不修改该参数（各家现网 MTU 取值不同，不替现场做决定）。
+     */
+    private String pathMtu;
+    private String valMtu;
+
+    /**
+     * IP 协议版本，设备上多叫 {@code X_CMCC_IPMode}（int：1=IPv4 / 2=IPv6 / 3=IPv4+IPv6）。
+     * 值留空表示不修改——老型号没有这个节点时路径也留空。
+     */
+    private String pathIpMode;
+    private String valIpMode;
 }

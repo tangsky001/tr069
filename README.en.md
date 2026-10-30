@@ -298,7 +298,10 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | **OLT CLI collection (read-only)** | Telnet login → paging off → `display board 0` / `display version` → `enable` → `config` (config view is entered only to read temperature / ONT / VLAN, nothing is configured) → temperature → one `display ont info 0 <slot> all` per service board → `display vlan all` → `display port vlan 0/<slot>/<port>` per uplink/control port → `display ip interface brief` / `display ip routing-table` → `quit`; boards, per-port ONTs (with every ONT detail), VLANs, L3 interfaces and static routes are persisted (`olt_device.vlan_json`, `olt_board.ports_json`); one round right after startup, then every 5 minutes; the page only reads the latest data and never touches the device. Only `display` / `show` are sent — **no write command at all** (changing VLANs, adding/removing ONTs, rebooting boards are unimplemented). The vendor is detected from the version output after login and written back to `olt_device.vendor`, which routes the device to its vendor page (`web/src/views/olt/vendors.js`). Verified on a Huawei MA5683T | `olt/*` (`telnet/OltCliSession`, `telnet/OltInfoParser`, `service/OltService`, `service/OltTelnetService`) |
 | **OLT template collection (read-only)** | Same Telnet session continues with the templates: `display dba-profile all detail` + `display dba-profile all` (names filled back by ID, the summary only carries the ID and a numeric type), `display ont-lineprofile <gpon\|epon> all` summary + per-`profile-id` detail (T-CONT `DBA Profile-ID`, `<Gem Index:n>` and the `Mapping VLAN` table), `display ont-srvprofile <gpon\|epon> all` summary + per-profile detail (`ont-port pots/eth adaptive`), `display ont tr069-server-profile all` (ACS URL and account), `display traffic table ip all` (CIR / PIR), `display current-configuration section service-port` (service flows; fixed field semantics, preferred over the table output). PON type is probed `gpon` first, then `epon`; the built-in `profile-id 0` is hidden; the result overwrites `olt_device.template_json` as a whole (a failed round keeps the previous data) | `olt/telnet/OltInfoParser` (`parseDbaProfiles` / `parseDbaDetails` / `parseLineProfiles` / `parseSrvProfiles` / `parseTr069Profiles` / `parseTrafficTables` / `parseServicePortsFromConfig`), `olt/telnet/OltCliSession#collectTemplates` |
 | **OLT CLI robustness** | ① Huawei's continuation prompt `( Press 'Q' to break ) ----` is recognized as paging; when the prompt shares a line with content, only the prompt is stripped and no space is sent, so paging never hangs; ② paging is disabled per vendor: Huawei gets `scroll` (`screen-length` belongs to VRP switches, OLTs reject it), re-sent after entering the config view; ③ parameter completion prompts (including the `<cr>`-less `{ all<K>\|bound-info<K> }:`) are answered with an automatic Enter instead of blocking for the full 8s timeout | `olt/telnet/TelnetClient#handlePagination`, `olt/telnet/OltVendor#getPagingCommands`, `olt/telnet/OltCliSession#readToPrompt` |
-| Admin auth | JWT login, `sys_user` lookup, initial admin created on first startup, JWT interceptor | `api/controller/AuthController`, `config/AdminAuthInterceptor` |
+| Admin auth | JWT login, `sys_user` lookup, initial admin created on first startup; besides validating the token, the JWT interceptor **derives the required permission from the request URL and method** (`GET` needs `xxx:view`, write methods need `xxx:manage`) and rejects with 403 when it is missing | `api/controller/AuthController`, `config/AdminAuthInterceptor`, `api/auth/PermissionCodes` |
+| **Roles & permissions** | `sys_role` + `sys_role_permission`: 20 permission points (10 modules × read/write) come from a code-level list and are **not stored in a table**; permissions are ticked per role and take effect **immediately** (every request re-reads the role from the database, nothing is cached in the token); the system administrator short-circuits to full permission in code, has **no row in the permission table** and cannot be modified | `api/auth/PermissionCodes`, `api/service/RoleService`, `api/controller/SystemController` |
+| **User management** | Nine endpoints under `/api/system`: create/read/update/delete users, change role, change password (**changing someone else's password requires re-entering the operator's own password**), enable/disable; you cannot delete yourself | `api/service/UserAdminService` |
+| **Login log** | Every attempt lands in `sys_login_log`: result and failure reason, **real IP** (first hop of `X-Forwarded-For`, private addresses ignored), **login source** (web / client / mobile, from `X-Client-Type` or the UA) and the UA; the latest 50 records are kept per user | `api/service/LoginLogService`, `api/auth/ClientIpResolver`, `api/auth/LoginSourceResolver` |
 | Startup self-check | Create/initialize business tables, check optional read-only tables | `common/startup/*` |
 
 ### 1.2 Frontend (`web/`)
@@ -315,6 +318,9 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | OLT detail · Huawei | `/olt/huawei/:id` | Done (**real Telnet collection, read-only**: OLT status (boards/temperature/port ONTs/diagram), configuration, VLAN, **DBA/line profile**, **service/TR069/traffic profile**, ONT config and status, collection records; port rows pinned on the board diagram; the ONT config/status table has auth code / run flag / **management IP** / **MAC** / **service flow** / **line profile** / **service profile** columns, rows are selectable and **reboot ONU / delete registration** buttons sit in the bottom-right; on-demand dialogs: click SN → authorization info + service flow, click ONT ID → hardware capability/status, service flow "View" → service flow table; **cannot change device config**, the "Add/Delete" buttons on template tabs, the batch ops buttons and the four service flow buttons are all placeholders; ONT registration, OLA, ONU rear panel, OLT upgrade, standby, protection are still placeholders) |
 | OLT detail · HSGQ | `/olt/hsgq/:id` | Done (**all-in-one panel, read-only**: device overview (4 PON ports, generated per model), PON port status, ONU list (placeholder), configuration, VLAN, collection records) |
 | OLT detail · Generic | `/olt/generic/:id` | Done (unrecognized vendors, ZTE and FiberHome land here: boards, ONTs, VLAN, configuration, collection records; **read-only**, once identified the device can be re-tested and routes to the matching vendor page) |
+| **User management** | `/system/users` | Done (create/edit/delete users, role changes take effect immediately, password change, enable/disable; the list carries **last login / login IP / login source**; the delete button of the initial `admin` is disabled) |
+| **Role permissions** | `/system/roles` | Done (tick **view / manage** per module; the **system administrator row is disabled**; a role still in use cannot be deleted) |
+| **Login log** | `/system/login-logs` | Done (successes and failures; filterable by **login IP / login time / login source**) |
 
 Bottom-right toolbar of the device list (`web/src/views/device/list.vue`, select devices first):
 
@@ -448,6 +454,44 @@ adding/removing ONTs, rebooting boards, editing templates) are all unimplemented
 
 ---
 
+### 1.7 Admin permission model
+
+**Permission points are a code-level feature list — not stored in a table, and users may not add or
+remove them**: delete one and the code that still checks it turns that feature into a button nobody
+can press. The list comes from `GET /api/system/permissions`, the page ticks what it needs, and only
+the ticks land in `sys_role_permission`.
+
+| Module | View | Manage |
+| --- | --- | --- |
+| dashboard / device / template / biz / model / worklist / olt / file / tag / system | `xxx:view` | `xxx:manage` |
+
+Permissions are derived from the URL automatically — **no annotation on every endpoint**:
+`GET /api/device/**` needs `device:view`, write methods need `device:manage`. Paths that map to no
+module (e.g. `/api/user/info`) are not checked: once you are logged in you may see who you are.
+
+**Two built-in roles**:
+
+| Role | Notes |
+| --- | --- |
+| `SUPER_ADMIN` system administrator | Built-in, **holds every permission**, cannot be deleted or re-permissioned |
+| `OPS_ADMIN` operations administrator | Reads everything by default, may modify devices and work orders; permissions are adjustable |
+
+The system administrator's full permission is short-circuited in code and **has no rows in the
+permission table** — storing them would raise the question of which one wins when they disagree.
+
+**The initial `admin` account has three locks**: `UserAdminService` refuses to delete it
+("system user cannot be deleted"), a database `BEFORE DELETE` trigger backs it up (a manual `delete`
+in MySQL fails too), and the front-end delete button is disabled. The last remaining system
+administrator likewise cannot be deleted, disabled or demoted — nobody left to grant permissions means
+the system is locked out for good.
+
+Changing someone else's password requires re-entering the **operator's own** password, so a borrowed
+session cannot be used to rewrite passwords in bulk.
+
+> Upgrade note: older versions stored `admin` / `operator` / `viewer` in `sys_user.role`.
+> `RoleService` migrates them on first touch (`admin` → `SUPER_ADMIN`, the rest → `OPS_ADMIN`),
+> no manual script needed. See [API.md §4.14](./API.md) for endpoint details.
+
 ## 2. To do / in progress
 
 | # | Item | Status | Detail |
@@ -488,7 +532,7 @@ adding/removing ONTs, rebooting boards, editing templates) are all unimplemented
 | --- | --- | --- |
 | 8888 | Admin UI and `/api` | `server.port` |
 | 8899 | **Northbound API** `/openapi/v1/**` (upstream systems), isolated from the admin port | `acs.openapi.port` |
-| 9090 / 8082 | ONT inform listeners | `acs.cwmp.listen-ports` |
+| 9090 / 8012 / 8080 / 8082 / 8172 / 5481 | ONT inform listeners (Huawei / ZTE / FiberHome / generic), 6060 also open | `acs.cwmp.listen-ports` |
 | 9528 | Frontend dev server (proxies `/dev-api` → `http://127.0.0.1:8888/api`) | `web/vue.config.js` |
 
 ## 5. Directory layout
@@ -539,7 +583,7 @@ Packages under `com.tr069.acs`, split by responsibility:
 | `biz` | Business templates: orchestration entity, member view, execution records, pre-delivery self-check |
 | `worklist` | ONT records (`loader`/`registry`/`model`), model semantic mapping (`ModelMappingService`), capability tree export (`ModelTreeStore`), model adaptation (`ModelAdaptationService`), work order creation and query (`WorklistDeliveryService`, `controller/WorklistExecuteController`) |
 | `olt` | **OLT management (read-only)**: Telnet session and command orchestration (`telnet/OltCliSession`, only `display` / `show` / `enable` / `config` / `quit`), output parsing (`telnet/OltInfoParser`: boards / VLAN / ONTs / DBA / line profiles / service and TR069 profiles / traffic profiles / service flows), vendor command differences (`telnet/OltVendor`), raw connection (`telnet/TelnetClient`, paging prompts and continuation), template and collection models (`model/OltDbaProfile`, `OltLineProfile`, `OltGemport`, `OltGemMapping`, `OltSrvProfile`, `OltTr069Profile`, `OltTrafficTable`, `OltServicePort`), ledger and sync (`service/OltService`), scheduled refresh (`service/OltAutoRefreshService`), controllers and models |
-| `api` | Admin APIs: device, capability, business, RPC task, statistics, login and their Services |
+| `api` | Admin APIs: device, capability, business, RPC task, statistics, login, plus **system management** (users / role permissions / login log) and their Services; the `auth` sub-package holds the permission-point list, login-source detection and real-IP detection |
 | `exec` | **Intent delivery executor**: plan rendering (`IntentPlanRenderer`), execution and task table (`IntentDeliveryService`, `DeviceTask`), task-finished events |
 | `openapi` | **Northbound API**: port and path isolation (`config`), query/delivery/event-subscription controllers, Webhook push and event delivery, device online/offline detection (`watch`) |
 | `domain` / `mapper` | Main database entities and Mappers |
@@ -550,7 +594,7 @@ Packages under `com.tr069.acs`, split by responsibility:
 
 ```
 web/src/
-├── api/            device / rpc / configTemplate / bizTemplate / dashboard / worklist / user
+├── api/            device / rpc / configTemplate / bizTemplate / dashboard / worklist / user / system
 ├── views/
 │   ├── dashboard/  Dashboard
 │   ├── device/     Device list list.vue, device detail detail.vue
@@ -570,6 +614,7 @@ web/src/
 │   │   │                       (service / TR069 / traffic profile + service flows),
 │   │   │                       OltVlanPanel, OltRecords
 │   │   └── boardProfiles.js     Board model records and diagrams
+│   ├── system/      User management users.vue, role permissions roles.vue, login log login-logs.vue
 │   └── login/ 404.vue
 ├── components/     DeviceBusinessPanel (business panel), DeviceIdentityCell (terminal info column), DeviceRuntimeCell (runtime column), etc.
 └── router/         Menus and routes
@@ -582,6 +627,9 @@ web/src/
 mysql -u root -p -e "CREATE DATABASE tr_acs DEFAULT CHARACTER SET utf8mb4;"
 mysql -u root -p tr_acs < sql/schema.sql
 # The script is idempotent (CREATE TABLE IF NOT EXISTS); missing tables are added on startup
+# Note: the script contains a trigger with DELIMITER (blocks deleting the initial admin or the last
+# system administrator) — run the whole script with the mysql client, do not feed it to anything
+# that splits statements on semicolons
 
 # 2) Start the backend (8888), adjust src/main/resources/application.yml as needed
 mvn spring-boot:run
@@ -609,7 +657,7 @@ For ONT onboarding, packaging for production and troubleshooting, see
 
 | Property | Default | Detail |
 | --- | --- | --- |
-| `acs.cwmp.listen-ports` | `9090,8082` | ONT inform ports, comma separated |
+| `acs.cwmp.listen-ports` | `9090,8082,6060,8012,8080,8172,5481` | ONT inform ports, comma separated, covering the factory ports: 9090 Huawei / 8012 ZTE / 8080 FiberHome / 8082, 8172, 5481, 6060 generic. Alcatel's usual 8888 collides with `server.port` and is skipped automatically — move the admin port first if you need it |
 | `acs.cwmp.cpe-path` | `/ACS-server/ACS` | Main inform path |
 | `acs.cwmp.extra-cpe-paths` | `/acs,/cwmp,/tr069,/`, etc. | Compatible inform paths; append here when hitting 405 |
 | `acs.auth.cpe-to-acs-username/password` | `auto` | Credentials the ONT uses to reach the ACS; `auto`/empty disables authentication, restore real credentials before production |

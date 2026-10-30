@@ -63,3 +63,13 @@ div:focus {
 .app-container {
   padding: 20px;
 }
+
+// 文字按钮里的删除这类危险操作统一这个红，一眼能看出这是删东西
+.danger-text {
+  color: #f56c6c;
+
+  &:hover,
+  &:focus {
+    color: #f78989;
+  }
+}

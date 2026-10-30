@@ -15,11 +15,6 @@ import java.util.Map;
 
 /**
  * 首页概览统计：设备总量、在线离线、品牌分布、已下发未下发。
- *
- * <p>在线判定用「最近上报时间落在窗口内」而不是内存会话：会话是进程内的，
- * 服务重启或多实例部署时内存会话并不可靠，而 last_contact_time 是落库的，
- * 任何实例看到的结论都一致。窗口默认 900 秒，覆盖常见的周期性 Inform 间隔
- * （多为 300~1800 秒），可按现场设备配置调整。</p>
  */
 @Slf4j
 @Service
@@ -65,11 +60,6 @@ public class DashboardService {
 
     /**
      * 品牌（厂商）分布，空厂商用 OUI 兜底。
-     *
-     * <p>设备上报的厂商名是各家固件自己写的，同一家会出现多种形态
-     * （{@code Huawei Technologies Co., Ltd.} 与 {@code ...Ltd}、
-     * {@code RAISECOM} 与 {@code RC}）。直接按字符串分组会让同一个牌子在图上占两行，
-     * 所以先归一成现场叫得出口的名字，再按台数重排。</p>
      */
     private List<Map<String, Object>> brands() {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(

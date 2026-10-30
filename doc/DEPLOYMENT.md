@@ -14,7 +14,7 @@ TR069 ACS（Java 版）的构建、部署与验收说明。目标是让一台干
 | --- | --- |
 | 管理端 | `http://<ip>:8888`（`server.port`，页面在 jar 内 `BOOT-INF/classes/static`） |
 | 管理端 API | 同源 `/api/**` |
-| CPE 上报 | `http://<ip>:9090`、`:8082`（`acs.cwmp.listen-ports`，按需增删） |
+| CPE 上报 | `http://<ip>:9090`（华为）、`:8012`（中兴）、`:8080`（烽火）、`:8082`、`:8172`、`:5481`、`:6060`（`acs.cwmp.listen-ports`，按需增删） |
 | 数据库 | MySQL 8 / MariaDB 10.6+，库名 `tr_acs` |
 | 缓存/队列 | Redis 6+（用于上报削峰与指令队列；无 Redis 可关闭队列降级运行） |
 | 工单模板 | jar 外目录 `configuration/`，改文件热加载生效，无需重启 |
@@ -94,7 +94,9 @@ spring:
 acs:
   public-host: <ACS 的 IP>        # 下发给光猫的连接请求地址，必须填真实地址
   cwmp:
-    listen-ports: 9090,8082       # 光猫上报端口，多填几个不影响
+    listen-ports: 9090,8082,6060,8012,8080,8172,5481   # 光猫上报端口，多填几个不影响
+    # 华为 9090 / 中兴 8012 / 烽火 8080，其余是各厂商常用备用口
+    # 贝尔常用的 8888 与 server.port 冲突（加了也会被跳过），要收这类设备先把管理端口挪走
 ```
 
 也可以完全不建文件，用环境变量覆盖（Spring Boot 原生名称映射）：
@@ -105,7 +107,7 @@ export SPRING_DATASOURCE_PASSWORD='xxx'
 export ACS_CWMP_LISTEN_PORTS='9090,8082'
 ```
 
-> `config/application.yml` 含数据库口令，已在 `.gitignore` 中排除，切勿提交。
+
 
 ### 4.4 构建
 
@@ -221,7 +223,7 @@ WantedBy=multi-user.target
 | `spring.datasource.*` | 本机 `tr_acs` | 数据库连接；连接串字符集写 `UTF-8`，写 `utf8mb4` 会抛异常 |
 | `spring.data.redis.*` | `127.0.0.1:6379` | 队列存储 |
 | `acs.public-host` | `127.0.0.1` | **生产必须改**，ACS 通告给光猫的地址 |
-| `acs.cwmp.listen-ports` | `9090,8082` | CPE 上报端口，逗号分隔，与主端口重复会自动跳过 |
+| `acs.cwmp.listen-ports` | `9090,8082,6060,8012,8080,8172,5481` | CPE 上报端口，逗号分隔，与主端口重复会自动跳过（贝尔常用的 8888 因此收不到） |
 | `acs.cwmp.cpe-path` | `/ACS-server/ACS` | CPE 上报主路径 |
 | `acs.cwmp.extra-cpe-paths` | `/acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/` | 兼容的上报路径，现场遇到新写法在此追加 |
 | `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | 光猫连 ACS 的 digest 账号；写 `auto` 或留空即免认证，任何账号密码都放行 |
@@ -267,8 +269,8 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8888/api/user/login \
   -H 'Content-Type: application/json' -d '{"username":"admin","password":"<pwd>"}' \
   | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 
-curl -s http://127.0.0.1:8888/api/dashboard/overview -H "X-Token: $TOKEN"   # code=20000
-curl -s http://127.0.0.1:8899/openapi/v1/devices?size=1 -H "X-Token: $TOKEN" # code=20000
+curl -s http://127.0.0.1:8888/api/dashboard/overview -H "X-Token: $TOKEN"   # code=200
+curl -s http://127.0.0.1:8899/openapi/v1/devices?size=1 -H "X-Token: $TOKEN" # code=200
 
 # 端口隔离：8899 上访问管理端路径必须 404
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8899/api/dashboard/overview  # 404
