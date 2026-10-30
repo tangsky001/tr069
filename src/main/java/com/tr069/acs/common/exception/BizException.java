@@ -1,5 +1,6 @@
 package com.tr069.acs.common.exception;
 
+import com.tr069.acs.common.Result;
 import lombok.Getter;
 
 /**
@@ -14,7 +15,7 @@ public class BizException extends RuntimeException {
 
     public BizException(String message) {
         super(message);
-        this.code = 50000;
+        this.code = Result.ERROR_CODE;
     }
 
     public BizException(int code, String message) {
@@ -24,6 +25,6 @@ public class BizException extends RuntimeException {
 
     public BizException(String message, Throwable cause) {
         super(message, cause);
-        this.code = 50000;
+        this.code = Result.ERROR_CODE;
     }
 }

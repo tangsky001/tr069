@@ -5,8 +5,12 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.media.Schema;
+import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springdoc.core.customizers.OperationCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,12 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 在线接口文档（springdoc / Swagger UI）：启动后打开 {@code /doc/index.html} 就能看到全部接口。
- *
- * <p>接口清单、参数名与类型、返回结构是从 Controller 签名与 Model 字段自动扫出来的，
- * 加了新接口不用改这里；下面的 {@link #DOC} 只负责给接口配一句中文说明——
- * 写在这里而不是散在各处 {@code @Operation} 注解，是为了让说明集中一处、业务代码保持干净。</p>
- */
+ * 在线接口文档（springdoc / Swagger UI）：启动后打开 {@code /doc/index.html} 就能看到全部接口。 */
 @Configuration
 public class OpenApiDocConfig {
 
@@ -45,6 +44,8 @@ public class OpenApiDocConfig {
     static {
         CLASS_TAG.put("AuthController", "鉴权");
         CLASS_TAG.put("OltController", "OLT 管理");
+        CLASS_TAG.put("FileManageController", "文件台账");
+        CLASS_TAG.put("SystemController", "系统管理");
         CLASS_TAG.put("DeviceController", "设备台账");
         CLASS_TAG.put("DeviceCapabilityController", "设备能力树");
         CLASS_TAG.put("DeviceBusinessController", "设备业务快照");
@@ -64,7 +65,7 @@ public class OpenApiDocConfig {
         // 鉴权
         doc("POST /api/user/login", "登录换 token",
                 "唯一免鉴权接口。成功后取 `data.token`，之后每个请求带请求头 `X-Token`。\n"
-                        + "登录失败也是 HTTP 200：`code=50000`，`message` 是「用户名或密码错误」这类原因。\n"
+                        + "登录失败也是 HTTP 200：`code=500`，`message` 是「用户名或密码错误」这类原因。\n"
                         + "令牌默认 12 小时有效，没有刷新接口，过期重新登录。");
         doc("GET /api/user/info", "当前登录用户信息", "需要带令牌。`data` 里是 name / avatar / roles / introduction。");
         doc("POST /api/user/logout", "登出", "服务端没有令牌黑名单，登出只是给客户端一个明确的退出动作。");
@@ -115,7 +116,7 @@ public class OpenApiDocConfig {
                         + "页面校验与后端校验用的是同一份约束，按它填就不会被拒。");
         doc("POST /api/olt/{id}/vlan/preview", "VLAN 命令预览（不下发）",
                 "把这次会执行的命令算出来给页面看，和下发走同一个方法，看到的必然是将要下发的那条序列。\n"
-                        + "`warnings` 是提醒不是错误；参数写错时返回 `code=50000` + 中文原因。");
+                        + "`warnings` 是提醒不是错误；参数写错时返回 `code=500` + 中文原因。");
         doc("POST /api/olt/{id}/vlan", "新建 VLAN 并配成员端口",
                 "`vlanIds` 支持 `100-102,300` 这种写法；`tagged` / `untagged` 写 `epon1` / `ge3`，同一个口不能两边都占。\n"
                         + "不带端口时一次最多 64 个，带端口一次最多 16 个（每个 VLAN 都要单独进视图配端口）。\n"
@@ -147,7 +148,7 @@ public class OpenApiDocConfig {
                         + "一次最多能改几个端口、VLAN ID 上下限、TR-069 段的默认值。");
         doc("POST /api/olt/{id}/quick-setup/preview", "一键开局命令预览（不下发）",
                 "把这次开局要下发的所有命令按顺序算出来，和下发走同一个方法。\n"
-                        + "`warnings` 是提醒（如「没填 VLAN，只会改端口模式」）；参数不合法时 `code=50000` + 中文原因。");
+                        + "`warnings` 是提醒（如「没填 VLAN，只会改端口模式」）；参数不合法时 `code=500` + 中文原因。");
         doc("POST /api/olt/{id}/quick-setup", "一键开局",
                 "一次把三件事做完：改端口 VLAN 模式 + 建业务 VLAN + 建 TR-069 模板，哪一步没勾就跳过哪一步。\n"
                         + "`mode`：trunk / hybrid 走 `vlanList`（可写 `41,45-46`），access 只认一个 VLAN。\n"
@@ -163,6 +164,55 @@ public class OpenApiDocConfig {
                 "`code` 取动作目录里的编号，`params` 是 `{占位符: 值}`，如 `{\"vlanId\":\"100\"}`。\n"
                         + "查询类返回设备回显 `outputs`；配置类下发后重采，`detail` 是最新详情。");
         doc("POST /api/olt/{id}/actions/preview", "动作命令预览（不下发）", "把这次动作会执行的完整命令（含进视图与 exit）算出来。");
+
+        // 文件台账
+        doc("GET /api/files", "文件清单", "固件与配置，新的在前。");
+        doc("GET /api/files/{id}", "文件详情", "含字节数与内容摘要。");
+        doc("GET /api/files/{id}/url", "设备取这个文件用的地址",
+                "下发给设备 Download 时填的就是它。由 `acs.file.base-url` 决定；\n"
+                        + "留空则按 `acs.public-host` + 上报端口拼。\n"
+                        + "**ACS 的地址与设备能通的网段常常不是一回事**，现场对不上就把 base-url 配成设备真正能访问的地址。");
+        doc("POST /api/files", "上传文件（multipart/form-data）",
+                "`file` 是文件本身；`fileType` 取 FIRMWARE 固件 / CONFIG 配置 / VENDOR 厂商文件，不填按固件；\n"
+                        + "`version` 是版本号。单个文件上限 512MB。\n"
+                        + "上传走 `/api` 要令牌；设备取文件走 `/files/{id}`，不要令牌。");
+        doc("POST /api/files/{id}/deliver", "把文件下发给一批设备（Download）",
+                "`sns` 是设备序列号，数组或逗号分隔都行；`delaySeconds` 让设备延迟多少秒再取。\n"
+                        + "每台设备各排一条 Download，队列是按设备分流的，多设备之间不会互相堵。\n"
+                        + "返回每台设备的 `taskId`，结果用 `GET /api/rpc/{taskId}` 查。");
+        doc("DELETE /api/files/{id}", "删除文件", "连带清掉磁盘上的内容。");
+
+        // 系统管理
+        doc("GET /api/system/permissions", "权限点清单",
+                "按模块分组返回全部权限点，页面按它勾选。**权限点不落库，也不允许用户增删**。");
+        doc("GET /api/system/roles", "角色列表",
+                "带每个角色的权限点与人数。\n"
+                        + "系统管理员的权限是代码里短路出来的全权限，库里没有它的行。");
+        doc("POST /api/system/roles", "新建角色",
+                "`{\"code\":\"VIEWER\",\"name\":\"只读\"}`，code 统一成大写。\n"
+                        + "新角色一个权限都没有，建完去勾。");
+        doc("PUT /api/system/roles/{code}/permissions", "设置角色权限",
+                "`{\"permissions\":[\"device:view\",\"device:manage\"]}`，**整份覆盖**，\n"
+                        + "传进去的就是这个角色的全部权限。改系统管理员的会被拒。");
+        doc("DELETE /api/system/roles/{code}", "删角色",
+                "内置角色删不掉，还有人在用的也删不掉。");
+        doc("GET /api/system/users", "用户列表", "带最近登录时间与来源（WEB / CLIENT / MOBILE）。");
+        doc("POST /api/system/users", "新建用户",
+                "`{\"username\":\"wang\",\"password\":\"123456\",\"nickname\":\"老王\","
+                        + "\"role\":\"VIEWER\"}`。密码至少 6 位。");
+        doc("PUT /api/system/users/{id}", "改用户",
+                "昵称 / 角色 / 状态 / 密码都可选，传 null 的项不动。\n"
+                        + "**改密码要二次验证**：带 password 时必须同时带 currentPassword（操作者自己的当前密码），\n"
+                        + "少了或不对直接被拒。拿到会话不等于拿到密码，会话被借走的人改不了密码。\n"
+                        + "最后一个系统管理员既删不掉也停不掉、也降不成别的角色。");
+        doc("GET /api/system/login-logs", "登录日志",
+                "记时间、登录名、IP、来源、结果。**失败的也记**，连着一片失败是有人在试密码。\n"
+                        + "传 userId 只看某一个人，默认看全部最近 100 条。\n"
+                        + "IP 取自 X-Forwarded-For 的第一段，其次 X-Real-IP，都没有才用连接的地址。");
+        doc("DELETE /api/system/users/{id}", "删用户",
+                "不能删自己。**初始系统账号 admin 删不掉**，返回「系统用户禁止删除」；\\n"
+                        + "最后一个系统管理员也删不掉。这两条在数据库里都有触发器兜底，\\n"
+                        + "直接在 MySQL 里 delete 同样会被拦。");
 
         // 设备台账
         doc("GET /api/device/stat", "设备统计", "总数、在线数、离线数。");
@@ -255,13 +305,14 @@ public class OpenApiDocConfig {
                 .info(new Info()
                         .title("TR069 ACS 接口文档")
                         .version("1.0.0")
-                        .contact(new Contact().name("javaacs"))
+                        .contact(new Contact().name("PilotACS"))
                         .description("""
                                 管理端 `/api/**` 与北向 `/openapi/v1/**` 两套接口。三条约定：
 
-                                1. **业务成功看 `code == 20000`，HTTP 200 不代表成功**：
-                                   参数写错、设备拒绝、命令算不出来都是 HTTP 200 + `code: 50000`，
-                                   原因在 `message` 里（可直接展示给用户）。只有未鉴权才是 HTTP 401。
+                                1. **业务成功看 `code == 200`，HTTP 200 不代表成功**：
+                                   参数写错、设备拒绝、命令算不出来都是 HTTP 200 + `code: 500`，
+                                   原因在 `message` 里（可直接展示给用户）。缺令牌是 HTTP 401（`code: 401`），
+                                   缺权限是 HTTP 403（`code: 403`）。
                                 2. **先 `POST /api/user/login` 换 token**，之后每个请求带请求头 `X-Token`。
                                    令牌默认 12 小时有效，没有刷新接口，过期重新登录。
                                 3. **北向接口在 8899 端口**（前缀 `/openapi/v1`），鉴权方式相同。
@@ -301,6 +352,9 @@ public class OpenApiDocConfig {
             if ("POST /api/user/login".equals(key)) {
                 operation.setSecurity(List.of());
             }
+            // 参数说明与响应状态说明先补：这两个跟接口有没有写 DOC 无关
+            fillParameters(operation, key);
+            fillResponses(operation);
             String text = DOC.get(key);
             if (text == null) {
                 return operation;
@@ -310,6 +364,85 @@ public class OpenApiDocConfig {
             operation.setDescription(text.substring(br + 1).trim());
             return operation;
         };
+    }
+
+    /**
+     * 给「请求参数」那张表补说明：路径参数与查询参数逐个按名字查 {@link OpenApiParamDoc}。
+     *
+     * <p>{@code id} 这类名字在不同接口里指向不同对象，查表时带上 {@code 方法 路径} 作上下文。</p>
+     */
+    private static void fillParameters(Operation operation, String key) {
+        if (operation.getParameters() == null) {
+            return;
+        }
+        for (Parameter parameter : operation.getParameters()) {
+            if (parameter == null || (parameter.getDescription() != null && !parameter.getDescription().isBlank())) {
+                continue;
+            }
+            String text = OpenApiParamDoc.param(key, parameter.getName());
+            if (text != null) {
+                parameter.setDescription(text);
+            }
+        }
+    }
+
+    /** 给「响应状态」那张表补说明：200 与 401 这两行有话说，其余保持框架默认。 */
+    private static void fillResponses(Operation operation) {
+        if (operation.getResponses() == null) {
+            return;
+        }
+        for (Map.Entry<String, ApiResponse> entry : operation.getResponses().entrySet()) {
+            String text = OpenApiParamDoc.status(entry.getKey());
+            if (text != null && entry.getValue() != null) {
+                entry.getValue().setDescription(text);
+            }
+        }
+    }
+
+    /**
+     * 给「响应参数」那张表补说明：遍历 {@code components.schemas}，按字段名查表写 description。
+     *
+     * <p>Swagger Models 页面用的是同一份 schema，所以那边也会一起有说明。</p>
+     */
+    @Bean
+    public OpenApiCustomizer fieldDocCustomizer() {
+        return openApi -> {
+            if (openApi.getComponents() == null || openApi.getComponents().getSchemas() == null) {
+                return;
+            }
+            openApi.getComponents().getSchemas().forEach((name, schema) -> fillSchema(name, schema, 0));
+        };
+    }
+
+    /** 递归补一个 schema 的字段说明，{@code depth} 用来兜住自引用。 */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void fillSchema(String name, Schema<?> schema, int depth) {
+        if (schema == null || depth > 3) {
+            return;
+        }
+        fillSchema(name, schema.getItems(), depth + 1);
+        Map<String, Schema> properties = schema.getProperties();
+        if (properties == null) {
+            return;
+        }
+        // 通用响应体的 code / message / data 与业务对象里的同名字段含义不同，只在顶层按 Result 走一套说法
+        boolean resultBody = depth == 0 && name.startsWith("Result");
+        for (Map.Entry<String, Schema> entry : properties.entrySet()) {
+            Schema<?> property = entry.getValue();
+            if (property == null) {
+                continue;
+            }
+            if (property.getDescription() == null || property.getDescription().isBlank()) {
+                String text = resultBody ? OpenApiParamDoc.resultField(entry.getKey()) : null;
+                if (text == null) {
+                    text = OpenApiParamDoc.field(entry.getKey());
+                }
+                if (text != null) {
+                    property.setDescription(text);
+                }
+            }
+            fillSchema(name, property, depth + 1);
+        }
     }
 
     /** 从 Controller 与方法上的 @*Mapping 拼出 `方法 路径`，如 `GET /api/olt/{id}` */

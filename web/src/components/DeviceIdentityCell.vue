@@ -44,8 +44,6 @@
 </template>
 
 <script>
-import { ponTypeOf, opticTextOf } from '@/utils/deviceOptic'
-
 /**
  * 设备终端信息：厂家 / 型号 / 硬件固件版本 / PON 类型 + 光功率。
  *
@@ -63,11 +61,13 @@ export default {
     opticFilter: { type: String, default: '' }
   },
   computed: {
+    // PON 类型与光功率换算都在后端完成：型号里写没写 GPON/EPON、
+    // 0.1µW 转 dBm 的对数换算，都只保留一份
     ponType() {
-      return ponTypeOf(this.row, this.biz)
+      return this.biz.ponType || 'GE'
     },
     opticText() {
-      return opticTextOf(this.biz)
+      return this.biz.opticText || ''
     }
   },
   methods: {

@@ -5,7 +5,7 @@
       <div slot="header" class="olt-top-head">
         <span class="olt-title">OLT/ONU 管理</span>
         <div>
-          <el-button type="primary" size="mini" icon="el-icon-plus" @click="openCreate">添加 OLT</el-button>
+          <el-button v-if="$has('olt:manage')" type="primary" size="mini" icon="el-icon-plus" @click="openCreate">添加 OLT</el-button>
           <el-button type="success" size="mini" icon="el-icon-refresh" :loading="loading" @click="loadList">刷新</el-button>
         </div>
       </div>
@@ -28,8 +28,9 @@
             <el-option v-for="r in resources" :key="r.id" :label="r.name" :value="r.id" />
           </el-select>
           <el-input :value="selected.host" size="small" style="width:170px" disabled />
-          <el-button type="primary" size="small" icon="el-icon-edit" :disabled="!selectedId" @click="openEdit">编辑</el-button>
+          <el-button v-if="$has('olt:manage')" type="primary" size="small" icon="el-icon-edit" :disabled="!selectedId" @click="openEdit">编辑</el-button>
           <el-button
+            v-if="$has('olt:manage')"
             type="primary"
             size="small"
             icon="el-icon-refresh-right"
@@ -38,6 +39,7 @@
             @click="handleSync"
           >同步</el-button>
           <el-button
+            v-if="$has('olt:manage')"
             type="warning"
             size="small"
             icon="el-icon-cpu"
@@ -45,7 +47,7 @@
             :disabled="!selectedId"
             @click="handleTest"
           >诊断测试</el-button>
-          <el-button type="danger" size="small" icon="el-icon-delete" :disabled="!selectedId" @click="handleDelete">删除</el-button>
+          <el-button v-if="$has('olt:manage')" type="danger" size="small" icon="el-icon-delete" :disabled="!selectedId" @click="handleDelete">删除</el-button>
           <span class="olt-auto">
             <el-switch v-model="autoRefresh" />
             <span class="olt-auto-label">自动刷新</span>
@@ -113,10 +115,6 @@ import { componentOfVendor } from './vendors'
 
 /**
  * OLT 管理页：上面下拉选哪一台，下面就按厂商出哪一套面板。
- *
- * 这里只管台账本身——下拉切换、增删改、诊断连通性、触发同步，再加一排设备概况；
- * 板卡、ONT、VLAN 那些采集结果的展示全在厂商视图里（华为一套、其它厂商走第三方），
- * 由 vendors.js 按 vendor 挑一个渲染在下面。厂商不同命令不同，混在一个页面里很快就没法维护。
  */
 export default {
   name: 'OltManagement',

@@ -1,0 +1,11 @@
+# 型号适配档：只有能力测试通过才会写 adapted: true
+model_key: H5-9_V32.AA1.04b
+isp: CMCC
+adapted: true
+config_file: models/CM/standard/h5-9_v32.aa1.04b.xml
+lan_ports: 4
+lan_speed: 自动
+sip_count: 无
+wifi_spec: 无
+sample_sn: CMDC14990D50
+adapted_at: 2026-10-30 20:54:34

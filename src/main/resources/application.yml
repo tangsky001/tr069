@@ -46,7 +46,7 @@ knife4j:
 
 spring:
   application:
-    name: javaacs-server
+    name: pilotacs-server
   # Redis：设备上报队列与下发指令队列的存储
   data:
     redis:
@@ -76,7 +76,7 @@ spring:
     username: root
     password: Qq123456
     hikari:
-      pool-name: javaacs-hikari
+      pool-name: pilotacs-hikari
       # 设备并发上报量大，空闲连接不宜过低
       minimum-idle: 10
       maximum-pool-size: 50
@@ -115,9 +115,12 @@ acs:
 
   cwmp:
     # CPE 上报监听端口，可填多个（逗号 / 空格分隔）。
-    # 不同厂商光猫出厂固化的 ACS URL 端口并不一致（例如 9090、8082），
+    # 不同厂商光猫出厂固化的 ACS URL 端口并不一致，这里按厂商常用端口列出：
+    #   9090 华为   8080 烽火   8012 中兴   6060 其他   8172 / 5481 通用备用
     # 这里列出的端口都会额外开启监听，与主 server.port 重复的会自动跳过。
-    listen-ports: 9090,8082,6060
+    # 注意：贝尔/阿尔卡特常用 8888，与本服务的 server.port 撞车，
+    # 加了也会被自动跳过——要收这类设备得先把 server.port 挪走。
+    listen-ports: 9090,8082,6060,8012,8080,8172,5481
     # CPE 上报的路径
     cpe-path: /ACS-server/ACS
     # 额外兼容的上报路径（逗号分隔）。各厂商出厂固化的 URL 路径不一致，

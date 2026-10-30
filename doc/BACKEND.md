@@ -266,7 +266,7 @@ if (board.getFrontPanel() == null) {
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
-  Where-Object { $_.CommandLine -like '*javaacs-server.jar*' }
+  Where-Object { $_.CommandLine -like '*pilotacs-server.jar*' }
 ```
 
 ---
@@ -321,7 +321,7 @@ mvn -o test -Dtest=HsgqModelCatalogTest
 cd e:/tr069
 mvn -o -DskipTests compile
 mvn -o test
-mvn -o -DskipTests package      # target/javaacs-server.jar
+mvn -o -DskipTests package      # target/pilotacs-server.jar
 
 # 前端（构建产物直接进 src/main/resources/static）
 cd web
@@ -329,7 +329,7 @@ npm run build:prod
 
 # 启动
 cd e:\tr069\target
-java -jar .\javaacs-server.jar
+java -jar .\pilotacs-server.jar
 ```
 
 前端改动后**必须重新 `npm run build:prod` 再打 jar**，静态资源是打进 jar 的。

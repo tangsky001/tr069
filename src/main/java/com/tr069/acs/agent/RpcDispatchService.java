@@ -34,10 +34,6 @@ import com.tr069.acs.common.log.AcsCoreLog;
  *   <li>{@link #submitAsync} 把指令放进 Redis 队列，立即返回任务号与结果凭据，不占用线程</li>
  *   <li>CPE 空 POST 时由 {@code CwmpController} 从队列取出捎带</li>
  *   <li>响应到达后由 {@link #completeTask} 回填结果与审计</li>
- * </ul>
- *
- * <p>相比原来的 {@code future.get(510s)} 阻塞，调用方线程不再被挂起；
- * 设备离线时指令留在队列里，不会随会话关闭被丢弃。</p>
  */
 @Slf4j
 @Service

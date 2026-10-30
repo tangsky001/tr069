@@ -7,7 +7,9 @@
 > 可直接查看全部接口的用途、请求参数与返回结构，顶部「Authorize / 认证」填一次 token 就能在线调试。
 > <http://127.0.0.1:8888/v3/api-docs> 是同一份内容的 OpenAPI 3.0 JSON，
 > 在 Apifox / Postman 里「导入 → OpenAPI/Swagger」粘贴这个地址即可批量生成接口。
-> 说明文字集中在 `config/OpenApiDocConfig` 的 `DOC` 表，新增接口在那儿补一句即可。
+> 说明文字集中在 `config/OpenApiDocConfig` 的 `DOC` 表，新增接口在那儿补一句即可；
+> 请求参数与响应字段的中文（界面上「参数说明」那一列）在 `config/OpenApiParamDoc` 按名字查表，
+> 模型字段不用为了文档加 `@Schema` 注解。
 
 ---
 
@@ -19,7 +21,7 @@
 | --- | --- | --- |
 | 8888 | 管理端页面与 `/api/**` | `server.port` |
 | 8899 | 北向 `/openapi/v1/**` | `acs.openapi.port` |
-| 9090 / 8082 | 光猫 CWMP 上报 | `acs.cwmp.listen-ports` |
+| 9090 / 8012 / 8080 / 8082 / 8172 / 5481 | 光猫 CWMP 上报（按厂商出厂端口），另有 6060 | `acs.cwmp.listen-ports` |
 | 9528 | 前端开发服务器（代理 `/dev-api` → `http://127.0.0.1:8888/api`） | `web/vue.config.js` |
 
 ### 1.2 鉴权
@@ -31,7 +33,7 @@
    - 请求头 `X-Token: <token>`（管理端页面用这个）
    - 请求头 `Authorization: Bearer <token>`
    - query 参数 `?token=<token>`（仅调试用）
-3. 未携带或校验失败返回 **HTTP 401**，body 为 `{"code":50008,"message":"登录状态已失效，请重新登录"}`。
+3. 未携带或校验失败返回 **HTTP 401**，body 为 `{"code":401,"message":"登录状态已失效，请重新登录"}`。
 
 例外路径（不鉴权）：`/api/user/login`、`/vue-admin-template/user/login`/`info`/`logout`，
 以及所有光猫上报路径——设备拿不到令牌，拦了就注册不上来。
@@ -43,17 +45,19 @@
 ### 1.3 统一响应体
 
 ```json
-{ "code": 20000, "message": "success", "data": { } }
+{ "code": 200, "message": "success", "data": { } }
 ```
 
 | 字段 | 说明 |
 | --- | --- |
-| `code` | `20000` 成功；`50000` 通用业务失败；`50008` 登录失效；其它为各接口自定义业务码 |
+| `code` | `200` 成功；`500` 通用业务失败；`401` 登录失效；`403` 没权限；其它为各接口自定义业务码 |
 | `message` | 成功时是 `success`，失败时是可直接展示给用户中文原因 |
 | `data` | 业务数据，失败时通常为 `null` |
 
-> HTTP 状态码与 `code` 是两个维度：业务失败也返回 HTTP 200 + `code != 20000`，
-> 只有未鉴权才是 HTTP 401。判断成败一律看 `code`。
+业务码沿用 HTTP 语义，省一层翻译：成功 `200`、业务失败 `500`、缺令牌 `401`、缺权限 `403`。
+
+HTTP 状态码只在缺令牌与缺权限时和业务码一起跟着变（HTTP 401 / 403）；
+其余业务失败仍然是 HTTP 200 + `code: 500`，原因在 `message` 里。**判断成败一律看 `code`**。
 
 ### 1.4 分页
 
@@ -82,22 +86,43 @@
 // 请求
 { "username": "admin", "password": "******" }
 // 响应
-{ "code": 20000, "message": "success", "data": { "token": "eyJhbGciOi..." } }
+{ "code": 200, "message": "success",
+  "data": { "token": "eyJhbGciOi...", "role": "SUPER_ADMIN", "source": "WEB" } }
 ```
 
 失败原因：`用户名或密码不能为空` / `用户名或密码错误` / `账号已禁用`。
+
+**登录来源**在登录时判一次，记进账号的 `last_login_source`，用来知道这个人是从哪儿登进来的：
+
+| 来源 | 判定 |
+| --- | --- |
+| `WEB` 网页端 | 常规浏览器 |
+| `CLIENT` 客户端 | `X-Client-Type: client`，或 curl / okhttp 这类非浏览器 UA |
+| `MOBILE` 移动端 | `X-Client-Type: mobile`，或 UA 带 iPhone / Android 等移动设备字样 |
+
+自己的 App 与脚本带上 `X-Client-Type` 头最准，没有它才去猜 UA。来源只是标签，不做限制——
+同一个人今天用网页、明天用 App，来源不同但能干的事一样。
+
+同一次登录还会把 IP 记下来（`X-Forwarded-For` 的第一段，其次 `X-Real-IP`，都没有才用连接的地址），
+并落一条登录日志；失败的那次也记。用户列表上能看到时间与来源，完整记录在 §4.13.5。
 
 ### 2.2 当前用户信息
 
 `GET /api/user/info`（别名 `/vue-admin-template/user/info`）
 
 ```json
-{ "code": 20000, "data": {
+{ "code": 200, "data": {
     "name": "admin",
     "avatar": "https://...",
-    "roles": ["admin"],
+    "roles": ["SUPER_ADMIN"],
+    "role": "SUPER_ADMIN",
+    "permissions": ["dashboard:view", "device:view", "device:manage"],
+    "source": "WEB",
     "introduction": "TR069 ACS 管理端" } }
 ```
+
+`permissions` 是当前角色勾中的权限点，前端用它决定菜单与按钮露不露出来。
+系统管理员这里返回的是全部权限点。
 
 ### 2.3 登出
 
@@ -119,6 +144,9 @@
 | 工单 / 光猫档案 | `/api/worklist` | §4.8 |
 | 首页概览 | `/api/dashboard` | §4.9 |
 | OLT 管理（Telnet 采集） | `/api/olt` | §4.10 |
+| 设备预设（引擎内部） | 无接口 | §4.11 |
+| 文件与固件 | `/api/files` | §4.12 |
+| 系统管理（用户与角色权限） | `/api/system` | §4.13 |
 
 ---
 
@@ -130,7 +158,7 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/page` | 分页列表，参数 `page`(默认1)、`size`(默认20)、`sn`(模糊)、`isp`(精确)、`deviceType`(精确)，按最近上报时间倒序 |
+| GET | `/page` | 分页列表，参数 `page`(默认1)、`size`(默认20)、`sn`(模糊)、`roomNo`(房间号，模糊)、`isp`(精确)、`deviceType`(精确)，按最近上报时间倒序 |
 | GET | `/{sn}` | 详情：`{device, session}`，`session` 含 `online`/`state`/`lastContactTime`/`pendingCount`（设备离线时没有 `session` 字段） |
 | GET | `/{sn}/status` | 在线状态：`{sn, online, state}` |
 | GET | `/online` | 全部在线会话明细列表 |
@@ -191,7 +219,7 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 - 请求体：与 RPC 同名的参数对象，如 `{"parameterNames":["Device.WAN."]}`（不同 RPC 参数不同）。
 - 响应（**提交即返回，不挂起等设备**）：
   ```json
-  { "code": 20000, "data": { "taskId": 17, "queued": true } }
+  { "code": 200, "data": { "taskId": 17, "queued": true } }
   ```
   `queued` 为 true 表示设备还没在线，指令进了队列，会在它下次上报时空 POST 带走。
 
@@ -627,6 +655,327 @@ curl -X POST 'http://127.0.0.1:8888/api/olt/12/sync' -H 'X-Token: <token>'
 
 ---
 
+## 4.11 设备预设（上报时自动收敛配置）
+
+预设是引擎内部的规则：**匹配条件 + 动作**，设备上报时按优先级依次匹配，命中后把动作里的
+目标值下发下去。已经对得上的参数会自动跳过，所以反复上报不会反复下发；一轮改完的参数会
+补进已知值，下一轮可能让另一条预设的条件成立，最多 4 轮，防止预设互相触发形成死循环。
+
+预设存在 `cpe_preset` 表里，**没有对外接口，也没有页面**：纳管那一条由引擎自己保证存在，
+要加别的规则直接改库。
+
+### 4.11.1 内置纳管预设
+
+引擎首次用到预设时会确保库里有一条内置预设「纳管（内置）」，动作为：
+
+```json
+[{"type":"set","path":"ManagementServer.URL","value":"${acsUrl}"},
+ {"type":"set","path":"ManagementServer.PeriodicInformInterval","value":"${informInterval}"},
+ {"type":"set","path":"ManagementServer.ConnectionRequestUsername","value":"${crUsername}"},
+ {"type":"set","path":"ManagementServer.ConnectionRequestPassword","value":"${crPassword}"}]
+```
+
+它不设条件（命中所有设备）、重跑间隔 24 小时、BOOTSTRAP 时强制重跑，
+等价于改造前 `InformProvisionService` 写死的那 4 个参数。改造后这四项改由预设驱动，
+原来的 `acs.device.provision.*` 配置继续生效——现在它们作为变量的来源。
+
+### 4.11.2 条件
+
+```json
+[{"field":"productClass","op":"eq","value":"HS8145V5"},
+ {"field":"param:ManagementServer.URL","op":"neq","value":"http://10.0.0.1:9090/ACS-server/ACS"}]
+```
+
+多条之间是**且**的关系，全部成立才算命中。
+
+`field` 可取：
+
+| 取值 | 含义 |
+| --- | --- |
+| `sn` | 设备序列号 |
+| `oui` | 厂商 OUI |
+| `productClass` | 设备型号 |
+| `softwareVersion` / `hardwareVersion` | 软件 / 硬件版本 |
+| `manufacturer` | 厂商 |
+| `rootNode` | 数据模型根节点（`InternetGatewayDevice.` 或 `Device.`） |
+| `isp` | 运营商，读设备台账 |
+| `param:<参数路径>` | 参数当前值，写叶子段即可，如 `param:ManagementServer.URL` |
+
+`op` 可取：
+
+| 取值 | 含义 |
+| --- | --- |
+| `eq` | 相等（忽略大小写，不写就是它） |
+| `neq` | 不等 |
+| `contains` | 包含 |
+| `startsWith` | 以…开头 |
+| `in` | 属于，值用逗号或分号分隔，如 `CMCC,CT` |
+| `regex` | 正则匹配 |
+| `gt` / `lt` | 大于 / 小于，按数值比较 |
+
+参数值取不到时条件**不成立**（`neq` 也一样），所以不要用 `neq` 表达「参数还没设过」。
+
+### 4.11.3 动作
+
+```json
+[{"type":"set","path":"ManagementServer.PeriodicInformInterval","value":"300"},
+ {"type":"reboot","key":""}]
+```
+
+| 类型 | 参数 | 说明 |
+| --- | --- | --- |
+| `set` | `path` + `value` | 设参数值，转 SetParameterValues；同一次会话内的 set 会合并成一条下发 |
+| `reboot` | `key` | 重启，转 Reboot |
+| `addObject` | `objectName` + `key` | 建实例，转 AddObject |
+| `deleteObject` | `objectName` + `key` | 删实例，转 DeleteObject |
+
+`set` 的 `path` 写 `InternetGatewayDevice.` 或 `Device.` 开头就是绝对路径，否则按设备根节点补全，
+所以通常只写 `ManagementServer.URL` 这一段。
+
+`value` 支持这些变量：
+
+| 变量 | 展开成 |
+| --- | --- |
+| `${acsUrl}` | ACS 上报地址，取 `acs.device.provision.acs-url`；留空则按 `acs.public-host` + 上报端口 + `acs.cwmp.cpe-path` 拼 |
+| `${informInterval}` | 上报间隔秒数，取 `acs.device.provision.inform-interval-seconds`；配 0 时这条动作自动丢弃 |
+| `${crUsername}` / `${crPassword}` | 连接请求凭据，取 `acs.device.provision.connection-request-*`；留空或 `auto` 按 `itms` |
+| `${sn}` / `${productClass}` | 设备序列号 / 型号 |
+| `${rootNode}` | 设备数据模型根节点 |
+
+### 4.11.4 其它约定
+
+- 重跑间隔按「设备 + 预设」分别计时，存在进程内存里，**重启进程会重新计时**。
+- 下发失败也按间隔节流，不会每次上报都重试——否则会一直占住设备的下发窗口。
+  真正失败的设备等间隔过去、或等它重启（BOOTSTRAP）时会再跑一次。
+- 下发改写过连接请求凭据时，会同步登记进设备台账，避免之后拿设备已经不认的旧密码去唤醒。
+
+---
+
+## 4.12 文件与固件升级
+
+文件台账在 `/api/files`，设备取文件是 `GET /files/{id}`。
+
+### 4.12.1 两个口子
+
+| 用途 | 路径 | 鉴权 |
+| --- | --- | --- |
+| 上传、清单、删除、下发 | `/api/files`（管理端口 8888） | 要令牌 |
+| 设备下载文件 | `/files/{id}`（上报端口 9090） | 不要令牌 |
+
+分得开是因为所有端口共用一个 Web 容器：上报口是设备必然连得上的口子，
+把文件口挂在那里最稳；它又不在 `/api` 与 `/openapi` 下，不会被鉴权拦住——
+设备下载时不会带令牌。
+
+### 4.12.2 接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/files` | 文件清单，新的在前 |
+| GET | `/api/files/{id}` | 文件详情 |
+| GET | `/api/files/{id}/url` | 设备取这个文件的地址 |
+| POST | `/api/files` | 上传（multipart） |
+| POST | `/api/files/{id}/deliver` | 下发给一批设备 |
+| DELETE | `/api/files/{id}` | 删除 |
+
+### 4.12.3 上传
+
+`multipart/form-data`：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `file` | 是 | 文件本身，单个上限 512MB |
+| `fileType` | 否 | `FIRMWARE`（默认）/ `CONFIG` / `VENDOR` |
+| `version` | 否 | 版本号 |
+| `remark` | 否 | 备注 |
+
+落盘路径是 `acs.file.dir`（默认 `files/`）下的 `yyyyMMdd/uuid_文件名`。
+台账里记的是落盘路径，**不是对外 URL**。对外只有 `/files/{id}` 这一个地址，
+所以文件挪位置、换目录都不影响已经下发出去的下载任务。
+
+### 4.12.4 设备取文件
+
+`GET /files/{id}` 支持：
+
+| 能力 | 说明 |
+| --- | --- |
+| Range | `bytes=0-1023` / `bytes=1024-` / `bytes=-500`，命中回 `206` + `Content-Range`；范围不满足回 `416` |
+| ETag | 取内容摘要（SHA-256），内容不变它就不变 |
+| Last-Modified | 文件落盘时间 |
+| If-None-Match | 命中回 `304`，设备不用重新拉一遍 |
+
+大文件断点续传靠 Range。设备下载到一半断开是常态，服务端不把它当错误。
+
+⚠️ **设备取文件的地址是现场最容易踩的坑**：默认按 `acs.public-host` + 上报端口拼，
+但 ACS 的地址和设备所在的网段经常不是一回事。对不上就配 `acs.file.base-url`
+（如 `http://10.10.19.2:9090`），直接写设备真正能访问到的那个地址。
+
+### 4.12.5 下发升级
+
+```bash
+curl -X POST 'http://127.0.0.1:8888/api/files/1/deliver' -H 'X-Token: <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"sns":["ZXHN000001","ZXHN000002"],"delaySeconds":0}'
+```
+
+每台设备各排一条 `Download`：队列是按设备分流的，多设备之间不会互相堵，
+不像对同一台设备连发多条那样会把它的队列占满。
+
+下发的参数按 CWMP 的 Download 结构拼（顺序即 SOAP 里的元素顺序）：
+
+`CommandKey`、`FileType`、`URL`、`FileSize`、`TargetFileName`、`DelaySeconds`
+
+`FileType` 由台账类型转过来：`FIRMWARE` → `1 Firmware Upgrade Image`，
+`CONFIG` / `VENDOR` → `3 Vendor Configuration File`。
+
+返回每台设备的 `taskId`，进度用 `GET /api/rpc/{taskId}` 查。
+
+### 4.12.6 下载完成的上报
+
+设备下载完会主动上报 `TransferComplete`（往往比 Download 指令晚几分钟）。
+ACS 会回 `TransferCompleteResponse`——不回的话设备会以为 ACS 没收到而反复重报。
+
+下载结果**不记在 Download 指令的账上**：那条指令在设备回 `DownloadResponse` 时就结了，
+这条上报是独立结果，只记日志：
+
+- 成功：`设备下载完成: sn=..., commandKey=...`
+- 失败：`设备下载失败: sn=..., commandKey=..., fault=<码> <描述>`
+
+排查升级失败主要看这条日志里的 fault 码。
+
+---
+
+## 4.13 系统管理
+
+基础路径 `/api/system`。角色、权限、用户都在这里。
+
+### 4.13.1 权限模型
+
+权限点是**代码里的功能清单**，不落库，也不允许增删：删掉一个权限点、代码还在判它，
+那个功能就变成谁也点不动的死按钮。清单由 `GET /api/system/permissions` 给出，
+页面按它勾选，勾的结果存在 `sys_role_permission` 里。
+
+判定按 URL 自动映射，不用给每个接口加注解：
+
+| 请求 | 要的权限点 |
+| --- | --- |
+| `GET /api/device/**` | `device:view` |
+| `POST` / `PUT` / `DELETE /api/device/**` | `device:manage` |
+
+认不出模块的路径（如 `/api/user/info`）不拦——登进来就能看自己是谁，没必要再配权限。
+
+模块一共十个：dashboard / device / template / biz / model / worklist / olt / file / tag / system，
+每个一读一写，共 20 个权限点。
+
+### 4.13.2 两个默认角色
+
+| 角色 | 说明 |
+| --- | --- |
+| `SUPER_ADMIN` 系统管理员 | 内置。**拥有全部权限**，不可删除，改它的权限会被拒 |
+| `OPS_ADMIN` 运维管理员 | 默认能看全部、能改设备与工单，权限可调整 |
+
+系统管理员的「全权限」是在代码里短路的，**权限表里没有它的行**——
+存一份就要操心「表里那行和代码里那句不一致时谁说了算」。
+所以它出现在角色列表里时权限是满的，但页面上那排勾选框是禁用的，保存按钮点不动。
+
+其它角色的权限随便勾，**整份覆盖**：传进去的就是这个角色的全部权限，没传的就没了。
+清单外的权限点会被直接丢掉。
+
+### 4.13.3 接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/system/permissions` | 权限点清单，按模块分组 |
+| GET | `/api/system/roles` | 角色列表，带权限与每个角色下的人数 |
+| POST | `/api/system/roles` | 新建角色，新角色一个权限都没有 |
+| PUT | `/api/system/roles/{code}/permissions` | 设置权限，整份覆盖 |
+| DELETE | `/api/system/roles/{code}` | 删角色 |
+| GET | `/api/system/users` | 用户列表，带最近登录来源与 IP |
+| POST | `/api/system/users` | 新建用户 |
+| PUT | `/api/system/users/{id}` | 改昵称 / 角色 / 状态 / 密码（改密码要二次验证） |
+| DELETE | `/api/system/users/{id}` | 删用户 |
+| GET | `/api/system/login-logs` | 登录日志，失败的也在里面 |
+
+### 4.13.4 改密码要二次验证
+
+改密码（改谁的都算，包括改自己的）除了新密码，还得把操作者**自己**的当前密码一起提交：
+
+```json
+{ "password": "新密码", "currentPassword": "操作者自己的密码" }
+```
+
+少 `currentPassword` 或它不对，请求直接被拒，一个字都不写。
+
+理由：拿到会话不等于拿到密码。会话被借走的人改不了密码，改不了就等于拿不走账号。
+只改昵称、只改角色不需要这步。
+
+### 4.13.5 登录日志
+
+`GET /api/system/login-logs?limit=50`，传 `userId` 只看某一个人。
+
+每次登录记一条：时间、登录名、IP、来源（WEB / CLIENT / MOBILE）、结果、浏览器标识。
+**失败的也记**——连着几十次失败是有人在试密码，只记成功的话这条线索整个就没了。
+
+| 失败原因 | 含义 |
+| --- | --- |
+| 用户不存在 | 用户名本身就不在库里，这条日志的 `user_id` 是空的 |
+| 密码错误 | 用户名对、密码不对 |
+| 账号已禁用 | 账号被人停了 |
+
+IP 取自 `X-Forwarded-For` 的第一段（前面挂反代时，那才是真正的客户端），
+其次 `X-Real-IP`，都没有才用连接的地址。反代没配好时别指望它准。
+日志只留每个人最近 50 条，超出的把最旧的删掉——它是个只增不查的表。
+
+### 4.13.6 权限不止菜单
+
+页面上的按钮也按权限摆：没有 `device:manage` 的人，设备台账上"重启""恢复出厂""批量下发模版"
+这些按钮根本不出现；没有 `olt:manage` 就看不到 OLT 的增删改。
+
+但按钮只是让人别点到不该点的，**真正挡人的是后端**：
+
+- 新接口没在 `PermissionCodes` 里登记模块的，会被直接拒掉（403）并在日志里告警。
+  这是默认拒绝：漏登记会立刻暴露成"功能打不开"，而不是变成"所有人都能访问"。
+- 免检的只有登录三件套：`/api/user/login`、`/api/user/info`、`/api/user/logout`。
+
+### 4.13.7 几条规矩
+
+- **初始系统账号 `admin` 删不掉**，接口返回「系统用户禁止删除」。它是建库脚本写进去的种子账号，
+  删完没有人能进系统。应用层挡一道，**数据库里还有一个 `BEFORE DELETE` 触发器兜底**——
+  就算有人在 MySQL 命令行里 `delete from sys_user` 也会被拦下。
+- **至少要留一个系统管理员**：删它、停用它、把它降成别的角色，只要它是最后一个就会被拒。
+  不留的话没人能再改权限，系统就锁死了。这一条同样写在数据库触发器里，判的是库里的实际数量。
+- **不能删自己**。
+- **还有人的角色删不掉**，先给他们换角色。
+- 改角色**立即生效**，不用让对方重新登录——每次请求都按库里的角色判，不缓存在令牌里。
+- 没有权限的请求返回 **403**，业务码 `403`，消息里带着缺的那个权限点。
+
+### 4.13.8 老版本升级
+
+升级前 `sys_user.role` 存的是 `admin` / `operator` / `viewer` 三个字符串。
+首次用到角色时会自动迁：`admin` → `SUPER_ADMIN`，`operator` / `viewer` / 空 → `OPS_ADMIN`。
+
+**不迁的话老账号会因为角色不存在而一个权限都没有**，等于被锁在门外——
+所以迁移放在每次都走得到的路径上（`RoleService.migrateLegacyRoles`），不指望人工跑脚本。
+
+### 4.13.9 例子
+
+```bash
+# 建一个只能看的角色
+curl -X POST 'http://127.0.0.1:8888/api/system/roles' -H 'X-Token: <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"code":"VIEWER","name":"只读"}'
+
+curl -X PUT 'http://127.0.0.1:8888/api/system/roles/VIEWER/permissions' \
+  -H 'X-Token: <token>' -H 'Content-Type: application/json' \
+  -d '{"permissions":["dashboard:view","device:view","worklist:view"]}'
+
+# 建个用户，让他只能看
+curl -X POST 'http://127.0.0.1:8888/api/system/users' -H 'X-Token: <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"wang","password":"123456","nickname":"老王","role":"VIEWER"}'
+```
+
+---
+
 ## 5. 北向接口 `/openapi/v1`
 
 面向上层运营商 / 计费 / 客服系统。**基点：`http://<host>:8899/openapi/v1`。**
@@ -805,7 +1154,7 @@ X-ACS-Signature: 8Z3k...（Base64）
 
 | 项 | 值 |
 | --- | --- |
-| 端口 | `acs.cwmp.listen-ports`，默认 `9090,8082` |
+| 端口 | `acs.cwmp.listen-ports`，默认 `9090,8082,6060,8012,8080,8172,5481` |
 | 路径 | `acs.cwmp.cpe-path` 默认 `/ACS-server/ACS`，另有 `/cpe` 与 `acs.cwmp.extra-cpe-paths` 兼容路径 |
 | 鉴权 | HTTP Digest，账号 `acs.auth.cpe-to-acs-username/password`；配 `auto` 或留空即免认证（上线前务必改回） |
 | 报文 | CWMP SOAP 1.1 envelope，见 `cwmp/SoapEnvelopeBuilder` |
@@ -813,13 +1162,41 @@ X-ACS-Signature: 8Z3k...（Base64）
 下行 connection request 的 URL 由 `acs.public-host` 拼出（默认 `127.0.0.1`，上线前必改：
 否则让设备主动回连时，它会连向自己）。
 
+### 6.1 连接断开与指令重发
+
+CWMP 是短连接：光猫报完一轮就把 TCP 断了。**连接断开不等于设备离线，也不等于指令失败**，
+所以这边的处理是：
+
+| 情况 | 处理 |
+| --- | --- |
+| TCP 连接断开 | 只摘掉连接标识，等回应中的指令继续留着，由响应定时器兜底超时 |
+| 设备从新连接回来（NAT 换端口、被唤醒后重连） | 按会话接管处理：会话对象没变，不判成重复会话、不关会话 |
+| 一轮没收到回应 | 重排队列，按 `acs.session.retry-delay-seconds`（默认 60 秒）× 2ⁿ 退避后重发，最多 `acs.session.max-delivery-attempts`（默认 2）次 |
+| 设备回了 fault（9003 / 9002 等） | 直接判失败，不重试——重试还是同一个错 |
+| 超过最大尝试次数 | 判 `8002` 失败 |
+
+**有副作用的方法一律不重发**：没收到回应时并不知道设备执行了没有，下面这些重发就是真干了第二次，
+所以直接按失败结，不重排队列：
+
+`Reboot`、`Download`、`Upload`、`FactoryReset`、`AddObject`、`DeleteObject`、
+`ChangeDUState`、`ScheduleDownload`、`ScheduleInform`、`CancelTransfer`、`SetVouchers`
+
+`SetParameterValues` / `GetParameterValues` / `GetParameterNames` 这类设值与取值，
+重复一次结果一样，可以安全重发。
+
+### 6.2 会话号
+
+每轮 Inform 都是一次新的 CWMP 会话，会换发新的 `session` Cookie。带着过期 Cookie 的请求蹭不进下一轮会话。
+同一轮会话里，空 POST 与 RPC 响应常常各开一条 TCP 连接（源端口不同），只有 Cookie 能认出是同一台设备——
+这是连接标识 `ip:端口` 做不到的，所以重靠 Cookie。
+
 ---
 
 ## 7. 错误排查速查
 
 | 现象 | 先看哪里 |
 | --- | --- |
-| HTTP 401 / `code=50008` | token 是否过期（`admin.jwt.expire-hours`）、请求头是否用了 `X-Token` |
+| HTTP 401 / `code=401` | token 是否过期（`admin.jwt.expire-hours`）、请求头是否用了 `X-Token` |
 | HTTP 404（北向端口） | 是否在 8899 上访问了非 `/openapi/v1/**` 路径，或在 8888 上访问了北向路径 |
 | 业务快照某分区为空 | 响应里的 `dataModel`；再看能力树是否已采集（`Device.WAN.` 与 `InternetGatewayDevice.WANDevice.` 的差异） |
 | 下发 `REJECTED` | `plan.errors` 与 §5.3 的 errorMsg 对照表 |
@@ -861,6 +1238,14 @@ X-ACS-Signature: 8Z3k...（Base64）
 `GET /api/worklist/instances/device/{sn}`、`GET /api/worklist/instances/{id}/steps`
 
 **概览**：`GET /api/dashboard/overview`
+
+**系统**：`GET /api/system/permissions`、`GET /api/system/roles`、`POST /api/system/roles`、
+`PUT /api/system/roles/{code}/permissions`、`DELETE /api/system/roles/{code}`、
+`GET /api/system/users`、`POST /api/system/users`、`PUT /api/system/users/{id}`、
+`DELETE /api/system/users/{id}`
+
+**文件**：`GET /api/files`、`GET /api/files/{id}`、`GET /api/files/{id}/url`、`POST /api/files`、
+`POST /api/files/{id}/deliver`、`DELETE /api/files/{id}`
 
 **OLT**：`GET /api/olt/list`、`GET /api/olt/{id}`、`POST /api/olt/save`、`POST /api/olt/delete`、
 `POST /api/olt/test`、`POST /api/olt/{id}/test`、`POST /api/olt/{id}/sync`、

@@ -15,13 +15,6 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>ACS 与 CPE 之间为反向轮询模型：一个 HTTP 事务只携带一条 SOAP 消息，
  * ACS 只能在 CPE 主动 POST 的响应体中捎带下发 RPC。</p>
- *
- * <p>关键三重限制：</p>
- * <ul>
- *   <li>Inform 的响应只能是 InformResponse，不能夹带下发</li>
- *   <li>下发发生在 CPE 的下一次空 POST 的响应体里</li>
- *   <li>同一时刻只允许一个已下发但未回应的 RPC</li>
- * </ul>
  */
 @Slf4j
 @Data

@@ -97,9 +97,7 @@
 </template>
 
 <script>
-import { fetchInstances, fetchInstance, fetchSteps } from '@/api/worklist'
-
-const STATUS_OPTIONS = ['build', 'bind', 'reserve', 'standby', 'running', 'success', 'fail', 'abnormal', 'expire']
+import { fetchInstances, fetchInstance, fetchSteps, fetchWorklistStatuses } from '@/api/worklist'
 
 export default {
   name: 'WorklistInstances',
@@ -108,7 +106,7 @@ export default {
       loading: false,
       list: [],
       total: 0,
-      statusOptions: STATUS_OPTIONS,
+      statusOptions: [],
       query: { page: 1, size: 20, sn: '', status: '' },
       steps: [],
       stepsVisible: false,
@@ -119,6 +117,10 @@ export default {
     }
   },
   created() {
+    // 工单状态枚举由后端维护，后端加一个状态，页面的筛选下拉自动跟上
+    fetchWorklistStatuses()
+      .then(res => { this.statusOptions = (res && res.data) || [] })
+      .catch(() => {})
     this.load()
   },
   methods: {

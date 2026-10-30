@@ -1,8 +1,10 @@
-# javaacs 部署文档
+# PilotACS 部署文档
 
 [English](./DEPLOYMENT.en.md) | 简体中文
 
 TR069 ACS（Java 版）的构建、部署与验收说明。目标是让一台干净机器按本文步骤走完就能跑起来并接上光猫。
+
+> 想省事的话直接用 Docker：**[DOCKER.md](./DOCKER.md)**，Linux / Windows / macOS 一条命令拉起应用 + MySQL + Redis。本文是手工部署的完整步骤。
 
 ---
 
@@ -14,7 +16,7 @@ TR069 ACS（Java 版）的构建、部署与验收说明。目标是让一台干
 | --- | --- |
 | 管理端 | `http://<ip>:8888`（`server.port`，页面在 jar 内 `BOOT-INF/classes/static`） |
 | 管理端 API | 同源 `/api/**` |
-| CPE 上报 | `http://<ip>:9090`、`:8082`（`acs.cwmp.listen-ports`，按需增删） |
+| CPE 上报 | `http://<ip>:9090`（华为）、`:8012`（中兴）、`:8080`（烽火）、`:8082`、`:8172`、`:5481`、`:6060`（`acs.cwmp.listen-ports`，按需增删） |
 | 数据库 | MySQL 8 / MariaDB 10.6+，库名 `tr_acs` |
 | 缓存/队列 | Redis 6+（用于上报削峰与指令队列；无 Redis 可关闭队列降级运行） |
 | 工单模板 | jar 外目录 `configuration/`，改文件热加载生效，无需重启 |
@@ -36,7 +38,7 @@ TR069 ACS（Java 版）的构建、部署与验收说明。目标是让一台干
 ## 3. 目录说明
 
 ```
-javaacs/
+PilotACS/
 └── server/
     ├── pom.xml
     ├── sql/schema.sql                 # 全库唯一建表脚本（部署必需，已入库）
@@ -78,8 +80,8 @@ mysql -u root -p tr_acs < server/sql/schema.sql
 在 **jar 同级目录**放 `config/application.yml`，只写要覆盖的键（Spring Boot 原生优先级高于 jar 内的同名配置，不用重新打包）：
 
 ```bash
-mkdir -p /opt/javaacs/config
-cp server/deploy/config/application.yml.example /opt/javaacs/config/application.yml
+mkdir -p /opt/pilotacs/config
+cp server/deploy/config/application.yml.example /opt/pilotacs/config/application.yml
 ```
 
 最小必改项：
@@ -94,7 +96,9 @@ spring:
 acs:
   public-host: <ACS 的 IP>        # 下发给光猫的连接请求地址，必须填真实地址
   cwmp:
-    listen-ports: 9090,8082       # 光猫上报端口，多填几个不影响
+    listen-ports: 9090,8082,6060,8012,8080,8172,5481   # 光猫上报端口，多填几个不影响
+    # 华为 9090 / 中兴 8012 / 烽火 8080，其余是各厂商常用备用口
+    # 贝尔常用的 8888 与 server.port 冲突（加了也会被跳过），要收这类设备先把管理端口挪走
 ```
 
 也可以完全不建文件，用环境变量覆盖（Spring Boot 原生名称映射）：
@@ -105,21 +109,21 @@ export SPRING_DATASOURCE_PASSWORD='xxx'
 export ACS_CWMP_LISTEN_PORTS='9090,8082'
 ```
 
-> `config/application.yml` 含数据库口令，已在 `.gitignore` 中排除，切勿提交。
+
 
 ### 4.4 构建
 
 后端（跳过测试）：
 
 ```bash
-cd javaacs/server
+cd pilotacs/server
 mvn clean package -DskipTests
 ```
 
 前端必须单独构建 —— `dist/` 不在版本库里，不构建的话打出来的 jar 没有页面：
 
 ```bash
-cd javaacs/server/web
+cd pilotacs/server/web
 npm install --legacy-peer-deps --no-audit --no-fund
 npm run build:prod          # Windows 先执行: set NODE_OPTIONS=--openssl-legacy-provider
 ```
@@ -130,35 +134,35 @@ npm run build:prod          # Windows 先执行: set NODE_OPTIONS=--openssl-lega
 mvn clean package -Pweb -DskipTests
 ```
 
-产物：`server/target/javaacs-server.jar`。
+产物：`server/target/pilotacs-server.jar`。
 
 ### 4.5 部署目录
 
 ```bash
-mkdir -p /opt/javaacs/{config,logs}
-cp server/target/javaacs-server.jar            /opt/javaacs/
-cp -r server/configuration                     /opt/javaacs/configuration   # 工单模板
-cp server/deploy/config/application.yml.example /opt/javaacs/config/application.yml
+mkdir -p /opt/pilotacs/{config,logs}
+cp server/target/pilotacs-server.jar            /opt/pilotacs/
+cp -r server/configuration                     /opt/pilotacs/configuration   # 工单模板
+cp server/deploy/config/application.yml.example /opt/pilotacs/config/application.yml
 ```
 
 最终布局：
 
 ```
-/opt/javaacs/
-├── javaacs-server.jar
+/opt/pilotacs/
+├── pilotacs-server.jar
 ├── config/application.yml
 ├── configuration/          # 工单模板，热加载目录
 └── logs/
 ```
 
-模板根目录按**进程工作目录**解析，jar 内默认已是 `./configuration`，在 `/opt/javaacs` 下启动就正好读到上面那个目录，无需额外配置。
+模板根目录按**进程工作目录**解析，jar 内默认已是 `./configuration`，在 `/opt/pilotacs` 下启动就正好读到上面那个目录，无需额外配置。
 
 只有在别的工作目录启动时，才需要显式指定：
 
 ```yaml
 acs:
   worklist:
-    root-path: /opt/javaacs/configuration
+    root-path: /opt/pilotacs/configuration
 ```
 
 > 目录为空时会依次回退到 jar 同级的 `configuration/`、`target/configuration/`，并自动释放示例配置。
@@ -168,39 +172,39 @@ acs:
 前台（首次建议，便于看日志）：
 
 ```bash
-cd /opt/javaacs
-java -jar javaacs-server.jar
+cd /opt/pilotacs
+java -jar pilotacs-server.jar
 ```
 
 后台：
 
 ```bash
-nohup java -jar javaacs-server.jar > logs/stdout.log 2>&1 &
+nohup java -jar pilotacs-server.jar > logs/stdout.log 2>&1 &
 ```
 
 Windows：
 
 ```bat
-cd /d D:\javaacs
-java -jar javaacs-server.jar
+cd /d D:\pilotacs
+java -jar pilotacs-server.jar
 ```
 
 systemd（可选）：
 
 ```ini
 [Unit]
-Description=javaacs ACS Server
+Description=PilotACS ACS Server
 After=network.target mysql.service redis.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/javaacs
-ExecStart=/usr/bin/java -jar /opt/javaacs/javaacs-server.jar
+WorkingDirectory=/opt/pilotacs
+ExecStart=/usr/bin/java -jar /opt/pilotacs/pilotacs-server.jar
 Restart=always
 RestartSec=10
-StandardOutput=append:/opt/javaacs/logs/stdout.log
-StandardError=append:/opt/javaacs/logs/stdout.log
+StandardOutput=append:/opt/pilotacs/logs/stdout.log
+StandardError=append:/opt/pilotacs/logs/stdout.log
 
 [Install]
 WantedBy=multi-user.target
@@ -221,7 +225,7 @@ WantedBy=multi-user.target
 | `spring.datasource.*` | 本机 `tr_acs` | 数据库连接；连接串字符集写 `UTF-8`，写 `utf8mb4` 会抛异常 |
 | `spring.data.redis.*` | `127.0.0.1:6379` | 队列存储 |
 | `acs.public-host` | `127.0.0.1` | **生产必须改**，ACS 通告给光猫的地址 |
-| `acs.cwmp.listen-ports` | `9090,8082` | CPE 上报端口，逗号分隔，与主端口重复会自动跳过 |
+| `acs.cwmp.listen-ports` | `9090,8082,6060,8012,8080,8172,5481` | CPE 上报端口，逗号分隔，与主端口重复会自动跳过（贝尔常用的 8888 因此收不到） |
 | `acs.cwmp.cpe-path` | `/ACS-server/ACS` | CPE 上报主路径 |
 | `acs.cwmp.extra-cpe-paths` | `/acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/` | 兼容的上报路径，现场遇到新写法在此追加 |
 | `acs.auth.cpe-to-acs-username/password` | `hgw/hgw` | 光猫连 ACS 的 digest 账号；写 `auto` 或留空即免认证，任何账号密码都放行 |
@@ -242,7 +246,7 @@ WantedBy=multi-user.target
 
 启动日志里应依次看到：
 
-1. `Started JavaAcsApplication in X seconds`
+1. `Started PilotAcsApplication in X seconds`
 2. `CPE 上报路径：主路径 /ACS-server/ACS，兼容 [...]` —— 路径兼容清单已生效
 3. `CPE 上报监听端口：[8888, 9090, 8082]（主端口 8888，额外 [9090, 8082]）`
 4. 无 `数据库自检失败` / 无缺表提示
@@ -267,8 +271,8 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8888/api/user/login \
   -H 'Content-Type: application/json' -d '{"username":"admin","password":"<pwd>"}' \
   | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 
-curl -s http://127.0.0.1:8888/api/dashboard/overview -H "X-Token: $TOKEN"   # code=20000
-curl -s http://127.0.0.1:8899/openapi/v1/devices?size=1 -H "X-Token: $TOKEN" # code=20000
+curl -s http://127.0.0.1:8888/api/dashboard/overview -H "X-Token: $TOKEN"   # code=200
+curl -s http://127.0.0.1:8899/openapi/v1/devices?size=1 -H "X-Token: $TOKEN" # code=200
 
 # 端口隔离：8899 上访问管理端路径必须 404
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8899/api/dashboard/overview  # 404
@@ -316,8 +320,8 @@ ACS 认证账号填 `hgw/hgw`（或现场实际值，对应 `acs.auth.cpe-to-acs
 升级：备份配置与模板 → 停进程 → 替换 jar → 启动。
 
 ```bash
-cp -r /opt/javaacs/config /opt/javaacs/config.bak
-cp -r /opt/javaacs/configuration /opt/javaacs/configuration.bak
+cp -r /opt/pilotacs/config /opt/pilotacs/config.bak
+cp -r /opt/pilotacs/configuration /opt/pilotacs/configuration.bak
 # 停进程后替换 jar，再启动
 ```
 

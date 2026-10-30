@@ -1,6 +1,6 @@
 
 -- ============================================================
--- javaacs-server 全库建表脚本（唯一权威版本）
+-- pilotacs-server 全库建表脚本（唯一权威版本）
 --
 -- 全库只有这一份脚本：手工部署执行它，应用启动时自动补表也读它
 -- （构建时复制到 classpath:db/schema.sql，见 pom.xml 的 <resources>）。
@@ -23,11 +23,73 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     `status`        TINYINT      NOT NULL DEFAULT 1 COMMENT '状态：1启用 0禁用',
     `deleted`       TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     `last_login_at` DATETIME     DEFAULT NULL COMMENT '最近登录时间',
+    `last_login_source` VARCHAR(16) DEFAULT NULL COMMENT '最近登录来源：WEB/CLIENT/MOBILE',
+    `last_login_ip` VARCHAR(64)  DEFAULT NULL COMMENT '最近登录 IP',
     `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_sys_user_username` (`username`, `deleted`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '管理端用户';
+
+-- ---------------------------- 角色 ----------------------------
+CREATE TABLE IF NOT EXISTS `sys_role` (
+    `id`         BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `code`       VARCHAR(32) NOT NULL COMMENT '角色编码，如 SUPER_ADMIN',
+    `name`       VARCHAR(64) NOT NULL COMMENT '角色名',
+    `builtin`    TINYINT     NOT NULL DEFAULT 0 COMMENT '内置：1 不可删除、权限不可改',
+    `remark`     VARCHAR(255) DEFAULT NULL COMMENT '说明',
+    `created_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_sys_role_code` (`code`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '角色';
+
+-- ---------------------------- 角色权限 ----------------------------
+CREATE TABLE IF NOT EXISTS `sys_role_permission` (
+    `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `role_code`   VARCHAR(32) NOT NULL COMMENT '角色编码',
+    `permission`  VARCHAR(64) NOT NULL COMMENT '权限点，如 device:manage',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_role_permission` (`role_code`, `permission`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '角色权限';
+
+-- ---------------------------- 删用户的底线（数据库兜底） ----------------------------
+-- 应用层的 UserAdminService 已经拦了，这里再拦一道：
+-- 有人在 MySQL 命令行里 delete from sys_user 也一样删不掉。
+-- 注意这段用了 DELIMITER，整份脚本请用 mysql 客户端执行，别用按分号拆语句的程序喂。
+DROP TRIGGER IF EXISTS `trg_sys_user_before_delete`;
+DELIMITER //
+CREATE TRIGGER `trg_sys_user_before_delete` BEFORE DELETE ON `sys_user`
+FOR EACH ROW
+BEGIN
+    -- 初始的系统账号，删完就没人能进系统
+    IF LOWER(OLD.`username`) = 'admin' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '系统用户禁止删除';
+    END IF;
+    -- 系统管理员只剩这一个时不能再删，否则没人能改权限
+    IF OLD.`role` = 'SUPER_ADMIN'
+        AND (SELECT COUNT(*) FROM `sys_user` WHERE `role` = 'SUPER_ADMIN') <= 1 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '至少要留一个系统管理员';
+    END IF;
+END//
+DELIMITER ;
+
+-- ---------------------------- 登录日志 ----------------------------
+-- 失败的也记：连着几十次失败是有人在试密码，只记成功的话这条线索就没了
+CREATE TABLE IF NOT EXISTS `sys_login_log` (
+    `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`     BIGINT      DEFAULT NULL COMMENT '用户 id，用户名不存在时为 NULL',
+    `username`    VARCHAR(64) DEFAULT NULL COMMENT '尝试登录的用户名',
+    `ip`          VARCHAR(64) DEFAULT NULL COMMENT '来源 IP',
+    `source`      VARCHAR(16) DEFAULT NULL COMMENT '来源：WEB/CLIENT/MOBILE',
+    `user_agent`  VARCHAR(255) DEFAULT NULL COMMENT '浏览器或客户端标识',
+    `success`     TINYINT     NOT NULL DEFAULT 0 COMMENT '1 成功 0 失败',
+    `fail_reason` VARCHAR(64) DEFAULT NULL COMMENT '失败原因',
+    `created_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_login_log_user` (`user_id`, `created_at`),
+    KEY `idx_login_log_time` (`created_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '登录日志';
 
 -- ---------------------------- 运营商配置 ----------------------------
 CREATE TABLE IF NOT EXISTS `operator_config` (
@@ -493,8 +555,71 @@ CREATE TABLE IF NOT EXISTS `olt_sync_record` (
     KEY `idx_olt_sync_record` (`olt_id`, `id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT 连接与同步记录';
 
+-- 预设：设备上报后按条件自动把配置收敛到目标值，取代逐台手工下发
+CREATE TABLE IF NOT EXISTS `cpe_preset` (
+    `id`                         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `name`                       VARCHAR(64)  NOT NULL COMMENT '预设名称',
+    `priority`                   INT          NOT NULL DEFAULT 100 COMMENT '优先级，小的先执行',
+    `enabled`                    TINYINT      NOT NULL DEFAULT 1 COMMENT '是否启用',
+    `conditions_json`            TEXT         COMMENT '匹配条件 JSON，为空表示命中所有设备',
+    `actions_json`               TEXT         NOT NULL COMMENT '动作 JSON',
+    `reprovision_interval_hours` INT          NOT NULL DEFAULT 24 COMMENT '距上次执行超过该小时数才重跑，0 表示每次上报都跑',
+    `force_on_bootstrap`         TINYINT      NOT NULL DEFAULT 0 COMMENT 'BOOTSTRAP 时是否跳过节流强制重跑',
+    `built_in`                   TINYINT      NOT NULL DEFAULT 0 COMMENT '内置预设不允许删除',
+    `remark`                     VARCHAR(255) DEFAULT NULL,
+    `created_at`                 DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`                 DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_preset_run` (`enabled`, `priority`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '设备预设：上报后自动收敛配置';
+
+-- 文件：固件与配置，供设备 Download 取用
+CREATE TABLE IF NOT EXISTS `cpe_file` (
+    `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `name`       VARCHAR(128) NOT NULL COMMENT '文件名',
+    `file_type`  VARCHAR(32)  NOT NULL COMMENT '类型：FIRMWARE 固件 / CONFIG 配置 / VENDOR 厂商文件',
+    `version`    VARCHAR(64)  DEFAULT NULL COMMENT '版本号，固件用',
+    `size`       BIGINT       NOT NULL DEFAULT 0 COMMENT '字节数',
+    `sha256`     VARCHAR(64)  DEFAULT NULL COMMENT '内容摘要，设备与 ACS 都用它校验',
+    `store_path` VARCHAR(255) NOT NULL COMMENT '落盘的相对路径，不是对外 URL',
+    `remark`     VARCHAR(255) DEFAULT NULL,
+    `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_file_type` (`file_type`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '文件：固件与配置';
+
+-- 已下线的设备标签表（cpe_device_tag）：分群改用台账上的房间号 room_no，
+-- 建库脚本不再建这张表；历史库里还留着的可以直接 DROP TABLE cpe_device_tag;
+
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- ---------------------------- 初始化角色 ----------------------------
+-- 系统管理员：拥有全部权限，权限表里没有它的行，代码里直接放行
+INSERT IGNORE INTO `sys_role` (`code`, `name`, `builtin`, `remark`)
+VALUES ('SUPER_ADMIN', '系统管理员', 1, '拥有全部权限，不可删除，权限不可修改');
+INSERT IGNORE INTO `sys_role` (`code`, `name`, `builtin`, `remark`)
+VALUES ('OPS_ADMIN', '运维管理员', 0, '默认能看全部、能改设备与工单，权限可调整');
+
+INSERT IGNORE INTO `sys_role_permission` (`role_code`, `permission`) VALUES
+('OPS_ADMIN', 'dashboard:view'),
+('OPS_ADMIN', 'device:view'),
+('OPS_ADMIN', 'device:manage'),
+('OPS_ADMIN', 'template:view'),
+('OPS_ADMIN', 'biz:view'),
+('OPS_ADMIN', 'model:view'),
+('OPS_ADMIN', 'worklist:view'),
+('OPS_ADMIN', 'worklist:manage'),
+('OPS_ADMIN', 'olt:view'),
+('OPS_ADMIN', 'olt:manage'),
+('OPS_ADMIN', 'file:view'),
+('OPS_ADMIN', 'file:manage');
 
 -- ---------------------------- 初始化管理员 ----------------------------
 INSERT IGNORE INTO `sys_user` (`id`, `username`, `password`, `nickname`, `role`, `status`)
-VALUES (1, 'admin', 'admin', '系统管理员', 'admin', 1);
+VALUES (1, 'admin', 'admin', '系统管理员', 'SUPER_ADMIN', 1);
+
+-- ---------------------------- 老角色值迁移 ----------------------------
+-- 升级前的 role 是 admin / operator / viewer，迁到角色编码上，
+-- 不迁的话老账号会因为角色不存在而一个权限都没有
+UPDATE `sys_user` SET `role` = 'SUPER_ADMIN' WHERE `role` IN ('admin', 'ADMIN');
+UPDATE `sys_user` SET `role` = 'OPS_ADMIN' WHERE `role` IN ('operator', 'viewer') OR `role` IS NULL;

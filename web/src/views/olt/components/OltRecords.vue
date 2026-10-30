@@ -10,7 +10,9 @@
           <pre class="raw-output">{{ row.rawPreview || '本次无回显（连接阶段即失败）' }}</pre>
         </template>
       </el-table-column>
-      <el-table-column label="时间" prop="createdAt" width="170" />
+      <el-table-column label="时间" width="170">
+        <template slot-scope="{ row }">{{ row.createdAt ? String(row.createdAt).replace('T', ' ') : '-' }}</template>
+      </el-table-column>
       <el-table-column label="动作" width="100" align="center">
         <template slot-scope="{ row }">
           <el-tag size="mini" :type="row.action === 'SYNC' ? 'success' : 'info'">

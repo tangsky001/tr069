@@ -6,7 +6,12 @@ const getDefaultState = () => {
   return {
     token: getToken(),
     name: '',
-    avatar: ''
+    avatar: '',
+    // 角色与权限：菜单与按钮按它决定露不露出来
+    role: '',
+    permissions: [],
+    // 最近登录来源：WEB / CLIENT / MOBILE
+    source: ''
   }
 }
 
@@ -24,6 +29,15 @@ const mutations = {
   },
   SET_AVATAR: (state, avatar) => {
     state.avatar = avatar
+  },
+  SET_ROLE: (state, role) => {
+    state.role = role || ''
+  },
+  SET_PERMISSIONS: (state, permissions) => {
+    state.permissions = permissions || []
+  },
+  SET_SOURCE: (state, source) => {
+    state.source = source || ''
   }
 }
 
@@ -53,10 +67,13 @@ const actions = {
           return reject('Verification failed, please Login again.')
         }
 
-        const { name, avatar } = data
+        const { name, avatar, role, permissions, source } = data
 
         commit('SET_NAME', name)
         commit('SET_AVATAR', avatar)
+        commit('SET_ROLE', role)
+        commit('SET_PERMISSIONS', permissions)
+        commit('SET_SOURCE', source)
         resolve(data)
       }).catch(error => {
         reject(error)

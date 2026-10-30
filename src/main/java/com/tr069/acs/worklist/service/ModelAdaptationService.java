@@ -585,6 +585,41 @@ public class ModelAdaptationService {
 
     // ==================== 申报比对 ====================
 
+    /** 运营商候选：v 是存库值，t 是展示名。 */
+    private static final List<Map<String, String>> ISP_OPTIONS = List.of(
+            isp("CT", "电信"),
+            isp("CU", "联通"),
+            isp("CMCC", "移动"),
+            isp("CBN", "广电"),
+            isp("standard", "标准/通用"));
+
+    /** 网口数量与 SIP 数量共用：两者口径一致，都是「能接几条」。 */
+    private static final List<String> PORT_OPTIONS = List.of("无", "1", "2", "3", "4", "8");
+
+    private static final List<String> SPEED_OPTIONS = List.of("无", "自动", "100M", "1000M", "2500M");
+
+    private static final List<String> WIFI_SPEC_OPTIONS = List.of("无", "2.4G", "2.4G+5.8G");
+
+    /**
+     * 能力申报的候选值。
+     *
+     * <p>这些取值不是随便的字符串，后端逐项比对时按它们解析：
+     * {@code 1000M} 要拆成速率数字、{@code 2.4G+5.8G} 要拆出两个频段、{@code 无} 表示不申报。
+     * 页面下拉里若冒出一个后端不认的值，该项会按 0 处理，等于白填——
+     * 所以候选值由后端给出，页面只管选。</p>
+     */
+    public Map<String, Object> capabilityOptions() {
+        return Map.of(
+                "isp", ISP_OPTIONS,
+                "ports", PORT_OPTIONS,
+                "speeds", SPEED_OPTIONS,
+                "wifiSpecs", WIFI_SPEC_OPTIONS);
+    }
+
+    private static Map<String, String> isp(String v, String t) {
+        return Map.of("v", v, "t", t);
+    }
+
     /** 逐项比对申报能力与实测能力，返回不满足的原因列表，空列表即全部支持。 */
     List<String> compare(Detection d, AdaptRequest req) {
         List<String> reasons = new ArrayList<>();

@@ -25,9 +25,15 @@ public class SysUser {
     private String nickname;
 
     /**
-     * 角色：admin / operator / viewer
+     * 角色编码，对应 sys_role.code。
      */
     private String role;
+
+    /** 最近一次登录来源：WEB / CLIENT / MOBILE。 */
+    private String lastLoginSource;
+
+    /** 最近一次登录 IP。 */
+    private String lastLoginIp;
 
     /**
      * 状态：1 启用，0 禁用

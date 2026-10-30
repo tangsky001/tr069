@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 工单实例。
@@ -43,6 +44,13 @@ public class Worklist {
      * 设备类型，如 ADSL_4+1
      */
     private String domain;
+
+    /**
+     * 工单状态全集。页面筛选下拉与状态流转都取它，避免两边各写一份。
+     */
+    public static final List<String> STATUSES = List.of(
+            "build", "bind", "reserve", "standby", "running",
+            "success", "fail", "abnormal", "expire");
 
     /**
      * build/bind/reserve/standby/running/success/fail/abnormal/expire

@@ -20,13 +20,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 向设备下发 CWMP 指令的通用通道。
- *
- * <p>只有 capability 原先会下发 RPC，它把「队列 / 会话 outbox」的二选一逻辑写在自己内部。
- * 下发执行器与北向接口同样需要这条路（SetParameterValues / AddObject / DeleteObject / Reboot），
- * 所以抽出来复用，避免各处重复一套排队与降级判断。</p>
- *
- * <p>队列开启时指令进 Redis 等 ACS 下发器取走；关闭时退回会话内存 outbox，
- * 只要设备在线就能发。</p>
  */
 @Slf4j
 @Service
@@ -51,7 +44,6 @@ public class CwmpRpcService {
 
     /**
      * 队列关闭时退回会话内存 outbox，此时拿不到 rpc_record 主键，
-     * 用负数序号避免与数据库主键相撞。
      */
     private final AtomicInteger outboxSequence = new AtomicInteger(0);
 
@@ -128,10 +120,6 @@ public class CwmpRpcService {
 
     /**
      * 设备是否正处在这一轮会话里：有会话、在线、且最近 {@code seconds} 秒内有通信。
-     *
-     * <p>只看 {@link #isOnline} 不够：CWMP 是短连接，设备报完一轮就把 TCP 断了，
-     * 会话对象还在、在线标志要等扫描才清掉，此时提交指令只能等它下一次上报。
-     * 下发前先等到「刚通信过」的会话，指令才会被设备紧接着的空 POST 取走。</p>
      */
     public boolean isSessionFresh(String sn, long seconds) {
         CpeSession session = sessionManager.find(sn);
