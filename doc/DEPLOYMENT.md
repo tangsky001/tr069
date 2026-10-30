@@ -4,6 +4,8 @@
 
 TR069 ACS（Java 版）的构建、部署与验收说明。目标是让一台干净机器按本文步骤走完就能跑起来并接上光猫。
 
+> 想省事的话直接用 Docker：**[DOCKER.md](./DOCKER.md)**，Linux / Windows / macOS 一条命令拉起应用 + MySQL + Redis。本文是手工部署的完整步骤。
+
 ---
 
 ## 1. 部署概览

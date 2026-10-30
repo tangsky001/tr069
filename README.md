@@ -6,6 +6,7 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 
 - **仓库地址：国内 [Gitee](https://gitee.com/kangweft/tr069) ｜ [Gitcode](https://gitcode.com/tangsky001/PilotACS)｜ 国外 [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图在国内加载不出来就去 Gitee 看）
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
+- 一键部署见 **[doc/DOCKER.md](./doc/DOCKER.md)**（Docker 部署 / 自动打包部署二选一，Linux / Windows / macOS）
 - 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
 - 界面截图见 [doc/Display/](./doc/Display)（见下文「效果展示」）
@@ -514,6 +515,15 @@ PilotACS/
 │   ├── ADAPTED_MODELS.en.md  Adapted ONT models (English)
 │   └── Display/              界面截图（见「效果展示」）
 ├── pom.xml                   后端（Maven）
+├── Dockerfile                镜像构建（node 编译前端 + maven 打包 + jre 运行）
+├── docker-compose.yml        一键编排（app + mysql + redis）
+├── .env.example              部署参数模板（首次运行自动复制为 .env）
+├── scripts/
+│   ├── deploy.sh             Linux / macOS 一键部署（Docker / 自动打包 二选一）
+│   ├── deploy.bat            Windows 双击入口
+│   ├── deploy.ps1            Windows PowerShell 一键部署
+│   ├── setup-native.sh       Linux / macOS 自动打包部署（装依赖 + 编译 + 建库 + 启动）
+│   └── setup-native.ps1      Windows 自动打包部署
 ├── sql/schema.sql            全库唯一建表脚本（所有表）
 ├── deploy/
 │   └── config/application.yml.example   外置配置模板
