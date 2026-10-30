@@ -46,7 +46,7 @@ knife4j:
 
 spring:
   application:
-    name: javaacs-server
+    name: pilotacs-server
   # Redis：设备上报队列与下发指令队列的存储
   data:
     redis:
@@ -76,7 +76,7 @@ spring:
     username: root
     password: Qq123456
     hikari:
-      pool-name: javaacs-hikari
+      pool-name: pilotacs-hikari
       # 设备并发上报量大，空闲连接不宜过低
       minimum-idle: 10
       maximum-pool-size: 50

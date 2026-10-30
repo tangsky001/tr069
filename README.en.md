@@ -1,4 +1,4 @@
-# javaacs
+# PilotACS
 
 [English](./README.en.md) | [简体中文](./README.md)
 
@@ -538,7 +538,7 @@ session cannot be used to rewrite passwords in bulk.
 ## 5. Directory layout
 
 ```
-javaacs/
+PilotACS/
 ├── README.md                 This document (Simplified Chinese)
 ├── README.en.md              English version
 ├── API.md                    API docs (admin /api and northbound /openapi/v1)

@@ -1,4 +1,4 @@
-# javaacs Deployment Guide
+# PilotACS Deployment Guide
 
 English | [简体中文](./DEPLOYMENT.md)
 
@@ -36,7 +36,7 @@ Everything ships as a single Spring Boot fat-jar; the frontend is packaged into 
 ## 3. Directory Structure
 
 ```
-javaacs/
+PilotACS/
 └── server/
     ├── pom.xml
     ├── sql/schema.sql                 # single database creation script (required for deployment, committed)
@@ -83,8 +83,8 @@ Place `config/application.yml` in the **same directory as the jar**, containing 
 (Spring Boot gives it native precedence over the same keys inside the jar, so no repackaging is needed):
 
 ```bash
-mkdir -p /opt/javaacs/config
-cp server/deploy/config/application.yml.example /opt/javaacs/config/application.yml
+mkdir -p /opt/pilotacs/config
+cp server/deploy/config/application.yml.example /opt/pilotacs/config/application.yml
 ```
 
 Minimum mandatory changes:
@@ -119,14 +119,14 @@ export ACS_CWMP_LISTEN_PORTS='9090,8082'
 Backend (skipping tests):
 
 ```bash
-cd javaacs/server
+cd pilotacs/server
 mvn clean package -DskipTests
 ```
 
 The frontend must be built separately — `dist/` is not in the repository, and without building it the resulting jar contains no pages:
 
 ```bash
-cd javaacs/server/web
+cd pilotacs/server/web
 npm install --legacy-peer-deps --no-audit --no-fund
 npm run build:prod          # on Windows run first: set NODE_OPTIONS=--openssl-legacy-provider
 ```
@@ -137,36 +137,36 @@ You can also let Maven build both in a single command (add `-Dnpm.executable=npm
 mvn clean package -Pweb -DskipTests
 ```
 
-Artifact: `server/target/javaacs-server.jar`.
+Artifact: `server/target/pilotacs-server.jar`.
 
 ### 4.5 Deployment directory
 
 ```bash
-mkdir -p /opt/javaacs/{config,logs}
-cp server/target/javaacs-server.jar            /opt/javaacs/
-cp -r server/configuration                     /opt/javaacs/configuration   # work order templates
-cp server/deploy/config/application.yml.example /opt/javaacs/config/application.yml
+mkdir -p /opt/pilotacs/{config,logs}
+cp server/target/pilotacs-server.jar            /opt/pilotacs/
+cp -r server/configuration                     /opt/pilotacs/configuration   # work order templates
+cp server/deploy/config/application.yml.example /opt/pilotacs/config/application.yml
 ```
 
 Final layout:
 
 ```
-/opt/javaacs/
-├── javaacs-server.jar
+/opt/pilotacs/
+├── pilotacs-server.jar
 ├── config/application.yml
 ├── configuration/          # work order templates, hot-reload directory
 └── logs/
 ```
 
 The template root is resolved against the **process working directory**, and the jar already defaults to `./configuration`,
-so starting from `/opt/javaacs` picks up exactly the directory above with no extra configuration.
+so starting from `/opt/pilotacs` picks up exactly the directory above with no extra configuration.
 
 Only when starting from another working directory do you need to set it explicitly:
 
 ```yaml
 acs:
   worklist:
-    root-path: /opt/javaacs/configuration
+    root-path: /opt/pilotacs/configuration
 ```
 
 > When the directory is empty, it falls back in order to `configuration/` next to the jar and `target/configuration/`, and sample configuration is extracted automatically.
@@ -176,39 +176,39 @@ acs:
 Foreground (recommended for the first run, easier to read logs):
 
 ```bash
-cd /opt/javaacs
-java -jar javaacs-server.jar
+cd /opt/pilotacs
+java -jar pilotacs-server.jar
 ```
 
 Background:
 
 ```bash
-nohup java -jar javaacs-server.jar > logs/stdout.log 2>&1 &
+nohup java -jar pilotacs-server.jar > logs/stdout.log 2>&1 &
 ```
 
 Windows:
 
 ```bat
-cd /d D:\javaacs
-java -jar javaacs-server.jar
+cd /d D:\pilotacs
+java -jar pilotacs-server.jar
 ```
 
 systemd (optional):
 
 ```ini
 [Unit]
-Description=javaacs ACS Server
+Description=PilotACS ACS Server
 After=network.target mysql.service redis.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/javaacs
-ExecStart=/usr/bin/java -jar /opt/javaacs/javaacs-server.jar
+WorkingDirectory=/opt/pilotacs
+ExecStart=/usr/bin/java -jar /opt/pilotacs/pilotacs-server.jar
 Restart=always
 RestartSec=10
-StandardOutput=append:/opt/javaacs/logs/stdout.log
-StandardError=append:/opt/javaacs/logs/stdout.log
+StandardOutput=append:/opt/pilotacs/logs/stdout.log
+StandardError=append:/opt/pilotacs/logs/stdout.log
 
 [Install]
 WantedBy=multi-user.target
@@ -251,7 +251,7 @@ If you do not need northbound integration, set `acs.openapi.port` to `0`; `/open
 
 The startup log should show, in order:
 
-1. `Started JavaAcsApplication in X seconds`
+1. `Started PilotAcsApplication in X seconds`
 2. `CPE 上报路径：主路径 /ACS-server/ACS，兼容 [...]` — the path compatibility list is in effect
 3. `CPE 上报监听端口：[8888, 9090, 8082]（主端口 8888，额外 [9090, 8082]）`
 4. No `数据库自检失败` / no missing-table messages
@@ -325,8 +325,8 @@ Normal interaction flow:
 Upgrade: back up configuration and templates → stop the process → replace the jar → start.
 
 ```bash
-cp -r /opt/javaacs/config /opt/javaacs/config.bak
-cp -r /opt/javaacs/configuration /opt/javaacs/configuration.bak
+cp -r /opt/pilotacs/config /opt/pilotacs/config.bak
+cp -r /opt/pilotacs/configuration /opt/pilotacs/configuration.bak
 # stop the process, replace the jar, then start again
 ```
 

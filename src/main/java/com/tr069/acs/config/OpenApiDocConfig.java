@@ -305,7 +305,7 @@ public class OpenApiDocConfig {
                 .info(new Info()
                         .title("TR069 ACS 接口文档")
                         .version("1.0.0")
-                        .contact(new Contact().name("javaacs"))
+                        .contact(new Contact().name("PilotACS"))
                         .description("""
                                 管理端 `/api/**` 与北向 `/openapi/v1/**` 两套接口。三条约定：
 

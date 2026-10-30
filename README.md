@@ -1,10 +1,10 @@
-# javaacs
+# PilotACS
 
 [English](./README.en.md) | 简体中文
 
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
-- **仓库地址：国内 [Gitee](https://gitee.com/kangweft/tr069) ｜ 国外 [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图在国内加载不出来就去 Gitee 看）
+- **仓库地址：国内 [Gitee](https://gitee.com/kangweft/tr069) ｜ [Gitcode](https://gitcode.com/tangsky001/PilotACS)｜ 国外 [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图在国内加载不出来就去 Gitee 看）
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
 - 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
@@ -503,7 +503,7 @@ DBA 模板增删、TR-069 模板新增、一键开局（改端口 VLAN 模式 + 
 ## 5. 目录结构
 
 ```
-javaacs/
+PilotACS/
 ├── README.md                 本文档（简体中文）
 ├── README.en.md              English version
 ├── API.md                    接口文档（管理端 /api 与北向 /openapi/v1）
@@ -732,6 +732,7 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | 访问 | 地址 |
 | --- | --- |
 | **国内** | https://gitee.com/kangweft/tr069 |
+| **国内** | https://gitcode.com/tangsky001/PilotACS |
 | **国外** | https://github.com/tangsky001/tr069 |
 
 截图都放在 [`doc/Display/`](./doc/Display)，国内加载不出来时直接到 **Gitee** 仓库看（图片与 README 同源，

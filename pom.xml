@@ -12,9 +12,9 @@
     </parent>
 
     <groupId>com.tr069</groupId>
-    <artifactId>javaacs-server</artifactId>
+    <artifactId>pilotacs-server</artifactId>
     <version>1.0.0</version>
-    <name>javaacs-server</name>
+    <name>pilotacs-server</name>
     <description>TR069 ACS Server</description>
 
     <properties>
@@ -176,7 +176,7 @@
     </dependencies>
 
     <build>
-        <finalName>javaacs-server</finalName>
+        <finalName>pilotacs-server</finalName>
 
         <resources>
             <resource>

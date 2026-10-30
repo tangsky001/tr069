@@ -1,4 +1,4 @@
-# javaacs 部署文档
+# PilotACS 部署文档
 
 [English](./DEPLOYMENT.en.md) | 简体中文
 
@@ -36,7 +36,7 @@ TR069 ACS（Java 版）的构建、部署与验收说明。目标是让一台干
 ## 3. 目录说明
 
 ```
-javaacs/
+PilotACS/
 └── server/
     ├── pom.xml
     ├── sql/schema.sql                 # 全库唯一建表脚本（部署必需，已入库）
@@ -78,8 +78,8 @@ mysql -u root -p tr_acs < server/sql/schema.sql
 在 **jar 同级目录**放 `config/application.yml`，只写要覆盖的键（Spring Boot 原生优先级高于 jar 内的同名配置，不用重新打包）：
 
 ```bash
-mkdir -p /opt/javaacs/config
-cp server/deploy/config/application.yml.example /opt/javaacs/config/application.yml
+mkdir -p /opt/pilotacs/config
+cp server/deploy/config/application.yml.example /opt/pilotacs/config/application.yml
 ```
 
 最小必改项：
@@ -114,14 +114,14 @@ export ACS_CWMP_LISTEN_PORTS='9090,8082'
 后端（跳过测试）：
 
 ```bash
-cd javaacs/server
+cd pilotacs/server
 mvn clean package -DskipTests
 ```
 
 前端必须单独构建 —— `dist/` 不在版本库里，不构建的话打出来的 jar 没有页面：
 
 ```bash
-cd javaacs/server/web
+cd pilotacs/server/web
 npm install --legacy-peer-deps --no-audit --no-fund
 npm run build:prod          # Windows 先执行: set NODE_OPTIONS=--openssl-legacy-provider
 ```
@@ -132,35 +132,35 @@ npm run build:prod          # Windows 先执行: set NODE_OPTIONS=--openssl-lega
 mvn clean package -Pweb -DskipTests
 ```
 
-产物：`server/target/javaacs-server.jar`。
+产物：`server/target/pilotacs-server.jar`。
 
 ### 4.5 部署目录
 
 ```bash
-mkdir -p /opt/javaacs/{config,logs}
-cp server/target/javaacs-server.jar            /opt/javaacs/
-cp -r server/configuration                     /opt/javaacs/configuration   # 工单模板
-cp server/deploy/config/application.yml.example /opt/javaacs/config/application.yml
+mkdir -p /opt/pilotacs/{config,logs}
+cp server/target/pilotacs-server.jar            /opt/pilotacs/
+cp -r server/configuration                     /opt/pilotacs/configuration   # 工单模板
+cp server/deploy/config/application.yml.example /opt/pilotacs/config/application.yml
 ```
 
 最终布局：
 
 ```
-/opt/javaacs/
-├── javaacs-server.jar
+/opt/pilotacs/
+├── pilotacs-server.jar
 ├── config/application.yml
 ├── configuration/          # 工单模板，热加载目录
 └── logs/
 ```
 
-模板根目录按**进程工作目录**解析，jar 内默认已是 `./configuration`，在 `/opt/javaacs` 下启动就正好读到上面那个目录，无需额外配置。
+模板根目录按**进程工作目录**解析，jar 内默认已是 `./configuration`，在 `/opt/pilotacs` 下启动就正好读到上面那个目录，无需额外配置。
 
 只有在别的工作目录启动时，才需要显式指定：
 
 ```yaml
 acs:
   worklist:
-    root-path: /opt/javaacs/configuration
+    root-path: /opt/pilotacs/configuration
 ```
 
 > 目录为空时会依次回退到 jar 同级的 `configuration/`、`target/configuration/`，并自动释放示例配置。
@@ -170,39 +170,39 @@ acs:
 前台（首次建议，便于看日志）：
 
 ```bash
-cd /opt/javaacs
-java -jar javaacs-server.jar
+cd /opt/pilotacs
+java -jar pilotacs-server.jar
 ```
 
 后台：
 
 ```bash
-nohup java -jar javaacs-server.jar > logs/stdout.log 2>&1 &
+nohup java -jar pilotacs-server.jar > logs/stdout.log 2>&1 &
 ```
 
 Windows：
 
 ```bat
-cd /d D:\javaacs
-java -jar javaacs-server.jar
+cd /d D:\pilotacs
+java -jar pilotacs-server.jar
 ```
 
 systemd（可选）：
 
 ```ini
 [Unit]
-Description=javaacs ACS Server
+Description=PilotACS ACS Server
 After=network.target mysql.service redis.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/javaacs
-ExecStart=/usr/bin/java -jar /opt/javaacs/javaacs-server.jar
+WorkingDirectory=/opt/pilotacs
+ExecStart=/usr/bin/java -jar /opt/pilotacs/pilotacs-server.jar
 Restart=always
 RestartSec=10
-StandardOutput=append:/opt/javaacs/logs/stdout.log
-StandardError=append:/opt/javaacs/logs/stdout.log
+StandardOutput=append:/opt/pilotacs/logs/stdout.log
+StandardError=append:/opt/pilotacs/logs/stdout.log
 
 [Install]
 WantedBy=multi-user.target
@@ -244,7 +244,7 @@ WantedBy=multi-user.target
 
 启动日志里应依次看到：
 
-1. `Started JavaAcsApplication in X seconds`
+1. `Started PilotAcsApplication in X seconds`
 2. `CPE 上报路径：主路径 /ACS-server/ACS，兼容 [...]` —— 路径兼容清单已生效
 3. `CPE 上报监听端口：[8888, 9090, 8082]（主端口 8888，额外 [9090, 8082]）`
 4. 无 `数据库自检失败` / 无缺表提示
@@ -318,8 +318,8 @@ ACS 认证账号填 `hgw/hgw`（或现场实际值，对应 `acs.auth.cpe-to-acs
 升级：备份配置与模板 → 停进程 → 替换 jar → 启动。
 
 ```bash
-cp -r /opt/javaacs/config /opt/javaacs/config.bak
-cp -r /opt/javaacs/configuration /opt/javaacs/configuration.bak
+cp -r /opt/pilotacs/config /opt/pilotacs/config.bak
+cp -r /opt/pilotacs/configuration /opt/pilotacs/configuration.bak
 # 停进程后替换 jar，再启动
 ```
 

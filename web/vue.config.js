@@ -38,7 +38,7 @@ module.exports = {
       errors: true
     },
     // 只有显式设置 VUE_APP_USE_MOCK=true 时才拦截请求走本地 mock，
-    // 默认直连 javaacs 后端，方便联调登录与设备接口
+    // 默认直连 PilotACS 后端，方便联调登录与设备接口
     before: process.env.VUE_APP_USE_MOCK === 'true'
       ? require('./mock/mock-server.js')
       : undefined,
