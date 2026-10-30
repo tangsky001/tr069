@@ -554,6 +554,7 @@ configuration/
 | `domain` / `mapper` | 主库实体与 Mapper |
 | `common` | 统一响应 `Result`、分页、全局异常、启动自检、Web 配置（多端口、路径分发） |
 | `config` | JWT 拦截器、跨域、MyBatis-Plus、SPA 路由回退 |
+| `report` | **实例上报**：每 15 分钟向 hserver POST 一次本实例信息（`StatisticsReportTask`），报文带 `serverId=acs` 供服务端按 TR069 体系展示；实例标识由 `MachineFingerprint` 按机器指纹生成（`ACS-<32位>`）。地址与周期写死在类常量里，不依赖配置文件；上报失败只记日志 |
 
 ## 7. 前端结构
 
