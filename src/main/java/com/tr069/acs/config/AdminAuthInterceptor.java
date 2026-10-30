@@ -116,22 +116,22 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
     }
 
     /**
-     * 返回 401，业务码用 50008，管理端响应拦截器据此弹出重新登录。
-     */
-    /**
-     * 登录了但没权限。业务码 50403，与管理端的响应拦截器对齐。
+     * 登录了但没权限：HTTP 403 + 业务码 {@link Result#FORBIDDEN_CODE}。
      */
     private void writeForbidden(HttpServletResponse response, String required) throws IOException {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write(objectMapper.writeValueAsString(
-                Result.failure(50403, "没有权限：" + required)));
+                Result.forbidden("没有权限：" + required)));
     }
 
+    /**
+     * 没带令牌或令牌失效：HTTP 401 + 业务码 {@link Result#UNAUTHORIZED_CODE}，前端据此弹重新登录。
+     */
     private void writeUnauthorized(HttpServletResponse response) throws IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write(objectMapper.writeValueAsString(
-                Result.failure(50008, "登录状态已失效，请重新登录")));
+                Result.unauthorized("登录状态已失效，请重新登录")));
     }
 }

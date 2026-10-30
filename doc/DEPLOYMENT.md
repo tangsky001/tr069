@@ -269,8 +269,8 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8888/api/user/login \
   -H 'Content-Type: application/json' -d '{"username":"admin","password":"<pwd>"}' \
   | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 
-curl -s http://127.0.0.1:8888/api/dashboard/overview -H "X-Token: $TOKEN"   # code=20000
-curl -s http://127.0.0.1:8899/openapi/v1/devices?size=1 -H "X-Token: $TOKEN" # code=20000
+curl -s http://127.0.0.1:8888/api/dashboard/overview -H "X-Token: $TOKEN"   # code=200
+curl -s http://127.0.0.1:8899/openapi/v1/devices?size=1 -H "X-Token: $TOKEN" # code=200
 
 # 端口隔离：8899 上访问管理端路径必须 404
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8899/api/dashboard/overview  # 404

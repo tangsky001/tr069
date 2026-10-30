@@ -5,8 +5,12 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.media.Schema;
+import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springdoc.core.customizers.OperationCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,12 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 在线接口文档（springdoc / Swagger UI）：启动后打开 {@code /doc/index.html} 就能看到全部接口。
- *
- * <p>接口清单、参数名与类型、返回结构是从 Controller 签名与 Model 字段自动扫出来的，
- * 加了新接口不用改这里；下面的 {@link #DOC} 只负责给接口配一句中文说明——
- * 写在这里而不是散在各处 {@code @Operation} 注解，是为了让说明集中一处、业务代码保持干净。</p>
- */
+ * 在线接口文档（springdoc / Swagger UI）：启动后打开 {@code /doc/index.html} 就能看到全部接口。 */
 @Configuration
 public class OpenApiDocConfig {
 
@@ -66,7 +65,7 @@ public class OpenApiDocConfig {
         // 鉴权
         doc("POST /api/user/login", "登录换 token",
                 "唯一免鉴权接口。成功后取 `data.token`，之后每个请求带请求头 `X-Token`。\n"
-                        + "登录失败也是 HTTP 200：`code=50000`，`message` 是「用户名或密码错误」这类原因。\n"
+                        + "登录失败也是 HTTP 200：`code=500`，`message` 是「用户名或密码错误」这类原因。\n"
                         + "令牌默认 12 小时有效，没有刷新接口，过期重新登录。");
         doc("GET /api/user/info", "当前登录用户信息", "需要带令牌。`data` 里是 name / avatar / roles / introduction。");
         doc("POST /api/user/logout", "登出", "服务端没有令牌黑名单，登出只是给客户端一个明确的退出动作。");
@@ -117,7 +116,7 @@ public class OpenApiDocConfig {
                         + "页面校验与后端校验用的是同一份约束，按它填就不会被拒。");
         doc("POST /api/olt/{id}/vlan/preview", "VLAN 命令预览（不下发）",
                 "把这次会执行的命令算出来给页面看，和下发走同一个方法，看到的必然是将要下发的那条序列。\n"
-                        + "`warnings` 是提醒不是错误；参数写错时返回 `code=50000` + 中文原因。");
+                        + "`warnings` 是提醒不是错误；参数写错时返回 `code=500` + 中文原因。");
         doc("POST /api/olt/{id}/vlan", "新建 VLAN 并配成员端口",
                 "`vlanIds` 支持 `100-102,300` 这种写法；`tagged` / `untagged` 写 `epon1` / `ge3`，同一个口不能两边都占。\n"
                         + "不带端口时一次最多 64 个，带端口一次最多 16 个（每个 VLAN 都要单独进视图配端口）。\n"
@@ -149,7 +148,7 @@ public class OpenApiDocConfig {
                         + "一次最多能改几个端口、VLAN ID 上下限、TR-069 段的默认值。");
         doc("POST /api/olt/{id}/quick-setup/preview", "一键开局命令预览（不下发）",
                 "把这次开局要下发的所有命令按顺序算出来，和下发走同一个方法。\n"
-                        + "`warnings` 是提醒（如「没填 VLAN，只会改端口模式」）；参数不合法时 `code=50000` + 中文原因。");
+                        + "`warnings` 是提醒（如「没填 VLAN，只会改端口模式」）；参数不合法时 `code=500` + 中文原因。");
         doc("POST /api/olt/{id}/quick-setup", "一键开局",
                 "一次把三件事做完：改端口 VLAN 模式 + 建业务 VLAN + 建 TR-069 模板，哪一步没勾就跳过哪一步。\n"
                         + "`mode`：trunk / hybrid 走 `vlanList`（可写 `41,45-46`），access 只认一个 VLAN。\n"
@@ -310,9 +309,10 @@ public class OpenApiDocConfig {
                         .description("""
                                 管理端 `/api/**` 与北向 `/openapi/v1/**` 两套接口。三条约定：
 
-                                1. **业务成功看 `code == 20000`，HTTP 200 不代表成功**：
-                                   参数写错、设备拒绝、命令算不出来都是 HTTP 200 + `code: 50000`，
-                                   原因在 `message` 里（可直接展示给用户）。只有未鉴权才是 HTTP 401。
+                                1. **业务成功看 `code == 200`，HTTP 200 不代表成功**：
+                                   参数写错、设备拒绝、命令算不出来都是 HTTP 200 + `code: 500`，
+                                   原因在 `message` 里（可直接展示给用户）。缺令牌是 HTTP 401（`code: 401`），
+                                   缺权限是 HTTP 403（`code: 403`）。
                                 2. **先 `POST /api/user/login` 换 token**，之后每个请求带请求头 `X-Token`。
                                    令牌默认 12 小时有效，没有刷新接口，过期重新登录。
                                 3. **北向接口在 8899 端口**（前缀 `/openapi/v1`），鉴权方式相同。
@@ -352,6 +352,9 @@ public class OpenApiDocConfig {
             if ("POST /api/user/login".equals(key)) {
                 operation.setSecurity(List.of());
             }
+            // 参数说明与响应状态说明先补：这两个跟接口有没有写 DOC 无关
+            fillParameters(operation, key);
+            fillResponses(operation);
             String text = DOC.get(key);
             if (text == null) {
                 return operation;
@@ -361,6 +364,85 @@ public class OpenApiDocConfig {
             operation.setDescription(text.substring(br + 1).trim());
             return operation;
         };
+    }
+
+    /**
+     * 给「请求参数」那张表补说明：路径参数与查询参数逐个按名字查 {@link OpenApiParamDoc}。
+     *
+     * <p>{@code id} 这类名字在不同接口里指向不同对象，查表时带上 {@code 方法 路径} 作上下文。</p>
+     */
+    private static void fillParameters(Operation operation, String key) {
+        if (operation.getParameters() == null) {
+            return;
+        }
+        for (Parameter parameter : operation.getParameters()) {
+            if (parameter == null || (parameter.getDescription() != null && !parameter.getDescription().isBlank())) {
+                continue;
+            }
+            String text = OpenApiParamDoc.param(key, parameter.getName());
+            if (text != null) {
+                parameter.setDescription(text);
+            }
+        }
+    }
+
+    /** 给「响应状态」那张表补说明：200 与 401 这两行有话说，其余保持框架默认。 */
+    private static void fillResponses(Operation operation) {
+        if (operation.getResponses() == null) {
+            return;
+        }
+        for (Map.Entry<String, ApiResponse> entry : operation.getResponses().entrySet()) {
+            String text = OpenApiParamDoc.status(entry.getKey());
+            if (text != null && entry.getValue() != null) {
+                entry.getValue().setDescription(text);
+            }
+        }
+    }
+
+    /**
+     * 给「响应参数」那张表补说明：遍历 {@code components.schemas}，按字段名查表写 description。
+     *
+     * <p>Swagger Models 页面用的是同一份 schema，所以那边也会一起有说明。</p>
+     */
+    @Bean
+    public OpenApiCustomizer fieldDocCustomizer() {
+        return openApi -> {
+            if (openApi.getComponents() == null || openApi.getComponents().getSchemas() == null) {
+                return;
+            }
+            openApi.getComponents().getSchemas().forEach((name, schema) -> fillSchema(name, schema, 0));
+        };
+    }
+
+    /** 递归补一个 schema 的字段说明，{@code depth} 用来兜住自引用。 */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void fillSchema(String name, Schema<?> schema, int depth) {
+        if (schema == null || depth > 3) {
+            return;
+        }
+        fillSchema(name, schema.getItems(), depth + 1);
+        Map<String, Schema> properties = schema.getProperties();
+        if (properties == null) {
+            return;
+        }
+        // 通用响应体的 code / message / data 与业务对象里的同名字段含义不同，只在顶层按 Result 走一套说法
+        boolean resultBody = depth == 0 && name.startsWith("Result");
+        for (Map.Entry<String, Schema> entry : properties.entrySet()) {
+            Schema<?> property = entry.getValue();
+            if (property == null) {
+                continue;
+            }
+            if (property.getDescription() == null || property.getDescription().isBlank()) {
+                String text = resultBody ? OpenApiParamDoc.resultField(entry.getKey()) : null;
+                if (text == null) {
+                    text = OpenApiParamDoc.field(entry.getKey());
+                }
+                if (text != null) {
+                    property.setDescription(text);
+                }
+            }
+            fillSchema(name, property, depth + 1);
+        }
     }
 
     /** 从 Controller 与方法上的 @*Mapping 拼出 `方法 路径`，如 `GET /api/olt/{id}` */

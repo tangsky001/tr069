@@ -7,7 +7,9 @@
 > 可直接查看全部接口的用途、请求参数与返回结构，顶部「Authorize / 认证」填一次 token 就能在线调试。
 > <http://127.0.0.1:8888/v3/api-docs> 是同一份内容的 OpenAPI 3.0 JSON，
 > 在 Apifox / Postman 里「导入 → OpenAPI/Swagger」粘贴这个地址即可批量生成接口。
-> 说明文字集中在 `config/OpenApiDocConfig` 的 `DOC` 表，新增接口在那儿补一句即可。
+> 说明文字集中在 `config/OpenApiDocConfig` 的 `DOC` 表，新增接口在那儿补一句即可；
+> 请求参数与响应字段的中文（界面上「参数说明」那一列）在 `config/OpenApiParamDoc` 按名字查表，
+> 模型字段不用为了文档加 `@Schema` 注解。
 
 ---
 
@@ -31,7 +33,7 @@
    - 请求头 `X-Token: <token>`（管理端页面用这个）
    - 请求头 `Authorization: Bearer <token>`
    - query 参数 `?token=<token>`（仅调试用）
-3. 未携带或校验失败返回 **HTTP 401**，body 为 `{"code":50008,"message":"登录状态已失效，请重新登录"}`。
+3. 未携带或校验失败返回 **HTTP 401**，body 为 `{"code":401,"message":"登录状态已失效，请重新登录"}`。
 
 例外路径（不鉴权）：`/api/user/login`、`/vue-admin-template/user/login`/`info`/`logout`，
 以及所有光猫上报路径——设备拿不到令牌，拦了就注册不上来。
@@ -43,17 +45,19 @@
 ### 1.3 统一响应体
 
 ```json
-{ "code": 20000, "message": "success", "data": { } }
+{ "code": 200, "message": "success", "data": { } }
 ```
 
 | 字段 | 说明 |
 | --- | --- |
-| `code` | `20000` 成功；`50000` 通用业务失败；`50008` 登录失效；其它为各接口自定义业务码 |
+| `code` | `200` 成功；`500` 通用业务失败；`401` 登录失效；`403` 没权限；其它为各接口自定义业务码 |
 | `message` | 成功时是 `success`，失败时是可直接展示给用户中文原因 |
 | `data` | 业务数据，失败时通常为 `null` |
 
-> HTTP 状态码与 `code` 是两个维度：业务失败也返回 HTTP 200 + `code != 20000`，
-> 只有未鉴权才是 HTTP 401。判断成败一律看 `code`。
+业务码沿用 HTTP 语义，省一层翻译：成功 `200`、业务失败 `500`、缺令牌 `401`、缺权限 `403`。
+
+HTTP 状态码只在缺令牌与缺权限时和业务码一起跟着变（HTTP 401 / 403）；
+其余业务失败仍然是 HTTP 200 + `code: 500`，原因在 `message` 里。**判断成败一律看 `code`**。
 
 ### 1.4 分页
 
@@ -82,7 +86,7 @@
 // 请求
 { "username": "admin", "password": "******" }
 // 响应
-{ "code": 20000, "message": "success",
+{ "code": 200, "message": "success",
   "data": { "token": "eyJhbGciOi...", "role": "SUPER_ADMIN", "source": "WEB" } }
 ```
 
@@ -107,7 +111,7 @@
 `GET /api/user/info`（别名 `/vue-admin-template/user/info`）
 
 ```json
-{ "code": 20000, "data": {
+{ "code": 200, "data": {
     "name": "admin",
     "avatar": "https://...",
     "roles": ["SUPER_ADMIN"],
@@ -215,7 +219,7 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 - 请求体：与 RPC 同名的参数对象，如 `{"parameterNames":["Device.WAN."]}`（不同 RPC 参数不同）。
 - 响应（**提交即返回，不挂起等设备**）：
   ```json
-  { "code": 20000, "data": { "taskId": 17, "queued": true } }
+  { "code": 200, "data": { "taskId": 17, "queued": true } }
   ```
   `queued` 为 true 表示设备还没在线，指令进了队列，会在它下次上报时空 POST 带走。
 
@@ -942,7 +946,7 @@ IP 取自 `X-Forwarded-For` 的第一段（前面挂反代时，那才是真正�
 - **不能删自己**。
 - **还有人的角色删不掉**，先给他们换角色。
 - 改角色**立即生效**，不用让对方重新登录——每次请求都按库里的角色判，不缓存在令牌里。
-- 没有权限的请求返回 **403**，业务码 `50403`，消息里带着缺的那个权限点。
+- 没有权限的请求返回 **403**，业务码 `403`，消息里带着缺的那个权限点。
 
 ### 4.13.8 老版本升级
 
@@ -1192,7 +1196,7 @@ CWMP 是短连接：光猫报完一轮就把 TCP 断了。**连接断开不等�
 
 | 现象 | 先看哪里 |
 | --- | --- |
-| HTTP 401 / `code=50008` | token 是否过期（`admin.jwt.expire-hours`）、请求头是否用了 `X-Token` |
+| HTTP 401 / `code=401` | token 是否过期（`admin.jwt.expire-hours`）、请求头是否用了 `X-Token` |
 | HTTP 404（北向端口） | 是否在 8899 上访问了非 `/openapi/v1/**` 路径，或在 8888 上访问了北向路径 |
 | 业务快照某分区为空 | 响应里的 `dataModel`；再看能力树是否已采集（`Device.WAN.` 与 `InternetGatewayDevice.WANDevice.` 的差异） |
 | 下发 `REJECTED` | `plan.errors` 与 §5.3 的 errorMsg 对照表 |

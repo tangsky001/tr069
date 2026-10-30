@@ -104,12 +104,12 @@ public class AuthController {
         Object parsed = request.getAttribute(AdminAuthInterceptor.USERNAME_ATTR);
         String username = parsed != null ? String.valueOf(parsed) : jwtTokenService.parse(token);
         if (username == null) {
-            return Result.failure(50008, "登录状态已失效，请重新登录");
+            return Result.unauthorized("登录状态已失效，请重新登录");
         }
         SysUser user = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, username));
         if (user == null) {
-            return Result.failure(50008, "用户不存在");
+            return Result.unauthorized("用户不存在");
         }
 
         // vue-admin-template 用 name / avatar / roles 渲染，权限清单与登录来源另给
