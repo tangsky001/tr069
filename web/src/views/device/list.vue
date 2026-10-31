@@ -392,7 +392,7 @@
     </el-dialog>
 
     <!-- 查询超管账号密码弹窗：每台设备一行，多路账号展开看 -->
-    <el-dialog title="超级管理员账号密码" :visible.sync="adminPwdVisible" width="860px">
+    <el-dialog title="超级管理员账号密码" :visible.sync="adminPwdVisible" width="960px">
       <el-table v-loading="adminPwdLoading" :data="adminPwdRows" border size="small" max-height="480">
         <el-table-column type="expand">
           <template slot-scope="{ row }">
@@ -405,20 +405,23 @@
             <div v-else class="admin-pwd-empty">{{ row.message || '未查询到账号' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="序列号" prop="sn" min-width="190" show-overflow-tooltip />
-        <el-table-column label="状态" width="100">
+        <el-table-column label="序列号" prop="sn" min-width="175" show-overflow-tooltip />
+        <el-table-column label="状态" width="95">
           <template slot-scope="{ row }">
             <el-tag size="mini" :type="adminPwdTagType(row)">{{ adminPwdStatusText(row) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="账号" min-width="150">
+        <el-table-column label="账号" min-width="140" show-overflow-tooltip>
           <template slot-scope="{ row }">{{ adminFirstAccount(row).username || '-' }}</template>
         </el-table-column>
-        <el-table-column label="密码" min-width="190">
+        <el-table-column label="密码" min-width="170" show-overflow-tooltip>
           <template slot-scope="{ row }">{{ adminFirstAccount(row).password || '-' }}</template>
         </el-table-column>
+        <el-table-column label="说明" min-width="240" show-overflow-tooltip>
+          <template slot-scope="{ row }">{{ adminPwdHint(row) }}</template>
+        </el-table-column>
       </el-table>
-      <div class="admin-pwd-tip">账号与口令是从设备上实时读到的明文，可直接用于登录光猫后台。</div>
+      <div class="admin-pwd-tip" :class="{ 'admin-pwd-tip-warn': adminPwdHasNoAccount }">{{ adminPwdTip }}</div>
       <span slot="footer">
         <el-button type="primary" :loading="adminPwdLoading" @click="reloadAdminPwd">重新查询</el-button>
         <el-button @click="adminPwdVisible = false">关闭</el-button>
@@ -862,6 +865,15 @@ export default {
           this.sortVal(a, key).localeCompare(this.sortVal(b, key), 'zh') * dir)
       }
       return rows
+    },
+    // 一行账号都没读到时，底部提示不能还写着「可直接用于登录后台」
+    adminPwdHasNoAccount() {
+      return !this.adminPwdLoading && !this.adminPwdRows.some(r => r.accounts && r.accounts.length)
+    },
+    adminPwdTip() {
+      if (this.adminPwdLoading) return '正在向设备实时读取账号与口令（离线设备会先发连接请求唤醒），单台最长等约 70 秒…'
+      if (!this.adminPwdHasNoAccount) return '账号与口令是从设备上实时读到的明文，可直接用于登录光猫后台。'
+      return '没读到账号与口令：原因见上方“说明”列，展开行可看每台设备读到的参数路径。'
     }
   },
   created() {
@@ -1793,6 +1805,16 @@ export default {
       const map = { success: '已获取', empty: '无账号', timeout: '超时', fail: '失败', offline: '离线' }
       return map[row.status] || '未知'
     },
+    // 状态标签只说明结果类型，具体原因（设备回 9005 / 未回应 / 离线）在这列讲清楚，
+    // 否则在线设备上两个横杠，看不出到底是设备不支持还是查询本身出了问题
+    adminPwdHint(row) {
+      if (row.loading) return '正在向设备读取账号与口令…'
+      if (row.message) return row.message
+      if (row.accounts && row.accounts.length > 1) {
+        return '共 ' + row.accounts.length + ' 组账号，展开行可看全部'
+      }
+      return '-'
+    },
     adminPwdTagType(row) {
       if (row.loading) return 'info'
       const map = { success: 'success', empty: 'info', timeout: 'warning', fail: 'danger', offline: 'info' }
@@ -2161,6 +2183,9 @@ export default {
   margin-top: 8px;
   font-size: 12px;
   color: #e6a23c;
+}
+.admin-pwd-tip-warn {
+  color: #f56c6c;
 }
 /* ---- WAN 单元格内的 LAN 网口小图标：4 个口要并排一行，不换行 ---- */
 .lan-list-bar {

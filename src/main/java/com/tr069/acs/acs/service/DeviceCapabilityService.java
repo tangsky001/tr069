@@ -1247,6 +1247,11 @@ public class DeviceCapabilityService {
             log.info("已反向唤醒设备，等待它建链: sn={}", sn);
         } else {
             log.warn("未发出反向唤醒: sn={}, 原因={}（只能等设备周期上报）", sn, result);
+            // 连接请求根本没发出去（开关关着、没地址、退避期内），等多久都不会因我们而建链：
+            // 再干等几十秒只会让调用方白等，直接返回让它走兜底
+            if (result != WakeUpResult.FAILED) {
+                return false;
+            }
         }
         long start = System.currentTimeMillis();
         long deadline = start + waitSeconds * 1000L;
@@ -1270,6 +1275,21 @@ public class DeviceCapabilityService {
 
     public boolean wakeUpAndAwait(String sn) {
         return wakeUpAndAwait(sn, wakeupWaitSeconds);
+    }
+
+    /**
+     * 这台设备现在能不能被反向唤醒：唤醒开关开着、台账里有它、且登记了连接请求地址。
+     *
+     * <p>给调用方一个「叫不叫得醒」的前置判断——叫不醒时还去等建链只是白等几十秒，
+     * 界面该直接给出「没有连接请求地址」这种能落地的原因。</p>
+     */
+    public boolean canWakeUp(String sn) {
+        if (!wakeupEnabled) {
+            return false;
+        }
+        CpeDevice device = findDevice(sn);
+        return device != null && device.getConnectionRequestUrl() != null
+                && !device.getConnectionRequestUrl().isBlank();
     }
 
     private long lastContactOf(String sn) {

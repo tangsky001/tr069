@@ -89,6 +89,17 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 
 ![设备详情 - 业务面板](doc/Display/162116_423.png)
 
+### 超级管理员账号密码（现场现读）
+
+勾选设备后点「查询超管账号密码」，逐台到设备上现读本地账号：先发 CWMP 连接请求把设备叫上来
+（离线的等它重新建链），再下发 `GetParameterValues` 读运营商定制节点
+（`DeviceInfo.X_CMCC_TeleComAccount.*` / `X_CT-COM_TeleComAccount.*` / `X_CU_TeleComAccount.*`），
+读不到再按型号挑通用节点（`UserInterface.X_HW_WebUserInfo.{i}` / `User.{i}`）。
+账号与口令都是设备回上来的明文，直接拿去登录光猫后台；每台一行、互不影响，
+多路账号展开可看实例号与真实参数路径：
+
+![超级管理员账号密码](doc/Display/180849_848.png)
+
 ### OLT 管理（真实设备采集，**只读**）
 
 Telnet 登录 OLT 命令行采集，已经在华为 MA5683T 上实测通过。
@@ -392,6 +403,7 @@ acs:
 | `174419_542.png` | 适配完成后列表 | 效果展示 · 设备管理 | 有效 |
 | `013530_034.png` | 设备列表（现行版） | 效果展示 · 设备列表 | 有效 |
 | `162116_423.png` | 设备详情业务面板 | 效果展示 · 设备详情 | 有效 |
+| `180849_848.png` | 超级管理员账号密码弹窗（现场现读） | 效果展示 · 超级管理员账号密码 | 有效 |
 | `013724_056.png` | 光猫后台平台服务器配置 | 1.4 设备纳管 | 有效 |
 | `162046_560.png` | 设备列表（**旧版**，`013530_034` 之前用过） | — | 未引用（保留） |
 | `025159_916.png` | 设备列表（**旧版**，早期用过） | — | 未引用（保留） |
@@ -657,6 +669,8 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`models/`）；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内处理 |
 | `acs.device.account.read-timeout-seconds` | `30` | 查询设备本地账号（超管密码）时等设备回值的最长时间（秒） |
+| `acs.device.account.total-timeout-seconds` | `70` | 超管账号查询的总预算（秒）：唤醒 + 两轮读取 + 逐条重试共用，要小于前端 90s 请求超时 |
+| `acs.device.account.offline-wakeup-wait-seconds` | `30` | 设备离线时发连接请求后最多等它重新建链的时间（秒） |
 | `acs.device.lan.auto-refresh.enabled` | `true` | LAN 网口状态定时自动刷新总开关 |
 | `acs.device.lan.auto-refresh.interval-millis` | `300000` | 自动刷新间隔（毫秒），默认 5 分钟 |
 | `acs.device.lan.auto-refresh.wait-seconds` | `120` | 单轮等待设备回值的上限（秒），超时不判失败 |

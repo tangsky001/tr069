@@ -38,12 +38,15 @@ public class Result<T> implements Serializable {
         this.data = data;
     }
 
+    /** 成功响应的默认提示语：返回给前端直接展示，用中文。 */
+    public static final String SUCCESS_MESSAGE = "成功";
+
     public static <T> Result<T> success() {
-        return new Result<>(SUCCESS_CODE, "success", null);
+        return new Result<>(SUCCESS_CODE, SUCCESS_MESSAGE, null);
     }
 
     public static <T> Result<T> success(T data) {
-        return new Result<>(SUCCESS_CODE, "success", data);
+        return new Result<>(SUCCESS_CODE, SUCCESS_MESSAGE, data);
     }
 
     public static <T> Result<T> success(String message, T data) {

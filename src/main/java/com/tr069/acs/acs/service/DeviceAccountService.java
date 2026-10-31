@@ -49,8 +49,8 @@ public class DeviceAccountService {
     /** 整批被拒后逐条重试的单条等待时间（秒）。 */
     private static final long RETRY_TIMEOUT_SECONDS = 8;
 
-    /** 读正式参数前的探活等待时间（秒）：设备不回应时快速给结论。 */
-    private static final long PROBE_TIMEOUT_SECONDS = 6;
+    /** 会话还在但可能已断链时，反向唤醒后最多等设备重新建链的时间（秒）。 */
+    private static final long WAKEUP_WAIT_SECONDS = 15;
 
     /**
      * 本地账号所在的父路径形态。
@@ -68,6 +68,23 @@ public class DeviceAccountService {
     private long readTimeoutSeconds;
 
     /**
+     * 整次查询的总预算（秒）。唤醒、两轮读取、逐条重试共用它，
+     * 免得每一段各自按满额算，加起来超过前端的 90s 请求超时，请求被 axios 掐断
+     * 时页面只剩一个「查询中」。
+     */
+    @Value("${acs.device.account.total-timeout-seconds:70}")
+    private long totalTimeoutSeconds;
+
+    /**
+     * 设备离线时，发连接请求后最多等它上来的时间（秒）。
+     *
+     * <p>离线通常意味着链路断了或设备在休眠，叫醒比会话还在的场景慢，给的时间要长一些；
+     * 这一段用完，剩下的总预算还够读一轮参数。</p>
+     */
+    @Value("${acs.device.account.offline-wakeup-wait-seconds:30}")
+    private long offlineWakeupWaitSeconds;
+
+    /**
      * 查询某台设备的本地账号（含超管）。
      */
     public Map<String, Object> queryAdminAccount(String sn) {
@@ -76,47 +93,52 @@ public class DeviceAccountService {
         String root = resolveRoot(sn);
         data.put("rootNode", root);
 
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(totalTimeoutSeconds);
+
         CpeSession session = sessionManager.find(sn);
         boolean online = session != null && session.isOnline();
         data.put("online", online);
         if (!online) {
-            data.put("status", "offline");
-            data.put("accounts", List.of());
-            data.put("message", "设备离线，无法实时读取口令，请等设备上线后重试");
-            return data;
+            // 「没有会话」不等于叫不醒：设备可被 UDP ConnectionRequest 叫上来，
+            // 它自己建链之后指令才有地方捎带。先叫一次，叫得醒就接着读，
+            // 直接回 offline 等于把唯一能救回来的手段丢掉了
+            if (!capabilityService.canWakeUp(sn)) {
+                data.put("status", "offline");
+                data.put("accounts", List.of());
+                data.put("message", "设备离线且无法反向唤醒：台账里没有这台设备的连接请求地址，"
+                        + "检查纳管时设备是否上报了 ConnectionRequestURL");
+                return data;
+            }
+            online = capabilityService.wakeUpAndAwait(sn,
+                    Math.min(offlineWakeupWaitSeconds, remaining(deadline)));
+            data.put("online", online);
+            if (!online) {
+                data.put("status", "offline");
+                data.put("accounts", List.of());
+                data.put("message", "设备离线，已发连接请求但 " + offlineWakeupWaitSeconds
+                        + " 秒内没上来：确认设备能否访问 acs.public-host，或等它下一次周期上报");
+                return data;
+            }
+            log.info("设备原本离线，已被连接请求唤醒: sn={}", sn);
+        } else {
+            // 会话在线不等于设备现在还连着：设备报完一轮就把 TCP 断了，指令只能排在队列里等
+            // 下一次周期上报（十几分钟）——现场就是「17:52:20 下发成功，17:52:36 读取超时」。
+            // 所以不拿探活读取当在线判据（它必然超时并误判成设备不回应），改成先反向唤醒再读
+            capabilityService.wakeUpAndAwait(sn, Math.min(WAKEUP_WAIT_SECONDS, remaining(deadline)));
         }
 
-        // 会话在线不等于设备真会回应。先拿一条必定存在的参数探一下，探不动就
-        // 直接给结论——否则要干等到读取超时，页面上一分钟没反应
-        String probe = root + "DeviceInfo.SerialNumber";
-        try {
-            capabilityService.readPathValues(sn, List.of(probe))
-                    .get(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            log.warn("设备未回应探活读取: sn={}, path={}, err={}",
-                    sn, probe, e.getMessage());
-            data.put("status", "timeout");
-            data.put("accounts", List.of());
-            data.put("message", "设备未回应参数读取请求，会话可能已失效，请稍候重试");
-            return data;
-        }
-
-        // 只按设备登记的根节点先读一轮：三种根节点一起拼会把候选翻到二十来条，
-        // 其中两种在这台设备上必然不存在，二分拆批的往返又把耗时吃掉了
-        List<String> primary = candidatePaths(sn, List.of(root));
-        if (primary.isEmpty()) {
-            data.put("status", "empty");
-            data.put("accounts", List.of());
-            data.put("message", "设备上没有可用的本地账号参数路径");
-            return data;
-        }
+        // 第一轮只发最可能命中的几条：运营商定制节点 + 能力树快照里真实采到过的账号路径。
+        // 两种根节点一起拼会把候选翻到二十来条，二分拆批的往返把耗时吃掉了
+        String isp = resolveIsp(sn);
+        List<String> primary = primaryPaths(sn, root, isp);
 
         String status = "success";
         Map<String, String> values = new LinkedHashMap<>();
         try {
             CompletableFuture<Map<String, String>> future =
                     capabilityService.readPathValues(sn, primary);
-            values.putAll(future.get(readTimeoutSeconds, TimeUnit.SECONDS));
+            values.putAll(future.get(Math.min(readTimeoutSeconds, remaining(deadline)),
+                    TimeUnit.SECONDS));
         } catch (TimeoutException e) {
             status = "timeout";
             log.warn("读取设备账号超时: sn={}, paths={}", sn, primary.size());
@@ -128,38 +150,34 @@ public class DeviceAccountService {
             log.warn("读取设备账号失败: sn={}, err={}", sn, e.getMessage());
         }
 
-        // 登记的根节点读不到才换另外两种根节点。兜底里的兜底，放第二轮不拖慢主线
+        // 定制节点读不到才扩大范围：先在同根下换节点形态（华为 Web 账号 / 标准 User 实例），
+        // 再换另外两种根节点。只换根不换形态时，运营商登记错一台设备就永远读不到账号
         List<String> candidates = new ArrayList<>(primary);
-        if (values.isEmpty()) {
-            List<String> others = candidatePaths(sn, otherRoots(root));
-            for (String path : others) {
-                candidates.add(path);
-            }
-            if (!others.isEmpty()) {
-                try {
-                    values.putAll(capabilityService.readPathValues(sn, others)
-                            .get(readTimeoutSeconds, TimeUnit.SECONDS));
-                } catch (Exception e) {
-                    log.debug("备用根节点读取账号失败: sn={}, err={}", sn, e.getMessage());
-                }
+        if (values.isEmpty() && !expired(deadline)) {
+            List<String> fallback = fallbackPaths(root, isp);
+            candidates.addAll(fallback);
+            try {
+                values.putAll(capabilityService.readPathValues(sn, fallback)
+                        .get(Math.min(readTimeoutSeconds, remaining(deadline)), TimeUnit.SECONDS));
+            } catch (Exception e) {
+                log.debug("备用账号节点读取失败: sn={}, err={}", sn, e.getMessage());
             }
         }
 
         // 整批被拒时逐条重试：有些设备只要批里有一个不认识的节点就整批回 fault，
         // 拆开单发却每一条都认（下发侧同样的兼容性问题已实测过）。
-        // 重试共用读取超时这个总预算，避免设备不支持时把请求拖到几分钟。
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(readTimeoutSeconds);
+        // 重试与前面几段共用总预算，避免设备不支持时把请求拖到几分钟。
         for (String path : candidates) {
             if (values.containsKey(path)) {
                 continue;
             }
-            long remain = TimeUnit.NANOSECONDS.toSeconds(deadline - System.nanoTime());
-            if (remain <= 0) {
+            if (expired(deadline)) {
                 break;
             }
             try {
                 values.putAll(capabilityService.readPathValues(sn, List.of(path))
-                        .get(Math.min(RETRY_TIMEOUT_SECONDS, remain), TimeUnit.SECONDS));
+                        .get(Math.min(RETRY_TIMEOUT_SECONDS, remaining(deadline)),
+                                TimeUnit.SECONDS));
             } catch (Exception e) {
                 // 单条读不到就是设备没这个节点，跳过
             }
@@ -172,7 +190,15 @@ public class DeviceAccountService {
         data.put("status", status);
         data.put("accounts", accounts);
         if (accounts.isEmpty()) {
-            data.put("message", "设备未返回账号信息，可能型号不支持读取本地账号");
+            // 超时和不支持是两回事：页面上「说明」列要能看出该重试还是该换型号
+            if ("timeout".equals(status)) {
+                data.put("message", "设备 " + readTimeoutSeconds + " 秒内没有回账号参数，稍后重试");
+            } else if ("fail".equals(status)) {
+                data.put("message", "读取账号参数失败，重试无效请查后端日志");
+            } else {
+                data.put("message",
+                        "设备没有可用的本地账号节点，定制节点与通用 User 实例都读不到");
+            }
         } else {
             data.put("message", null);
         }
@@ -194,64 +220,129 @@ public class DeviceAccountService {
     private static final String HUAWEI_WEB_USER_NODE = "UserInterface.X_HW_WebUserInfo.";
 
     /**
-     * 待读取的参数路径：按设备登记的运营商挑对应的超管节点，能力树快照里采到的
-     * 账号路径补在后面，快照里一个都没有时再按 TR-098 / TR-181 两种根拼标准路径兜底。
+     * 第一轮候选：运营商定制节点 + 能力树快照里真实采到过的账号路径。
+     *
+     * <p>这两类都短：定制节点就两条叶子，快照命中的路径按实例补齐 Username / Password。
+     * 一条都拼不出来（运营商登记为空且快照没采到账号）才直接上通用形态，免得白跑一轮。</p>
      */
-    private List<String> candidatePaths(String sn, List<String> roots) {
+    private List<String> primaryPaths(String sn, String root, String isp) {
+        LinkedHashSet<String> paths = new LinkedHashSet<>(ispPaths(root, isp));
+        paths.addAll(snapshotPaths(sn));
+        if (paths.isEmpty()) {
+            paths.addAll(genericPaths(root));
+        }
+        return new ArrayList<>(paths);
+    }
+
+    /**
+     * 第二轮候选：定制节点读不到时才展开。
+     *
+     * <p>先在同一根下换节点形态——运营商标错、或定制固件其实用华为 Web 账号 / 标准
+     * {@code User.{i}} 的设备，只换根节点是永远读不到的；再换另外两种根节点。</p>
+     */
+    private List<String> fallbackPaths(String root, String isp) {
+        LinkedHashSet<String> paths = new LinkedHashSet<>(genericPaths(root));
+        // 台账上的运营商可能是别的：这台实际节点是 X_CMCC_TeleComAccount，
+        // 登记成别家的就只有把三家定制节点都试一遍才读得到
+        paths.addAll(otherIspPaths(root, isp));
+        for (String r : otherRoots(root)) {
+            paths.addAll(ispPaths(r, isp));
+            paths.addAll(otherIspPaths(r, isp));
+            paths.addAll(genericPaths(r));
+        }
+        return new ArrayList<>(paths);
+    }
+
+    /** 运营商定制固件的超管节点；未登记运营商返回空。 */
+    private static List<String> ispPaths(String root, String isp) {
+        String adminNode = ADMIN_NODE_BY_ISP.get(isp == null ? "" : isp.toUpperCase(Locale.ROOT));
+        if (adminNode == null) {
+            return List.of();
+        }
+        return List.of(root + adminNode + LEAF_USERNAME, root + adminNode + LEAF_PASSWORD);
+    }
+
+    /** 除已登记运营商以外的定制超管节点。 */
+    private static List<String> otherIspPaths(String root, String isp) {
+        String registered = isp == null ? "" : isp.toUpperCase(Locale.ROOT);
         LinkedHashSet<String> paths = new LinkedHashSet<>();
-        String isp = resolveIsp(sn).toUpperCase(Locale.ROOT);
-        String adminNode = ADMIN_NODE_BY_ISP.get(isp);
-        for (String r : roots) {
-            if (adminNode != null) {
-                paths.add(r + adminNode + LEAF_USERNAME);
-                paths.add(r + adminNode + LEAF_PASSWORD);
+        for (Map.Entry<String, String> e : ADMIN_NODE_BY_ISP.entrySet()) {
+            if (e.getKey().equals(registered)) {
                 continue;
             }
-            // 通用型号：华为公开版固件。两种叶子写法都试，各固件不一致
-            for (int i = 1; i <= MAX_USER_INSTANCE; i++) {
-                String base = r + HUAWEI_WEB_USER_NODE + i + ".";
-                paths.add(base + LEAF_USERNAME_HW);
-                paths.add(base + LEAF_USERNAME);
-                paths.add(base + LEAF_PASSWORD);
-            }
+            paths.add(root + e.getValue() + LEAF_USERNAME);
+            paths.add(root + e.getValue() + LEAF_PASSWORD);
         }
-        int fromSnapshot = 0;
+        return new ArrayList<>(paths);
+    }
+
+    /** 总预算还剩下的秒数，至少 1 秒——0 会让 future.get 立刻超时，白跑一趟。 */
+    private static long remaining(long deadline) {
+        return Math.max(1L, TimeUnit.NANOSECONDS.toSeconds(deadline - System.nanoTime()));
+    }
+
+    /** 总预算是否用完。 */
+    private static boolean expired(long deadline) {
+        return System.nanoTime() >= deadline;
+    }
+
+    /** 通用形态：华为公开版 Web 账号节点 + TR-098 / TR-181 标准 User 实例。 */
+    private static List<String> genericPaths(String root) {
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
+        // 华为公开版固件，两种叶子写法都试，各固件不一致
+        for (int i = 1; i <= MAX_USER_INSTANCE; i++) {
+            String base = root + HUAWEI_WEB_USER_NODE + i + ".";
+            paths.add(base + LEAF_USERNAME_HW);
+            paths.add(base + LEAF_USERNAME);
+            paths.add(base + LEAF_PASSWORD);
+        }
+        for (int i = 1; i <= MAX_USER_INSTANCE; i++) {
+            paths.add(root + "User." + i + "." + LEAF_USERNAME);
+            paths.add(root + "User." + i + "." + LEAF_PASSWORD);
+        }
+        return new ArrayList<>(paths);
+    }
+
+    /**
+     * 能力树快照里真实存在、且父节点是本地账号对象的那几条路径。
+     *
+     * <p>快照常只采到 Username 没有 Password（设备不把口令报给 GetParameterNames），
+     * 这里按实例把两个叶子都补齐，只查账号查不出密码没意义。</p>
+     */
+    private List<String> snapshotPaths(String sn) {
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
         for (CpeParameter row : snapshotUserParams(sn)) {
             String leaf = DeviceBusinessService.normalizeLeaf(
                     DeviceCapabilityService.nameOf(row.getParamPath()));
             if (!LEAF_USERNAME.equals(leaf) && !LEAF_PASSWORD.equals(leaf)) {
                 continue;
             }
-            // 快照常只采到 Username 没有 Password（设备不把口令报给 GetParameterNames），
-            // 这里按实例把两个叶子都补齐，只查账号查不出密码没意义
             String parent = DeviceCapabilityService.parentOf(row.getParamPath());
+            // WAN 拨号账号的叶子名也叫 Username，父路径不是本地账号对象的一律不要
+            if (!LOCAL_ACCOUNT_PARENT.matcher(parent).find()) {
+                continue;
+            }
             paths.add(parent + LEAF_USERNAME);
             paths.add(parent + LEAF_PASSWORD);
-            fromSnapshot++;
-        }
-        // 快照里采到真实账号路径就够了，不必再拼一堆标准 User 实例；
-        // 一条都没有说明这台不对外部暴露账号节点，才往下兜底
-        if (fromSnapshot > 0) {
-            return new ArrayList<>(paths);
-        }
-        for (String r : roots) {
-            for (int i = 1; i <= MAX_USER_INSTANCE; i++) {
-                paths.add(r + "User." + i + "." + LEAF_USERNAME);
-                paths.add(r + "User." + i + "." + LEAF_PASSWORD);
-            }
         }
         return new ArrayList<>(paths);
     }
 
     /**
-     * 能力树快照里形如 {@code ...User.{i}.Username} 的参数行。
+     * 能力树快照里账号对象的参数行：{@code User.{i}} / {@code X_HW_WebUserInfo.{i}} /
+     * 运营商定制 {@code X_CT-COM_TeleComAccount} 都算。
+     *
+     * <p>之前只按 {@code .User.} 模糊匹配，定制节点的账号行一条都查不出来，
+     * 快照兜底等于没生效。</p>
      */
     private List<CpeParameter> snapshotUserParams(String sn) {
         try {
             return parameterMapper.selectList(new LambdaQueryWrapper<CpeParameter>()
                     .eq(CpeParameter::getSn, sn)
                     .eq(CpeParameter::getNodeType, CpeParameter.TYPE_PARAM)
-                    .like(CpeParameter::getParamPath, ".User.")
+                    .and(w -> w.like(CpeParameter::getParamPath, ".User.")
+                            .or().like(CpeParameter::getParamPath, "WebUserInfo.")
+                            .or().like(CpeParameter::getParamPath, "TeleComAccount."))
                     .orderByAsc(CpeParameter::getParamPath));
         } catch (Exception e) {
             log.warn("查询设备账号参数失败: sn={}, err={}", sn, e.getMessage());

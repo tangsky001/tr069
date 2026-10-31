@@ -45,13 +45,13 @@
 ### 1.3 统一响应体
 
 ```json
-{ "code": 200, "message": "success", "data": { } }
+{ "code": 200, "message": "成功", "data": { } }
 ```
 
 | 字段 | 说明 |
 | --- | --- |
 | `code` | `200` 成功；`500` 通用业务失败；`401` 登录失效；`403` 没权限；其它为各接口自定义业务码 |
-| `message` | 成功时是 `success`，失败时是可直接展示给用户中文原因 |
+| `message` | 成功时是 `成功`，失败时是可直接展示给用户中文原因 |
 | `data` | 业务数据，失败时通常为 `null` |
 
 业务码沿用 HTTP 语义，省一层翻译：成功 `200`、业务失败 `500`、缺令牌 `401`、缺权限 `403`。
@@ -86,7 +86,7 @@ HTTP 状态码只在缺令牌与缺权限时和业务码一起跟着变（HTTP 4
 // 请求
 { "username": "admin", "password": "******" }
 // 响应
-{ "code": 200, "message": "success",
+{ "code": 200, "message": "成功",
   "data": { "token": "eyJhbGciOi...", "role": "SUPER_ADMIN", "source": "WEB" } }
 ```
 

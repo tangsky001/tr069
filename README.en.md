@@ -102,6 +102,19 @@ WLAN split by 2.4G / 5.8G, SIP voice (real line instances only):
 
 ![Device detail - business panel](doc/Display/162116_423.png)
 
+### Super admin account and password (read live from the device)
+
+Select devices and click "query super admin account": each device is queried on its own — the ACS
+first sends a CWMP Connection Request to bring the device up (offline ones are given time to
+reconnect), then issues `GetParameterValues` against the ISP-specific node
+(`DeviceInfo.X_CMCC_TeleComAccount.*` / `X_CT-COM_TeleComAccount.*` / `X_CU_TeleComAccount.*`) and
+falls back to the generic nodes (`UserInterface.X_HW_WebUserInfo.{i}` / `User.{i}`) when that node
+does not exist. Account and password come back in clear text and can be used to log into the ONT's
+web UI right away; one row per device, a failing device never blocks the others, and extra accounts
+expand to show their instance number and real parameter path:
+
+![Super admin account and password](doc/Display/180849_848.png)
+
 ### OLT management (real device collection, **read-only**)
 
 Collected from the OLT CLI over Telnet, verified on a Huawei MA5683T.
@@ -243,6 +256,7 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | `174419_542.png` | Device list after adaptation | Screenshots · Device management | In use |
 | `013530_034.png` | Device list (current) | Screenshots · Device list | In use |
 | `162116_423.png` | Device detail business panel | Screenshots · Device detail | In use |
+| `180849_848.png` | Super admin account / password dialog (read live) | Screenshots · Super admin account | In use |
 | `013724_056.png` | ONT admin UI platform server config | 1.4 Device provisioning | In use |
 | `162046_560.png` | Device list (**older** version, used before `013530_034`) | — | Unused (kept) |
 | `025159_916.png` | Device list (**older** version, used early on) | — | Unused (kept) |
@@ -675,6 +689,8 @@ For ONT onboarding, packaging for production and troubleshooting, see
 | `acs.worklist.root-path` | `./configuration` | External config root (`models/`); relative paths resolve against the jar directory, so any working directory points to the same place |
 | `acs.queue.enabled` | `true` | Disable to fall back to in-process handling |
 | `acs.device.account.read-timeout-seconds` | `30` | How long to wait for a device when querying its local account (super-admin password) |
+| `acs.device.account.total-timeout-seconds` | `70` | Total budget for one account query (seconds): wake-up + two read rounds + per-path retries; keep it below the frontend's 90s request timeout |
+| `acs.device.account.offline-wakeup-wait-seconds` | `30` | How long to wait for an offline device to reconnect after a connection request (seconds) |
 | `acs.device.lan.auto-refresh.enabled` | `true` | Master switch for periodic LAN port status refresh |
 | `acs.device.lan.auto-refresh.interval-millis` | `300000` | Refresh interval (ms), 5 minutes by default |
 | `acs.device.lan.auto-refresh.wait-seconds` | `120` | Per-round wait limit for device responses (seconds); a timeout is not a failure |
