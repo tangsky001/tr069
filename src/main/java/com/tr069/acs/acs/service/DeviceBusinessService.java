@@ -791,6 +791,24 @@ public class DeviceBusinessService {
     /** URI 里 @ 前面的号码部分。 */
     private static final Pattern SIP_URI_NUMBER = Pattern.compile("^([^@]+)@");
 
+    /** VoiceProfile 级的 SIP 对象：整档语音的服务器地址挂在它身上，不是某个话机口。 */
+    private static final Pattern SIP_PROFILE_INSTANCE =
+            Pattern.compile("VoiceService\\.\\d+\\.VoiceProfile\\.\\d+\\.SIP\\.$");
+
+    /**
+     * 从 VoiceProfile 级补到每一路 Line 上的字段：只有服务器相关的才补。
+     *
+     * <p>RegistrarServer / ProxyServer 这类地址整档共用一份，补进线路是为了页面能
+     * 一次拿全；反过来不能把 Line 自己的值覆盖掉——个别厂商会把 OutboundProxy
+     * 也写进 Line 里，那种以线路自己的为准。</p>
+     */
+    private static final List<String> SIP_SERVER_KEYS = List.of(
+            "RegistrarServer", "RegistrarServerPort", "RegistrarServerTransport",
+            "ProxyServer", "ProxyServerPort", "ProxyServerTransport",
+            "OutboundProxy", "OutboundProxyPort",
+            "UserAgentDomain", "UserAgentPort", "UserAgentTransport",
+            "RegisterExpires");
+
     /**
      * 过滤 SIP 分组里的非线路实例。
 
@@ -827,8 +845,49 @@ public class DeviceBusinessService {
                 filtered.add(row);
             }
         }
+        // 服务器地址要先补再算语义：statusText / number / server 都读 params，
+        // 顺序反了的话 server 会先被判成「-」再也没机会改回来
+        Map<String, String> profileParams = profileSipParams(list);
+        for (Map<String, Object> row : filtered) {
+            mergeServerParams(row, profileParams);
+        }
         applySipSemantics(filtered);
         data.put(SIP_KEY, filtered);
+    }
+
+    /** VoiceProfile 级 SIP 对象里的服务器类参数。 */
+    private static Map<String, String> profileSipParams(List<Map<String, Object>> rows) {
+        Map<String, String> profile = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String path = String.valueOf(row.getOrDefault("path", ""));
+            if (!SIP_PROFILE_INSTANCE.matcher(path).find()) {
+                continue;
+            }
+            Map<String, String> params = paramsOf(row);
+            for (String key : SIP_SERVER_KEYS) {
+                String value = params.get(key);
+                if (value != null && !value.isBlank()) {
+                    profile.putIfAbsent(key, value);
+                }
+            }
+        }
+        return profile;
+    }
+
+    /** 把整档服务器参数并进一条线路，线路自己没报的才补。 */
+    private static void mergeServerParams(Map<String, Object> row, Map<String, String> profileParams) {
+        if (profileParams.isEmpty()) {
+            return;
+        }
+        Object raw = row.get("params");
+        if (!(raw instanceof Map<?, ?>)) {
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, String> params = (Map<String, String>) raw;
+        for (Map.Entry<String, String> entry : profileParams.entrySet()) {
+            params.putIfAbsent(entry.getKey(), entry.getValue());
+        }
     }
 
     /**

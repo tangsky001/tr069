@@ -177,7 +177,15 @@
         <el-table-column label="SIP 信息" min-width="150">
           <template slot-scope="{ row }">
             <template v-if="sipList(row.sn).length">
-              <div v-for="item in sipList(row.sn)" :key="item.path" class="biz-row">
+              <!-- 每一路 SIP 都能点开看全部参数：只读本地快照，不发任何 RPC，
+                   不会唤醒设备（以前这一列是死的，点什么都没反应） -->
+              <div
+                v-for="item in sipList(row.sn)"
+                :key="item.path"
+                class="biz-row sip-row"
+                title="点击查看该路 SIP 的全部参数"
+                @click="openSipParams(row.sn, item)"
+              >
                 <el-tag size="mini" :type="sipTagType(item)">
                   {{ item.statusText }}
                 </el-tag>
@@ -525,7 +533,103 @@
         </el-collapse>
       </el-card>
       <span slot="footer">
+        <span class="snapshot-tip">以上为本地快照，未唤醒设备</span>
         <el-button @click="wanVisible = false">关闭</el-button>
+      </span>
+    </el-dialog>
+
+    <!-- SIP 语音：与「编辑 WLAN」同款——点开就是表单，点下发 = 提交一张 SIP 工单 -->
+    <el-dialog
+      :title="'SIP 语音 - ' + sipEditForm.sn"
+      :visible.sync="sipVisible"
+      width="520px"
+      top="8vh"
+    >
+      <div class="snapshot-tip-block">打开此窗口不会唤醒设备，点「下发到设备」才会建单并写入</div>
+      <el-form label-width="118px" size="small">
+        <el-form-item label="下发线路">
+          <!-- 设备上只有一路语音时不再摆勾选框：选来选去还是那一路，只会多一步操作 -->
+          <div v-if="sipLineOptions(sipEditForm.sn).length > 1" class="sip-line-pick">
+            <el-checkbox-group v-model="sipEditForm.lines">
+              <el-checkbox v-for="opt in sipLineOptions(sipEditForm.sn)" :key="opt.line" :label="opt.line">
+                第 {{ opt.line }} 路
+                <span class="sip-line-num">{{ opt.number || '未配置' }}</span>
+              </el-checkbox>
+            </el-checkbox-group>
+            <div class="sip-line-tip">勾选的每一路按同一套号码 / 密码下发</div>
+          </div>
+          <span v-else class="sip-edit-path">
+            第 {{ (sipEditForm.lines[0] || 1) }} 路 · {{ sipEditForm.path }}
+          </span>
+        </el-form-item>
+        <el-form-item label="电话号码 / URI">
+          <el-input v-model="sipEditForm.number" placeholder="如 8888 或 88880001@ims.domain" />
+        </el-form-item>
+        <el-form-item label="认证用户名">
+          <!-- 设备上叫 AuthUserName，注册时送出去的就是它；真机上多数情况与号码同号 -->
+          <el-input v-model="sipEditForm.authUser" placeholder="AuthUserName" />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input
+            :type="sipShowPwd ? 'text' : 'password'"
+            v-model="sipEditForm.password"
+            placeholder="AuthPassword"
+          >
+            <i
+              slot="suffix"
+              :class="sipShowPwd ? 'el-icon-view' : 'el-icon-hide'"
+              class="pwd-eye"
+              @click="sipShowPwd = !sipShowPwd"
+            />
+          </el-input>
+        </el-form-item>
+        <!-- 服务器地址整档共用一份（RegistrarServer / ProxyServer 挂在 VoiceProfile 上，
+             不是某个话机口的私有值），是局点侧的地址，不该在这张单里改，所以只读。
+             设备没上报时才放开手填，否则下发会缺 %sip_registrar% 变量直接渲染失败 -->
+        <el-form-item label="注册服务器">
+          <el-input
+            v-model="sipEditForm.registrar"
+            :disabled="!!sipEditForm.registrar"
+            placeholder="设备未上报"
+          />
+        </el-form-item>
+        <el-form-item label="注册服务器端口">
+          <el-input
+            v-model="sipEditForm.registrarPort"
+            :disabled="!!sipEditForm.registrarPort"
+            placeholder="设备未上报"
+          />
+        </el-form-item>
+        <el-form-item label="代理服务器">
+          <el-input
+            v-model="sipEditForm.proxy"
+            :disabled="!!sipEditForm.proxy"
+            placeholder="设备未上报"
+          />
+        </el-form-item>
+        <el-form-item label="代理服务器端口">
+          <el-input
+            v-model="sipEditForm.proxyPort"
+            :disabled="!!sipEditForm.proxyPort"
+            placeholder="设备未上报"
+          />
+        </el-form-item>
+        <div class="sip-readonly-tip">
+          <i class="el-icon-info" /> 四项取自设备当前配置（整档共用），不随本次下发改动
+        </div>
+      </el-form>
+      <el-collapse v-if="sipDialogItems.length" class="wan-more">
+        <el-collapse-item title="全部参数（当前快照）">
+          <div v-for="(value, name) in sipDialogItems[0].params" :key="name" class="wan-all-row">
+            <span class="k">{{ name }}</span>
+            <span class="v">{{ showVal(value) }}</span>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
+      <span slot="footer">
+        <span class="snapshot-tip">以上为本地快照，未唤醒设备</span>
+        <el-button @click="sipVisible = false">取消</el-button>
+        <el-button type="primary" :loading="sipSubmitting" @click="submitSipEdit">下发到设备</el-button>
       </span>
     </el-dialog>
 
@@ -539,6 +643,8 @@
         <el-tag size="mini" type="info">{{ wifiEditForm.band }}</el-tag>
         <span class="wifi-edit-path">{{ wifiEditForm.path }}</span>
       </div>
+      <!-- 打开弹窗只读快照，不碰设备；只有点「保存」创建工单才会下发 -->
+      <div class="snapshot-tip-block">打开此窗口不会唤醒设备，保存并下发时才会向设备写入</div>
       <el-form label-width="100px" size="small">
         <el-form-item label="SSID 名称">
           <el-input v-model="wifiEditForm.ssid" maxlength="32" show-word-limit />
@@ -776,6 +882,23 @@ export default {
       wifiOptions: [],
       wanVisible: false,
       wanDialogSn: '',
+      sipVisible: false,
+      sipDialogSn: '',
+      sipDialogPath: '',
+      sipShowPwd: false,
+      sipSubmitting: false,
+      sipEditForm: {
+        sn: '',
+        path: '',
+        lines: [],
+        number: '',
+        authUser: '',
+        password: '',
+        registrar: '',
+        registrarPort: '5060',
+        proxy: '',
+        proxyPort: '5060'
+      },
       wifiEditVisible: false,
       wifiSubmitting: false,
       wifiEditForm: {
@@ -1225,6 +1348,13 @@ export default {
     sipList(sn) {
       return this.bizOf(sn).sip || []
     },
+    // SIP 弹窗要展示的那一路：点哪条看哪条，路径对不上就退回整组
+    sipDialogItems() {
+      const list = this.sipList(this.sipDialogSn)
+      if (!this.sipDialogPath) return list
+      const picked = list.filter(item => item.path === this.sipDialogPath)
+      return picked.length ? picked : list
+    },
     // 注册判定与号码截取都在后端（URI 带 @ 时截前面，避免显示成 2026@192.168.x.x），
     // 前端只剩标签颜色：已注册绿、未配置灰、其余黄
     sipTagType(item) {
@@ -1258,6 +1388,138 @@ export default {
     openWanParams(sn) {
       this.wanDialogSn = sn
       this.wanVisible = true
+    },
+
+    // SIP 语音参数：同样只看本地快照。这里刻意不调 collectDeviceBusiness——
+    // 点一下就把设备叫醒（连接请求 + 一轮 GPV）既慢又会打扰正在用的用户，
+    // 要最新值请走详情面板的「重新采集」
+    /**
+     * 这台设备能下发的语音线路清单：设备上报了几个 Line 实例就列几个。
+     *
+     * <p>只有一路时不给勾选（用户说的「申报 1 个就没有勾选窗口」），
+     * 两路以上才摆在表单里让用户挑要开哪几个口。</p>
+     */
+    sipLineOptions(sn) {
+      // 路数优先看申报（适配时登记 capSipCount）：申报 1 路就不摆勾选框，
+      // 申报多路才给挑。实际采不到时用申报值兜底——模板也是按它生成的，
+      // 不然「申报了 4 路、设备还没上报 Line.3」就只能让用户勾两路
+      const declared = Number(String(this.adaptOf(sn).capSipCount || '').replace(/\D/g, '')) || 0
+      // VoiceProfile 级那一行（…VoiceProfile.1.SIP.）只放注册/代理服务器，
+      // 不是一个话机口，不能当成第 1 路混进来
+      const rows = this.sipList(sn)
+      const lines = rows.filter(item => /\.Line\.\d+\.SIP\.$/.test(item.path || ''))
+      const known = new Map()
+      for (const item of lines) {
+        const m = /\.Line\.(\d+)\.SIP\.$/.exec(item.path || '')
+        if (m) known.set(Number(m[1]), item)
+      }
+      const actualMax = known.size ? Math.max(...known.keys()) : 0
+      const total = Math.max(declared, actualMax, 1)
+      const options = []
+      for (let line = 1; line <= total; line++) {
+        const item = known.get(line)
+        options.push({
+          line,
+          number: item ? (item.number || (item.params && item.params.AuthUserName) || '') : ''
+        })
+      }
+      return options
+    },
+
+    /** 点开的这一行属于第几路：路径里 Line.N 就是，取不到算第 1 路。 */
+    sipLineOf(item) {
+      const m = /\.Line\.(\d+)\.SIP\.$/.exec((item && item.path) || '')
+      return m ? Number(m[1]) : 1
+    },
+
+    openSipParams(sn, item) {
+      const line = this.sipLineOf(item)
+      this.sipDialogSn = sn
+      this.sipDialogPath = (item && item.path) || ''
+      this.sipShowPwd = false
+      const params = (item && item.params) || {}
+      // 字段被拆在两行里：账号密码挂在每一路 Line（…Line.1.SIP.），
+      // 注册 / 代理服务器挂在 VoiceProfile 级（…VoiceProfile.1.SIP.）。
+      // 只看点开的那一路，注册服务器就永远是空的，所以按整组补全
+      const firstOf = key => {
+        const own = params[key]
+        if (own !== undefined && String(own).trim() !== '') return String(own)
+        for (const row of this.sipList(sn)) {
+          const v = (row.params || {})[key]
+          if (v !== undefined && String(v).trim() !== '') return String(v)
+        }
+        return ''
+      }
+      const number = item && item.number
+        ? item.number
+        : (params.AuthUserName || params.URI || '')
+      this.sipEditForm = {
+        sn,
+        path: (item && item.path) || '',
+        // 默认就是点开的那一路，避免在多路设备上忘了勾却把第 1 路覆盖掉
+        lines: [line],
+        number: String(number || ''),
+        authUser: String(params.AuthUserName || number || ''),
+        password: String(params.AuthPassword || ''),
+        registrar: firstOf('RegistrarServer'),
+        registrarPort: firstOf('RegistrarServerPort') || '5060',
+        proxy: firstOf('ProxyServer'),
+        proxyPort: firstOf('ProxyServerPort') || '5060'
+      }
+      this.sipVisible = true
+    },
+
+    /** 点「下发到设备」= 提交一张 SIP 工单，与 WLAN 编辑走同一套下发链路。 */
+    async submitSipEdit() {
+      const form = this.sipEditForm
+      if (!form.number) {
+        this.$message.warning('电话号码 / URI 不能为空')
+        return
+      }
+      const lines = form.lines && form.lines.length ? [...form.lines].sort((a, b) => a - b) : [1]
+      this.sipSubmitting = true
+      try {
+        // 一路一张工单：工单模型是「一次下发一个业务实例」，写第几路由 values 里的
+        // instance 告诉渲染器（缺省 1），所以开三路 = 三张单，不是一张单塞三份
+        let done = 0
+        let failed = 0
+        for (const line of lines) {
+          try {
+            await createWorklist({
+              sn: form.sn,
+              category: 'SIP',
+              // 幂等键必须带上路号：服务器同秒内连开多单会认为重复提交，
+              // 三路合成一路就等于只开了第一路
+              worklistDesc: 'UI-SIP-' + form.sn + '-L' + line + '-' + Date.now(),
+              values: {
+                instance: String(line),
+                // 变量的键就是模板里占位符：sip_num 写 AuthUserName，sip_uri 写 URI，
+                // 密码、注册/代理服务器各自对应
+                '%sip_num%': form.authUser || form.number,
+                '%sip_uri%': form.number,
+                '%sip_pwd%': form.password,
+                '%sip_registrar%': form.registrar,
+                '%sip_registrar_port%': form.registrarPort,
+                '%sip_proxy%': form.proxy,
+                '%sip_port%': form.proxyPort
+              },
+              username: this.$store.getters.name || 'admin'
+            })
+            done++
+          } catch (e) {
+            failed++
+            this.$message.error('第 ' + line + ' 路提交失败：' + ((e && e.message) || ''))
+          }
+        }
+        if (done) {
+          this.$message.success('SIP 语音下发工单已提交 ' + done + ' 张（第 ' + lines.join('、') + ' 路）')
+        }
+        if (!failed) {
+          this.sipVisible = false
+        }
+      } finally {
+        this.sipSubmitting = false
+      }
     },
 
     // ---------------- 设备详情弹窗（设备标识列点 SN 打开） ----------------
@@ -2051,6 +2313,58 @@ export default {
   align-items: center;
   margin-bottom: 3px;
 }
+/* SIP 行可点开：给个手型与悬停底色，否则用户不知道这一列能点 */
+.sip-row {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 3px;
+  margin-left: -3px;
+}
+.sip-row:hover {
+  background: #f0f7ff;
+}
+.snapshot-tip {
+  float: left;
+  font-size: 12px;
+  color: #909399;
+  line-height: 32px;
+}
+.pwd-eye {
+  cursor: pointer;
+  color: #909399;
+  margin-right: 6px;
+}
+.sip-readonly-tip {
+  margin: -4px 0 8px 118px;
+  font-size: 12px;
+  color: #c0c4cc;
+}
+.sip-line-pick {
+  padding: 6px 10px;
+  background: #f5f7fa;
+  border-radius: 3px;
+}
+.sip-line-pick .el-checkbox {
+  margin-right: 14px;
+}
+.sip-line-num {
+  margin-left: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+.sip-line-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #c0c4cc;
+}
+.snapshot-tip-block {
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #909399;
+  background: #f5f7fa;
+  border-radius: 3px;
+}
 .biz-name {
   margin-left: 6px;
   font-size: 12px;
@@ -2090,6 +2404,7 @@ export default {
   align-items: center;
   gap: 10px;
 }
+.sip-edit-path,
 .wifi-edit-path {
   font-size: 12px;
   color: #909399;

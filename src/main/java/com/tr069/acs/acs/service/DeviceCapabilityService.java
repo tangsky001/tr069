@@ -79,6 +79,11 @@ public class DeviceCapabilityService {
 
     /** 只采集这些子树，相对数据模型根节点书写。 */
     private static final List<String> SUBTREES_TR098 = List.of(
+            // 设备身份与运行时长：Manufacturer / SoftwareVersion / SerialNumber / UpTime
+            // 都在 DeviceInfo 这一层，节点数只有几十个，但以前一棵都没采——
+            // 于是页面上的「运行时长」永远是空的（设备明明能报，实测
+            // InternetGatewayDevice.DeviceInfo.UpTime 返回 unsignedInt 秒数）
+            "DeviceInfo.",
             // WAN
             "WANDevice.",
             // LAN 网口（TR-098 的 WiFi 挂在 LANDevice 下面，随 LAN 子树一并取回）
@@ -88,6 +93,8 @@ public class DeviceCapabilityService {
 
     /** TR-181（{@code Device.}）下的业务子树。 */
     private static final List<String> SUBTREES_TR181 = List.of(
+            // 设备身份与运行时长，同上
+            "DeviceInfo.",
             // WAN
             "WAN.",
             // LAN 网口

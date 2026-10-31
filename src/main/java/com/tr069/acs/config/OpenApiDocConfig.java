@@ -12,6 +12,7 @@ import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springdoc.core.customizers.OperationCustomizer;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,8 +25,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 在线接口文档（springdoc / Swagger UI）：启动后打开 {@code /doc/index.html} 就能看到全部接口。 */
+ * 在线接口文档（springdoc / Swagger UI）：启动后打开 {@code /doc/index.html} 就能看到全部接口。
+ *
+ * <p>开关统一由 {@code springdoc.enabled} 控制：置 false 时本类不装载，OpenAPI 都不生成，
+ * 文档端点也就无处可返。作者信息写在下面的 info 里，不放配置文件。</p>
+ */
 @Configuration
+@ConditionalOnProperty(name = "springdoc.enabled", havingValue = "true", matchIfMissing = true)
 public class OpenApiDocConfig {
 
     /** 令牌请求头：管理端页面用的就是这个，和 AdminAuthInterceptor 一致 */
@@ -303,10 +309,14 @@ public class OpenApiDocConfig {
     public OpenAPI acsOpenApi() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("TR069 ACS 接口文档")
+                        .title("Pilot ACS 接口文档")
                         .version("1.0.0")
-                        .contact(new Contact().name("PilotACS"))
+                        .contact(new Contact()
+                                .name("阿斌")
+                                .email("38912748@qq.com"))
                         .description("""
+                                作者：阿斌 <38912748@qq.com>
+
                                 管理端 `/api/**` 与北向 `/openapi/v1/**` 两套接口。三条约定：
 
                                 1. **业务成功看 `code == 200`，HTTP 200 不代表成功**：

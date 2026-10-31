@@ -1,0 +1,4 @@
+# 文档界面偏好由 com.tr069.acs.config.DocEnvDefaults 在代码里设置，
+# application.yml 里只留 springdoc.enabled 这一个开关。
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.tr069.acs.config.DocEnvDefaults

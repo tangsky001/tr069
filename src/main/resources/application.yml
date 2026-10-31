@@ -21,11 +21,17 @@ server:
       min-spare: 40
 
 # 接口文档：启动后浏览器打开 http://127.0.0.1:8888/doc.html 看全部接口与参数
+#
+# 总开关：改成 false 会把 /doc.html、/v3/api-docs、Swagger UI 一起关掉，
+# 生产环境不想暴露接口结构时只改这一处就够了
 springdoc:
+  enabled: true
   api-docs:
+    enabled: ${springdoc.enabled}
     # 这份 JSON 可以直接导进 Apifox / Postman
     path: /v3/api-docs
   swagger-ui:
+    enabled: ${springdoc.enabled}
     # 原生 Swagger UI，Knife4j 界面不可用时可以退回这里
     path: /doc/index.html
     tags-sorter: alpha
@@ -36,13 +42,11 @@ springdoc:
     - /openapi/**
 
 # Knife4j 文档界面（左侧主页 / Swagger Models / 文档管理，右侧简介与接口统计）
+# 界面偏好（语言 zh_cn、我们的页脚）都在 com.tr069.acs.config.DocEnvDefaults 里，
+# 这里不重复一遍
 knife4j:
-  enable: true
-  setting:
-    language: zh_cn
-    enable-footer: false
-    enable-footer-custom: true
-    footer-custom-content: TR069 ACS 接口文档
+  # 跟随上面的总开关，不用再改第二处
+  enable: ${springdoc.enabled}
 
 spring:
   application:

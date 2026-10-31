@@ -2,10 +2,13 @@
   <div class="biz-panel">
     <div class="biz-toolbar">
       <span class="biz-meta">最近采集：{{ formatTime(summary.lastCollectTime) }}</span>
+      <!-- 这个按钮是唯一会主动叫醒设备的入口：其余区块（WAN / WLAN / SIP / LAN）
+           点开都是读本地快照，不下发任何 RPC -->
       <el-button
         type="primary"
         size="mini"
         icon="el-icon-refresh"
+        title="向设备发起一轮读取（会唤醒设备）"
         :loading="collecting"
         @click="collect"
       >重新采集</el-button>
@@ -60,7 +63,7 @@
           </div>
           <div class="wan-row">
             <span class="k">端口绑定:</span>
-            <span class="v">{{ item.bindPorts || '未绑定（默认全部口）' }}</span>
+            <span class="v">{{ item.bindPorts || '未绑定' }}</span>
           </div>
           <div class="wan-row">
             <span class="k">MAC地址:</span>
