@@ -489,6 +489,10 @@
           <span class="v v-strong">{{ serviceMode(item) }}</span>
         </div>
         <div class="wan-param-row">
+          <span class="k">端口绑定:</span>
+          <span class="v">{{ item.bindPorts || '未绑定（默认全部口）' }}</span>
+        </div>
+        <div class="wan-param-row">
           <span class="k">MAC地址:</span>
           <span class="v">{{ showVal(item.params.MACAddress) }}</span>
         </div>
@@ -1087,7 +1091,8 @@ export default {
       }
       return lines
     },
-    // 整页设备的机型适配状态一次拉回：有型号能力树 XML = 已适配
+    // 整页设备的机型适配状态一次拉回：以 SQLite 模板库里的适配结果为准，
+    // 型号能力树 XML 只是归档产物，有没有不影响「已适配」的判定
     async loadAdaptStatus() {
       const sns = this.list.map(d => d.sn)
       if (!sns.length) {

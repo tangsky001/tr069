@@ -59,6 +59,10 @@
             <span class="v v-strong">{{ item.service }}</span>
           </div>
           <div class="wan-row">
+            <span class="k">端口绑定:</span>
+            <span class="v">{{ item.bindPorts || '未绑定（默认全部口）' }}</span>
+          </div>
+          <div class="wan-row">
             <span class="k">MAC地址:</span>
             <span class="v">{{ show(item.params.MACAddress) }}</span>
           </div>

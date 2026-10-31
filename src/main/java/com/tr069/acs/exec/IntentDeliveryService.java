@@ -33,6 +33,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -354,15 +355,16 @@ public class IntentDeliveryService {
         Map<String, String> overrides = new LinkedHashMap<>();
         if (values != null) {
             values.forEach((k, v) -> {
-                if (v != null && !String.valueOf(v).isBlank()) {
-                    overrides.put(k, String.valueOf(v));
+                String text = textValue(v);
+                if (text != null && !text.isBlank()) {
+                    overrides.put(k, text);
                 }
             });
         }
         Map<String, Object> intentFields = new LinkedHashMap<>();
         if (tplFields != null) {
             intentFields.putAll(tplFields);
-            tplFields.forEach((k, v) -> overrides.putIfAbsent(k, v == null ? null : String.valueOf(v)));
+            tplFields.forEach((k, v) -> overrides.putIfAbsent(k, textValue(v)));
         }
 
         // 重启这类设备管理意图是标准 RPC，不依赖型号适配：没做过适配的设备也应该能重启
@@ -430,6 +432,16 @@ public class IntentDeliveryService {
             if ("boolean".equalsIgnoreCase(type)) {
                 value = booleanValue(value);
             }
+            if (LAN_INTERFACE_NODE.equalsIgnoreCase(leafOf(path))) {
+                // 绑定端口落到 X_CMCC_LanInterface 上时，值必须是 LAN 口的完整路径串，
+                // 页面给的 LAN1,LAN2 写下去会被整批拒（SPV 按批生效，会连 Enable 一起废掉）
+                String bound = lanInterfaceValue(path, value);
+                if (bound == null) {
+                    log.warn("绑定端口值无法映射到 LAN 口路径，本次不下发: {} = {}", path, value);
+                    continue;
+                }
+                value = bound;
+            }
             items.add(new PlanItem(item.bizObject(), item.bizField(), path, value, type));
         }
         List<String> errors = new ArrayList<>(plan.errors());
@@ -437,6 +449,66 @@ public class IntentDeliveryService {
             errors.add("模板里的参数在这台设备上一个都对不上，请重新适配该型号");
         }
         return new IntentPlan(plan.bizObject(), plan.instance(), plan.objectsToAdd(), items, errors);
+    }
+
+    /** 绑定端口节点：中国移动定制机上真叫这个名字，取值为 LAN 口路径。 */
+    private static final String LAN_INTERFACE_NODE = "X_CMCC_LanInterface";
+
+    private static String leafOf(String path) {
+        if (path == null) {
+            return "";
+        }
+        int idx = path.lastIndexOf('.');
+        return idx < 0 ? path : path.substring(idx + 1);
+    }
+
+    /**
+     * 把页面勾选的 {@code LAN1,LAN2} 翻成设备认的 LAN 口路径串。
+     *
+     * <p>实测（中兴 P22g-CIac）：{@code X_CMCC_LanInterface} 上现存的值是
+     * {@code InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1}——一个口的完整
+     * 路径，多口按逗号分隔，空串＝不绑定（设备上默认绑全部口）。直接写 {@code LAN1} 会被
+     * 判 9003 Invalid arguments。</p>
+     *
+     * @return 设备侧取值；无法映射（如勾了 SSID / PON）返回 null，由调用方跳过
+     */
+    private static String lanInterfaceValue(String path, String value) {
+        String v = value == null ? "" : value.trim();
+        StringBuilder sb = new StringBuilder();
+        for (String part : v.split("[,;\\s]+")) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            String port = lanPortPath(path, p);
+            if (port == null) {
+                return null;
+            }
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            sb.append(port);
+        }
+        return sb.toString();
+    }
+
+    /** LAN{n} → 根节点下的 LANEthernetInterfaceConfig.{n}；已经是路径的照原样收下。 */
+    private static String lanPortPath(String wanPath, String port) {
+        if (port.startsWith("InternetGatewayDevice.") || port.startsWith("Device.")) {
+            return port;
+        }
+        if (port.length() < 4 || !port.regionMatches(true, 0, "LAN", 0, 3)) {
+            return null;
+        }
+        String no = port.substring(3);
+        for (int i = 0; i < no.length(); i++) {
+            if (!Character.isDigit(no.charAt(i))) {
+                return null;
+            }
+        }
+        int dot = wanPath.indexOf('.');
+        String root = dot < 0 ? "InternetGatewayDevice." : wanPath.substring(0, dot + 1);
+        return root + "LANDevice.1.LANEthernetInterfaceConfig." + no;
     }
 
     /**
@@ -463,10 +535,11 @@ public class IntentDeliveryService {
         }
         String service = serviceOf(values, overrides);
         if ("OTHER".equalsIgnoreCase(service)) {
-            // 桥接的「其他 / Other」是纯二层透传，不绑业务。本机型能力树里没采到过
-            // OTHER 这个取值，写上去被拒会把整批 SPV 拖掉、桥接反而建不起来
-            log.info("业务模式为 Other，跳过业务绑定补写（纯二层透传）: sn={}", sn);
-            return plan;
+            // 「其他 / Other」不是不绑业务，而是业务绑定就写 OTHER：设备上现存的桥接
+            // 4_OTHER_B_VID_100 的 X_CMCC_ServiceList 正是 OTHER，且它连着。
+            // 以前这里当成"纯二层透传不绑业务"跳过，结果同一批里的 Enable 被设备拒
+            // （没绑业务的连接不许启用），整批 9003，桥接一条也建不起来。
+            log.info("业务模式为 Other，按 OTHER 补写业务绑定（不绑业务时设备拒绝启用）: sn={}", sn);
         }
         String first = plan.parameters().get(0).path();
         int cut = first.lastIndexOf('.');
@@ -756,17 +829,21 @@ public class IntentDeliveryService {
     /** 业务绑定的默认取值：没指定业务模式时按上网处理。 */
     private static final String SERVICE_INTERNET = "INTERNET";
 
-    /** 设备认识的业务绑定取值，取型号能力树里 {@code X_CMCC_ServiceList} 的实测值。 */
-    private static final List<String> SERVICE_TOKENS = List.of("INTERNET", "TR069", "VOIP", "IPTV");
+    /**
+     * 设备认识的业务绑定取值，取型号能力树里 {@code X_CMCC_ServiceList} 的实测值。
+     *
+     * <p>{@code OTHER} 也是实测值：设备上自带的桥接 {@code 4_OTHER_B_VID_100} 就是 OTHER。</p>
+     */
+    private static final List<String> SERVICE_TOKENS =
+            List.of("INTERNET", "TR069", "VOIP", "IPTV", "OTHER");
 
     /**
      * 桥接会用到、但本机型能力树里还没采到样本的取值。
      *
-     * <p>{@code OTHER} 是桥接的默认业务模式（纯二层透传），{@code OTT} 是桥接选项之一；
-     * 移动规范里有这两个值，但这批样机只采到 INTERNET/TR069/VOIP/IPTV。照填下发并留一条
-     * 提示——被设备拒时日志里能直接看出是这两个值的问题，而不是静默改成 INTERNET。</p>
+     * <p>{@code OTT} 是移动规范里的桥接业务选项之一，样机上没采到过。照填下发并留一条
+     * 提示——被设备拒时日志里能直接看出是这个值的问题，而不是静默改成 INTERNET。</p>
      */
-    private static final List<String> SERVICE_TOKENS_UNVERIFIED = List.of("OTHER", "OTT");
+    private static final List<String> SERVICE_TOKENS_UNVERIFIED = List.of("OTT");
 
     /**
      * 业务绑定的取值：本次显式传的值 &gt; 配置模板里保存的业务模式 &gt; 默认 INTERNET。
@@ -1216,6 +1293,37 @@ public class IntentDeliveryService {
     }
 
     /**
+     * 业务字段值转成可下发的字符串。
+     *
+     * <p>多选字段（绑定端口）存的是 {@code ["LAN1","LAN2"]}，直接 {@code String.valueOf}
+     * 会写出 {@code [LAN1, LAN2]} 这种带方括号的串，设备只会回 9003 / 9007；按模板定义的
+     * 约定拼成 {@code LAN1,LAN2}。空集合得到空串，仍按「未填写」处理，不覆盖默认值。</p>
+     */
+    private static String textValue(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Collection<?> list) {
+            StringBuilder sb = new StringBuilder();
+            for (Object item : list) {
+                if (item == null) {
+                    continue;
+                }
+                String s = String.valueOf(item).trim();
+                if (s.isEmpty()) {
+                    continue;
+                }
+                if (sb.length() > 0) {
+                    sb.append(',');
+                }
+                sb.append(s);
+            }
+            return sb.toString();
+        }
+        return String.valueOf(v);
+    }
+
+    /**
      * 该业务是否要动 WAN 连接。只有 WAN 类才需要清理，WiFi / SIP 下发不要碰。
      */
     private static boolean isWan(String category) {
@@ -1660,11 +1768,34 @@ public class IntentDeliveryService {
     }
 
     private List<List<PlanItem>> chunks(List<PlanItem> items) {
+        // WAN 连接的 Enable 单独放最后一批：设备要求先把业务绑定 / VLAN / 绑定端口配好
+        // 才允许启用，同一批里带着 Enable 时，前面任何一条被拒都会把启用一起拖掉，
+        // 而且日志里只看得到整批 9003，分不清是"配置不对"还是"不许启用"
+        List<PlanItem> body = new ArrayList<>(items.size());
+        List<PlanItem> enables = new ArrayList<>();
+        for (PlanItem item : items) {
+            if (isWanEnable(item)) {
+                enables.add(item);
+            } else {
+                body.add(item);
+            }
+        }
         List<List<PlanItem>> chunks = new ArrayList<>();
-        for (int i = 0; i < items.size(); i += VALUE_BATCH) {
-            chunks.add(items.subList(i, Math.min(items.size(), i + VALUE_BATCH)));
+        for (int i = 0; i < body.size(); i += VALUE_BATCH) {
+            chunks.add(body.subList(i, Math.min(body.size(), i + VALUE_BATCH)));
+        }
+        if (!enables.isEmpty()) {
+            // 配置那一批先发；它失败时整个任务就此收尾，绝不会顺手把半成品启用
+            chunks.add(enables);
         }
         return chunks;
+    }
+
+    /** WAN 连接的启用开关：{@code WANIPConnection.{i}.Enable} / {@code WANPPPConnection.{i}.Enable}。 */
+    private static boolean isWanEnable(PlanItem item) {
+        String path = item.path();
+        return path != null && path.contains("Connection.")
+                && "Enable".equalsIgnoreCase(leafOf(path));
     }
 
     // ==================== 序列化 ====================

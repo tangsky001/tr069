@@ -290,7 +290,12 @@ public class ModelTreeStore {
         data.put("exists", Files.isRegularFile(file));
         data.put("sampleSn", model.getSampleSn());
         if (!Files.isRegularFile(file)) {
-            data.put("hint", "型号文件尚未生成，请对该设备执行一次能力树导出");
+            // 能力树 XML 只是归档产物： SQLite 模板库里那份适配结果还在，下发照旧能发，
+            // 缺的只是「同型号新设备的骨架」。说成「必须重新适配」会让现场白跑一轮采集
+            data.put("hint", "型号能力树文件缺失（适配结果仍在模板库中，下发不受影响）；"
+                    + "需要时可对该设备再执行一次能力树导出重建");
+            log.warn("型号能力树文件缺失，下发路径校正只用设备自身参数树: model={}, file={}",
+                    modelKey, file);
         }
         return data;
     }
@@ -317,7 +322,10 @@ public class ModelTreeStore {
         }
         Path file = resolveFile(String.valueOf(relative));
         if (!Files.isRegularFile(file)) {
-            throw new IllegalStateException("型号能力树文件不存在，请先导出: " + file);
+            // 这份接口查的是归档的能力档案，文件不在就拿不出节点清单；
+            // 与下发无关：适配结果在 SQLite 模板库里，缺的只是这份档案本身
+            throw new IllegalStateException("型号能力树文件不存在（适配结果仍在模板库，下发不受影响）；"
+                    + "需要这份档案时对该设备再执行一次能力树导出即可重建: " + file);
         }
         List<ParamNode> params = readParams(file);
         List<String> words = keywords(item);
@@ -600,6 +608,12 @@ public class ModelTreeStore {
         map.put("X_CMCC_VLANID", List.of("X_CMCC_VLANIDMark", "X_CT-COM_VLANIDMark", "VLANIDMark"));
         map.put("VLANID", List.of("X_CMCC_VLANIDMark", "X_CT-COM_VLANIDMark", "VLANIDMark"));
         map.put("IPAddressingType", List.of("AddressingType"));
+        // 绑定端口：模板库统一登记的是 X_CMCC_BindLANPort，而移动定制机（如中兴 P22g-CIac）
+        // 上真实存在的节点叫 X_CMCC_LanInterface——两个名字毫无字面相似，不加别名就永远
+        // 判成「该型号不支持」，勾的端口一个都发不出去
+        map.put("X_CMCC_BindLANPort", List.of("X_CMCC_LanInterface", "X_CT-COM_LanInterface",
+                "X_CMCC_LANInterface"));
+        map.put("BindLANPort", List.of("X_CMCC_LanInterface", "X_CT-COM_LanInterface"));
         return Map.copyOf(map);
     }
 
