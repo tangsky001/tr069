@@ -27,7 +27,7 @@ export function fetchConfigTemplate(id) {
   })
 }
 
-/** data: { id, name, category, groupName, enabled, remark, fields } */
+/** data: { id, name, category, groupName, enabled, remark, incremental, fields } */
 export function saveConfigTemplate(data) {
   return request({
     url: '/config-templates',

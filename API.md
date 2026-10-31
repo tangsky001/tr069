@@ -126,7 +126,7 @@ HTTP 状态码只在缺令牌与缺权限时和业务码一起跟着变（HTTP 4
 
 ### 2.3 登出
 
-`POST /api/user/logout` — 服务端无状态 Token，此接口仅用于前端清会话，返回 `success`。
+`POST /api/user/logout` — 服务端无状态 Token，此接口仅用于前端清会话，返回 `成功`。
 
 ---
 
@@ -238,6 +238,18 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 | GET | `/{id}` | — | 详情 |
 | POST | `` | `ConfigTemplateSaveRequest` | 新增或更新（带 `id` 为更新） |
 | POST | `/{id}/delete` | — | 删除 |
+
+`ConfigTemplateSaveRequest`：
+
+```json
+{ "id": null, "name": "WAN-Internet", "category": "WAN_DHCP", "groupName": "",
+  "enabled": true, "remark": "", "incremental": false, "fields": { "vlan_id": 41 } }
+```
+
+- `incremental`（默认 `false`）：**增量业务**开关。`true` 时下发只 `AddObject` 新增这一条业务，
+  **不删除、不改写**设备上已有的其它业务（已有的 IPTV / VOIP / 用户自建 Internet 都保持原样）；
+  `false` 为整单覆盖，WAN 类业务会先清理同设备上除 TR069 管理通道外的连接再新建。
+  判据取任务上的模板 id，下发时现查模板，因此改了开关对排队中的任务同样生效。
 
 ### 4.6 业务模板
 

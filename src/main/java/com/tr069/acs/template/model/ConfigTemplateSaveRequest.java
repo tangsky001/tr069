@@ -25,4 +25,7 @@ public class ConfigTemplateSaveRequest {
 
     /** 意图字段，按类型不同：如 ip_protocol / vlan_used / port_bind。 */
     private Map<String, Object> fields;
+
+    /** 增量业务：true 时下发只新增这一条，不清理/不改写设备上已有的其它业务；为空按 false。 */
+    private Boolean incremental;
 }

@@ -366,6 +366,7 @@ public class ConfigTemplateService {
         template.setEnabled(request.getEnabled() == null || request.getEnabled());
         template.setRemark(request.getRemark() == null ? "" : request.getRemark().trim());
         template.setFields(writeFields(request.getFields()));
+        template.setIncremental(request.getIncremental() != null && request.getIncremental());
 
         LocalDateTime now = LocalDateTime.now();
         if (request.getId() == null) {
@@ -401,6 +402,20 @@ public class ConfigTemplateService {
         return readFields(template.getFields());
     }
 
+    /**
+     * 模板是否勾了「增量业务」。
+     *
+     * <p>下发侧在 {@code IntentDeliveryService} 里按任务上的模板 id 现取：模板改了开关，
+     * 排队中的任务跟着走新语义，不需要给 device_task 再加一列。</p>
+     */
+    public boolean incrementalOf(Long id) {
+        if (id == null) {
+            return false;
+        }
+        ConfigTemplate template = mapper.selectById(id);
+        return template != null && template.getIncremental() != null && template.getIncremental();
+    }
+
     // ==================== 内部实现 ====================
 
     private Map<String, Object> toView(ConfigTemplate template) {
@@ -413,6 +428,7 @@ public class ConfigTemplateService {
         view.put("enabled", template.getEnabled() != null && template.getEnabled());
         view.put("remark", template.getRemark());
         view.put("fields", readFields(template.getFields()));
+        view.put("incremental", template.getIncremental() != null && template.getIncremental());
         view.put("createdAt", template.getCreatedAt());
         view.put("updatedAt", template.getUpdatedAt());
         return view;

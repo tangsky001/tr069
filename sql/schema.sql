@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS `config_template` (
     `enabled`     TINYINT      NOT NULL DEFAULT 1 COMMENT '是否启用',
     `remark`      VARCHAR(255) COMMENT '备注',
     `fields`      TEXT         COMMENT '意图字段 JSON，键值与型号语义映射的 biz_field 对齐',
+    `incremental` TINYINT      NOT NULL DEFAULT 0 COMMENT '增量业务：只新增这一条业务，不清理/不改写设备上已有的其它业务',
     `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
     `updated_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),

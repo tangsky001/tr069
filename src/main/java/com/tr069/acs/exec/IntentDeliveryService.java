@@ -978,7 +978,14 @@ public class IntentDeliveryService {
             // 第一个刚建好的连接当成残留删掉
             if (isWan(task.getCategory())) {
                 plan = alignWanDevice(task, plan);
-                cleanupWan(task);
+                // 模板上勾了「增量业务」就完全跳过清理：只 AddObject 新增这一条，
+                // 设备上已有的 IPTV / VOIP / 用户自建 Internet 一条都不动
+                if (incremental(task)) {
+                    log.info("增量业务，跳过 WAN 清理（只新增，不删不改已有连接）: sn={}, taskNo={}",
+                            task.getSn(), task.getTaskNo());
+                } else {
+                    cleanupWan(task);
+                }
             }
             // AddObject 的实例号是设备分配的，可能和计划渲染时占的号不同，
             // 必须回填进参数路径，否则会写到错误的实例上去
@@ -1213,6 +1220,16 @@ public class IntentDeliveryService {
      */
     private static boolean isWan(String category) {
         return category != null && category.toUpperCase().startsWith("WAN_");
+    }
+
+    /**
+     * 这一单是不是「增量业务」：模板上勾了这个开关，就只新增、不清理也不改写已有业务。
+     *
+     * <p>判据取任务上的模板 id，现查模板：开关是模板级语义，改了就该对排队中的任务同样生效，
+     * 不必给 device_task 再落一列。没有模板（手工临时下发）按覆盖语义走，保持原行为。</p>
+     */
+    private boolean incremental(DeviceTask task) {
+        return task != null && configTemplateService.incrementalOf(task.getTemplateId());
     }
 
     /**

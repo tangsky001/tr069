@@ -74,6 +74,13 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="下发方式" width="95">
+        <template slot-scope="{ row }">
+          <el-tag size="mini" :type="row.incremental ? 'warning' : 'info'">
+            {{ row.incremental ? '增量' : '覆盖' }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template slot-scope="{ row }">
           <el-button v-if="$has('template:manage')" type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
@@ -170,6 +177,15 @@
           />
           <div v-if="f.tip" class="field-tip">{{ f.tip }}</div>
         </el-form-item>
+        <!-- 只有 WAN 业务会在下发前清理存量连接，其它类型（WiFi / SIP）没有「覆盖」语义，
+             开关摆在它们上面等于一个空开关 -->
+        <el-form-item v-if="wanCategory" label="增量业务">
+          <el-switch v-model="form.incremental" active-text="是" inactive-text="否" />
+          <div class="field-tip">
+            是：下发只新增这一条业务，不删除、不改写设备上已有的其它业务（已有 IPTV / VOIP /
+            用户自建 Internet 都保持原样）；否：整单覆盖，先清理同设备上多余的连接再新建。
+          </div>
+        </el-form-item>
       </el-form>
 
       <span slot="footer">
@@ -196,6 +212,8 @@ function emptyForm() {
     groupName: '',
     enabled: true,
     remark: '',
+    // 增量业务：只新增这一条，不清理/不改写设备上已有的其它业务
+    incremental: false,
     fields: {}
   }
 }
@@ -222,6 +240,10 @@ export default {
   computed: {
     fieldDefs() {
       return this.fieldDefMap[this.form.category] || []
+    },
+    /** 只有 WAN 类业务有「先清理存量再新建」的覆盖语义，增量开关只对它们有意义 */
+    wanCategory() {
+      return String(this.form.category || '').toUpperCase().startsWith('WAN_')
     }
   },
   created() {
@@ -296,6 +318,7 @@ export default {
         groupName: row.groupName || '',
         enabled: row.enabled !== false,
         remark: row.remark || '',
+        incremental: row.incremental === true,
         fields: Object.assign({}, row.fields || {})
       }
       // 业务模式的历史值是混合大小写（Internet / Internet,TR069），先归一成设备口径，
@@ -346,6 +369,7 @@ export default {
           groupName: this.form.groupName,
           enabled: this.form.enabled,
           remark: this.form.remark,
+          incremental: this.form.incremental === true,
           fields: this.form.fields
         })
         this.$message.success(this.form.id ? '模板已更新' : '模板已保存')
