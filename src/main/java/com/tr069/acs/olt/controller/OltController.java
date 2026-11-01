@@ -21,6 +21,9 @@ import com.tr069.acs.olt.model.OltVlanForm;
 import com.tr069.acs.olt.model.OltVlanRequest;
 import com.tr069.acs.olt.model.OltSyncRecordView;
 import com.tr069.acs.olt.model.OltTestResult;
+import com.tr069.acs.olt.model.OltOntAutofind;
+import com.tr069.acs.olt.model.OltOntAutoFindStatus;
+import com.tr069.acs.olt.model.OltTerminalUserRequest;
 import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltTr069ProfileRequest;
 import com.tr069.acs.olt.model.OltVlanRequest;
@@ -406,6 +409,89 @@ public class OltController {
         } catch (Exception e) {
             log.error("查询 TR-069 模板异常 id={}", id, e);
             return Result.failure("查询 TR-069 模板失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 待注册 ONT：不读库，实时登设备执行 {@code display ont autofind all}。
+     *
+     * <p>返回的是这一瞬间设备上等着授权的光猫，注册完就不在这个表里，所以每次点都重查。</p>
+     */
+    @GetMapping("/{id}/ont-autofind")
+    public Result<List<OltOntAutofind>> ontAutofind(@PathVariable Long id) {
+        try {
+            return Result.success(oltService.ontAutofind(id));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("查询待注册 ONT 异常 id={}", id, e);
+            return Result.failure("查询待注册 ONT 失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * PON 口自动发现开关状态：逐口问设备 {@code display ont-auto-find}。
+     *
+     * <p>查不出来也返回 200 + message，不抛 500——这块状态查不到属于正常情况
+     * （有的版本没这条命令），不该让页面显示成故障。</p>
+     */
+    @GetMapping("/{id}/ont-auto-find")
+    public Result<OltOntAutoFindStatus> ontAutoFindStatus(@PathVariable Long id) {
+        try {
+            return Result.success(oltService.ontAutoFindStatus(id));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("查询 PON 口自动发现异常 id={}", id, e);
+            return Result.failure("查询自动发现状态失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 一键开启所有 GPON 业务板 PON 口的自动发现，下发后自动重采一次。
+     */
+    @PostMapping("/{id}/ont-auto-find/enable")
+    public Result<OltDetail> enableOntAutoFind(@PathVariable Long id, HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.enableOntAutoFind(id, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("开启 PON 口自动发现异常 id={}", id, e);
+            return Result.failure("开启自动发现失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 建一个 OLT 本地用户（登这台设备用的账号）。
+     *
+     * <p>华为这边走 {@code terminal user name} 那条交互式命令：登上去之后设备会
+     * 依次问用户名、密码、确认密码、用户模板、级别、可重入次数、备注，
+     * 后端按顺序应答，建完自动重采一次整机。</p>
+     *
+     * <p>级别只有 1（Common User）和 2（Operator）两档——华为不允许建比当前
+     * 登录账号更高级别的账号，用 Operator 级的账号连设备时，设备就只给这两个选项。</p>
+     */
+    @PostMapping("/{id}/terminal-user")
+    public Result<OltDetail> createTerminalUser(@PathVariable Long id,
+                                                @RequestBody(required = false) OltTerminalUserRequest request,
+                                                HttpServletRequest httpRequest) {
+        if (request == null || request.getUsername() == null || request.getPassword() == null) {
+            return Result.failure("用户名和密码都要填");
+        }
+        try {
+            return Result.success(oltService.createTerminalUser(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("建 OLT 用户异常 id={}", id, e);
+            return Result.failure("建 OLT 用户失败：" + e.getMessage());
         }
     }
 

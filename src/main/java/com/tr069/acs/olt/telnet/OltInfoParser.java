@@ -16,6 +16,7 @@ import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltIpInterface;
 import com.tr069.acs.olt.model.OltPortVlan;
 import com.tr069.acs.olt.model.OltStaticRoute;
+import com.tr069.acs.olt.model.OltOntAutofind;
 import com.tr069.acs.olt.model.OltVlan;
 import com.tr069.acs.olt.vendor.OltVendorProfiles;
 
@@ -2094,6 +2095,247 @@ public final class OltInfoParser {
         String lower = text.toLowerCase(Locale.ROOT);
         return lower.contains("command is not found") || lower.contains("unrecognized")
                 || lower.contains("unknown command") || lower.contains("failure:");
+    }
+
+    // --------------------------------------------------- 待注册 ONT（display ont autofind）
+
+    /**
+     * 回显是不是「设备上现在没有待注册 ONT」。
+     *
+     * <p>华为在这种情况下不返回空表，而是回一句
+     * {@code Failure: The automatically found ONTs do not exist}——带 Failure 字样，
+     * 但这属于正常结果，跟「命令不认识」是两码事，不能当成失败往上抛。</p>
+     */
+    public static boolean autofindIsEmpty(String text) {
+        if (text == null || text.isBlank()) {
+            return true;
+        }
+        String lower = text.toLowerCase(Locale.ROOT);
+        // 只认「没有待注册 ONT」这几种说法，不能写成宽泛的 not exist：
+        // "command does not exist" 是命令不支持，那个是要报错上去的
+        return lower.contains("automatically found")
+                || lower.contains("no ont") || lower.contains("0 ont");
+    }
+
+    /**
+     * 解析 {@code display ont autofind all} 的回显，得到已经上报、但还没授权的那批 ONT。
+     *
+     * <p>这张表各版本差别不小：简版只有 Number / F/S/P / SN 三列，完整版还带
+     * Password / Loid / Checkcode / VenderID / Ont Version / Ont SoftwareVersion，
+     * 列宽也跟着变。所以不硬背某一版的列宽——先从 {@code ----} 分隔线量出列边界，
+     * 再看表头认每列是什么，最后按列取值。换版本、换兄弟机型照样能对上。</p>
+     *
+     * <p>认不出表头就返回空表，页面按「没有待注册光猫」处理，不会把别的内容塞进来。</p>
+     */
+    public static List<OltOntAutofind> parseOntAutofind(String text) {
+        List<OltOntAutofind> items = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return items;
+        }
+        int[][] bounds = null;
+        List<String> headers = null;
+        for (String line : text.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            // 分隔线纯装饰：表格上下各一根，中间也可能有。清列宽会把已经认好的表头丢掉，
+            // 所以直接跳过；真换了表时会再次识别到新表头
+            if (trimmed.matches("[-= ]+")) {
+                continue;
+            }
+            int[][] candidate = autofindColumnBounds(line);
+            if (candidate.length < 2) {
+                continue;
+            }
+            List<String> cells = autofindCells(line, candidate);
+            // 每行都试一下像不像表头，命中就按它定列。不限定「分隔线后第一行」，
+            // 是因为回显里常常还夹着命令原样回打的一行
+            if (autofindIsHeader(cells)) {
+                bounds = candidate;
+                headers = autofindHeaders(cells);
+                continue;
+            }
+            if (headers == null) {
+                continue;
+            }
+            OltOntAutofind item = autofindRow(autofindCells(line, bounds), headers);
+            if (item != null) {
+                items.add(item);
+            }
+        }
+        return items;
+    }
+
+    /**
+     * 按列之间的宽空白（两个以上空格）把一行切成若干列，返回每列的起止下标。
+     *
+     * <p>不能拿 {@code ----} 分隔线来量列宽：华为那根分隔线是连成一整条的，
+     * 中间没有空格，看得出表有多宽，看不出列在哪。实际用来定列的是表头行——
+     * 列之间一般用多个空格分开，而列名内部的单词只用一个空格
+     * （{@code Ont Software Version} 是同一列，不能被拆成三列）。</p>
+     */
+    private static int[][] autofindColumnBounds(String rawLine) {
+        String line = rawLine.replace("\t", "    ");
+        List<int[]> spans = new ArrayList<>();
+        int index = 0;
+        int length = line.length();
+        while (index < length) {
+            while (index < length && line.charAt(index) == ' ') {
+                index++;
+            }
+            if (index >= length) {
+                break;
+            }
+            int start = index;
+            while (index < length) {
+                if (line.charAt(index) != ' ') {
+                    index++;
+                    continue;
+                }
+                int next = index;
+                while (next < length && line.charAt(next) == ' ') {
+                    next++;
+                }
+                // 单个空格是列名内部的词间距，两个以上才当作列分隔
+                if (next - index >= 2) {
+                    break;
+                }
+                index = next;
+            }
+            spans.add(new int[]{start, index});
+        }
+        return spans.toArray(new int[0][]);
+    }
+
+    /**
+     * 按列边界切单元格。
+     *
+     * <p>一列的宽度是「本列起点 → 下一列起点」，不是这一列<b>列名</b>的宽度：SN 十六位、
+     * 软件版本号也很长，都比列名宽，按列名宽度去截只能拿到前几个字符。</p>
+     */
+    private static List<String> autofindCells(String line, int[][] bounds) {
+        List<String> cells = new ArrayList<>();
+        for (int i = 0; i < bounds.length; i++) {
+            int start = Math.min(bounds[i][0], line.length());
+            int end = i + 1 < bounds.length ? Math.min(bounds[i + 1][0], line.length()) : line.length();
+            cells.add(start >= end ? "" : line.substring(start, end).trim());
+        }
+        return cells;
+    }
+
+    /** 表头行：要同时能认出 Number，以及端口列或 SN 列（缺一个就当它不是这张表） */
+    private static boolean autofindIsHeader(List<String> cells) {
+        boolean number = false;
+        boolean identity = false;
+        for (String cell : cells) {
+            String key = autofindKey(cell);
+            if (key.isEmpty()) {
+                continue;
+            }
+            if (key.startsWith("number")) {
+                number = true;
+            }
+            if (key.contains("s/p") || (key.contains("port") && key.contains("slot"))
+                    || key.contains("frameslot") || key.contains("sn") || key.contains("serial")) {
+                identity = true;
+            }
+        }
+        return number && identity;
+    }
+
+    private static List<String> autofindHeaders(List<String> cells) {
+        List<String> headers = new ArrayList<>();
+        for (String cell : cells) {
+            headers.add(autofindKey(cell));
+        }
+        return headers;
+    }
+
+    /** 列名规范化：小写、只留字母数字和斜杠（"Ont SN" → "ontsn"，"F/S/P" → "f/s/p"） */
+    private static String autofindKey(String cell) {
+        return cell == null ? "" : cell.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9/]", "");
+    }
+
+    /**
+     * 一行数据。Number 必须是整数，顺带把「命令回执」「提示语」这类混在回显里的
+     * 杂行挡在外面——它们的首列不是数字。
+     */
+    private static OltOntAutofind autofindRow(List<String> cells, List<String> headers) {
+        OltOntAutofind item = new OltOntAutofind();
+        for (int i = 0; i < headers.size() && i < cells.size(); i++) {
+            String header = headers.get(i);
+            String value = clean(cells.get(i));
+            if (header.isEmpty() || value == null || value.isEmpty()) {
+                continue;
+            }
+            if (header.startsWith("number")) {
+                item.setId(autofindInt(value));
+            } else if (header.contains("password")) {
+                item.setPassword(value);
+            } else if (header.contains("loid")) {
+                item.setLoid(value);
+            } else if (header.contains("checkcode")) {
+                item.setCheckCode(value);
+            } else if (header.contains("equipment")) {
+                item.setEquipmentId(value);
+            } else if (header.contains("software")) {
+                item.setSoftwareVersion(value);
+            } else if (header.contains("version")) {
+                item.setHardwareVersion(value);
+            } else if (header.contains("s/p") || header.contains("frameslot")
+                    || (header.contains("slot") && header.contains("port"))) {
+                autofindSetPort(item, value);
+            } else if (header.contains("vendor") || header.contains("vender")) {
+                // VenderID 单独占一列时它就是厂商；只有 "Vendor/Model" 这种合并列才要拆
+                if (header.contains("model")) {
+                    autofindSetVendorModel(item, value);
+                } else {
+                    item.setVendorId(value);
+                }
+            } else if (header.contains("model")) {
+                item.setModel(value);
+            } else if (header.contains("time")) {
+                item.setLastTime(value);
+            } else if (header.contains("serial") || header.endsWith("sn")) {
+                item.setSn(value);
+            }
+        }
+        // 光连个 SN 或端口都认不出来就别收了，多半是回显里的杂行
+        return item.getSn() != null || item.getFsp() != null ? item : null;
+    }
+
+    /** F/S/P 拆成框/槽/端口，方便按端口匹配注册模板 */
+    private static void autofindSetPort(OltOntAutofind item, String value) {
+        item.setFsp(value);
+        String[] parts = value.split("/");
+        if (parts.length == 3) {
+            item.setFrameNo(autofindInt(parts[0]));
+            item.setSlotNo(autofindInt(parts[1]));
+            item.setPortNo(autofindInt(parts[2]));
+        }
+    }
+
+    /** 厂商和型号有时挤在一列（HWTC/HG8010H），有时分列；挤一块就从斜杠处拆开 */
+    private static void autofindSetVendorModel(OltOntAutofind item, String value) {
+        int slash = value.indexOf('/');
+        if (slash > 0) {
+            item.setVendorId(value.substring(0, slash).trim());
+            item.setModel(value.substring(slash + 1).trim());
+            return;
+        }
+        if (item.getModel() == null) {
+            // 分不清厂商还是型号时先当型号：页面挑模板主要看型号
+            item.setModel(value);
+        }
+    }
+
+    private static Integer autofindInt(String value) {
+        try {
+            return Integer.valueOf(value.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static String clean(String value) {

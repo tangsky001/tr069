@@ -67,6 +67,26 @@ public class OltCliSession implements Closeable {
                     + "|[^\\r\\n]*param(?:eter)?s?\\s*[:：][^\\r\\n]*)\\s*[:：]?\\s*$",
             Pattern.CASE_INSENSITIVE);
 
+    /**
+     * 命令序列里，以这个前缀开头的行是「对上一条命令追问的应答」，不是要下发的命令。
+     *
+     * <p>像 MA5683T 的 {@code terminal user name} 这种交互式命令，发完只回一句
+     * {@code User Name(length<6,15>):} 然后等输入，不回提示符。命令序列里就得能把
+     * 「什么时候该回什么」一起带上。</p>
+     */
+    public static final String ANSWER_PREFIX = ">>";
+
+    /**
+     * 交互式命令停在追问上的样子：最后一行的行尾是冒号或问号。
+     *
+     * <p>提示符行尾是 {@code #}/{@code >}，不会跟这个撞上；但保险起见先判提示符，
+     * 已经回到提示符就说明这次交互结束了。</p>
+     */
+    private static final Pattern INTERACTIVE_ASK = Pattern.compile("(?m)[^\\r\\n]*[:：?？]\\s*$");
+
+    /** 交互式命令的收尾条件：要么停在追问（要继续应答），要么回到提示符（结束） */
+    private static final List<Pattern> INTERACTIVE_STOPS = List.of(INTERACTIVE_ASK, SHELL_PROMPT);
+
     /** 参数提示最多回几次车，防止设备反复要参数时死循环 */
     private static final int MAX_PARAM_ROUNDS = 3;
 
@@ -986,20 +1006,119 @@ public class OltCliSession implements Closeable {
      * 全部成功返回每条的回显。</p>
      */
     public List<String> sendConfigCommands(List<String> commands) {
+        return sendConfigCommands(commands, false);
+    }
+
+    /**
+     * 批量下发配置。
+     *
+     * @param tolerateExisting 设备回「已经有了」时不中断，继续往下发。一键开局必须打开它：
+     *                         开局是把整套配置声明一遍，设备上只要已经存在一个 VLAN 46，
+     *                         {@code vlan 46 smart} 就回 {@code Failure: VLAN has existed}，
+     *                         严格模式会当场抛异常，后面的业务 VLAN、DBA、四套模板一条都建不出来。
+     *                         这类命令本身幂等，重复下发的正确结果是「跳过」而不是「失败」。
+     */
+    public List<String> sendConfigCommands(List<String> commands, boolean tolerateExisting) {
         prepareTerminal(vendorHint);
         if (!enterConfigView(commandTimeoutMs)) {
             throw new IllegalStateException("进不了 config 视图，无法下发配置");
         }
         List<String> outputs = new ArrayList<>();
-        for (String command : commands) {
-            String out = runCommand(command, commandTimeoutMs);
+        // 命令和它的应答要一起发：交互式命令（terminal user name）发完会停在
+        // 追问上等输入，逐条独立下发的话中间隔着一个等不来的提示符
+        for (List<String> group : groupWithAnswers(commands)) {
+            String command = group.get(0);
+            List<String> answers = group.subList(1, group.size());
+            String out = answers.isEmpty() ? runCommand(command, commandTimeoutMs) : runInteractive(command, answers);
             outputs.add(out);
             String reason = commandRejected(out);
-            if (reason != null) {
-                throw new IllegalStateException("OLT 拒绝命令「" + command + "」：" + reason);
+            if (reason == null) {
+                continue;
             }
+            if (tolerateExisting && ALREADY_EXISTS.matcher(reason).find()) {
+                log.info("设备上已有该配置，跳过「{}」：{}", command, reason);
+                continue;
+            }
+            throw new IllegalStateException("OLT 拒绝命令「" + command + "」：" + reason);
         }
         return outputs;
+    }
+
+    /**
+     * 下发一条会逐步追问参数的命令，并按顺序把每个应答发过去。
+     *
+     * <p>华为 MA5683T 的 {@code terminal user name} 就是这类：发完不回提示符，
+     * 而是一句一句问下去（用户名 → 密码 → 确认密码 → profile → 级别 → 可重入
+     * 次数 → 备注 → 是否再来一个）。等提示符只会等到超时，所以这里每次认出
+     * 「行尾冒号/问号」的追问，就把下一个应答发出去。</p>
+     *
+     * @param command 要下发的命令
+     * @param answers 依次回答每个追问；空串表示直接回车（用设备给的默认值）
+     * @return 整段交互的回显
+     */
+    public String runInteractive(String command, List<String> answers) {
+        StringBuilder whole = new StringBuilder();
+        try {
+            client.resetBuffer();
+            client.sendLine(command);
+            String out = client.readUntilAny(INTERACTIVE_STOPS, commandTimeoutMs);
+            whole.append(out);
+            for (String answer : answers) {
+                if (!isAsking(out)) {
+                    break; // 设备不问了（多半已经报错或者收工了），别再往里灌
+                }
+                transcript.append("[应答] ").append(answer).append('\n');
+                client.resetBuffer();
+                client.sendLine(answer);
+                out = client.readUntilAny(INTERACTIVE_STOPS, commandTimeoutMs);
+                whole.append(out);
+            }
+            transcript.append("\n$ ").append(command).append('\n').append(whole).append('\n');
+            return whole.toString();
+        } catch (IOException e) {
+            String partial = client.getText();
+            lastError = e;
+            log.debug("OLT 交互命令执行失败: {} - {}", command, e.getMessage());
+            transcript.append("\n$ ").append(command)
+                    .append("\n[失败] ").append(e.getMessage()).append('\n')
+                    .append(partial).append('\n');
+            drain();
+            return whole.length() > 0 ? whole.toString() : partial;
+        }
+    }
+
+    /**
+     * 把命令序列按「一条命令 + 它的应答」切成若干组，{@code >>} 开头的行归到上一条命令。
+     */
+    private static List<List<String>> groupWithAnswers(List<String> commands) {
+        List<List<String>> groups = new ArrayList<>();
+        if (commands == null) {
+            return groups;
+        }
+        for (String raw : commands) {
+            if (raw != null && raw.startsWith(ANSWER_PREFIX)) {
+                if (!groups.isEmpty()) {
+                    groups.get(groups.size() - 1).add(raw.substring(ANSWER_PREFIX.length()));
+                }
+                continue;
+            }
+            List<String> group = new ArrayList<>();
+            group.add(raw);
+            groups.add(group);
+        }
+        return groups;
+    }
+
+    /** 设备现在是不是停在某个追问上等输入 */
+    private static boolean isAsking(String out) {
+        if (out == null || out.isBlank()) {
+            return false;
+        }
+        String tail = out.length() > 120 ? out.substring(out.length() - 120) : out;
+        if (SHELL_PROMPT.matcher(tail).find()) {
+            return false; // 已经回到提示符，这次交互结束了
+        }
+        return INTERACTIVE_ASK.matcher(tail).find();
     }
 
     /**
@@ -1032,11 +1151,40 @@ public class OltCliSession implements Closeable {
     private static final Pattern REJECT_ROW = Pattern.compile(
             "(?im)^.*(\\berror\\b|\\bfail(?:ed|ure)?\\b|错误[:：]?|无效|非法|not\\s+exist|exsits|不存在).*$");
 
+    /**
+     * 设备说「这个东西已经有了」。
+     *
+     * <p>一键开局会 {@code vlan 46 smart} 这种把整套配置声明一遍，设备上只要 VLAN 46
+     * 已经存在，回的就是 {@code Failure: VLAN has existed}——按「Failure 即失败」处理，
+     * 整批命令当场停住，后面的业务 VLAN、DBA、四套模板一条都建不出来。
+     * 这些命令本身是幂等的，重复下发的正确结果是跳过，不是失败。</p>
+     */
+    private static final Pattern ALREADY_EXISTS = Pattern.compile(
+            // 设备说「这件事已经做过了」的几种说法，实测遇到的：
+            //   Failure: VLAN has existed                        重复建 VLAN
+            //   Failure: The port is already in the VLAN         重复把口加进 VLAN
+            //   Failure: The dba profile already exists          重复建模板
+            //   Failure: Make configuration repeatedly           重复下发同一条配置
+            // already / has been 后面跟的动词不枚举了——设备版本之间措辞不一样
+            // （added / created / configured / bound），漏一个就得再跑一趟。
+            "(?i)(has\\s+existed|has\\s+been\\s+\\w+|already\\s+\\w+|repeat\\w*|exsits|已存在|已经存在)");
+
+    /**
+     * 「失败数为 0」不是失败。
+     *
+     * <p>{@code port vlan eth 1 transparent} 这类命令成功时也会带一行统计：
+     * {@code Set ONT port(s) VLAN configuration, success: 1, failed: 0}。
+     * 按 {@code \bfailed\b} 去判，整条命令就被当成拒绝，而设备其实已经配好了——
+     * 报错文案还自相矛盾：说拒绝，后面的数字却是全员成功。</p>
+     */
+    private static final Pattern ZERO_FAILURES = Pattern.compile("(?i)\\bfailed\\s*[:：]?\\s*0\\b");
+
     private String commandRejected(String out) {
         if (out == null || out.isBlank()) {
             return null;
         }
-        Matcher matcher = REJECT_ROW.matcher(out);
+        // 先把「零失败」的统计抹掉，留下来的才算真的拒绝
+        Matcher matcher = REJECT_ROW.matcher(ZERO_FAILURES.matcher(out).replaceAll(" "));
         // 命令本身（回显里的 "Error:" 提示才算拒绝，提示符/参数提示不算）
         while (matcher.find()) {
             String row = matcher.group().trim();

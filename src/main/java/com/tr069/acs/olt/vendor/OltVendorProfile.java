@@ -2,6 +2,7 @@ package com.tr069.acs.olt.vendor;
 
 import com.tr069.acs.olt.entity.OltBoard;
 import com.tr069.acs.olt.model.OltAction;
+import com.tr069.acs.olt.model.OltTerminalUserRequest;
 import com.tr069.acs.olt.telnet.OltSnapshot;
 import com.tr069.acs.olt.telnet.OltVendor;
 
@@ -196,6 +197,57 @@ public interface OltVendorProfile {
     }
 
     /**
+     * 这台设备能不能采集「待注册 ONT」（还没被授权的那批，光猫报上 SN 但没正式上线）。
+     *
+     * <p>和 {@link #supportsTr069Profile()} 一样是道开关：没接过 {@code display ont autofind}
+     * 回显格式的设备不去瞎猜，页面上也就不会给出「查找新的 ONT 设备」这种点了没反应的按钮。</p>
+     */
+    default boolean supportsOntAutofind() {
+        return false;
+    }
+
+    /** 查询待注册 ONT 的命令；不支持时返回空表 */
+    default List<String> ontAutofindCommands() {
+        return List.of();
+    }
+
+    /** 解析 {@link #ontAutofindCommands()} 的回显，得到待注册 ONT 列表 */
+    default List<com.tr069.acs.olt.model.OltOntAutofind> parseOntAutofind(String text) {
+        return List.of();
+    }
+
+    // ------------------------------------------------------------ PON 口自动发现开关
+
+    /**
+     * 能不能查/开 PON 口的自动发现（{@code ont-auto-find}）。
+     *
+     * <p>这个开关不开，光猫接上去设备根本不会去发现，待注册列表就永远是空的。</p>
+     */
+    default boolean supportsOntAutoFind() {
+        return false;
+    }
+
+    /** 进某块 PON 板视图的命令，如 {@code interface gpon 0/1} */
+    default String ponViewCommand(int frame, int slot) {
+        return null;
+    }
+
+    /** 查单个 PON 口开关的命令（在上面那个视图里执行） */
+    default String ontAutoFindQueryCommand(int port) {
+        return null;
+    }
+
+    /** 从查询回显里认这个口开着没；认不出返回 null，别瞎猜 */
+    default Boolean parseOntAutoFindState(String output) {
+        return null;
+    }
+
+    /** 开启指定 PON 口的命令块（含进视图、退视图、保存），fsp 形如 0/1/3 */
+    default List<String> ontAutoFindEnableCommands(List<String> fspList) {
+        return List.of();
+    }
+
+    /**
      * 这台设备能不能用「一键开局」一次性下发端口模式、业务 VLAN 和 TR-069 模板。
      *
      * <p>开局这几步的写法各厂商不一样，没接过命令的设备不允许下发——
@@ -222,5 +274,25 @@ public interface OltVendorProfile {
             return null;
         }
         return com.tr069.acs.olt.telnet.OltInfoParser.parseSlotCount(boardText);
+    }
+
+    // ------------------------------------------------------------ OLT 本地用户
+
+    /** 这台设备能不能建本地用户（登 OLT 用的账号） */
+    default boolean supportsTerminalUser() {
+        return false;
+    }
+
+    /**
+     * 建本地用户的命令序列，{@code >>} 开头的行是对设备追问的应答。
+     *
+     * <p>华为的 {@code terminal user name} 是交互式命令：回车后设备一问一答地把用户名、
+     * 密码、级别这些信息逐个要过去。普通命令发完就回提示符，这条不回——所以这里给的
+     * 不只是命令，还得带上按提问顺序排好的应答，会话那边照着问一条回一条。</p>
+     *
+     * @return 命令序列；不支持或参数不合规时返回空表
+     */
+    default List<String> terminalUserAddCommands(OltTerminalUserRequest request) {
+        return List.of();
     }
 }

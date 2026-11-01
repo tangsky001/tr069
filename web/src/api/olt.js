@@ -185,6 +185,60 @@ export function fetchTr069Profiles(id) {
 }
 
 /**
+ * 待注册 ONT：不读库，每次实时登设备执行 display ont autofind all。
+ *
+ * 这是设备上等着授权的光猫，注册完就不在这个表里了，所以每次点都重查。
+ */
+export function fetchOntAutofind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-autofind',
+    method: 'get',
+    timeout: 60000
+  })
+}
+
+/**
+ * PON 口自动发现开关状态：后端逐口登设备查 display ont-auto-find。
+ *
+ * 一个口一条命令，口多的设备要跑十几秒，所以超时放宽到 2 分钟。
+ */
+export function fetchOntAutoFind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-auto-find',
+    method: 'get',
+    timeout: 120000
+  })
+}
+
+/**
+ * 一键开启所有 GPON 业务板 PON 口的自动发现。
+ *
+ * 下发完后端会重采一次整机，连同重采一起给足超时。
+ */
+export function enableOntAutoFind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-auto-find/enable',
+    method: 'post',
+    timeout: 180000
+  })
+}
+
+/**
+ * 建一个 OLT 本地用户（登这台设备用的账号）。
+ *
+ * 华为这边 backend 走的是 terminal user name 那条交互式命令，一问一答比较慢，
+ * 超时放宽到 3 分钟。
+ */
+export function createOltTerminalUser(id, data) {
+  return request({
+    url: '/olt/' + id + '/terminal-user',
+    method: 'post',
+    data,
+    timeout: 180000
+  })
+}
+
+/**
  * 新增 TR-069 模板：下发 onu-tr069-profile add ...，返回下发后的最新列表。
  */
 export function createTr069Profile(id, data) {

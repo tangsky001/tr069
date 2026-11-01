@@ -186,19 +186,30 @@ public class OltTelnetService {
      * 「自动」编码时回显解出替换符就用备用编码重发一遍，避免中文错误提示读不懂。
      */
     public List<String> sendConfig(OltDevice device, List<String> commands) throws IOException {
+        return sendConfig(device, commands, false);
+    }
+
+    /**
+     * @param tolerateExisting 设备回「已经有了」时跳过继续，不当作失败。
+     *                         一键开局要打开：整套配置声明一遍时，已存在的 VLAN / 模板
+     *                         会让严格模式当场中断，后面的命令全部下发不了。
+     */
+    public List<String> sendConfig(OltDevice device, List<String> commands, boolean tolerateExisting)
+            throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
-        List<String> outputs = doSendConfig(device, charset, commands);
+        List<String> outputs = doSendConfig(device, charset, commands, tolerateExisting);
         if (OltCharset.isAuto(device.getCharset())
                 && outputs.stream().anyMatch(out -> out != null && out.indexOf('\uFFFD') >= 0)) {
-            return doSendConfig(device, OltCharset.fallback(), commands);
+            return doSendConfig(device, OltCharset.fallback(), commands, tolerateExisting);
         }
         return outputs;
     }
 
-    private List<String> doSendConfig(OltDevice device, Charset charset, List<String> commands) throws IOException {
+    private List<String> doSendConfig(OltDevice device, Charset charset, List<String> commands,
+                                      boolean tolerateExisting) throws IOException {
         try (OltCliSession session = OltCliSession.open(
                 device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
-            return session.sendConfigCommands(commands);
+            return session.sendConfigCommands(commands, tolerateExisting);
         }
     }
 

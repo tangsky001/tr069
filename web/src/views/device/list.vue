@@ -571,8 +571,8 @@
         </el-form-item>
         <el-form-item label="密码">
           <el-input
-            :type="sipShowPwd ? 'text' : 'password'"
             v-model="sipEditForm.password"
+            :type="sipShowPwd ? 'text' : 'password'"
             placeholder="AuthPassword"
           >
             <i

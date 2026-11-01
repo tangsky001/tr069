@@ -26,6 +26,10 @@ import com.tr069.acs.olt.model.OltOntInfo;
 import com.tr069.acs.olt.model.OltOntQueryResult;
 import com.tr069.acs.olt.model.OltServicePort;
 import com.tr069.acs.olt.model.OltQuickSetupRequest;
+import com.tr069.acs.olt.model.HuaweiQuickSetupRequest;
+import com.tr069.acs.olt.model.OltOntAutofind;
+import com.tr069.acs.olt.model.OltOntAutoFindStatus;
+import com.tr069.acs.olt.model.OltTerminalUserRequest;
 import com.tr069.acs.olt.model.OltBoardProfile;
 import com.tr069.acs.olt.model.OltBoardStatusRule;
 import com.tr069.acs.olt.model.OltDeviceOptions;
@@ -990,6 +994,190 @@ public class OltService {
     }
 
     /**
+     * 待注册 ONT：实时登设备执行 {@code display ont autofind all}，拿到已经上报 SN、
+     * 但还没被授权到端口上的那批光猫。
+     *
+     * <p>不入库：这是设备上每过一阵就会变的临时状态，光猫注册完就不在这个表里了，
+     * 缓存下来反而会显示已经处理掉的记录。</p>
+     *
+     * <p>「没有待注册光猫」和「这条命令设备不认」是两回事，后者要报出来，
+     * 不然页面显示空列表会让人以为是自己的设备真没接光猫。</p>
+     */
+    public List<OltOntAutofind> ontAutofind(Long id) {
+        OltDevice device = requireDevice(id);
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsOntAutofind()) {
+            throw new IllegalArgumentException("这台设备还没接入待注册 ONT 的采集命令");
+        }
+        String raw;
+        try {
+            List<String> outputs = telnetService.queryCommands(device, profile.ontAutofindCommands());
+            raw = outputs.isEmpty() ? null : outputs.get(0);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            log.warn("查询待注册 ONT 失败 id={}: {}", id, message);
+            throw new IllegalStateException("查询待注册 ONT 失败：" + message, e);
+        }
+        // 没有待注册 ONT 时华为回的是
+        // "Failure: The automatically found ONTs do not exist"：带 Failure 字样，但是正常空结果
+        if (OltInfoParser.autofindIsEmpty(raw)) {
+            return List.of();
+        }
+        if (OltInfoParser.looksUnsupported(raw)) {
+            throw new IllegalStateException("设备不认这条命令，回显：" + raw);
+        }
+        return profile.parseOntAutofind(raw);
+    }
+
+    /**
+     * 各 PON 口自动发现开关：逐块 GPON 业务板进视图，一个口一条命令问设备。
+     *
+     * <p>口多的设备会慢些（8 口板大约几秒），所以页面是异步取、取不到也不影响主信息。
+     * 查不到就返回带 message 的状态而不抛错——一块状态查不了，不该让整页报错。</p>
+     */
+    public OltOntAutoFindStatus ontAutoFindStatus(Long id) {
+        OltDevice device = requireDevice(id);
+        OltVendorProfile profile = profileOf(id);
+        OltOntAutoFindStatus status = new OltOntAutoFindStatus();
+        if (!profile.supportsOntAutoFind()) {
+            status.setMessage("这台设备还没接入自动发现的查询命令");
+            return status;
+        }
+        List<OltBoard> boards = gponBoards(id);
+        if (boards.isEmpty()) {
+            status.setMessage("没采到 GPON 业务板，先同步一次板卡信息");
+            return status;
+        }
+
+        // 命令与端口一一对应：进出视图那几条 fsp 记 null，每个 display 对应一个口
+        List<String> commands = new ArrayList<>();
+        List<String> commandFsp = new ArrayList<>();
+        int frame = 0;   // MA5600T 系列是单框设备，机框号固定 0
+        for (OltBoard board : boards) {
+            commands.add(profile.ponViewCommand(frame, board.getSlotNo()));
+            commandFsp.add(null);
+            for (int port = 0; port < board.getPortCount(); port++) {
+                commands.add(profile.ontAutoFindQueryCommand(port));
+                commandFsp.add(frame + "/" + board.getSlotNo() + "/" + port);
+            }
+            commands.add("quit");
+            commandFsp.add(null);
+        }
+
+        List<String> outputs;
+        try {
+            outputs = telnetService.queryCommands(device, commands);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            log.warn("查询 PON 口自动发现失败 id={}: {}", id, message);
+            status.setMessage("查询失败：" + message);
+            return status;
+        }
+
+        int total = 0;
+        int enabled = 0;
+        List<String> disabled = new ArrayList<>();
+        for (int i = 0; i < commands.size() && i < outputs.size(); i++) {
+            if (commandFsp.get(i) == null) {
+                continue;
+            }
+            total++;
+            Boolean state = profile.parseOntAutoFindState(outputs.get(i));
+            if (Boolean.TRUE.equals(state)) {
+                enabled++;
+            } else if (Boolean.FALSE.equals(state)) {
+                disabled.add(commandFsp.get(i));
+            }
+            // state 为 null（这个口认不出来）时两边都不算，避免把「查不到」说成「没开」
+        }
+        status.setSupported(true);
+        status.setTotalPorts(total);
+        status.setEnabledPorts(enabled);
+        status.setDisabledPorts(disabled);
+        status.setAllEnabled(total > 0 && enabled == total);
+        if (total > 0 && enabled == 0 && disabled.isEmpty()) {
+            status.setMessage("这个版本不认 display ont-auto-find，开关状态查不到，但仍可以直接开启");
+        }
+        return status;
+    }
+
+    /**
+     * 一键开启所有 GPON 业务板 PON 口的自动发现。
+     *
+     * <p>不先查一遍再挑着开：查一遍要好几秒，而且查不到的时候就彻底开不了。
+     * {@code port N ont-auto-find enable} 是幂等的，已经开着的口再开一次不受影响。</p>
+     */
+    public OltDetail enableOntAutoFind(Long id, String operator) {
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsOntAutoFind()) {
+            throw new IllegalArgumentException("这台设备还没接入自动发现的命令");
+        }
+        List<OltBoard> boards = gponBoards(id);
+        if (boards.isEmpty()) {
+            throw new IllegalArgumentException("没采到 GPON 业务板，先同步一次板卡信息再开");
+        }
+        List<String> fspList = new ArrayList<>();
+        for (OltBoard board : boards) {
+            for (int port = 0; port < board.getPortCount(); port++) {
+                fspList.add("0/" + board.getSlotNo() + "/" + port);
+            }
+        }
+        List<String> commands = profile.ontAutoFindEnableCommands(fspList);
+        if (commands.isEmpty()) {
+            throw new IllegalArgumentException("没生成要下发的命令，自动发现未开启");
+        }
+        return dispatchConfig(id, commands, operator, "开启 PON 口自动发现");
+    }
+
+    /**
+     * 建 OLT 本地用户：登设备跑 {@code terminal user name}，按设备的提问顺序
+     * 依次把用户名、密码、级别喂进去。
+     *
+     * <p>用户名/密码长度是设备定的（6~15 位），这里先挡一道：不合规的参数发过去
+     * 只会拿到一串 Failure，不如当场说清楚。</p>
+     *
+     * <p>走 {@link #dispatchConfig}：下发前记操作、下发后重采一次整机。</p>
+     */
+    public OltDetail createTerminalUser(Long id, OltTerminalUserRequest request, String operator) {
+        OltVendorProfile profile = profileOf(id);
+        if (!profile.supportsTerminalUser()) {
+            throw new IllegalArgumentException("这台设备还没接入建用户的命令");
+        }
+        if (request == null || request.getUsername() == null || request.getPassword() == null) {
+            throw new IllegalArgumentException("用户名和密码都要填");
+        }
+        String username = request.getUsername().trim();
+        if (username.length() < 6 || username.length() > 15) {
+            throw new IllegalArgumentException("用户名要 6~15 位（设备限制）");
+        }
+        String password = request.getPassword();
+        if (password.length() < 6 || password.length() > 15) {
+            throw new IllegalArgumentException("密码要 6~15 位（设备限制）");
+        }
+        if (request.getLevel() != null && (request.getLevel() < 1 || request.getLevel() > 3)) {
+            throw new IllegalArgumentException("权限级别只能是 1（Common User）、2（Operator）、3（Administrator）");
+        }
+        List<String> commands = profile.terminalUserAddCommands(request);
+        if (commands.isEmpty()) {
+            throw new IllegalArgumentException("参数不合设备要求，没生成要下发的命令");
+        }
+        return dispatchConfig(id, commands, operator, "建 OLT 用户 " + username);
+    }
+
+    /** 已装的 GPON 业务板；EPON 板命令不一样，这里先不碰 */
+    private List<OltBoard> gponBoards(Long id) {
+        return boardMapper.selectList(new LambdaQueryWrapper<OltBoard>()
+                        .eq(OltBoard::getOltId, id)
+                        .orderByAsc(OltBoard::getSlotNo))
+                .stream()
+                .filter(board -> "SERVICE".equalsIgnoreCase(board.getBoardKind()))
+                .filter(board -> board.getBoardType() != null
+                        && board.getBoardType().toUpperCase(Locale.ROOT).contains("GP"))
+                .filter(board -> board.getPortCount() != null && board.getPortCount() > 0)
+                .collect(Collectors.toList());
+    }
+
+    /**
      * 新增 TR-069 模板：下发 {@code onu-tr069-profile add ...}，成功后立刻重查一次返回新列表。
      *
      * <p>不重采整台设备——模板跟板卡/ONU 数据无关，没必要为了一个模板等十几秒。</p>
@@ -1036,6 +1224,16 @@ public class OltService {
         if (request == null) {
             throw new IllegalArgumentException("请把开局选项填完整");
         }
+        // 华为开局另有一段参数：要建的是 DBA / 线路 / 业务 / TR-069 四套模板，
+        // 没有「改端口 VLAN 模式」这一步，下面的端口与 VLAN 校验对它不适用
+        if (request.getHuawei() != null) {
+            List<String> commands = profile.quickSetupCommands(request);
+            if (commands.isEmpty()) {
+                throw new IllegalArgumentException("没生成要下发的命令，开局未执行");
+            }
+            // 开局是幂等的「声明一遍」，设备上已有的 VLAN / 模板跳过就好
+            return dispatchConfig(id, commands, operator, describeHuaweiQuickSetup(request.getHuawei()), true);
+        }
         String mode = normalizeMode(request.getMode());
         if (request.getVlanList() != null && !request.getVlanList().isBlank()) {
             VlanIdExpression.expand(request.getVlanList());
@@ -1056,7 +1254,7 @@ public class OltService {
         if (commands.isEmpty()) {
             throw new IllegalArgumentException("没生成要下发的命令，开局未执行");
         }
-        return dispatchConfig(id, commands, operator, describeQuickSetup(request));
+        return dispatchConfig(id, commands, operator, describeQuickSetup(request), true);
     }
 
     /**
@@ -1076,6 +1274,11 @@ public class OltService {
         }
         if (request == null) {
             return new OltQuickSetupPreview(List.of(), List.of("先勾选要做的开局项"));
+        }
+        // 同上：华为这四套模板与端口模式无关，命令直接问模板编排器；
+        // 参数不全时编排器抛错，页面预览区会把原因显示出来
+        if (request.getHuawei() != null) {
+            return new OltQuickSetupPreview(profile.quickSetupCommands(request), List.of());
         }
         String mode = normalizeMode(request.getMode());
         if (request.getVlanList() != null && !request.getVlanList().isBlank()) {
@@ -1197,6 +1400,15 @@ public class OltService {
             parts.add("建 TR069 模板 " + request.getTr069().getProfileId());
         }
         return "一键开局（" + String.join("；", parts) + "）";
+    }
+
+    /** 华为开局的记录摘要：模板 ID 就是带宽，写清楚这次建的是哪一套 */
+    private static String describeHuaweiQuickSetup(HuaweiQuickSetupRequest request) {
+        Integer bandwidth = request.getDbaBandwidthMbps();
+        if (bandwidth == null) {
+            return "华为一键开局（模板 ID 未定）";
+        }
+        return "华为一键开局（DBA/线路/业务/TR069 模板 " + bandwidth + "，" + bandwidth + "M）";
     }
 
     private static String normalizeMode(String mode) {
@@ -1800,10 +2012,20 @@ public class OltService {
 
     /** 下发配置的公共流程：连设备执行 → 写采集记录（带回显）→ 自动重采刷新库和页面 */
     private OltDetail dispatchConfig(Long id, List<String> commands, String operator, String label) {
+        return dispatchConfig(id, commands, operator, label, false);
+    }
+
+    /**
+     * @param tolerateExisting 设备回「已经有了」时跳过继续，不当作失败。
+     *                         一键开局要打开：开局是把整套配置声明一遍，设备上只要已有 VLAN 46，
+     *                         {@code vlan 46 smart} 就会被拒，严格模式下后面的命令全发不出去。
+     */
+    private OltDetail dispatchConfig(Long id, List<String> commands, String operator, String label,
+                                     boolean tolerateExisting) {
         OltDevice device = requireDevice(id);
         long start = System.currentTimeMillis();
         try {
-            List<String> outputs = telnetService.sendConfig(device, commands);
+            List<String> outputs = telnetService.sendConfig(device, commands, tolerateExisting);
             String transcript = String.join("\n", outputs);
             saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
                     label + "：" + String.join("；", commands), transcript,
