@@ -622,6 +622,17 @@ CREATE TABLE IF NOT EXISTS `olt_ont_reg_record` (
     KEY `idx_ont_reg_record` (`olt_id`, `id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT ONT 注册记录';
 
+-- 一键开局参数：原来存在浏览器本地，换台电脑就没了，也不该在前端再留一份默认值
+CREATE TABLE IF NOT EXISTS `olt_quick_setup_config` (
+    `id`          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `olt_id`      BIGINT   NOT NULL COMMENT 'olt_device.id',
+    `config_json` LONGTEXT DEFAULT NULL COMMENT '开局参数快照(JSON)，字段就是 HuaweiQuickSetupRequest',
+    `created_at`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_quick_setup_config_olt` (`olt_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT 一键开局参数';
+
 -- 预设：设备上报后按条件自动把配置收敛到目标值，取代逐台手工下发
 CREATE TABLE IF NOT EXISTS `cpe_preset` (
     `id`                         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',

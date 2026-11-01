@@ -4,6 +4,7 @@ import {
   testOltById,
   quickSyncOlt,
   refreshOlt,
+  confirmOltBoards,
   createDbaProfile,
   deleteDbaProfiles,
   createOltVlan,
@@ -29,6 +30,7 @@ export const oltDetailMixin = {
       loading: false,
       syncing: false,
       testing: false,
+      confirmingBoards: false,
       detail: { device: null, boards: [], records: [], vlan: null, template: null },
       // 页面自动刷新：后台每 5 分钟自己去采，这里只按间隔把最新数据拉到页面上，不碰设备
       autoRefresh: true,
@@ -268,6 +270,10 @@ export const oltDetailMixin = {
       const detail = Object.keys(counts).map(kind => (labels[kind] || kind) + ' ' + counts[kind]).join(' / ')
       return '共 ' + this.boards.length + ' 块板卡（' + detail + '）'
     },
+    /** 有板卡停在 auto-find（插上了没确认）才显示「确认所有业务板」按钮 */
+    boardsNeedConfirm() {
+      return this.boards.some(board => /auto[_ ]?find/i.test(board.status || ''))
+    },
     statusText() {
       const map = { ONLINE: '在线', OFFLINE: '离线', UNKNOWN: '未探测' }
       return map[this.device.status] || '未探测'
@@ -438,6 +444,28 @@ export const oltDetailMixin = {
         })
         .finally(() => {
           this.refreshing = false
+        })
+    },
+    /**
+     * 确认所有待确认板卡（board confirm 0）：确认成功后重采板卡，
+     * 状态变正常了，按钮也就不用再显示。
+     */
+    handleConfirmBoards() {
+      if (!this.detailId || this.confirmingBoards) return
+      this.confirmingBoards = true
+      confirmOltBoards(this.detailId)
+        .then(res => {
+          this.applyDetail(res.data)
+          this.liveAt = new Date()
+          const pending = this.boards.filter(board => /auto[_ ]?find/i.test(board.status || '')).length
+          this.$message.success(pending ? '确认命令已下发，但仍有 ' + pending + ' 块板卡待确认，稍后重新采集' : '板卡确认完成，状态已恢复正常')
+        })
+        .catch(err => {
+          const data = (err && err.response && err.response.data) || {}
+          this.$message.error(data.message || (err && err.message) || '板卡确认失败')
+        })
+        .finally(() => {
+          this.confirmingBoards = false
         })
     },
     /**

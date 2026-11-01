@@ -44,6 +44,12 @@
         <appender-ref ref="ACS_CORE_ASYNC"/>
     </logger>
 
+    <!-- OLT 采集/注册的日志也进文件：定时任务是静默跑的，排障时只翻文件就要能看出
+         「扫到了几台、注册成没成、为什么没成」，光看控制台早就刷没了 -->
+    <logger name="com.tr069.acs.olt" level="INFO" additivity="true">
+        <appender-ref ref="ACS_CORE_ASYNC"/>
+    </logger>
+
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
     </root>

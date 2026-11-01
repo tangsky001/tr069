@@ -487,6 +487,21 @@ public class OltService {
     }
 
     /**
+     * 确认所有待确认板卡，确认完自动重采一遍板卡返回最新状态。
+     *
+     * <p>刚连接时业务板/上联板不是正常状态，多半是板卡插上了但停在 auto-find——
+     * 没确认的板卡不加载业务，PON 口上一个光猫都发现不了。命令按厂商走
+     * （华为是 {@code board confirm 0}），确认成功后页面上的按钮随之消失。</p>
+     */
+    public OltDetail confirmBoards(Long id, String operator) {
+        String command = profileOf(id).boardConfirmCommand();
+        if (command == null) {
+            throw new IllegalArgumentException("该厂商没有板卡确认命令（不存在待确认状态）");
+        }
+        return dispatchConfig(id, List.of(command), operator, "确认所有业务板");
+    }
+
+    /**
      * 快速同步：一次短连接把板卡（型号 / 板卡类型 / 槽位 / 机框槽位数）拿回来写库，
      * 立即返回；端口状态、ONT、VLAN、模板交给后台异步补采。
      *

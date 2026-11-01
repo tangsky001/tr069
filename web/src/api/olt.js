@@ -91,6 +91,18 @@ export function refreshOlt(id) {
 }
 
 /**
+ * 确认所有待确认板卡（华为 board confirm 0）：新插的板卡停在 auto-find 时不加载业务。
+ * 返回确认后重采的最新详情，前端据此决定按钮是否继续显示。
+ */
+export function confirmOltBoards(id) {
+  return request({
+    url: '/olt/' + id + '/boards/confirm',
+    method: 'post',
+    timeout: 120000
+  })
+}
+
+/**
  * 单条 ONT 按需查询：光信息 / 版本 / 注册历史。
  * 点列表里某条的图标时才登录设备查一次，data: { action, slotNo, portNo, ontId }
  */
@@ -237,6 +249,25 @@ export function fetchOntRegTemplates(id, onlyCurrent) {
   })
 }
 
+/** 新建模板的初始表单：默认值由后端给，页面不自带一份 */
+export function fetchOntRegTemplateDefault(id, oltIp) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/template/default',
+    method: 'get',
+    params: { oltIp: oltIp || '' },
+    timeout: 30000
+  })
+}
+
+/** 不等下一轮扫描，立刻按当前参数跑一轮自动注册（和后台定时任务同一条路径） */
+export function runOntRegScan(id) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/scan',
+    method: 'post',
+    timeout: 120000
+  })
+}
+
 /** 新增或修改一条注册模板 */
 export function saveOntRegTemplate(id, data) {
   return request({
@@ -311,6 +342,30 @@ export function registerOnt(id, data) {
     method: 'post',
     data,
     timeout: 180000
+  })
+}
+
+/**
+ * 一键开局参数：默认值和已存的都在后端，页面只管要。
+ *
+ * @param defaults true 时忽略存过的、直接要默认值（「默认设置」按钮）
+ */
+export function fetchQuickSetupConfig(id, defaults) {
+  return request({
+    url: '/olt/' + id + '/quick-setup/config',
+    method: 'get',
+    params: { defaults: defaults ? 1 : 0 },
+    timeout: 30000
+  })
+}
+
+/** 保存一键开局参数：存库，换台电脑、换个人打开都是同一套 */
+export function saveQuickSetupConfig(id, data) {
+  return request({
+    url: '/olt/' + id + '/quick-setup/config',
+    method: 'post',
+    data,
+    timeout: 30000
   })
 }
 

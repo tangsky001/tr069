@@ -18,7 +18,8 @@
           text="自动发现扫描时间间隔"
           tip="多久扫一次待注册光猫（display ont autofind all）。太小会频繁登录设备，建议 30 秒以上。"
         />
-        <el-input-number v-model="autoConfig.scanSeconds" :min="5" :max="3600" :step="5" controls-position="right" size="small" />
+        <!-- 上下限不写在前端：范围由后端定，填小了后端会夹回并在保存后回显实际值 -->
+        <el-input-number v-model="autoConfig.scanSeconds" :step="5" controls-position="right" size="small" />
         <span class="reg-unit">秒</span>
       </el-form-item>
 
@@ -28,7 +29,7 @@
           text="新光猫注册后自动保存时间"
           tip="授权成功后隔多久把配置存盘。华为只写运行配置，不 save 掉电就回到注册前。"
         />
-        <el-input-number v-model="autoConfig.saveSeconds" :min="60" :max="86400" :step="60" controls-position="right" size="small" />
+        <el-input-number v-model="autoConfig.saveSeconds" :step="60" controls-position="right" size="small" />
         <span class="reg-unit">秒</span>
       </el-form-item>
 
@@ -36,9 +37,10 @@
         <olt-help-label
           slot="label"
           text="并发注册光猫数量"
-          tip="一轮里最多同时授权几个。并发大了会把 OLT 的 CLI 会话占满，反而拖慢注册。"
+          tip="一轮最多注册几台，一台一台对 OLT 下发（CLI 会话有限，不并行）。没轮到的下一轮扫描时接着注册。"
         />
-        <el-input-number v-model="autoConfig.concurrency" :min="1" :max="32" controls-position="right" size="small" />
+        <el-input-number v-model="autoConfig.concurrency" :step="1" controls-position="right" size="small" />
+        <span class="reg-unit">台/轮</span>
       </el-form-item>
 
       <el-form-item>
@@ -60,6 +62,13 @@
       </el-form-item>
 
       <el-form-item label-width="210px">
+        <!-- 后台任务是静默跑的：不显示这几个时间，没法区分「没在跑」和「跑了没注册上」 -->
+        <div class="reg-auto-status">
+          <span>上次扫描 <b>{{ fmtTime(autoConfig.lastScanAt) }}</b></span>
+          <span>上次注册 <b>{{ fmtTime(autoConfig.lastRegisterAt) }}</b></span>
+          <span>上次存盘 <b>{{ fmtTime(autoConfig.lastSaveAt) }}</b></span>
+        </div>
+        <el-button size="small" icon="el-icon-search" :loading="scanning" @click="runScanOnce">立即扫描一次</el-button>
         <el-button size="small" type="primary" icon="el-icon-check" @click="saveAutoConfig">保存设置</el-button>
       </el-form-item>
     </el-form>
@@ -275,6 +284,7 @@
     <olt-ont-reg-template-dialog
       :visible.sync="templateDialogVisible"
       :template="editingTemplate"
+      :olt-id="oltId"
       :olt-ip="oltIp"
       @submit="submitTemplate"
     />
@@ -290,6 +300,7 @@ import {
   saveOntRegConfig,
   fetchOntRegRecords,
   fetchOntRegTemplates,
+  runOntRegScan,
   saveOntRegTemplate,
   deleteOntRegTemplates,
   previewOntRegister,
@@ -306,32 +317,30 @@ import {
  * 哪台注册了、套了哪条模板、没成的因为什么。</p>
  */
 
-/** 后端存的是 0/1，页面上是开关；两边各用各的，进出接口时翻一下 */
-function defaultAutoConfig() {
-  return {
-    enabled: false,
-    scanSeconds: 30,
-    saveSeconds: 28800,
-    concurrency: 1,
-    autoMove: false,
-    autoDeleteOffline: false
-  }
-}
-
-/** 接口返回的参数（0/1）翻成页面上的开关（true/false） */
+/**
+ * 接口返回的参数翻成页面上的：后端存的是 0/1，页面上是开关。
+ *
+ * <p>这里不准备任何默认值——扫描间隔、存盘时间、并发这些默认值只有后端一份
+ * （见后端的 {@code config(oltId)} 与建表脚本的 DEFAULT）。前端再抄一份，
+ * 后端改了默认值页面还是老样子，看不出来。</p>
+ *
+ * @return 后端没给数据（接口异常）时返回 null，调用方保留原值、不自己编数字
+ */
 function toViewConfig(config) {
-  const base = defaultAutoConfig()
   if (!config) {
-    return base
+    return null
   }
   return {
-    ...base,
     enabled: config.enabled === 1,
-    scanSeconds: config.scanSeconds || base.scanSeconds,
-    saveSeconds: config.saveSeconds || base.saveSeconds,
-    concurrency: config.concurrency || base.concurrency,
+    scanSeconds: config.scanSeconds,
+    saveSeconds: config.saveSeconds,
+    concurrency: config.concurrency,
     autoMove: config.autoMove === 1,
-    autoDeleteOffline: config.autoDeleteOffline === 1
+    autoDeleteOffline: config.autoDeleteOffline === 1,
+    // 后台任务的痕迹：页面上显示出来，一眼看出任务活着没有
+    lastScanAt: config.lastScanAt || null,
+    lastRegisterAt: config.lastRegisterAt || null,
+    lastSaveAt: config.lastSaveAt || null
   }
 }
 
@@ -378,7 +387,9 @@ export default {
   },
   data() {
     return {
-      autoConfig: defaultAutoConfig(),
+      // 打开后由后端填；接口还没回来时是空壳，不在这里放任何默认值
+      autoConfig: toViewConfig({}),
+      scanning: false,
       templates: [],
       discovered: [],
       records: [],
@@ -464,7 +475,11 @@ export default {
         fetchOntRegTemplates(this.oltId, this.onlyCurrentOlt).catch(() => ({ data: [] })),
         fetchOntRegRecords(this.oltId, 50).catch(() => ({ data: [] }))
       ])
-      this.autoConfig = toViewConfig(configResult.data)
+      // 后端没给数据时保留原值，不自己编一份默认值出来
+      const view = toViewConfig(configResult.data)
+      if (view) {
+        this.autoConfig = view
+      }
       this.templates = (templateResult.data || []).map(item => ({
         ...item,
         priority: item.priority == null ? 0 : Number(item.priority),
@@ -474,12 +489,43 @@ export default {
       this.records = recordResult.data || []
       this.seq = this.templates.length + 1
     },
+    /** 后端时间戳转短格式：今天的只显示时分秒，更早的带上日期 */
+    fmtTime(value) {
+      if (!value) {
+        return '—'
+      }
+      const text = String(value).replace('T', ' ')
+      const today = new Date().toISOString().slice(0, 10)
+      return text.startsWith(today) ? text.slice(11, 19) : text.slice(5, 19)
+    },
+    /** 不等下一轮扫描，立刻按当前参数跑一轮（和后台任务同一条路径） */
+    async runScanOnce() {
+      if (!this.oltId || this.scanning) {
+        return
+      }
+      this.scanning = true
+      try {
+        const result = await runOntRegScan(this.oltId)
+        const count = result.data || 0
+        this.$message.success(count > 0 ? '本轮注册成功 ' + count + ' 台' : '本轮没有注册成功的（看下面注册记录的原因）')
+        await this.reload()
+      } catch (e) {
+        this.$message.error(e && e.message ? e.message : '扫描失败')
+      } finally {
+        this.scanning = false
+      }
+    },
     async saveAutoConfig() {
       if (!this.oltId) {
         return
       }
       try {
-        await saveOntRegConfig(this.oltId, toServerConfig(this.autoConfig))
+        const result = await saveOntRegConfig(this.oltId, toServerConfig(this.autoConfig))
+        // 用后端存下的那份回填：填了越界的值后端会夹回，页面要显示真正生效的那个
+        const saved = toViewConfig(result.data)
+        if (saved) {
+          this.autoConfig = saved
+        }
         this.$message.success(this.autoConfig.enabled ? '自动注册参数已保存，后台开始按间隔扫描注册' : '自动注册参数已保存')
       } catch (e) {
         this.$message.error(e && e.message ? e.message : '保存失败')
@@ -750,6 +796,19 @@ export default {
 }
 
 /* 参数区沿用截图那种紧凑下划线表单 */
+.reg-auto-status {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 8px;
+  color: #909399;
+  font-size: 12px;
+
+  b {
+    color: #4a5b6c;
+    font-weight: 600;
+  }
+}
+
 .reg-auto-form {
   max-width: 560px;
 

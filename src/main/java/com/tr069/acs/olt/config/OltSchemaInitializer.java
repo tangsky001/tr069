@@ -24,7 +24,8 @@ public class OltSchemaInitializer implements InitializingBean {
 
     private static final List<String> TABLES =
             List.of("olt_device", "olt_board", "olt_sync_record",
-                    "olt_ont_reg_template", "olt_ont_reg_config", "olt_ont_reg_record");
+                    "olt_ont_reg_template", "olt_ont_reg_config", "olt_ont_reg_record",
+                    "olt_quick_setup_config");
 
     /** 后续版本新增的列：{表, 列, 列定义}，缺哪列补哪列 */
     private static final String[][] EXPECTED_COLUMNS = {

@@ -93,13 +93,78 @@
         <olt-help-label
           slot="label"
           text="DBA 模版带宽(Mbps)"
-          tip="既是上行带宽也是模板 ID：1000 → DBA 模板 1000/1000M、线路与业务模板 1000/FTTH-GPON-1000、TR069 模板 1000/TR069_ACS。最大 1000M。"
+          :tip="'只决定上行限速和模板名字：1000 → DBA 模板名 1000M、线路与业务模板名 FTTH-GPON-1000。范围 ' + minBandwidthMbps + '-' + maxBandwidthMbps + 'M（设备上下限由后端给出）。'"
         />
         <el-input-number
           v-model="form.dbaBandwidth"
-          :min="1"
-          :max="1000"
+          :min="minBandwidthMbps"
+          :max="maxBandwidthMbps"
           :step="10"
+          controls-position="right"
+          size="small"
+        />
+      </el-form-item>
+
+      <!-- 模板 ID：以前拿带宽顶，1000M 撞上设备 10~512 的限制被压成 512，页面填的和下发下去的不是一个数 -->
+      <el-form-item>
+        <olt-help-label
+          slot="label"
+          text="DBA 模板 ID"
+          :tip="'dba-profile add 用的 profile-id，设备认 ' + minProfileId + '-' + maxProfileId + '。'"
+        />
+        <el-input-number
+          v-model="form.dbaProfileId"
+          :min="minProfileId"
+          :max="maxProfileId"
+          :step="1"
+          controls-position="right"
+          size="small"
+        />
+      </el-form-item>
+
+      <el-form-item>
+        <olt-help-label
+          slot="label"
+          text="ONT 线路模板 ID"
+          :tip="'ont-lineprofile 用的 profile-id，设备认 ' + minProfileId + '-' + maxProfileId + '。模板里的 T-CONT 按上面 DBA 的 ID 引用，所以两个 ID 可以不一样。'"
+        />
+        <el-input-number
+          v-model="form.lineProfileId"
+          :min="minProfileId"
+          :max="maxProfileId"
+          :step="1"
+          controls-position="right"
+          size="small"
+        />
+      </el-form-item>
+
+      <el-form-item>
+        <olt-help-label
+          slot="label"
+          text="ONT 业务模板 ID"
+          :tip="'ont-srvprofile 用的 profile-id，设备认 ' + minProfileId + '-' + maxProfileId + '。注册光猫时和线路模板成对指定。'"
+        />
+        <el-input-number
+          v-model="form.srvProfileId"
+          :min="minProfileId"
+          :max="maxProfileId"
+          :step="1"
+          controls-position="right"
+          size="small"
+        />
+      </el-form-item>
+
+      <el-form-item>
+        <olt-help-label
+          slot="label"
+          text="TR069 模板 ID"
+          :tip="'ont tr069-server-profile 用的 profile-id，设备只认 ' + minTr069ProfileId + '-' + maxTr069ProfileId + '，比另外三套窄（所以不能也填 100）。'"
+        />
+        <el-input-number
+          v-model="form.tr069ProfileId"
+          :min="minTr069ProfileId"
+          :max="maxTr069ProfileId"
+          :step="1"
           controls-position="right"
           size="small"
         />
@@ -182,7 +247,7 @@
 
 <script>
 import OltHelpLabel from './OltHelpLabel'
-import { previewQuickSetup } from '@/api/olt'
+import { previewQuickSetup, fetchQuickSetupConfig, saveQuickSetupConfig } from '@/api/olt'
 
 /** 表单改动后隔多久重新算命令：输入 IP 时别每敲一个字符就打一次接口 */
 const PREVIEW_DELAY_MS = 300
@@ -194,52 +259,39 @@ const PREVIEW_DELAY_MS = 300
  * T-CONT 与 GEM 的绑定关系全由后端 {@code HuaweiQuickSetupPlanner} 编：
  * 打开后每次改动都调一遍预览，看到的必然就是即将下发的那条序列。</p>
  *
- * <p>下发回调 {@code submitHandler} 由父组件给；没给就只存本地草稿
- * （按 OLT 记，刷新页面还在），不会假装下发成功。</p>
+ * <p><b>参数不存本机、也不自带默认值。</b>打开时向后端要（没存过就是后端那份默认值），
+ * 「保存设置」写库，「默认设置」再去后端要一份默认值——前端抄一份默认值，
+ * 就会出现「页面让填到 1000、设备其实能到 1024」这种两处对不上的情况。</p>
  */
 
-/** 出厂默认值，点「默认设置」回到这一套 */
-function defaultForm() {
+/**
+ * 后端给的参数翻成表单：后端是 Integer/Boolean，输入框里是字符串/开关。
+ */
+function toForm(request) {
+  const req = request || {}
   return {
-    manageVlan: '46',
-    manageVlanIp: '10.172.10.254/255.255.255.0',
-    defaultRoute: '10.172.10.1',
-    tr069Vlan: '46',
-    serviceVlan: '41,45',
-    iptvMulticastVlan: '',
-    ponType: 'GPON',
-    acsUrl: 'http://10.172.10.1:9090/',
-    dbaBandwidth: 1000,
-    uplinkPorts: '0/17/0,0/17/1,0/7/0,0/7/1,0/7/2,0/7/3',
-    uplinkDefaultVlan: '',
-    l2InteropVlan: '',
-    allowUnknownMulticast: false,
-    multicastService: false
-  }
-}
-
-const DRAFT_PREFIX = 'olt-huawei-quick-setup:'
-
-function readDraft(oltId) {
-  if (!oltId) {
-    return null
-  }
-  try {
-    const raw = window.localStorage.getItem(DRAFT_PREFIX + oltId)
-    return raw ? JSON.parse(raw) : null
-  } catch (e) {
-    return null
-  }
-}
-
-function writeDraft(oltId, form) {
-  if (!oltId) {
-    return
-  }
-  try {
-    window.localStorage.setItem(DRAFT_PREFIX + oltId, JSON.stringify(form))
-  } catch (e) {
-    // 隐私模式下 localStorage 会抛异常，草稿丢了不影响主流程
+    manageVlan: req.manageVlan == null ? '' : String(req.manageVlan),
+    manageVlanIp: req.manageVlanIp || '',
+    defaultRoute: req.defaultRoute || '',
+    tr069Vlan: req.tr069Vlan == null ? '' : String(req.tr069Vlan),
+    serviceVlan: req.serviceVlan || '',
+    iptvMulticastVlan: req.iptvMulticastVlan == null ? '' : String(req.iptvMulticastVlan),
+    ponType: req.ponType || 'GPON',
+    acsUrl: req.acsUrl || '',
+    // ACS 账号密码后端给默认值，页面上不写死
+    acsUsername: req.acsUsername || '',
+    acsPassword: req.acsPassword || '',
+    dbaBandwidth: req.dbaBandwidthMbps == null ? null : Number(req.dbaBandwidthMbps),
+    // 模板 ID 由后端给默认值和区间，页面上不写死
+    dbaProfileId: req.dbaProfileId,
+    lineProfileId: req.lineProfileId,
+    srvProfileId: req.srvProfileId,
+    tr069ProfileId: req.tr069ProfileId,
+    uplinkPorts: req.uplinkPorts || '',
+    uplinkDefaultVlan: req.uplinkDefaultVlan || '',
+    l2InteropVlan: req.l2InteropVlan || '',
+    allowUnknownMulticast: req.allowUnknownMulticast === true,
+    multicastService: req.multicastService === true
   }
 }
 
@@ -264,12 +316,12 @@ export default {
       type: Boolean,
       default: false
     },
-    /** 设备 ID，取预览和记草稿要用 */
+    /** 设备 ID，取参数与预览都要用 */
     oltId: {
       type: [Number, String],
       default: null
     },
-    /** 下发回调，返回 Promise；没给就只存草稿 */
+    /** 下发回调，返回 Promise；没给就只保存参数不下发 */
     submitHandler: {
       type: Function,
       default: null
@@ -282,7 +334,14 @@ export default {
       /** 后端算出来的命令和提醒 */
       preview: { commands: [], warnings: [] },
       previewError: '',
-      form: defaultForm()
+      form: toForm({}),
+      /** 上下限：设备只认到多少由后端说了算，页面不自带 */
+      minBandwidthMbps: 1,
+      maxBandwidthMbps: 0,
+      minProfileId: 0,
+      maxProfileId: 0,
+      minTr069ProfileId: 0,
+      maxTr069ProfileId: 0
     }
   },
   computed: {
@@ -319,14 +378,33 @@ export default {
     }
   },
   methods: {
-    onOpen() {
-      const draft = readDraft(this.oltId)
-      this.form = draft ? { ...defaultForm(), ...draft } : defaultForm()
+    /** 打开时向后端要参数：存过的给存过的，没存过给后端那份默认值 */
+    async onOpen() {
+      await this.loadConfig(false)
       this.runPreview()
     },
-    resetDefaults() {
-      this.form = defaultForm()
+    /** 默认设置：再去后端要一份默认值，前端不自带 */
+    async resetDefaults() {
+      await this.loadConfig(true)
       this.$message.info('已恢复默认设置')
+    },
+    async loadConfig(forceDefaults) {
+      if (!this.oltId) {
+        return
+      }
+      try {
+        const result = await fetchQuickSetupConfig(this.oltId, forceDefaults)
+        const data = result.data || {}
+        this.form = toForm(data.request)
+        this.minBandwidthMbps = data.minBandwidthMbps || 1
+        this.maxBandwidthMbps = data.maxBandwidthMbps || 0
+        this.minProfileId = data.minProfileId || 0
+        this.maxProfileId = data.maxProfileId || 0
+        this.minTr069ProfileId = data.minTr069ProfileId || 0
+        this.maxTr069ProfileId = data.maxTr069ProfileId || 0
+      } catch (e) {
+        this.$message.error(e && e.message ? e.message : '读取开局参数失败')
+      }
     },
     close() {
       this.dialogVisible = false
@@ -344,10 +422,14 @@ export default {
           iptvMulticastVlan: toInt(form.iptvMulticastVlan),
           ponType: form.ponType,
           acsUrl: toText(form.acsUrl),
-          // TR-069 模板里的账号密码固定用 acs
-          acsUsername: 'acs',
-          acsPassword: 'acs',
+          // ACS 账号密码也来自后端给的默认值，页面上改不了就照传
+          acsUsername: toText(form.acsUsername),
+          acsPassword: toText(form.acsPassword),
           dbaBandwidthMbps: toInt(form.dbaBandwidth),
+          dbaProfileId: toInt(form.dbaProfileId),
+          lineProfileId: toInt(form.lineProfileId),
+          srvProfileId: toInt(form.srvProfileId),
+          tr069ProfileId: toInt(form.tr069ProfileId),
           uplinkPorts: toText(form.uplinkPorts),
           uplinkDefaultVlan: toText(form.uplinkDefaultVlan),
           l2InteropVlan: toText(form.l2InteropVlan),
@@ -384,7 +466,7 @@ export default {
         this.previewing = false
       }
     },
-    save() {
+    async save() {
       // 命令和校验都在后端：预览算不出来（参数有误）就不保存也不下发
       if (this.previewError) {
         this.$message.warning(this.previewError)
@@ -395,15 +477,20 @@ export default {
         return
       }
 
-      const data = this.payload()
-
-      // 父组件没给下发回调就先存草稿，别点了没反应
-      if (!this.submitHandler) {
-        writeDraft(this.oltId, this.form)
-        this.$message.success('已保存（下发接口待接入，参数已记在本机）')
+      try {
+        await saveQuickSetupConfig(this.oltId, this.payload().huawei)
+      } catch (e) {
+        this.$message.error(e && e.message ? e.message : '保存失败')
         return
       }
 
+      // 父组件没给下发回调就只保存参数，别点了没反应
+      if (!this.submitHandler) {
+        this.$message.success('开局参数已保存')
+        return
+      }
+
+      const data = this.payload()
       this.$confirm('将对设备下发 ' + this.preview.commands.length + ' 条命令，确认开局？', '一键开局', {
         confirmButtonText: '下发',
         cancelButtonText: '取消',
@@ -414,7 +501,6 @@ export default {
           return this.submitHandler(data)
         })
         .then(() => {
-          writeDraft(this.oltId, this.form)
           this.dialogVisible = false
         })
         .catch(() => {})

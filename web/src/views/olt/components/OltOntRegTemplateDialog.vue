@@ -179,31 +179,37 @@
 
 <script>
 import OltHelpLabel from './OltHelpLabel'
+import { fetchOntRegTemplateDefault } from '@/api/olt'
 
 /**
  * 自动注册模板的编辑弹窗。
- *
- * <p>一条模板就是「光猫上线的匹配条件 + 套哪套线路/业务模板 + 下发什么业务 VLAN」。
- * 同一台 OLT 可以有多条，按 {@link #form.priority} 从小到大匹配，第一条命中的被采用。</p>
+ * 默认值只在后端一处，页面不自带。</p>
  */
 
-function defaultForm(oltIp) {
+/**
+ * 后端给的模板翻成表单：数字和开关在输入框里用字符串，没值的给空串。
+ *
+ * <p>这里不写死任何默认值（认证方式、PON 类型、优先级、工作模式都是后端给的），
+ * 前端抄一份就会出现「页面默认 SN、后端默认也是 SN，哪天改了一处」这种对不上。</p>
+ */
+function toForm(template) {
+  const tpl = template || {}
   return {
-    id: null,
-    name: '',
-    oltIp: oltIp || '',
-    priority: '0',
-    authMode: 'SN',
-    ponType: 'GPON',
-    lineProfileId: '',
-    srvProfileId: '',
-    bindPorts: '',
-    ontModels: '',
-    workMode: 'HGU',
-    serviceVlanMap: '',
-    tr069Vlan: '',
-    iptvVlan: '',
-    multicastVlan: ''
+    id: tpl.id || null,
+    name: tpl.name || '',
+    oltIp: tpl.oltIp || '',
+    priority: tpl.priority == null ? '' : String(tpl.priority),
+    authMode: tpl.authMode || '',
+    ponType: tpl.ponType || '',
+    lineProfileId: tpl.lineProfileId == null ? '' : String(tpl.lineProfileId),
+    srvProfileId: tpl.srvProfileId == null ? '' : String(tpl.srvProfileId),
+    bindPorts: tpl.bindPorts || '',
+    ontModels: tpl.ontModels || '',
+    workMode: tpl.workMode || '',
+    serviceVlanMap: tpl.serviceVlanMap || '',
+    tr069Vlan: tpl.tr069Vlan || '',
+    iptvVlan: tpl.iptvVlan || '',
+    multicastVlan: tpl.multicastVlan || ''
   }
 }
 
@@ -220,6 +226,11 @@ export default {
       type: Object,
       default: null
     },
+    /** 所属 OLT，向后端要默认值用 */
+    oltId: {
+      type: [Number, String],
+      default: null
+    },
     /** 所属 OLT 的地址，新建时预填 */
     oltIp: {
       type: String,
@@ -228,7 +239,8 @@ export default {
   },
   data() {
     return {
-      form: defaultForm(this.oltIp)
+      // 打开时才由后端填默认值；这里是空壳，不放任何业务默认值
+      form: toForm({ oltIp: this.oltIp })
     }
   },
   computed: {
@@ -245,10 +257,18 @@ export default {
     }
   },
   methods: {
-    onOpen() {
-      this.form = this.template
-        ? { ...defaultForm(this.oltIp), ...this.template }
-        : defaultForm(this.oltIp)
+    async onOpen() {
+      // 先向后端要一份带默认值的空表单，再拿编辑的那条盖上去
+      let base = toForm({ oltIp: this.oltIp })
+      if (this.oltId) {
+        try {
+          const result = await fetchOntRegTemplateDefault(this.oltId, this.oltIp)
+          base = toForm(result.data)
+        } catch (e) {
+          this.$message.error(e && e.message ? e.message : '取模板默认值失败')
+        }
+      }
+      this.form = this.template ? { ...base, ...toForm(this.template) } : base
     },
     submit() {
       if (!String(this.form.name || '').trim()) {

@@ -31,10 +31,11 @@ import java.util.Locale;
  * 顺序反了设备直接回语法/参数错误——这也是为什么整段命令由这里一次编好，
  * 而不是按表单字段的顺序想到哪拼到哪。</p>
  *
- * <p><b>命名从带宽推导，ID 压到设备认的区间</b>（页面上只填带宽）：1000 Mbps →
- * DBA 名 {@code 1000M}、线路与业务模板名 {@code FTTH-GPON-1000}、TR-069 模板名
- * {@code TR069_ACS}，四套模板共用一个 ID 便于对照。ID 不直接取带宽——DBA 的
- * profile-id 只认 10~512，1000M 照抄成 1000 会被设备顶回来。</p>
+ * <p><b>名字从带宽推导，ID 单独填</b>：1000 Mbps → DBA 名 {@code 1000M}、
+ * 线路与业务模板名 {@code FTTH-GPON-1000}、TR-069 模板名 {@code TR069_ACS}，
+ * 现场看名字就知道规格。ID 不再拿带宽顶——DBA 的 profile-id 只认 10~512，
+ * 1000M 照抄成 1000 会被设备顶回来，压成 512 又和页面填的对不上，
+ * 所以三套模板各有一个 ID 输入框，默认 100。</p>
  *
  * <p>这个类不碰设备、不做会话，只负责把请求编成命令，交给
  * {@code OltService} 下发；同样的方法也用于预览，所以页面看到的必然是要下发的。</p>
@@ -48,23 +49,37 @@ public final class HuaweiQuickSetupPlanner {
      * {@code profile-id<U><10,512>}；填 1000 就是
      * {@code % Parameter error, the error locates at '^'}。</p>
      */
-    private static final int MIN_PROFILE_ID = 10;
-    private static final int MAX_PROFILE_ID = 512;
+    public static final int MIN_PROFILE_ID = 10;
+    public static final int MAX_PROFILE_ID = 512;
 
-    /** 带宽上限（Mbps）：GPON 上行 1.25G，1024M 已经贴到边 */
-    private static final int MAX_BANDWIDTH_MBPS = 1024;
+    /** 带宽下限（Mbps） */
+    public static final int MIN_BANDWIDTH_MBPS = 1;
+
+    /** 带宽上限（Mbps）：GPON 上行 1.25G，1024M 已经贴到边。页面上的输入框上限也取它，别再抄一份 */
+    public static final int MAX_BANDWIDTH_MBPS = 1024;
+
+    /**
+     * 三套模板（DBA / 线路 / 业务）的默认 ID。
+     *
+     * <p>ID 以前是从带宽推的：1000M → 1000，撞上设备 10~512 的限制后被压到 512，
+     * 页面上填的和下发下去的不是一个数。现在 ID 就是 ID、带宽就是带宽，
+     * 没填时用这一个默认值。</p>
+     */
+    public static final int DEFAULT_PROFILE_ID = 100;
 
     /** TR-069 模板固定叫这个名字，不跟带宽变 */
     private static final String TR069_PROFILE_NAME = "TR069_ACS";
 
     /**
-     * TR-069 模板 ID 固定用 1。
-     *
-     * <p>设备只认 1~32（问 {@code ont tr069-server-profile add profile-id 512 ?}，
-     * 回来的是 {@code profile-id<U><1,32>}），比 DBA 的 10~512 窄得多。而且这个模板
-     * 的内容只有 ACS 地址一项，跟带宽没关系，没必要跟着带宽变。</p>
+     * TR-069 模板 ID 区间是 1~32（问 {@code ont tr069-server-profile add profile-id 512 ?}，
+     * 回来的是 {@code profile-id<U><1,32>}），比 DBA 的 10~512 窄得多——
+     * 所以「所有 ID 都用 100」在这套模板上行不通，它只能落在 1~32 里。
      */
-    private static final int TR069_PROFILE_ID = 1;
+    public static final int MIN_TR069_PROFILE_ID = 1;
+    public static final int MAX_TR069_PROFILE_ID = 32;
+
+    /** TR-069 模板的默认 ID：内容只有 ACS 地址一项，跟带宽没关系，默认就占 1 号 */
+    public static final int DEFAULT_TR069_PROFILE_ID = 1;
 
     /**
      * DBA 带宽单位是 kbit/s，1 Mbps 按 1024 kbit/s 折算。
@@ -89,8 +104,11 @@ public final class HuaweiQuickSetupPlanner {
         }
 
         int bandwidth = requireBandwidth(request);
-        // 模板 ID 不等于带宽：DBA 只认 10~512，1000M 落到 1000 上会被拒
-        int profileId = profileIdOf(bandwidth);
+        // ID 就是 ID，不再从带宽推：带宽只决定名字和 DBA 的限速值
+        int dbaId = profileIdOf(request.getDbaProfileId(), "DBA 模板 ID");
+        int lineId = profileIdOf(request.getLineProfileId(), "ONT 线路模板 ID");
+        int srvId = profileIdOf(request.getSrvProfileId(), "ONT 业务模板 ID");
+        int tr069Id = tr069ProfileIdOf(request.getTr069ProfileId());
         String ponView = ponView(request.getPonType());
         String lineName = "FTTH-" + ponView.toUpperCase(Locale.ROOT) + "-" + bandwidth;
         List<Integer> gemVlans = gemVlanOrder(request);
@@ -98,10 +116,11 @@ public final class HuaweiQuickSetupPlanner {
         List<String> commands = new ArrayList<>();
         // 顺序就是依赖顺序：先有 VLAN 与 DBA，线路模板才引用得到
         addSwitchingCommands(commands, request, gemVlans);
-        addDbaProfile(commands, profileId, bandwidth);
-        addLineProfile(commands, ponView, profileId, lineName, gemVlans);
-        addServiceProfile(commands, ponView, profileId, lineName);
-        addTr069Profile(commands, request);
+        addDbaProfile(commands, dbaId, bandwidth);
+        // 线路模板里 tcont 引用的是 DBA 的 ID，不是自己的
+        addLineProfile(commands, ponView, lineId, dbaId, lineName, gemVlans);
+        addServiceProfile(commands, ponView, srvId, lineName);
+        addTr069Profile(commands, request, tr069Id);
         // 华为只写运行配置，不存盘掉电就回到开局前
         commands.add("save");
         return commands;
@@ -157,19 +176,22 @@ public final class HuaweiQuickSetupPlanner {
     /**
      * ONT 线路模板：T-CONT → DBA，GEM → T-CONT，GEM 映射 → VLAN，全部在这个视图里配完。
      *
-     * <p>映射索引从 0 开始递增，一个 GEM 承载多个 VLAN 的映射是常见做法，
-     * 不用为每条业务流单开一个 GEM。</p>
+     * <p><b>一个 VLAN 一个 GEM</b>（映射 ID 都用 0）：{@code gem add 0/1/2} 各挂一条 VLAN。
+     * 这是现场跑通的那套结构（MA5683T 上 102 台在线的做法），业务虚口（service-port）
+     * 也按「VLAN 对应的 GEM」一条一条建；一个 GEM 挂多条映射虽然设备也收，
+     * 但和现场对不上，排障时要翻译两套结构。</p>
      */
     private static void addLineProfile(List<String> commands, String ponView, int profileId,
-                                       String lineName, List<Integer> gemVlans) {
+                                       int dbaProfileId, String lineName, List<Integer> gemVlans) {
         commands.add("ont-lineprofile " + ponView + " profile-id " + profileId
                 + " profile-name \"" + lineName + "\"");
-        // T-CONT 挂到刚才那条 DBA 模板上
-        commands.add("tcont 1 dba-profile-id " + profileId);
-        commands.add("gem add 1 eth tcont 1 encrypt on");
-        int index = 0;
+        // T-CONT 挂到刚才那条 DBA 模板上（按 DBA 的 ID 引用，两个 ID 可以不同）
+        commands.add("tcont 1 dba-profile-id " + dbaProfileId);
+        int gem = 0;
         for (Integer vlan : gemVlans) {
-            commands.add("gem mapping 1 " + index++ + " vlan " + vlan);
+            commands.add("gem add " + gem + " eth tcont 1 encrypt on");
+            commands.add("gem mapping " + gem + " 0 vlan " + vlan);
+            gem++;
         }
         // OMCI 侧打开 TR-069 管理，ONT 才会按三层接口去连 ACS
         commands.add("tr069-management enable");
@@ -206,14 +228,14 @@ public final class HuaweiQuickSetupPlanner {
      * <p>放在最后：它本身不被前面引用，但注册 ONT 时要和线路模板一起拿出来用，
      * 编在一批命令里一次下发，省得配一半少一块。</p>
      */
-    private static void addTr069Profile(List<String> commands, HuaweiQuickSetupRequest request) {
+    private static void addTr069Profile(List<String> commands, HuaweiQuickSetupRequest request, int profileId) {
         String url = trimToNull(request.getAcsUrl());
         if (url == null) {
             throw new IllegalArgumentException("请填写 TR069 ACS 地址");
         }
         // 只有这三个参数。多给 username / password 会被回 % Too many parameters，
         // 也就是页面上那句 "% Parameter error, the error locates at '^'" 的来源
-        commands.add("ont tr069-server-profile add profile-id " + TR069_PROFILE_ID
+        commands.add("ont tr069-server-profile add profile-id " + profileId
                 + " profile-name \"" + TR069_PROFILE_NAME + "\""
                 + " url \"" + url + "\"");
     }
@@ -240,22 +262,41 @@ public final class HuaweiQuickSetupPlanner {
         if (bandwidth == null) {
             throw new IllegalArgumentException("请填写 DBA 模版带宽");
         }
-        if (bandwidth < 1 || bandwidth > MAX_BANDWIDTH_MBPS) {
+        if (bandwidth < MIN_BANDWIDTH_MBPS || bandwidth > MAX_BANDWIDTH_MBPS) {
             throw new IllegalArgumentException(
-                    "DBA 模版带宽要在 1-" + MAX_BANDWIDTH_MBPS + " Mbps 之间：" + bandwidth);
+                    "DBA 模版带宽要在 " + MIN_BANDWIDTH_MBPS + "-" + MAX_BANDWIDTH_MBPS + " Mbps 之间：" + bandwidth);
         }
         return bandwidth;
     }
 
     /**
-     * 由带宽推出模板 ID。
+     * 三套模板的 ID：没填就用默认值，填了必须在设备认的区间里。
      *
-     * <p>带宽（Mbps）直接当 ID 用过一段时间，1000M 就落到 1000 上——DBA 只认 10~512，
-     * 当场被拒。所以统一压到合法区间：10~512 的原样用，超出的按 512 走。
-     * 命名仍然带带宽（{@code 1000M}、{@code FTTH-GPON-1000}），现场看名字就知道规格。</p>
+     * <p>以前是带宽直接当 ID（1000M → 1000），撞上 10~512 的限制后被压成 512，
+     * 页面上填的和设备上下去的不是一个数。现在 ID 单独填，越界直接报出来，
+     * 不悄悄替人改——改了就对不上账。</p>
      */
-    private static int profileIdOf(int bandwidth) {
-        return Math.max(MIN_PROFILE_ID, Math.min(MAX_PROFILE_ID, bandwidth));
+    private static int profileIdOf(Integer value, String label) {
+        if (value == null) {
+            return DEFAULT_PROFILE_ID;
+        }
+        if (value < MIN_PROFILE_ID || value > MAX_PROFILE_ID) {
+            throw new IllegalArgumentException(
+                    label + "要在 " + MIN_PROFILE_ID + "-" + MAX_PROFILE_ID + " 之间：" + value);
+        }
+        return value;
+    }
+
+    /** TR-069 模板的 ID：区间比三套模板窄（1~32），没填就用默认 */
+    private static int tr069ProfileIdOf(Integer value) {
+        if (value == null) {
+            return DEFAULT_TR069_PROFILE_ID;
+        }
+        if (value < MIN_TR069_PROFILE_ID || value > MAX_TR069_PROFILE_ID) {
+            throw new IllegalArgumentException("TR069 模板 ID 要在 " + MIN_TR069_PROFILE_ID + "-"
+                    + MAX_TR069_PROFILE_ID + " 之间：" + value);
+        }
+        return value;
     }
 
     private static int requireInt(Integer value, String label) {

@@ -52,11 +52,22 @@ public class HuaweiQuickSetupRequest {
     private String acsPassword;
 
     /**
-     * DBA 模板带宽（Mbps），同时就是模板 ID：1000 → DBA 模板 1000 / 1000M。
-     *
-     * <p>既是带宽又是 ID，取值要在模板 ID 的范围内，超了设备不认。</p>
+     * DBA 模板带宽（Mbps）：只决定限速值和模板名字（{@code 1000M}），
+     * 不再当模板 ID 用——设备上的 ID 只认 10~512，带宽当 ID 会被顶回来。
      */
     private Integer dbaBandwidthMbps;
+
+    /** DBA 模板的 profile-id，设备认 10~512，没填用后端默认值 */
+    private Integer dbaProfileId;
+
+    /** ONT 线路模板的 profile-id，设备认 10~512，没填用后端默认值 */
+    private Integer lineProfileId;
+
+    /** ONT 业务模板的 profile-id，设备认 10~512，没填用后端默认值 */
+    private Integer srvProfileId;
+
+    /** TR-069 模板的 profile-id，设备只认 1~32，没填用后端默认值 */
+    private Integer tr069ProfileId;
 
     /** 上联端口，多个用逗号分隔，写法与设备一致（0/6、0/6/2、0/0/6/1） */
     private String uplinkPorts;

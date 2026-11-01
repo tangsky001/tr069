@@ -5,6 +5,7 @@ import com.tr069.acs.olt.model.OltDbaProfile;
 import com.tr069.acs.olt.model.OltGemMapping;
 import com.tr069.acs.olt.model.OltGemport;
 import com.tr069.acs.olt.model.OltLineProfile;
+import com.tr069.acs.olt.model.VlanIdExpression;
 import com.tr069.acs.olt.model.OltServicePort;
 import com.tr069.acs.olt.model.OltSrvProfile;
 import com.tr069.acs.olt.model.OltTrafficTable;
@@ -1583,6 +1584,88 @@ public final class OltInfoParser {
             }
         }
         return profiles;
+    }
+
+    private static final Pattern GEM_INDEX = Pattern.compile("<Gem\\s+Index\\s+(\\d+)\\s*>");
+
+    /** 映射表表头：{@code Mapping VLAN  Priority Port ...} 后面才是数据行 */
+    private static final Pattern MAPPING_HEADER =
+            Pattern.compile("^\\s*Mapping\\s+VLAN\\s+.*", Pattern.CASE_INSENSITIVE);
+    /** 映射数据行：{@code    0       46    -        -       -     -       -     -} */
+    private static final Pattern MAPPING_ROW = Pattern.compile("^\\s*(\\d{1,3})\\s+(\\d{1,4})\\s+.*");
+
+    /**
+     * 线路模板详情里的 GEM 索引（{@code <Gem Index 1>}）。
+     *
+     * <p>建业务虚口时 gemport 要写模板里那个 GEM 号，写错设备直接报参数错。</p>
+     */
+    public static Integer parseGemIndex(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        Matcher matcher = GEM_INDEX.matcher(text);
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
+    }
+
+    /**
+     * 线路模板详情里「VLAN → GEM Port」的对应关系（{@code display ont-lineprofile gpon profile-id X}）。
+     *
+     * <p>模板上「业务 VLAN 映射」留空时，业务虚口就按线路模板里 GEM 实际映射的结构下发——
+     * 页面提示写的是「留空表示沿用线路模板里的 GEM 映射」。现场的标准结构是
+     * 一个 VLAN 一个 GEM（GEM 0→46、1→41、2→45，映射 ID 都是 0），
+     * 建业务虚口时每条 VLAN 要用它自己的 GEM 号，写错设备直接报参数错。</p>
+     *
+     * @return key 是 VLAN，value 是承载它的 GEM 索引；按回显顺序排列，解析不到返回空表
+     */
+    public static Map<Integer, Integer> parseGemVlanPairs(String text) {
+        Map<Integer, Integer> pairs = new LinkedHashMap<>();
+        if (text == null || text.isBlank()) {
+            return pairs;
+        }
+        // 回显是「<Gem Index N> + 表头两行 + 分隔线 + 数据行」；表头第二行（index/type/ID...）
+        // 不含数字，所以按「表头 → 分隔线 → 数据行」三段走，别在表头第二行就判定表结束了
+        boolean header = false;
+        boolean rows = false;
+        int currentGem = -1;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            Matcher gem = GEM_INDEX.matcher(line);
+            if (gem.find()) {
+                currentGem = Integer.parseInt(gem.group(1));
+                header = false;
+                rows = false;
+                continue;
+            }
+            if (MAPPING_HEADER.matcher(rawLine).matches()) {
+                header = true;
+                rows = false;
+                continue;
+            }
+            if (currentGem < 0 || !header) {
+                continue;
+            }
+            if (!rows) {
+                // 表头和分隔线之间的那一行（列名的下半截）
+                if (line.startsWith("-")) {
+                    rows = true;
+                }
+                continue;
+            }
+            Matcher matcher = MAPPING_ROW.matcher(rawLine);
+            if (!matcher.matches()) {
+                header = false;
+                rows = false;
+                continue;
+            }
+            int vlan = Integer.parseInt(matcher.group(2));
+            if (vlan >= 1 && vlan <= VlanIdExpression.MAX_VLAN_ID) {
+                pairs.putIfAbsent(vlan, currentGem);
+            }
+        }
+        return pairs;
     }
 
     private static final Pattern SERVICE_PORT_ROW = Pattern.compile(

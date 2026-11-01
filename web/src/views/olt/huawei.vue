@@ -73,6 +73,16 @@
           <div class="olt-section-title">
             板卡信息
             <span v-if="boardSummary" class="board-summary">{{ boardSummary }}</span>
+            <!-- 板卡停在 auto-find（插上了没确认）时不加载业务，一键确认后按钮自动隐藏 -->
+            <el-button
+              v-if="boardsNeedConfirm"
+              class="board-confirm-btn"
+              type="danger"
+              size="mini"
+              plain
+              :loading="confirmingBoards"
+              @click="handleConfirmBoards"
+            >确认所有业务板</el-button>
           </div>
 
           <olt-board-cards
@@ -399,8 +409,8 @@ export default {
     handleEnableAutoFind() {
       const ports = this.autoFind ? this.autoFind.totalPorts : 0
       this.$confirm(
-        '将在这台 OLT 的 ' + ports + ' 个 GPON 业务板 PON 口开启 ont-auto-find，完成后自动重采一次。'
-          + '已经开着的口再开一次不受影响，是否继续？',
+        '将在这台 OLT 的 ' + ports + ' 个 GPON 业务板 PON 口开启 ont-auto-find，完成后自动重采一次。' +
+        '已经开着的口再开一次不受影响，是否继续？',
         '一键开启自动发现',
         { confirmButtonText: '开启', cancelButtonText: '取消', type: 'warning' }
       )

@@ -223,23 +223,37 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
     }
 
     /**
-     * {@code ont confirm <port> <number> <认证方式> omci ont-lineprofile-id X ont-srvprofile-id Y}
+     * {@code ont confirm <port> <认证方式> <认证串> omci [ont-lineprofile-id X] [ont-srvprofile-id Y]}
      *
-     * <p>用自动发现表里那个 Number 直接确认，ONT ID 由设备分配。认证方式只给关键字
-     * （{@code sn-auth} / {@code loid-auth} 这种），值设备从那条待注册记录里自己取——
-     * 带上值反而容易被不同版本挑语法错误。</p>
+     * <p>语法是设备上问出来的（{@code ont confirm ?} 逐级问到的就是下面这套），
+     * 每一样都不是猜的：</p>
      *
-     * <p>线路/业务模板 ID 可选：模板里没填就不带这两个参数，设备按默认模板走。</p>
+     * <pre>
+     * ont confirm 0
+     *   { all | loid-auth | ontid | password-auth | sn-auth | sn-or-password-auth }: sn-auth
+     *   { sn-value&lt;S&gt;&lt;Length 12-16&gt; }:                                   43494F5429ABE539
+     *   { omci | password-auth | snmp }:                                  omci
+     *   { &lt;cr&gt; | desc | ont-lineprofile-id | ont-srvprofile-id | ont-type }
+     * </pre>
+     *
+     * <p><b>端口后面不是 ONT ID</b>：第二位直接是认证方式关键字，ONT ID 由设备自动分配。
+     * 早先按「端口 + 自动发现编号 + sn-auth」拼的命令，编号被当成关键字，
+     * 设备回 {@code % Unknown command, the error locates at '^'}，一台都注册不上。</p>
      */
     @Override
-    public String ontConfirmCommand(int port, int autofindNo, String authMode,
+    public String ontConfirmCommand(int port, String authMode, String authValue,
                                     Integer lineProfileId, Integer srvProfileId) {
         String keyword = ontAuthKeyword(authMode);
         if (keyword == null) {
             return null;
         }
+        if (authValue == null || authValue.isBlank()) {
+            // 关键字后面空着就是一条必然被拒的命令，宁可返回 null 让上层报「缺认证串」
+            return null;
+        }
         StringBuilder command = new StringBuilder("ont confirm ")
-                .append(port).append(' ').append(autofindNo).append(' ').append(keyword).append(" omci");
+                .append(port).append(' ').append(keyword).append(' ')
+                .append(authValue.trim()).append(" omci");
         if (lineProfileId != null) {
             command.append(" ont-lineprofile-id ").append(lineProfileId);
         }
@@ -259,6 +273,54 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
             case "PASSWORD" -> "password-auth";
             default -> null;
         };
+    }
+
+    /**
+     * {@code board confirm 0}：把 auto-find 状态的板卡一次确认加载。
+     *
+     * <p>0 是机框号（两台都是单机框）。刚连接时业务板/上联板若不是正常状态，
+     * 多半是插上了还没确认——确认后重新采集，状态就变 Active_normal。</p>
+     */
+    @Override
+    public String boardConfirmCommand() {
+        return "board confirm 0";
+    }
+
+    /**
+     * 线路模板详情：{@code display ont-lineprofile gpon profile-id 512}。
+     *
+     * <p>回显里有 T-CONT 挂的 DBA、{@code <Gem Index 1>} 和它下面那张
+     * {@code Mapping VLAN} 表（一键开局建的那条就是 46 / 41 / 45 三条）。
+     * 注册后下发业务虚口时，VLAN 和 GEM 号都从这儿读。</p>
+     */
+    @Override
+    public String lineProfileDetailCommand(String ponType, int profileId) {
+        // 模板上没写 PON 类型就按 gpon：华为这两台都是 GPON 业务板
+        String view = ponType == null || ponType.isBlank()
+                ? "gpon" : ponType.trim().toLowerCase(Locale.ROOT);
+        return "display ont-lineprofile " + view + " profile-id " + profileId;
+    }
+
+    /**
+     * 业务虚口：一条 VLAN 一条流，{@code translate} 表示用户侧 VLAN 原样透传到上联。
+     *
+     * <p>语法是设备上问出来的：{@code service-port ?} 给出 {@code index<U><0,32767>}，
+     * {@code multi-service user-vlan <v> ?} 里有 {@code tag-transform}。
+     * 没有这层虚口，光猫注册上线了也不通业务——页面「业务流」一列会是空的。</p>
+     *
+     * <p>GEM Port 用线路模板里的那一个（一键开局建的就是 {@code gem add 1}）。</p>
+     */
+    @Override
+    public boolean supportsServicePorts() {
+        return true;
+    }
+
+    @Override
+    public String servicePortCommand(int index, int vlan, int frame, int slot, int port,
+                                     int ontId, int gemPort) {
+        return "service-port " + index + " vlan " + vlan + " gpon "
+                + frame + "/" + slot + "/" + port + " ont " + ontId + " gemport " + gemPort
+                + " multi-service user-vlan " + vlan + " tag-transform translate";
     }
 
     @Override

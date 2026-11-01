@@ -292,18 +292,69 @@ public interface OltVendorProfile {
     /**
      * 确认一台待注册 ONT 的命令（在 {@link #ponViewCommand} 进的 PON 板视图里执行）。
      *
-     * <p>用自动发现表里那个 Number 直接确认，ONT ID 由设备自己分配——
-     * 不用先查一遍该口用了哪些 ID，少一个来回也少一处出错。</p>
+     * <p>ONT ID 由设备自己分配：不用先查一遍该口用了哪些 ID，少一个来回，
+     * 也避免了自己挑的 ID 正好被占。</p>
      *
      * @param port          PON 口号
-     * @param autofindNo    {@code display ont autofind} 回显里的 Number
      * @param authMode      注册方式：SN / MAC / LOID / PASSWORD
+     * @param authValue     认证串（SN / MAC / LOID / 密码）。设备语法里 sn-auth 后面
+     *                      必须跟值，只给关键字会被回 {@code % Unknown command}
      * @param lineProfileId 线路模板 ID，为空就不带这个参数
      * @param srvProfileId  业务模板 ID，为空就不带这个参数
      * @return 命令；不支持时返回 null
      */
-    default String ontConfirmCommand(int port, int autofindNo, String authMode,
+    default String ontConfirmCommand(int port, String authMode, String authValue,
                                      Integer lineProfileId, Integer srvProfileId) {
+        return null;
+    }
+
+    /**
+     * 确认所有待确认板卡的命令（config 视图下执行）。
+     *
+     * <p>新插的板卡上电后停在 auto-find 状态，不确认就不加载业务——
+     * 华为的确认命令是 {@code board confirm 0}（0 是机框号）。
+     * 没有这套机制的厂商返回 null。</p>
+     */
+    default String boardConfirmCommand() {
+        return null;
+    }
+
+    /**
+     * 查一条 ONT 线路模板详情的命令（config 视图下执行），用来读它 GEM 映射了哪些 VLAN。
+     *
+     * @param ponType    GPON / EPON
+     * @param profileId  线路模板 ID
+     * @return 命令；不支持时返回 null
+     */
+    default String lineProfileDetailCommand(String ponType, int profileId) {
+        return null;
+    }
+
+    /**
+     * 这台设备支不支持给已注册的 ONT 建业务虚口。
+     *
+     * <p>光猫注册上（{@code ont confirm}）只是通了 OMCI 管理通道，用户流量要走
+     * 业务虚口（service-port）绑 GEM Port 才放得出去——没这层虚口，页面「业务流」
+     * 就是空的，用户也没网。</p>
+     */
+    default boolean supportsServicePorts() {
+        return false;
+    }
+
+    /**
+     * 给一台已注册的 ONT 建一条业务虚口的命令（config 视图下执行）。
+     *
+     * @param index   业务虚口索引，调用方保证不与现有冲突
+     * @param vlan    业务 VLAN（OLT 侧 = 用户侧，translate 透传）
+     * @param frame   框号
+     * @param slot    槽位号
+     * @param port    端口号
+     * @param ontId   注册后设备分配的 ONT ID
+     * @param gemPort 线路模板里的 GEM Port 号
+     * @return 命令；不支持时返回 null
+     */
+    default String servicePortCommand(int index, int vlan, int frame, int slot, int port,
+                                      int ontId, int gemPort) {
         return null;
     }
 

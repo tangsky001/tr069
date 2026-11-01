@@ -14,6 +14,8 @@ import com.tr069.acs.olt.model.OltQuickSetupRequest;
 import com.tr069.acs.olt.model.OltDeviceOptions;
 import com.tr069.acs.olt.model.OltDeviceView;
 import com.tr069.acs.olt.model.OltQuickSetupForm;
+import com.tr069.acs.olt.model.HuaweiQuickSetupRequest;
+import com.tr069.acs.olt.model.OltHuaweiSetupForm;
 import com.tr069.acs.olt.model.OltQuickSetupPreview;
 import com.tr069.acs.olt.model.OltSaveRequest;
 import com.tr069.acs.olt.model.OltTr069Form;
@@ -33,6 +35,7 @@ import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltTr069ProfileRequest;
 import com.tr069.acs.olt.model.OltVlanRequest;
 import com.tr069.acs.olt.service.OltOntRegService;
+import com.tr069.acs.olt.service.OltQuickSetupConfigService;
 import com.tr069.acs.olt.service.OltService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
@@ -65,6 +68,8 @@ public class OltController {
     private final OltService oltService;
 
     private final OltOntRegService ontRegService;
+
+    private final OltQuickSetupConfigService quickSetupConfigService;
 
     /**
      * OLT 列表，keyword 匹配名称 / 地址 / 型号。
@@ -213,6 +218,26 @@ public class OltController {
         } catch (Exception e) {
             log.error("OLT 实时刷新异常 id={}", id, e);
             return Result.failure("实时刷新失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 确认所有待确认板卡（华为 {@code board confirm 0}）。
+     *
+     * <p>新插的板卡上电后停在 auto-find，不确认不加载业务。返回确认后重采的最新详情，
+     * 页面据此判断按钮还要不要显示。</p>
+     */
+    @PostMapping("/{id}/boards/confirm")
+    public Result<OltDetail> confirmBoards(@PathVariable Long id, HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.confirmBoards(id, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("板卡确认异常 id={}", id, e);
+            return Result.failure("板卡确认失败：" + e.getMessage());
         }
     }
 
@@ -573,6 +598,37 @@ public class OltController {
     }
 
     /**
+     * 一键开局参数：页面打开时问后端要，默认值也只有后端这一份。
+     *
+     * @param defaults true 时忽略存过的，直接给默认值（「默认设置」按钮）
+     */
+    @GetMapping("/{id}/quick-setup/config")
+    public Result<OltHuaweiSetupForm> quickSetupConfig(@PathVariable Long id,
+                                                       @RequestParam(required = false) Boolean defaults) {
+        try {
+            return Result.success(quickSetupConfigService.form(id, Boolean.TRUE.equals(defaults)));
+        } catch (Exception e) {
+            log.error("查询开局参数异常 id={}", id, e);
+            return Result.failure("查询开局参数失败：" + e.getMessage());
+        }
+    }
+
+    /** 保存一键开局参数：存库，谁打开这台设备都是同一套 */
+    @PostMapping("/{id}/quick-setup/config")
+    public Result<OltHuaweiSetupForm> saveQuickSetupConfig(@PathVariable Long id,
+                                                           @RequestBody HuaweiQuickSetupRequest request) {
+        try {
+            quickSetupConfigService.save(id, request);
+            return Result.success(quickSetupConfigService.form(id, false));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("保存开局参数异常 id={}", id, e);
+            return Result.failure("保存开局参数失败：" + e.getMessage());
+        }
+    }
+
+    /**
      * TR-069 模板表单的默认值与取值约束，两个入口共用同一份。
      */
     @GetMapping("/{id}/tr069/form")
@@ -640,6 +696,18 @@ public class OltController {
         }
     }
 
+    /** 新建模板的初始表单：默认值只有后端这一份，页面不自己准备 */
+    @GetMapping("/{id}/ont-reg/template/default")
+    public Result<OltOntRegTemplate> blankOntRegTemplate(@PathVariable Long id,
+                                                         @RequestParam(required = false) String oltIp) {
+        try {
+            return Result.success(ontRegService.blankTemplate(id, oltIp));
+        } catch (Exception e) {
+            log.error("取新建模板默认值异常 id={}", id, e);
+            return Result.failure("取模板默认值失败：" + e.getMessage());
+        }
+    }
+
     /** 新增或更新一条注册模板 */
     @PostMapping("/{id}/ont-reg/template")
     public Result<OltOntRegTemplate> saveOntRegTemplate(@PathVariable Long id,
@@ -688,6 +756,24 @@ public class OltController {
         } catch (Exception e) {
             log.error("保存自动注册参数异常 id={}", id, e);
             return Result.failure("保存自动注册参数失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 立刻跑一轮自动注册（扫描 → 按模板注册），返回本轮注册成功的台数。
+     *
+     * <p>和后台定时任务走的是同一个 {@code autoRegister}，用来验证参数和模板
+     * 配得对不对，不用干等下一轮扫描。</p>
+     */
+    @PostMapping("/{id}/ont-reg/scan")
+    public Result<Integer> runOntRegScan(@PathVariable Long id) {
+        try {
+            return Result.success(ontRegService.scanNow(id));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("手动触发自动注册异常 id={}", id, e);
+            return Result.failure("扫描注册失败：" + e.getMessage());
         }
     }
 
