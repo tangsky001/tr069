@@ -224,6 +224,97 @@ export function enableOntAutoFind(id) {
 }
 
 /**
+ * 注册模板列表：从库里读（原来存在浏览器本地，换台电脑就没了）。
+ *
+ * @param onlyCurrent true 时只要「不限设备」和绑在这台 OLT 上的
+ */
+export function fetchOntRegTemplates(id, onlyCurrent) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/templates',
+    method: 'get',
+    params: { onlyCurrent: onlyCurrent ? 1 : 0 },
+    timeout: 30000
+  })
+}
+
+/** 新增或修改一条注册模板 */
+export function saveOntRegTemplate(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/template',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 批量删除注册模板 */
+export function deleteOntRegTemplates(id, ids) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/templates',
+    method: 'delete',
+    data: ids,
+    timeout: 30000
+  })
+}
+
+/** 自动注册参数；没存过后端给一份默认值 */
+export function fetchOntRegConfig(id) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/config',
+    method: 'get',
+    timeout: 30000
+  })
+}
+
+/**
+ * 保存自动注册参数。
+ *
+ * 开关打开后后台定时任务按 scanSeconds 去设备上扫待注册光猫，命中模板就注册。
+ */
+export function saveOntRegConfig(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/config',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 注册记录：哪台注册了、套了哪个模板、没成的因为什么 */
+export function fetchOntRegRecords(id, limit) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/records',
+    method: 'get',
+    params: { limit: limit || 50 },
+    timeout: 30000
+  })
+}
+
+/** 只编命令不下发，下发前先在页面上核对一遍 */
+export function previewOntRegister(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/preview',
+    method: 'post',
+    data,
+    timeout: 60000
+  })
+}
+
+/**
+ * 注册选中的待注册 ONT。
+ *
+ * 逐台下发命令，一台失败不影响其它台，结果逐条返回。
+ */
+export function registerOnt(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/register',
+    method: 'post',
+    data,
+    timeout: 180000
+  })
+}
+
+/**
  * 建一个 OLT 本地用户（登这台设备用的账号）。
  *
  * 华为这边 backend 走的是 terminal user name 那条交互式命令，一问一答比较慢，

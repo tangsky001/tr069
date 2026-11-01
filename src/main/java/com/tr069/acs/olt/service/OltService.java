@@ -1018,15 +1018,27 @@ public class OltService {
             log.warn("查询待注册 ONT 失败 id={}: {}", id, message);
             throw new IllegalStateException("查询待注册 ONT 失败：" + message, e);
         }
+        // 回显为空和设备不认这条命令，都是「命令视图不对」的症状，先分开记下来
+        if (raw == null || raw.isBlank()) {
+            log.warn("查询待注册 ONT：设备没有回显 id={} 命令={}", id, profile.ontAutofindCommands());
+            return List.of();
+        }
         // 没有待注册 ONT 时华为回的是
         // "Failure: The automatically found ONTs do not exist"：带 Failure 字样，但是正常空结果
         if (OltInfoParser.autofindIsEmpty(raw)) {
+            log.info("查询待注册 ONT：设备回没有待注册 ONT id={}", id);
             return List.of();
         }
         if (OltInfoParser.looksUnsupported(raw)) {
             throw new IllegalStateException("设备不认这条命令，回显：" + raw);
         }
-        return profile.parseOntAutofind(raw);
+        List<OltOntAutofind> items = profile.parseOntAutofind(raw);
+        if (items.isEmpty()) {
+            // 有回显却一条都没解析出来：不是设备没有，是回显格式没认出来。
+            // 不打这条日志的话，页面只会显示「没有待注册光猫」，没法区分这两种情况
+            log.warn("查询待注册 ONT：回显有内容但一条都没解析出来，格式没对上 id={} 回显:\n{}", id, raw);
+        }
+        return items;
     }
 
     /**

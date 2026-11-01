@@ -1,5 +1,6 @@
 package com.tr069.acs.olt.vendor;
 
+import com.tr069.acs.olt.model.OltOnt;
 import com.tr069.acs.olt.model.OltOntAutofind;
 import com.tr069.acs.olt.model.OltQuickSetupRequest;
 import com.tr069.acs.olt.model.OltTerminalUserRequest;
@@ -212,6 +213,73 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
             commands.add("save");
         }
         return commands;
+    }
+
+    // ------------------------------------------------------------ ONT 注册（ont confirm）
+
+    @Override
+    public boolean supportsOntConfirm() {
+        return true;
+    }
+
+    /**
+     * {@code ont confirm <port> <number> <认证方式> omci ont-lineprofile-id X ont-srvprofile-id Y}
+     *
+     * <p>用自动发现表里那个 Number 直接确认，ONT ID 由设备分配。认证方式只给关键字
+     * （{@code sn-auth} / {@code loid-auth} 这种），值设备从那条待注册记录里自己取——
+     * 带上值反而容易被不同版本挑语法错误。</p>
+     *
+     * <p>线路/业务模板 ID 可选：模板里没填就不带这两个参数，设备按默认模板走。</p>
+     */
+    @Override
+    public String ontConfirmCommand(int port, int autofindNo, String authMode,
+                                    Integer lineProfileId, Integer srvProfileId) {
+        String keyword = ontAuthKeyword(authMode);
+        if (keyword == null) {
+            return null;
+        }
+        StringBuilder command = new StringBuilder("ont confirm ")
+                .append(port).append(' ').append(autofindNo).append(' ').append(keyword).append(" omci");
+        if (lineProfileId != null) {
+            command.append(" ont-lineprofile-id ").append(lineProfileId);
+        }
+        if (srvProfileId != null) {
+            command.append(" ont-srvprofile-id ").append(srvProfileId);
+        }
+        return command.toString();
+    }
+
+    /** SN / MAC / LOID / PASSWORD → 设备认的认证关键字 */
+    private static String ontAuthKeyword(String authMode) {
+        String mode = authMode == null ? "SN" : authMode.trim().toUpperCase(Locale.ROOT);
+        return switch (mode) {
+            case "SN" -> "sn-auth";
+            case "MAC" -> "mac-auth";
+            case "LOID" -> "loid-auth";
+            case "PASSWORD" -> "password-auth";
+            default -> null;
+        };
+    }
+
+    @Override
+    public String ontDeleteCommand(int port, int ontId) {
+        return "ont delete " + port + " " + ontId;
+    }
+
+    /**
+     * 整块板所有口的 ONT 明细：{@code display ont info 0 <槽位> all}。
+     *
+     * <p>回显按端口分段，每行带 ONT ID、SN 和 Run state，正好用来判断这台光猫
+     * 是不是已经在别的口上注册过（自动移机），以及哪些是离线的（注册表满时清掉）。</p>
+     */
+    @Override
+    public String ontListCommand(int frame, int slot) {
+        return "display ont info " + frame + " " + slot + " all";
+    }
+
+    @Override
+    public Map<Integer, List<OltOnt>> parseOntList(String text) {
+        return OltInfoParser.parseOntDetails(text);
     }
 
     // ------------------------------------------------------------ OLT 本地用户

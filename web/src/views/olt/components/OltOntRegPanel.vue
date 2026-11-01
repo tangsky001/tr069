@@ -198,10 +198,48 @@
       </div>
     </div>
 
+    <!-- 四、注册记录：后台自动注册跑了什么，只能在这儿看出来 -->
+    <div class="reg-block-title">
+      ONT 注册记录
+      <span class="reg-block-extra">最近 {{ records.length }} 条</span>
+    </div>
+
+    <el-table :data="records" size="mini" border class="reg-table" empty-text="还没有注册记录。开自动注册后，后台扫到的光猫会按模板注册并记在这里。">
+      <el-table-column label="时间" width="140">
+        <template slot-scope="{ row }">{{ row.createdAt || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="端口" width="90">
+        <template slot-scope="{ row }">{{ row.fsp || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="ONT SN" min-width="150">
+        <template slot-scope="{ row }">
+          <div class="cell-main">{{ row.ontSn || '-' }}</div>
+          <div class="cell-sub">{{ row.model || '-' }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column label="模板 / 方式" min-width="130">
+        <template slot-scope="{ row }">
+          <div class="cell-main">{{ row.templateName || '-' }}</div>
+          <div class="cell-sub">{{ authLabel(row.authMode) }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column label="来源" width="80" align="center">
+        <template slot-scope="{ row }">{{ row.source === 'AUTO' ? '自动' : '手动' }}</template>
+      </el-table-column>
+      <el-table-column label="结果" min-width="220">
+        <template slot-scope="{ row }">
+          <el-tag :type="row.success === 1 ? 'success' : 'danger'" size="mini">
+            {{ row.success === 1 ? '成功' : '失败' }}
+          </el-tag>
+          <span class="reg-record-message">{{ row.message || '-' }}</span>
+        </template>
+      </el-table-column>
+    </el-table>
+
     <!-- 一键注册确认：命令由后端编，这里先把要做什么摊开确认 -->
     <el-dialog :visible.sync="registerVisible" title="一键注册" width="620px" append-to-body>
       <div class="reg-preview-tip">
-        命令序列由后端模板编排器生成，接口还没接，本次不会下发到设备。
+        命令序列由后端按模板编排，确认后真下发到设备；一台失败不影响其它台。
       </div>
 
       <el-table :data="previewRows" size="mini" border class="reg-table">
@@ -210,6 +248,11 @@
         <el-table-column prop="model" label="型号" width="110" />
         <el-table-column prop="authLabel" label="注册方式" width="90" />
       </el-table>
+
+      <div v-if="previewCommands.length" class="reg-preview-block">
+        <div class="reg-preview-title">将要下发</div>
+        <pre class="reg-command-preview">{{ previewCommands.join('\n') }}</pre>
+      </div>
 
       <div class="reg-preview-block">
         <div>模板：<b>{{ previewName }}</b>（优先级 {{ previewTemplate ? previewTemplate.priority : '-' }}，{{ previewTemplate ? previewTemplate.ponType : '-' }}）</div>
@@ -223,8 +266,8 @@
       </div>
 
       <div slot="footer">
-        <el-button size="small" type="primary" @click="registerVisible = false">确认</el-button>
-        <el-button size="small" @click="registerVisible = false">取消</el-button>
+        <el-button size="small" type="primary" :loading="registering" @click="confirmRegister">确认下发</el-button>
+        <el-button size="small" :disabled="registering" @click="registerVisible = false">取消</el-button>
       </div>
     </el-dialog>
 
@@ -241,20 +284,29 @@
 <script>
 import OltHelpLabel from './OltHelpLabel'
 import OltOntRegTemplateDialog from './OltOntRegTemplateDialog'
-import { fetchOntAutofind } from '@/api/olt'
+import {
+  fetchOntAutofind,
+  fetchOntRegConfig,
+  saveOntRegConfig,
+  fetchOntRegRecords,
+  fetchOntRegTemplates,
+  saveOntRegTemplate,
+  deleteOntRegTemplates,
+  previewOntRegister,
+  registerOnt
+} from '@/api/olt'
 
 /**
- * ONT 注册 / 自动注册模板。
+ * ONT 注册 / 自动注册。
  *
- * <p>三块：自动注册参数、注册模板（按优先级匹配）、自动发现（设备上待授权的光猫）。</p>
+ * <p>三块：自动注册参数、注册模板（按优先级匹配）、自动发现（设备上待授权的光猫）。
+ * 模板和参数都存库，换台电脑打开、后台定时任务跑的都是同一份。</p>
  *
- * <p><b>当前状态：模板和参数存在本机（按 OLT 记），刷新页面还在，但没有写库。</b>
- * 后端接口接上后把 {@link #persist} / {@link #discover} / {@link #registerChecked}
- * 三个方法换成真实调用即可，页面结构不用动。</p>
+ * <p>注册记录单独一块：自动注册是后台跑的，页面上只能从记录里看出
+ * 哪台注册了、套了哪条模板、没成的因为什么。</p>
  */
 
-const STORE_PREFIX = 'olt-ont-reg:'
-
+/** 后端存的是 0/1，页面上是开关；两边各用各的，进出接口时翻一下 */
 function defaultAutoConfig() {
   return {
     enabled: false,
@@ -266,15 +318,32 @@ function defaultAutoConfig() {
   }
 }
 
-function loadState(oltId) {
-  if (!oltId) {
-    return null
+/** 接口返回的参数（0/1）翻成页面上的开关（true/false） */
+function toViewConfig(config) {
+  const base = defaultAutoConfig()
+  if (!config) {
+    return base
   }
-  try {
-    const raw = window.localStorage.getItem(STORE_PREFIX + oltId)
-    return raw ? JSON.parse(raw) : null
-  } catch (e) {
-    return null
+  return {
+    ...base,
+    enabled: config.enabled === 1,
+    scanSeconds: config.scanSeconds || base.scanSeconds,
+    saveSeconds: config.saveSeconds || base.saveSeconds,
+    concurrency: config.concurrency || base.concurrency,
+    autoMove: config.autoMove === 1,
+    autoDeleteOffline: config.autoDeleteOffline === 1
+  }
+}
+
+/** 页面上的开关翻回后端要的 0/1 */
+function toServerConfig(config) {
+  return {
+    enabled: config.enabled ? 1 : 0,
+    scanSeconds: config.scanSeconds,
+    saveSeconds: config.saveSeconds,
+    concurrency: config.concurrency,
+    autoMove: config.autoMove ? 1 : 0,
+    autoDeleteOffline: config.autoDeleteOffline ? 1 : 0
   }
 }
 
@@ -312,23 +381,25 @@ export default {
       autoConfig: defaultAutoConfig(),
       templates: [],
       discovered: [],
+      records: [],
       onlyCurrentOlt: false,
       templateDialogVisible: false,
       editingTemplate: null,
       registerTemplateId: '',
       registerVisible: false,
       previewRows: [],
+      previewCommands: [],
       previewTemplate: null,
       discovering: false,
+      registering: false,
+      /** 预览弹窗里等确认的那批参数，确认后才拿去下发 */
+      pendingPayload: null,
       seq: 1
     }
   },
   computed: {
     visibleTemplates() {
-      if (!this.onlyCurrentOlt) {
-        return this.templates
-      }
-      return this.templates.filter(item => !item.oltIp || item.oltIp === this.oltIp)
+      return this.templates
     },
     checkedTemplates() {
       return this.templates.filter(item => item.checked)
@@ -364,41 +435,55 @@ export default {
       handler() {
         this.reload()
       }
+    },
+    // 勾上「只显示当前 OLT 模板」重新拉一次：让库来挑，不在前端比对
+    onlyCurrentOlt() {
+      this.reload()
     }
   },
   methods: {
     authLabel(mode) {
       return AUTH_LABELS[mode] || '-'
     },
-    reload() {
-      const state = loadState(this.oltId)
-      this.autoConfig = state && state.autoConfig
-        ? { ...defaultAutoConfig(), ...state.autoConfig }
-        : defaultAutoConfig()
-      this.templates = state && Array.isArray(state.templates)
-        ? state.templates.map(item => ({ ...item, checked: false }))
-        : []
+    /**
+     * 从库里读模板、自动注册参数、注册记录。
+     *
+     * <p>模板原来存在浏览器本地，换台电脑打开就空了，后台定时任务也看不到——
+     * 现在都走接口，页面和定时任务用的是同一份。</p>
+     */
+    async reload() {
+      if (!this.oltId) {
+        return
+      }
       // 自动发现结果不落草稿：那是设备上实时的东西，缓存下来反而会显示已经注册掉的光猫
       this.discovered = []
+      this.registerTemplateId = ''
+      const [configResult, templateResult, recordResult] = await Promise.all([
+        fetchOntRegConfig(this.oltId).catch(() => ({ data: null })),
+        // 过滤交给后端：库里就有 olt_id，后端按「不限设备 + 这台设备」挑比前端比对 IP 准
+        fetchOntRegTemplates(this.oltId, this.onlyCurrentOlt).catch(() => ({ data: [] })),
+        fetchOntRegRecords(this.oltId, 50).catch(() => ({ data: [] }))
+      ])
+      this.autoConfig = toViewConfig(configResult.data)
+      this.templates = (templateResult.data || []).map(item => ({
+        ...item,
+        priority: item.priority == null ? 0 : Number(item.priority),
+        enabled: item.enabled === 1,
+        checked: false
+      }))
+      this.records = recordResult.data || []
       this.seq = this.templates.length + 1
     },
-    persist() {
+    async saveAutoConfig() {
       if (!this.oltId) {
         return
       }
       try {
-        const payload = {
-          autoConfig: this.autoConfig,
-          templates: this.templates.map(({ checked, ...rest }) => rest)
-        }
-        window.localStorage.setItem(STORE_PREFIX + this.oltId, JSON.stringify(payload))
+        await saveOntRegConfig(this.oltId, toServerConfig(this.autoConfig))
+        this.$message.success(this.autoConfig.enabled ? '自动注册参数已保存，后台开始按间隔扫描注册' : '自动注册参数已保存')
       } catch (e) {
-        // 隐私模式下写不进去，不影响页面操作
+        this.$message.error(e && e.message ? e.message : '保存失败')
       }
-    },
-    saveAutoConfig() {
-      this.persist()
-      this.$message.success('自动注册参数已保存')
     },
     openCreate() {
       this.editingTemplate = null
@@ -408,23 +493,64 @@ export default {
       this.editingTemplate = row
       this.templateDialogVisible = true
     },
-    submitTemplate(form) {
-      if (form.id) {
-        const index = this.templates.findIndex(item => item.id === form.id)
-        if (index >= 0) {
-          this.templates.splice(index, 1, { ...form, checked: this.templates[index].checked })
-        }
-      } else {
-        this.templates.push({ ...form, id: 't' + this.seq++, enabled: true, checked: false })
+    /**
+     * 保存一条模板：交给后端入库，成功后按后端返回的列表重排。
+     *
+     * <p>不在本地拼 id：模板要被后台定时任务拿去匹配，本地造的 id 出了这个页面就没意义。</p>
+     */
+    async submitTemplate(form) {
+      if (!this.oltId) {
+        return
       }
-      // 优先级小的排前面，和匹配顺序一致
-      this.templates.sort((a, b) => Number(a.priority) - Number(b.priority))
-      this.persist()
-      this.$message.success('注册模板已保存')
+      try {
+        const result = await saveOntRegTemplate(this.oltId, {
+          ...form,
+          id: form.id || null,
+          oltIp: form.oltIp || this.oltIp || null,
+          priority: Number(form.priority || 0),
+          enabled: form.enabled === false ? 0 : 1
+        })
+        this.$message.success('注册模板已保存')
+        // 用后端返回的这条回填，id 是真的库里 id，后面编辑/删除才找得着
+        const saved = result.data
+        if (saved && saved.id) {
+          const index = this.templates.findIndex(item => item.id === saved.id)
+          const view = { ...saved, enabled: saved.enabled === 1, checked: false }
+          if (index >= 0) {
+            this.templates.splice(index, 1, view)
+          } else {
+            this.templates.push(view)
+          }
+        } else {
+          await this.reload()
+        }
+        // 优先级小的排前面，和匹配顺序一致
+        this.templates.sort((a, b) => Number(a.priority) - Number(b.priority))
+      } catch (e) {
+        this.$message.error(e && e.message ? e.message : '保存模板失败')
+      }
     },
-    onToggleEnabled(row) {
-      this.persist()
-      this.$message.info(row.name + (row.enabled ? ' 已启用' : ' 已停用'))
+    /** 启用/停用：这条模板还留在库里，只是不再参与匹配 */
+    async onToggleEnabled(row) {
+      // 先在 await 前把目标值定下来：await 之后 row.enabled 可能已经被别的改动覆盖，
+      // 回滚时不能用「取反」这种依赖当前值的写法
+      const target = row.enabled
+      try {
+        await saveOntRegTemplate(this.oltId, {
+          ...row,
+          enabled: target ? 1 : 0,
+          priority: Number(row.priority || 0)
+        })
+        this.$message.info(row.name + (target ? ' 已启用' : ' 已停用'))
+      } catch (e) {
+        // 保存失败就把开关拨回去：整行换掉而不是改 row.enabled，
+        // 免得 await 期间这一行已经被别处改动过
+        const index = this.templates.findIndex(item => item.id === row.id)
+        if (index >= 0) {
+          this.$set(this.templates, index, { ...row, enabled: !target })
+        }
+        this.$message.error(e && e.message ? e.message : '保存失败')
+      }
     },
     toggleAll(value) {
       this.templates.forEach(item => { item.checked = value })
@@ -441,15 +567,19 @@ export default {
       if (!ids.length) {
         return
       }
-      this.$confirm('删除选中的 ' + ids.length + ' 条注册模板？', '删除', {
+      this.$confirm('删除选中的 ' + ids.length + ' 条注册模板？删除后这些光猫上线就匹配不到模板了。', '删除', {
         confirmButtonText: '删除',
         cancelButtonText: '取消',
         type: 'warning'
       })
-        .then(() => {
-          this.templates = this.templates.filter(item => !ids.includes(item.id))
-          this.persist()
-          this.$message.success('已删除')
+        .then(async() => {
+          try {
+            await deleteOntRegTemplates(this.oltId, ids)
+            this.templates = this.templates.filter(item => !ids.includes(item.id))
+            this.$message.success('已删除')
+          } catch (e) {
+            this.$message.error(e && e.message ? e.message : '删除失败')
+          }
         })
         .catch(() => {})
     },
@@ -496,10 +626,15 @@ export default {
       }
     },
     /**
-     * 待接后端：真下发时是把勾中的行连模板一起交给后端，
-     * 由那边编 ont confirm / ont add 的命令序列。这里先把内容摊开确认。
+     * 一键注册：先让后端把命令编出来给人看，确认了才真下发。
+     *
+     * <p>命令由后端按模板编排（{@code ont confirm}），页面不自己拼命令——
+     * 命令写法是设备知识，写在前端迟早跟设备版本对不上。</p>
+     *
+     * <p>下发逐台独立：一台失败（SN 重复、模板套不上）不影响其它台，
+     * 结果按台摊开显示。</p>
      */
-    registerChecked() {
+    async registerChecked() {
       const template = this.templates.find(item => item.id === this.registerTemplateId)
       if (!template) {
         this.$message.warning('先选一条注册模版')
@@ -509,6 +644,16 @@ export default {
         this.$message.warning('先勾选要注册的光猫')
         return
       }
+      const rows = this.checkedDiscovered.map(item => ({
+        id: item.id,
+        fsp: item.port === '-' ? null : item.port,
+        sn: item.sn === '-' ? null : item.sn,
+        loid: item.loid === '-' ? null : item.loid,
+        password: item.password === '-' ? null : item.password,
+        model: item.model === '-' ? null : item.model,
+        vendorId: item.vendorId === '-' ? null : item.vendorId,
+        ponType: item.ponType || 'gpon'
+      }))
       this.previewTemplate = template
       this.previewRows = this.checkedDiscovered.map(item => ({
         port: item.port,
@@ -516,7 +661,50 @@ export default {
         model: item.model,
         authLabel: this.authLabel(template.authMode)
       }))
+      const payload = { templateId: template.id, rows }
+      try {
+        const result = await previewOntRegister(this.oltId, payload)
+        this.previewCommands = result.data || []
+      } catch (e) {
+        this.previewCommands = []
+        this.$message.error(e && e.message ? e.message : '生成命令失败')
+      }
+      this.pendingPayload = payload
       this.registerVisible = true
+    },
+    /** 确认下发：把勾中的行连模板一起交给后端，逐台注册 */
+    async confirmRegister() {
+      if (!this.pendingPayload) {
+        this.registerVisible = false
+        return
+      }
+      this.registering = true
+      try {
+        const result = await registerOnt(this.oltId, this.pendingPayload)
+        const list = result.data || []
+        const ok = list.filter(item => item.success).length
+        const failed = list.length - ok
+        if (failed === 0) {
+          this.$message.success('已注册 ' + ok + ' 台')
+        } else {
+          // 逐台结果摊开：哪台没成、因为什么，比一句「部分失败」有用
+          const reasons = list.filter(item => !item.success)
+            .map(item => (item.sn || item.fsp) + '：' + (item.message || '失败'))
+          this.$message({
+            type: 'warning',
+            message: '成功 ' + ok + ' 台，失败 ' + failed + ' 台：' + reasons.join('；'),
+            duration: 8000
+          })
+        }
+        this.registerVisible = false
+        this.pendingPayload = null
+        await this.reload()
+        await this.discover()
+      } catch (e) {
+        this.$message.error(e && e.message ? e.message : '注册失败')
+      } finally {
+        this.registering = false
+      }
     }
   }
 }
@@ -596,6 +784,34 @@ export default {
 .reg-unit {
   margin-left: 6px;
   color: #9aa7b4;
+  font-size: 12px;
+}
+
+/* 下发前把命令原样摆出来：命令是后端按模板编的，现场要能一眼核对 */
+.reg-preview-title {
+  margin-bottom: 4px;
+  color: #4a5b6c;
+  font-weight: 600;
+}
+
+.reg-command-preview {
+  max-height: 180px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  color: #476582;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+  background: #f6f8fa;
+  border: 1px solid #ebeef5;
+  border-radius: 3px;
+}
+
+.reg-record-message {
+  margin-left: 6px;
+  color: #6b7a8c;
   font-size: 12px;
 }
 

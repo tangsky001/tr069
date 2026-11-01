@@ -2164,7 +2164,103 @@ public final class OltInfoParser {
                 items.add(item);
             }
         }
+        if (items.isEmpty()) {
+            // 表格认不出来还有第二种格式：部分版本（以及自定义厂商的光猫，如 CIOT/RCOM）
+            // 回的是竖排键值，一台一段——Number : 1 / F/S/P : 0/2/0 / Ont SN : ...，
+            // 段间用分隔线隔开。表格解析对它一行都收不到，这里兜底按段拆。
+            items = autofindFromBlocks(text);
+        }
         return items;
+    }
+
+    /**
+     * 竖排键值格式：一台 ONT 一段「标签 : 值」，段与段之间用分隔线隔开。
+     *
+     * <pre>
+     * ------------------------------------------
+     *   Number              : 1
+     *   F/S/P               : 0/2/0
+     *   Ont SN              : 43494F5429ABE539 (CIOT-29ABE539)
+     *   Password            : 0x00000000000000000000
+     *   Loid                :
+     *   Checkcode           :
+     *   VendorID            : CIOT
+     *   Ont Version         : HW1.00.00.488
+     *   Ont SoftwareVersion : V1.0.00.488
+     *   Ont EquipmentID     : PZg-Clac
+     *   Ont autofind time   : 2026-11-01 17:47:51+08:00
+     * ------------------------------------------
+     * </pre>
+     *
+     * <p>复用 {@link #parseOntKeyValueBlocks} 按分隔线切段，再逐键对号。
+     * 判定成一条有效记录的条件放宽：编号、端口、SN 里认出任意一样就算——
+     * 宁可页面上多显示一行残缺记录，也别把真实存在的光猫静默吞掉。</p>
+     */
+    private static List<OltOntAutofind> autofindFromBlocks(String text) {
+        List<OltOntAutofind> items = new ArrayList<>();
+        for (LinkedHashMap<String, String> block : parseOntKeyValueBlocks(text)) {
+            OltOntAutofind item = new OltOntAutofind();
+            boolean recognized = false;
+            for (Map.Entry<String, String> entry : block.entrySet()) {
+                String key = autofindKey(entry.getKey());
+                String value = entry.getValue();
+                if (value == null || value.isBlank() || "-".equals(value.trim())) {
+                    continue;
+                }
+                switch (key) {
+                    case "number" -> {
+                        Integer number = toInt(value);
+                        if (number != null) {
+                            item.setId(number);
+                            recognized = true;
+                        }
+                    }
+                    case "f/s/p" -> {
+                        item.setFsp(value.trim());
+                        recognized = true;
+                    }
+                    case "ontsn", "sn", "serialnumber" -> {
+                        item.setSn(stripSnNote(value));
+                        recognized = true;
+                    }
+                    case "password" -> item.setPassword(value.trim());
+                    case "loid", "logicalid", "logicid" -> item.setLoid(value.trim());
+                    case "checkcode" -> item.setCheckCode(value.trim());
+                    case "vendorid" -> item.setVendorId(value.trim());
+                    case "ontversion" -> item.setHardwareVersion(value.trim());
+                    case "ontsoftwareversion", "softwareversion" -> item.setSoftwareVersion(value.trim());
+                    // 部分版本不单列型号，型号就在 EquipmentID 里
+                    case "ontequipmentid", "equipmentid" -> {
+                        item.setEquipmentId(value.trim());
+                        item.setModel(value.trim());
+                    }
+                    case "ontmodel", "model" -> item.setModel(value.trim());
+                    case "ontautofindtime", "autofindtime" -> item.setLastTime(value.trim());
+                    default -> { }
+                }
+            }
+            if (recognized) {
+                if (item.getFsp() != null) {
+                    String[] parts = item.getFsp().split("/");
+                    if (parts.length == 3) {
+                        try {
+                            item.setFrameNo(Integer.parseInt(parts[0].trim()));
+                            item.setSlotNo(Integer.parseInt(parts[1].trim()));
+                            item.setPortNo(Integer.parseInt(parts[2].trim()));
+                        } catch (NumberFormatException ignored) {
+                            // 端口号不是数字就留着 fsp 原样，别因为一条怪数据丢整条记录
+                        }
+                    }
+                }
+                items.add(item);
+            }
+        }
+        return items;
+    }
+
+    /** SN 后面设备自带的对照注解（"43494F5429ABE539 (CIOT-29ABE539)"）只留前半截 */
+    private static String stripSnNote(String value) {
+        return value.replaceAll("\\s*\\([^)]*\\)\\s*$", "").trim();
     }
 
     /**

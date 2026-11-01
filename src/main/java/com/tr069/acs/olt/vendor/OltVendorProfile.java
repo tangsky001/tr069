@@ -7,6 +7,7 @@ import com.tr069.acs.olt.telnet.OltSnapshot;
 import com.tr069.acs.olt.telnet.OltVendor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 一家 OLT 厂商（或一条产品线）的全部差异。
@@ -274,6 +275,56 @@ public interface OltVendorProfile {
             return null;
         }
         return com.tr069.acs.olt.telnet.OltInfoParser.parseSlotCount(boardText);
+    }
+
+    // ------------------------------------------------------------ ONT 注册（ont confirm）
+
+    /**
+     * 这台设备能不能把「自动发现到的 ONT」确认成正式 ONT（{@code ont confirm}）。
+     *
+     * <p>没接过回显与命令的厂商不猜：命令发出去只会得到一串语法错误，
+     * 不如当面说不支持，页面也就不会给出点了没反应的按钮。</p>
+     */
+    default boolean supportsOntConfirm() {
+        return false;
+    }
+
+    /**
+     * 确认一台待注册 ONT 的命令（在 {@link #ponViewCommand} 进的 PON 板视图里执行）。
+     *
+     * <p>用自动发现表里那个 Number 直接确认，ONT ID 由设备自己分配——
+     * 不用先查一遍该口用了哪些 ID，少一个来回也少一处出错。</p>
+     *
+     * @param port          PON 口号
+     * @param autofindNo    {@code display ont autofind} 回显里的 Number
+     * @param authMode      注册方式：SN / MAC / LOID / PASSWORD
+     * @param lineProfileId 线路模板 ID，为空就不带这个参数
+     * @param srvProfileId  业务模板 ID，为空就不带这个参数
+     * @return 命令；不支持时返回 null
+     */
+    default String ontConfirmCommand(int port, int autofindNo, String authMode,
+                                     Integer lineProfileId, Integer srvProfileId) {
+        return null;
+    }
+
+    /** 删掉一个已注册 ONT 的命令（PON 板视图里执行）：{@code ont delete <port> <ontId>} */
+    default String ontDeleteCommand(int port, int ontId) {
+        return null;
+    }
+
+    /** 整块板所有 PON 口的 ONT 明细命令（config 视图执行），用于判断 SN 是不是已经注册过 */
+    default String ontListCommand(int frame, int slot) {
+        return null;
+    }
+
+    /** 解析 {@link #ontListCommand} 的回显：key 是端口号，value 是该口下的 ONT */
+    default Map<Integer, List<com.tr069.acs.olt.model.OltOnt>> parseOntList(String text) {
+        return Map.of();
+    }
+
+    /** 存盘命令：华为只写运行配置，不 save 掉电就回到注册前 */
+    default String saveCommand() {
+        return "save";
     }
 
     // ------------------------------------------------------------ OLT 本地用户
