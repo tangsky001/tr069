@@ -39,15 +39,37 @@ public class ConfigTemplateSchemaInitializer implements InitializingBean {
         try {
             if (allTablesExist()) {
                 log.info("配置意图模板表已存在，跳过建表");
-                return;
+            } else {
+                for (String sql : SchemaScript.createStatements(TABLES)) {
+                    jdbcTemplate.execute(sql);
+                }
+                log.info("配置意图模板表已补齐: {}", String.join(", ", TABLES));
             }
-            for (String sql : SchemaScript.createStatements(TABLES)) {
-                jdbcTemplate.execute(sql);
-            }
-            log.info("配置意图模板表已补齐: {}", String.join(", ", TABLES));
+            // 存量库补列：建表只在「表不存在」时跑一次，后加的列老库永远不会有，
+            // 查询和插入会直接报 Unknown column
+            addColumnIfMissing("config_template", "incremental",
+                    "TINYINT NOT NULL DEFAULT 0 COMMENT '增量业务：只新增这一条业务，不清理/不改写设备上已有的其它业务'");
         } catch (Exception e) {
             log.error("配置意图模板表自动建表失败，请手工执行 classpath:{}（对应仓库 sql/schema.sql）: {}",
                     SchemaScript.RESOURCE, e.getMessage());
+        }
+    }
+
+    private void addColumnIfMissing(String table, String column, String definition) {
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                            + "WHERE table_schema = DATABASE() AND table_name = ? "
+                            + "AND column_name = ?",
+                    Integer.class, table, column);
+            if (count != null && count > 0) {
+                return;
+            }
+            jdbcTemplate.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+            log.info("配置意图模板已补齐列: {}.{}", table, column);
+        } catch (Exception e) {
+            // 补列失败只是「增量开关存不下」，不能连带把整个启动拖垮
+            log.error("补齐 {}.{} 失败，增量业务开关将不可用: {}", table, column, e.getMessage());
         }
     }
 

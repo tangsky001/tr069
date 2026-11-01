@@ -91,6 +91,18 @@ export function refreshOlt(id) {
 }
 
 /**
+ * 确认所有待确认板卡（华为 board confirm 0）：新插的板卡停在 auto-find 时不加载业务。
+ * 返回确认后重采的最新详情，前端据此决定按钮是否继续显示。
+ */
+export function confirmOltBoards(id) {
+  return request({
+    url: '/olt/' + id + '/boards/confirm',
+    method: 'post',
+    timeout: 120000
+  })
+}
+
+/**
  * 单条 ONT 按需查询：光信息 / 版本 / 注册历史。
  * 点列表里某条的图标时才登录设备查一次，data: { action, slotNo, portNo, ontId }
  */
@@ -181,6 +193,194 @@ export function fetchTr069Profiles(id) {
     url: '/olt/' + id + '/tr069-profiles',
     method: 'get',
     timeout: 60000
+  })
+}
+
+/**
+ * 待注册 ONT：不读库，每次实时登设备执行 display ont autofind all。
+ *
+ * 这是设备上等着授权的光猫，注册完就不在这个表里了，所以每次点都重查。
+ */
+export function fetchOntAutofind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-autofind',
+    method: 'get',
+    timeout: 60000
+  })
+}
+
+/**
+ * PON 口自动发现开关状态：后端逐口登设备查 display ont-auto-find。
+ *
+ * 一个口一条命令，口多的设备要跑十几秒，所以超时放宽到 2 分钟。
+ */
+export function fetchOntAutoFind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-auto-find',
+    method: 'get',
+    timeout: 120000
+  })
+}
+
+/**
+ * 一键开启所有 GPON 业务板 PON 口的自动发现。
+ *
+ * 下发完后端会重采一次整机，连同重采一起给足超时。
+ */
+export function enableOntAutoFind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-auto-find/enable',
+    method: 'post',
+    timeout: 180000
+  })
+}
+
+/**
+ * 注册模板列表：从库里读（原来存在浏览器本地，换台电脑就没了）。
+ *
+ * @param onlyCurrent true 时只要「不限设备」和绑在这台 OLT 上的
+ */
+export function fetchOntRegTemplates(id, onlyCurrent) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/templates',
+    method: 'get',
+    params: { onlyCurrent: onlyCurrent ? 1 : 0 },
+    timeout: 30000
+  })
+}
+
+/** 新建模板的初始表单：默认值由后端给，页面不自带一份 */
+export function fetchOntRegTemplateDefault(id, oltIp) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/template/default',
+    method: 'get',
+    params: { oltIp: oltIp || '' },
+    timeout: 30000
+  })
+}
+
+/** 不等下一轮扫描，立刻按当前参数跑一轮自动注册（和后台定时任务同一条路径） */
+export function runOntRegScan(id) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/scan',
+    method: 'post',
+    timeout: 120000
+  })
+}
+
+/** 新增或修改一条注册模板 */
+export function saveOntRegTemplate(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/template',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 批量删除注册模板 */
+export function deleteOntRegTemplates(id, ids) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/templates',
+    method: 'delete',
+    data: ids,
+    timeout: 30000
+  })
+}
+
+/** 自动注册参数；没存过后端给一份默认值 */
+export function fetchOntRegConfig(id) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/config',
+    method: 'get',
+    timeout: 30000
+  })
+}
+
+/**
+ * 保存自动注册参数。
+ *
+ * 开关打开后后台定时任务按 scanSeconds 去设备上扫待注册光猫，命中模板就注册。
+ */
+export function saveOntRegConfig(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/config',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 注册记录：哪台注册了、套了哪个模板、没成的因为什么 */
+export function fetchOntRegRecords(id, limit) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/records',
+    method: 'get',
+    params: { limit: limit || 50 },
+    timeout: 30000
+  })
+}
+
+/** 只编命令不下发，下发前先在页面上核对一遍 */
+export function previewOntRegister(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/preview',
+    method: 'post',
+    data,
+    timeout: 60000
+  })
+}
+
+/**
+ * 注册选中的待注册 ONT。
+ *
+ * 逐台下发命令，一台失败不影响其它台，结果逐条返回。
+ */
+export function registerOnt(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/register',
+    method: 'post',
+    data,
+    timeout: 180000
+  })
+}
+
+/**
+ * 一键开局参数：默认值和已存的都在后端，页面只管要。
+ *
+ * @param defaults true 时忽略存过的、直接要默认值（「默认设置」按钮）
+ */
+export function fetchQuickSetupConfig(id, defaults) {
+  return request({
+    url: '/olt/' + id + '/quick-setup/config',
+    method: 'get',
+    params: { defaults: defaults ? 1 : 0 },
+    timeout: 30000
+  })
+}
+
+/** 保存一键开局参数：存库，换台电脑、换个人打开都是同一套 */
+export function saveQuickSetupConfig(id, data) {
+  return request({
+    url: '/olt/' + id + '/quick-setup/config',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/**
+ * 建一个 OLT 本地用户（登这台设备用的账号）。
+ *
+ * 华为这边 backend 走的是 terminal user name 那条交互式命令，一问一答比较慢，
+ * 超时放宽到 3 分钟。
+ */
+export function createOltTerminalUser(id, data) {
+  return request({
+    url: '/olt/' + id + '/terminal-user',
+    method: 'post',
+    data,
+    timeout: 180000
   })
 }
 

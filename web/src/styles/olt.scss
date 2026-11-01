@@ -136,6 +136,22 @@
 .olt-live-error {
   color: #e6a23c;
 }
+/* 概要里的自动发现开关：开没开一眼看到，没开就点旁边那个按钮 */
+.olt-autofind {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 2px;
+}
+.olt-autofind-label {
+  color: #606266;
+}
+.olt-autofind-hint {
+  color: #909399;
+}
 .olt-summary {
   background: #f5f7fa;
   border-radius: 4px;

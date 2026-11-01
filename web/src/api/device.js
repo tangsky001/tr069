@@ -79,8 +79,8 @@ export function fetchDeviceActiveTasks(sns) {
 }
 
 /**
- * 批量机型适配状态：库里有没有该型号的能力树 XML 文件。
- * 返回 sn -> { adapted, configPath, isp, productClass, ... }
+ * 批量机型适配状态：以 SQLite 模板库里的适配结果为准（下发查的也是它）。
+ * 返回 sn -> { adapted, adaptedFrom, templateLibId, configPath, isp, productClass, ... }
  */
 export function fetchAdaptStatus(sns) {
   return request({

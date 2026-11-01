@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Adapted ONT Models
 
 [English](./ADAPTED_MODELS.en.md) | [简体中文](./ADAPTED_MODELS.md)
@@ -15,6 +14,7 @@ Models still in progress (capability tree collected, or under investigation) go 
 | CMCC (China Mobile) | CIOT P22g-CIac |
 | CMCC (China Mobile) | CIOT ZNM802 |
 | CMCC (China Mobile) | MSG2200C-UP-4E4V |
+| CMCC (China Mobile) | CMDC H5-9 |
 | CT (China Telecom) | B866-S1-4E1P3W1-Ethernet |
 
 > `B866-S1-4E1P3W1` hardware is **XGPON** uplink. After this unit was switched to **Ethernet uplink**
@@ -23,29 +23,21 @@ Models still in progress (capability tree collected, or under investigation) go 
 > Changing the uplink type changes `DeviceInfo.ProductClass`, which is effectively a different model —
 > it has to go through the adaptation flow again.
 
+> `H5-9` is a data-only terminal: both the WiFi spec and the SIP count were declared as "none",
+> leaving 4 LAN ports. WAN delivery works fine on it — just do not schedule WiFi or voice
+> services for it the way you would for a wireless / voice model.
+
 ## In progress
 
 | ISP | Vendor model | Status |
 | --- | --- | --- |
 | CT (China Telecom) | HS8145C5-GPON | Capability tree archived (360 objects / 1947 parameters), awaiting declaration and save |
 | CT (China Telecom) | MSG2100E-UPON-8V-AC | GPN firmware unusable (always 9002); 26 objects / 12 parameters retrieved via known paths, awaiting declaration and save; ISP pending ledger confirmation (Inform reported `X_CT-COM_UserInfo`) |
-=======
-# Adapted ONU Models
-
-English | [简体中文](./ADAPTED_MODELS.md)
-
-Only two columns are tracked: **operator** + **vendor model**. Add one line per successfully adapted device — no version numbers or capability items, since those change over time.
-
-| Operator | Vendor model |
-| --- | --- |
-| CMCC (China Mobile) | CIOT P22g-CIac |
->>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6
 
 ---
 
 ## Notes
 
-<<<<<<< HEAD
 - Adaptation records live in the portable SQLite template library `configuration/tr069_tpl.pack`
   (property `acs.tr069tpl.db-path`). It ships with the repository — copy it to a deployment host
   and those models are recognized as adapted.
@@ -58,6 +50,10 @@ Only two columns are tracked: **operator** + **vendor model**. Add one line per 
   appears next to the XML with `adapted: true`.
 - This table and the library are two views of the same thing: one row here per successful save,
   and a model moves from "In progress" to "Adapted" once it is saved.
+- The same model may appear on several rows with different `isp` values (`CM` / `CMCC` /
+  `standard`): `standard` is the placeholder registered automatically during collection, and
+  picking an operator on the adaptation page creates a separate row carrying that operator.
+  This table lists only the adapted operator row, never the placeholders.
 
 ## Adapting a new model
 
@@ -87,14 +83,3 @@ Two fallback rules:
 2. **No band detected at all → infer from the radio count.** One radio means 2.4G, two radios mean
    dual-band. Old firmware reports neither the band parameter nor any band wording in the SSID
    (`ChinaNet-xxxx`); without this fallback a 2.4G declaration could never pass.
-=======
-- Adaptation profiles are stored in the portable SQLite template library `configuration/tr069_tpl.pack` (property `acs.tr069tpl.db-path`),
-  which ships with the repository: copy it to the deployment host and the models are recognized as adapted.
-- Only devices with `device.status = ADAPTED` count as adapted; `PENDING` is just an auto-registered placeholder awaiting adaptation and does not take part in delivery.
-- This table and the database are two views of the same thing: one row inserted successfully into the library means one row added here.
-
-## Adding a new device
-
-Device list → select the device → Model adaptation (declare operator / port count / port speed / SIP count / WiFi specs)
-→ trial collection → save once it passes. Saving writes into the template library; then add one row to this table.
->>>>>>> da83b5bca1b2034d567691b4bd0e9638099dbff6

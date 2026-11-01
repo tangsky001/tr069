@@ -40,8 +40,19 @@ public final class WanServiceClassifier {
      */
     public static String classify(Map<String, String> params, String path) {
         if (params == null || params.isEmpty()) {
-            return classifyText(path);
+            return classifyText(stripRoot(path));
         }
+        String declared = declaredService(params);
+        if (!declared.isBlank() && !UNKNOWN.equals(declared)) {
+            // 设备自己申报了业务类型就认它：TR069 / INTERNET / VOIP / IPTV / OTHER 都是合法值，
+            // 认不出的也原样回显，绝不能再拿路径去猜
+            return declared;
+        }
+        String text = params.getOrDefault("Name", "") + " " + stripRoot(path);
+        return classifyText(text);
+    }
+
+    private static String declaredService(Map<String, String> params) {
         String declared = params.get("ServiceList");
         if (declared == null || declared.isBlank()) {
             for (Map.Entry<String, String> entry : params.entrySet()) {
@@ -53,10 +64,40 @@ public final class WanServiceClassifier {
                 }
             }
         }
-        String text = (declared == null ? "" : declared) + " "
-                + params.getOrDefault("Name", "") + " " + (path == null ? "" : path);
-        return classifyText(text);
+        if (declared == null || declared.isBlank()) {
+            return "";
+        }
+        // 多值（如 INTERNET,TR069）按关键字优先级挑一个；单个值原样大写回显
+        String mixed = declared.trim();
+        String byKeyword = classifyText(mixed);
+        if (!UNKNOWN.equals(byKeyword)) {
+            return byKeyword;
+        }
+        String first = mixed.split("[,，、+/\\s]+")[0].trim().toUpperCase(Locale.ROOT);
+        return first;
     }
+
+    /**
+     * 去掉数据模型根节点，避免根名本身命中关键字。
+     *
+     * <p>{@code InternetGatewayDevice} 含 INTERNET、{@code Device.} 无影响，但一致处理更省心。</p>
+     */
+    private static String stripRoot(String path) {
+        if (path == null) {
+            return "";
+        }
+        String p = path;
+        for (String root : ROOTS) {
+            if (p.regionMatches(true, 0, root, 0, root.length())) {
+                p = p.substring(root.length());
+                break;
+            }
+        }
+        return p;
+    }
+
+    /** TR-098 / TR-181 的根节点写法。 */
+    private static final List<String> ROOTS = List.of("InternetGatewayDevice.", "Device.");
 
     /**
      * 是否为 TR069 管理通道。下发清理靠它决定「哪条绝对不能删」。

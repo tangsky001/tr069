@@ -1,11 +1,12 @@
-# javaacs
+# PilotACS
 
 [English](./README.en.md) | 简体中文
 
 TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平台，Spring Boot 3 + Vue 2 实现。
 
-- **仓库地址：国内 [Gitee](https://gitee.com/kangweft/tr069) ｜ 国外 [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图在国内加载不出来就去 Gitee 看）
+- **仓库地址：国内 [Gitee](https://gitee.com/kangweft/tr069) ｜ [Gitcode](https://gitcode.com/tangsky001/PilotACS)｜ 国外 [GitHub](https://github.com/tangsky001/tr069)**（同源同步，按网络就近访问；截图在国内加载不出来就去 Gitee 看）
 - 部署步骤见 **[doc/DEPLOYMENT.md](./doc/DEPLOYMENT.md)**
+- 一键部署见 **[doc/DOCKER.md](./doc/DOCKER.md)**（Docker 部署 / 自动打包部署二选一，Linux / Windows / macOS）
 - 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
 - 界面截图见 [doc/Display/](./doc/Display)（见下文「效果展示」）
@@ -87,6 +88,17 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 未插灰色，悬停看 MAC）、WLAN 按 2.4G / 5.8G 分行、SIP 语音（只列真实线路实例）：
 
 ![设备详情 - 业务面板](doc/Display/162116_423.png)
+
+### 超级管理员账号密码（现场现读）
+
+勾选设备后点「查询超管账号密码」，逐台到设备上现读本地账号：先发 CWMP 连接请求把设备叫上来
+（离线的等它重新建链），再下发 `GetParameterValues` 读运营商定制节点
+（`DeviceInfo.X_CMCC_TeleComAccount.*` / `X_CT-COM_TeleComAccount.*` / `X_CU_TeleComAccount.*`），
+读不到再按型号挑通用节点（`UserInterface.X_HW_WebUserInfo.{i}` / `User.{i}`）。
+账号与口令都是设备回上来的明文，直接拿去登录光猫后台；每台一行、互不影响，
+多路账号展开可看实例号与真实参数路径：
+
+![超级管理员账号密码](doc/Display/180849_848.png)
 
 ### OLT 管理（真实设备采集，**只读**）
 
@@ -225,7 +237,7 @@ VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN �
 | 机型适配 | 能力采集完成后人工申报运营商 / 网口数 / 速率 / SIP 数 / WiFi 规格，先试采集逐项验证，通过后保存适配档（能力树 XML + 适配 yml）；申报运营商同步写回设备台账，列表与详情按台账展示。**频段识别**按「频段字段 / 信道列表 / 802.11 制式 / SSID 字样」四条判据取并集，只标 5G 不标 2.4G 时按双频认定、一个频段都认不出时按射频数推断（判据清单见 [doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)） | `worklist/service/ModelAdaptationService`、`ModelTreeStore` |
 | RPC 下发（异步） | 下发返回任务号，按任务号轮询结果；超时统一收尾 | `agent/RpcDispatchService`、`queue/RpcTaskQueue`、`api/controller/RpcTaskController` |
 | 队列削峰 | 上报与下发走 Redis 队列，Redis 不可用时降级为进程内处理 | `queue/*` |
-| **配置意图模板** | 入库 `config_template`，只描述开通意图（不下发任何数据）：7 类（WAN DHCP / WAN PPPoE / WAN 静态IP / WAN 桥接 / 2.4G WiFi / 5.8G WiFi / SIP），各类自带意图字段；支持 `/meta` 字段定义、列表、详情、保存、删除 | `template/*`（`ConfigTemplateService`、`ConfigTemplateController`） |
+| **配置意图模板** | 入库 `config_template`，只描述开通意图（不下发任何数据）：7 类（WAN DHCP / WAN PPPoE / WAN 静态IP / WAN 桥接 / 2.4G WiFi / 5.8G WiFi / SIP），各类自带意图字段；支持 `/meta` 字段定义、列表、详情、保存、删除；**增量业务**开关（`incremental`）：勾上后下发只 `AddObject` 新增这一条，跳过 WAN 存量清理，不删也不改设备上已有的其它业务 | `template/*`（`ConfigTemplateService`、`ConfigTemplateController`） |
 | 业务模板 | 多张意图模板编排成一个业务包：列表、详情、保存、删除、下发前自检 `/validate`、下发记录查询 | `biz/*`（`BizTemplateService`、`BizTemplateExecutionService`） |
 | **工单下发（管理端）** | `POST /api/worklist/instances` 建单即以 `worklistDesc` 做幂等键，落库后立刻转下发任务（`IntentDeliveryService`，`source=worklist`），任务结束按 `TaskFinishedEvent` 回写终态与失败原因；工单与步骤记录可查 | `worklist/service/WorklistDeliveryService`、`worklist/controller/WorklistExecuteController` |
 | 首页概览 | 在线/离线、品牌分布、模板统计（模板数改为统计意图模板） | `api/service/DashboardService` |
@@ -391,6 +403,7 @@ acs:
 | `174419_542.png` | 适配完成后列表 | 效果展示 · 设备管理 | 有效 |
 | `013530_034.png` | 设备列表（现行版） | 效果展示 · 设备列表 | 有效 |
 | `162116_423.png` | 设备详情业务面板 | 效果展示 · 设备详情 | 有效 |
+| `180849_848.png` | 超级管理员账号密码弹窗（现场现读） | 效果展示 · 超级管理员账号密码 | 有效 |
 | `013724_056.png` | 光猫后台平台服务器配置 | 1.4 设备纳管 | 有效 |
 | `162046_560.png` | 设备列表（**旧版**，`013530_034` 之前用过） | — | 未引用（保留） |
 | `025159_916.png` | 设备列表（**旧版**，早期用过） | — | 未引用（保留） |
@@ -503,7 +516,7 @@ DBA 模板增删、TR-069 模板新增、一键开局（改端口 VLAN 模式 + 
 ## 5. 目录结构
 
 ```
-javaacs/
+PilotACS/
 ├── README.md                 本文档（简体中文）
 ├── README.en.md              English version
 ├── API.md                    接口文档（管理端 /api 与北向 /openapi/v1）
@@ -514,6 +527,15 @@ javaacs/
 │   ├── ADAPTED_MODELS.en.md  Adapted ONT models (English)
 │   └── Display/              界面截图（见「效果展示」）
 ├── pom.xml                   后端（Maven）
+├── Dockerfile                镜像构建（node 编译前端 + maven 打包 + jre 运行）
+├── docker-compose.yml        一键编排（app + mysql + redis）
+├── .env.example              部署参数模板（首次运行自动复制为 .env）
+├── scripts/
+│   ├── deploy.sh             Linux / macOS 一键部署（Docker / 自动打包 二选一）
+│   ├── deploy.bat            Windows 双击入口
+│   ├── deploy.ps1            Windows PowerShell 一键部署
+│   ├── setup-native.sh       Linux / macOS 自动打包部署（装依赖 + 编译 + 建库 + 启动）
+│   └── setup-native.ps1      Windows 自动打包部署
 ├── sql/schema.sql            全库唯一建表脚本（所有表）
 ├── deploy/
 │   └── config/application.yml.example   外置配置模板
@@ -554,6 +576,7 @@ configuration/
 | `domain` / `mapper` | 主库实体与 Mapper |
 | `common` | 统一响应 `Result`、分页、全局异常、启动自检、Web 配置（多端口、路径分发） |
 | `config` | JWT 拦截器、跨域、MyBatis-Plus、SPA 路由回退 |
+| `report` | **实例上报**：每 15 分钟向 hserver POST 一次本实例信息（`StatisticsReportTask`），报文带 `serverId=acs` 供服务端按 TR069 体系展示；实例标识由 `MachineFingerprint` 按机器指纹生成（`ACS-<32位>`）。地址与周期写死在类常量里，不依赖配置文件；上报失败只记日志 |
 
 ## 7. 前端结构
 
@@ -646,6 +669,8 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`models/`）；相对路径按 jar 所在目录解析，从任何工作目录启动都指向同一处 |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内处理 |
 | `acs.device.account.read-timeout-seconds` | `30` | 查询设备本地账号（超管密码）时等设备回值的最长时间（秒） |
+| `acs.device.account.total-timeout-seconds` | `70` | 超管账号查询的总预算（秒）：唤醒 + 两轮读取 + 逐条重试共用，要小于前端 90s 请求超时 |
+| `acs.device.account.offline-wakeup-wait-seconds` | `30` | 设备离线时发连接请求后最多等它重新建链的时间（秒） |
 | `acs.device.lan.auto-refresh.enabled` | `true` | LAN 网口状态定时自动刷新总开关 |
 | `acs.device.lan.auto-refresh.interval-millis` | `300000` | 自动刷新间隔（毫秒），默认 5 分钟 |
 | `acs.device.lan.auto-refresh.wait-seconds` | `120` | 单轮等待设备回值的上限（秒），超时不判失败 |
@@ -731,6 +756,7 @@ cd web && npx vue-cli-service lint --no-fix    # 前端 lint
 | 访问 | 地址 |
 | --- | --- |
 | **国内** | https://gitee.com/kangweft/tr069 |
+| **国内** | https://gitcode.com/tangsky001/PilotACS |
 | **国外** | https://github.com/tangsky001/tr069 |
 
 截图都放在 [`doc/Display/`](./doc/Display)，国内加载不出来时直接到 **Gitee** 仓库看（图片与 README 同源，

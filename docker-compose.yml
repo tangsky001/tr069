@@ -1,0 +1,107 @@
+# ==================== PilotACS 一键编排 ====================
+#
+# 服务：
+#   mysql  数据库（首次启动自动执行 sql/schema.sql 建表）
+#   redis  队列与会话
+#   app    PilotACS 本体（页面 + /api + CWMP 上报端口 + 北向接口）
+#
+# 用法：
+#   cp .env.example .env     # 按需改 ACS_PUBLIC_HOST 等
+#   docker compose up -d --build
+#
+# 端口说明：
+#   8888  管理端页面与 /api
+#   8899  北向接口 /openapi/v1
+#   9090 / 8012 / 8080 / 8082 / 8172 / 5481 / 6060
+#         光猫 CWMP 上报监听，端口由光猫出厂固化，别改
+
+name: pilotacs
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: pilotacs-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-PilotACS@123}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-tr_acs}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --default-time-zone=+08:00
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 仅首次初始化时执行；已有数据卷时不会再跑
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./sql/schema-tr069tpl.sql:/docker-entrypoint-initdb.d/02-schema-tr069tpl.sql:ro
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-PilotACS@123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
+  redis:
+    image: redis:7-alpine
+    container_name: pilotacs-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pilotacs-server:latest
+    container_name: pilotacs-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-tr_acs}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true&nullCatalogMeansCurrent=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-PilotACS@123}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      # 光猫要回连的地址，生产必须改成真实地址
+      ACS_PUBLIC_HOST: ${ACS_PUBLIC_HOST:-127.0.0.1}
+      ACS_CWMP_LISTEN_PORTS: ${ACS_CWMP_LISTEN_PORTS:-9090,8082,6060,8012,8080,8172,5481}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx1024m}
+    ports:
+      - "${APP_PORT:-8888}:8888"
+      - "${OPENAPI_PORT:-8899}:8899"
+      - "9090:9090"
+      - "8082:8082"
+      - "6060:6060"
+      - "8012:8012"
+      - "8080:8080"
+      - "8172:8172"
+      - "5481:5481"
+    volumes:
+      - app-logs:/app/log
+      - app-config:/app/config
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8888/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+volumes:
+  mysql-data:
+  redis-data:
+  app-logs:
+  app-config:

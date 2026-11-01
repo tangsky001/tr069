@@ -1,4 +1,4 @@
-# javaacs
+# PilotACS
 
 [English](./README.en.md) | [简体中文](./README.md)
 
@@ -101,6 +101,19 @@ WAN connections, LAN ports (green when plugged, grey when not, hover for MAC),
 WLAN split by 2.4G / 5.8G, SIP voice (real line instances only):
 
 ![Device detail - business panel](doc/Display/162116_423.png)
+
+### Super admin account and password (read live from the device)
+
+Select devices and click "query super admin account": each device is queried on its own — the ACS
+first sends a CWMP Connection Request to bring the device up (offline ones are given time to
+reconnect), then issues `GetParameterValues` against the ISP-specific node
+(`DeviceInfo.X_CMCC_TeleComAccount.*` / `X_CT-COM_TeleComAccount.*` / `X_CU_TeleComAccount.*`) and
+falls back to the generic nodes (`UserInterface.X_HW_WebUserInfo.{i}` / `User.{i}`) when that node
+does not exist. Account and password come back in clear text and can be used to log into the ONT's
+web UI right away; one row per device, a failing device never blocks the others, and extra accounts
+expand to show their instance number and real parameter path:
+
+![Super admin account and password](doc/Display/180849_848.png)
 
 ### OLT management (real device collection, **read-only**)
 
@@ -243,6 +256,7 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | `174419_542.png` | Device list after adaptation | Screenshots · Device management | In use |
 | `013530_034.png` | Device list (current) | Screenshots · Device list | In use |
 | `162116_423.png` | Device detail business panel | Screenshots · Device detail | In use |
+| `180849_848.png` | Super admin account / password dialog (read live) | Screenshots · Super admin account | In use |
 | `013724_056.png` | ONT admin UI platform server config | 1.4 Device provisioning | In use |
 | `162046_560.png` | Device list (**older** version, used before `013530_034`) | — | Unused (kept) |
 | `025159_916.png` | Device list (**older** version, used early on) | — | Unused (kept) |
@@ -288,7 +302,7 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | Model adaptation | After collection, declare ISP / LAN port count / speed / SIP count / WiFi spec, verify each item with a test collection, then save the adaptation record (capability tree XML + adaptation yml); the declared ISP is written back to the device ledger, and list and detail views follow the ledger. **Band detection** combines four rules — band parameter / channel list / 802.11 standard / SSID wording; when only 5G is labelled and 2.4G is not, it is treated as dual-band, and when no band can be detected at all it falls back to the radio count (full rule list in [doc/ADAPTED_MODELS.en.md](./doc/ADAPTED_MODELS.en.md)) | `worklist/service/ModelAdaptationService`, `ModelTreeStore` |
 | RPC delivery (async) | Delivery returns a task id; poll the result by id; timeouts are finalized uniformly | `agent/RpcDispatchService`, `queue/RpcTaskQueue`, `api/controller/RpcTaskController` |
 | Queue smoothing | Inform and delivery go through Redis queues; degrades to in-process handling when Redis is unavailable | `queue/*` |
-| **Configuration intent templates** | Stored in `config_template`, describing provisioning intent only (no data is delivered): 7 categories (WAN DHCP / WAN PPPoE / WAN static IP / WAN bridge / 2.4G WiFi / 5.8G WiFi / SIP), each with its own intent fields; `/meta` field definitions, list, detail, save, delete | `template/*` (`ConfigTemplateService`, `ConfigTemplateController`) |
+| **Configuration intent templates** | Stored in `config_template`, describing provisioning intent only (no data is delivered): 7 categories (WAN DHCP / WAN PPPoE / WAN static IP / WAN bridge / 2.4G WiFi / 5.8G WiFi / SIP), each with its own intent fields; `/meta` field definitions, list, detail, save, delete; **incremental** switch (`incremental`): when on, delivery only `AddObject`s this one service, skips the WAN cleanup and never touches services already on the device | `template/*` (`ConfigTemplateService`, `ConfigTemplateController`) |
 | Business templates | Several intent templates orchestrated into one package: list, detail, save, delete, pre-delivery self-check `/validate`, delivery record query | `biz/*` (`BizTemplateService`, `BizTemplateExecutionService`) |
 | **Work order delivery (admin)** | `POST /api/worklist/instances` uses `worklistDesc` as the idempotency key; after persisting, it immediately becomes a delivery task (`IntentDeliveryService`, `source=worklist`); on completion `TaskFinishedEvent` writes back the final state and failure reason; work orders and step records are queryable | `worklist/service/WorklistDeliveryService`, `worklist/controller/WorklistExecuteController` |
 | Dashboard | Online/offline, vendor distribution, template statistics (counting intent templates) | `api/service/DashboardService` |
@@ -538,7 +552,7 @@ session cannot be used to rewrite passwords in bulk.
 ## 5. Directory layout
 
 ```
-javaacs/
+PilotACS/
 ├── README.md                 This document (Simplified Chinese)
 ├── README.en.md              English version
 ├── API.md                    API docs (admin /api and northbound /openapi/v1)
@@ -675,6 +689,8 @@ For ONT onboarding, packaging for production and troubleshooting, see
 | `acs.worklist.root-path` | `./configuration` | External config root (`models/`); relative paths resolve against the jar directory, so any working directory points to the same place |
 | `acs.queue.enabled` | `true` | Disable to fall back to in-process handling |
 | `acs.device.account.read-timeout-seconds` | `30` | How long to wait for a device when querying its local account (super-admin password) |
+| `acs.device.account.total-timeout-seconds` | `70` | Total budget for one account query (seconds): wake-up + two read rounds + per-path retries; keep it below the frontend's 90s request timeout |
+| `acs.device.account.offline-wakeup-wait-seconds` | `30` | How long to wait for an offline device to reconnect after a connection request (seconds) |
 | `acs.device.lan.auto-refresh.enabled` | `true` | Master switch for periodic LAN port status refresh |
 | `acs.device.lan.auto-refresh.interval-millis` | `300000` | Refresh interval (ms), 5 minutes by default |
 | `acs.device.lan.auto-refresh.wait-seconds` | `120` | Per-round wait limit for device responses (seconds); a timeout is not a failure |

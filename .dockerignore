@@ -1,0 +1,16 @@
+.git
+.gitignore
+.idea
+.vscode
+*.iml
+
+target/
+web/node_modules/
+web/dist/
+src/main/resources/static/
+tmp/
+
+**/*.log
+**/*.LOG
+.DS_Store
+Thumbs.db

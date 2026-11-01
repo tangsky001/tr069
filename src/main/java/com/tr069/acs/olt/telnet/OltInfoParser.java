@@ -5,6 +5,7 @@ import com.tr069.acs.olt.model.OltDbaProfile;
 import com.tr069.acs.olt.model.OltGemMapping;
 import com.tr069.acs.olt.model.OltGemport;
 import com.tr069.acs.olt.model.OltLineProfile;
+import com.tr069.acs.olt.model.VlanIdExpression;
 import com.tr069.acs.olt.model.OltServicePort;
 import com.tr069.acs.olt.model.OltSrvProfile;
 import com.tr069.acs.olt.model.OltTrafficTable;
@@ -16,6 +17,7 @@ import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltIpInterface;
 import com.tr069.acs.olt.model.OltPortVlan;
 import com.tr069.acs.olt.model.OltStaticRoute;
+import com.tr069.acs.olt.model.OltOntAutofind;
 import com.tr069.acs.olt.model.OltVlan;
 import com.tr069.acs.olt.vendor.OltVendorProfiles;
 
@@ -1584,6 +1586,88 @@ public final class OltInfoParser {
         return profiles;
     }
 
+    private static final Pattern GEM_INDEX = Pattern.compile("<Gem\\s+Index\\s+(\\d+)\\s*>");
+
+    /** 映射表表头：{@code Mapping VLAN  Priority Port ...} 后面才是数据行 */
+    private static final Pattern MAPPING_HEADER =
+            Pattern.compile("^\\s*Mapping\\s+VLAN\\s+.*", Pattern.CASE_INSENSITIVE);
+    /** 映射数据行：{@code    0       46    -        -       -     -       -     -} */
+    private static final Pattern MAPPING_ROW = Pattern.compile("^\\s*(\\d{1,3})\\s+(\\d{1,4})\\s+.*");
+
+    /**
+     * 线路模板详情里的 GEM 索引（{@code <Gem Index 1>}）。
+     *
+     * <p>建业务虚口时 gemport 要写模板里那个 GEM 号，写错设备直接报参数错。</p>
+     */
+    public static Integer parseGemIndex(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        Matcher matcher = GEM_INDEX.matcher(text);
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
+    }
+
+    /**
+     * 线路模板详情里「VLAN → GEM Port」的对应关系（{@code display ont-lineprofile gpon profile-id X}）。
+     *
+     * <p>模板上「业务 VLAN 映射」留空时，业务虚口就按线路模板里 GEM 实际映射的结构下发——
+     * 页面提示写的是「留空表示沿用线路模板里的 GEM 映射」。现场的标准结构是
+     * 一个 VLAN 一个 GEM（GEM 0→46、1→41、2→45，映射 ID 都是 0），
+     * 建业务虚口时每条 VLAN 要用它自己的 GEM 号，写错设备直接报参数错。</p>
+     *
+     * @return key 是 VLAN，value 是承载它的 GEM 索引；按回显顺序排列，解析不到返回空表
+     */
+    public static Map<Integer, Integer> parseGemVlanPairs(String text) {
+        Map<Integer, Integer> pairs = new LinkedHashMap<>();
+        if (text == null || text.isBlank()) {
+            return pairs;
+        }
+        // 回显是「<Gem Index N> + 表头两行 + 分隔线 + 数据行」；表头第二行（index/type/ID...）
+        // 不含数字，所以按「表头 → 分隔线 → 数据行」三段走，别在表头第二行就判定表结束了
+        boolean header = false;
+        boolean rows = false;
+        int currentGem = -1;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            Matcher gem = GEM_INDEX.matcher(line);
+            if (gem.find()) {
+                currentGem = Integer.parseInt(gem.group(1));
+                header = false;
+                rows = false;
+                continue;
+            }
+            if (MAPPING_HEADER.matcher(rawLine).matches()) {
+                header = true;
+                rows = false;
+                continue;
+            }
+            if (currentGem < 0 || !header) {
+                continue;
+            }
+            if (!rows) {
+                // 表头和分隔线之间的那一行（列名的下半截）
+                if (line.startsWith("-")) {
+                    rows = true;
+                }
+                continue;
+            }
+            Matcher matcher = MAPPING_ROW.matcher(rawLine);
+            if (!matcher.matches()) {
+                header = false;
+                rows = false;
+                continue;
+            }
+            int vlan = Integer.parseInt(matcher.group(2));
+            if (vlan >= 1 && vlan <= VlanIdExpression.MAX_VLAN_ID) {
+                pairs.putIfAbsent(vlan, currentGem);
+            }
+        }
+        return pairs;
+    }
+
     private static final Pattern SERVICE_PORT_ROW = Pattern.compile(
             "^\\s*(\\d{1,4})\\s+(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})"
                     + "(?:\\s+(\\d{1,4}))?(?:\\s+(\\d{1,4}))?");
@@ -2094,6 +2178,343 @@ public final class OltInfoParser {
         String lower = text.toLowerCase(Locale.ROOT);
         return lower.contains("command is not found") || lower.contains("unrecognized")
                 || lower.contains("unknown command") || lower.contains("failure:");
+    }
+
+    // --------------------------------------------------- 待注册 ONT（display ont autofind）
+
+    /**
+     * 回显是不是「设备上现在没有待注册 ONT」。
+     *
+     * <p>华为在这种情况下不返回空表，而是回一句
+     * {@code Failure: The automatically found ONTs do not exist}——带 Failure 字样，
+     * 但这属于正常结果，跟「命令不认识」是两码事，不能当成失败往上抛。</p>
+     */
+    public static boolean autofindIsEmpty(String text) {
+        if (text == null || text.isBlank()) {
+            return true;
+        }
+        String lower = text.toLowerCase(Locale.ROOT);
+        // 只认「没有待注册 ONT」这几种说法，不能写成宽泛的 not exist：
+        // "command does not exist" 是命令不支持，那个是要报错上去的
+        return lower.contains("automatically found")
+                || lower.contains("no ont") || lower.contains("0 ont");
+    }
+
+    /**
+     * 解析 {@code display ont autofind all} 的回显，得到已经上报、但还没授权的那批 ONT。
+     *
+     * <p>这张表各版本差别不小：简版只有 Number / F/S/P / SN 三列，完整版还带
+     * Password / Loid / Checkcode / VenderID / Ont Version / Ont SoftwareVersion，
+     * 列宽也跟着变。所以不硬背某一版的列宽——先从 {@code ----} 分隔线量出列边界，
+     * 再看表头认每列是什么，最后按列取值。换版本、换兄弟机型照样能对上。</p>
+     *
+     * <p>认不出表头就返回空表，页面按「没有待注册光猫」处理，不会把别的内容塞进来。</p>
+     */
+    public static List<OltOntAutofind> parseOntAutofind(String text) {
+        List<OltOntAutofind> items = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return items;
+        }
+        int[][] bounds = null;
+        List<String> headers = null;
+        for (String line : text.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            // 分隔线纯装饰：表格上下各一根，中间也可能有。清列宽会把已经认好的表头丢掉，
+            // 所以直接跳过；真换了表时会再次识别到新表头
+            if (trimmed.matches("[-= ]+")) {
+                continue;
+            }
+            int[][] candidate = autofindColumnBounds(line);
+            if (candidate.length < 2) {
+                continue;
+            }
+            List<String> cells = autofindCells(line, candidate);
+            // 每行都试一下像不像表头，命中就按它定列。不限定「分隔线后第一行」，
+            // 是因为回显里常常还夹着命令原样回打的一行
+            if (autofindIsHeader(cells)) {
+                bounds = candidate;
+                headers = autofindHeaders(cells);
+                continue;
+            }
+            if (headers == null) {
+                continue;
+            }
+            OltOntAutofind item = autofindRow(autofindCells(line, bounds), headers);
+            if (item != null) {
+                items.add(item);
+            }
+        }
+        if (items.isEmpty()) {
+            // 表格认不出来还有第二种格式：部分版本（以及自定义厂商的光猫，如 CIOT/RCOM）
+            // 回的是竖排键值，一台一段——Number : 1 / F/S/P : 0/2/0 / Ont SN : ...，
+            // 段间用分隔线隔开。表格解析对它一行都收不到，这里兜底按段拆。
+            items = autofindFromBlocks(text);
+        }
+        return items;
+    }
+
+    /**
+     * 竖排键值格式：一台 ONT 一段「标签 : 值」，段与段之间用分隔线隔开。
+     *
+     * <pre>
+     * ------------------------------------------
+     *   Number              : 1
+     *   F/S/P               : 0/2/0
+     *   Ont SN              : 43494F5429ABE539 (CIOT-29ABE539)
+     *   Password            : 0x00000000000000000000
+     *   Loid                :
+     *   Checkcode           :
+     *   VendorID            : CIOT
+     *   Ont Version         : HW1.00.00.488
+     *   Ont SoftwareVersion : V1.0.00.488
+     *   Ont EquipmentID     : PZg-Clac
+     *   Ont autofind time   : 2026-11-01 17:47:51+08:00
+     * ------------------------------------------
+     * </pre>
+     *
+     * <p>复用 {@link #parseOntKeyValueBlocks} 按分隔线切段，再逐键对号。
+     * 判定成一条有效记录的条件放宽：编号、端口、SN 里认出任意一样就算——
+     * 宁可页面上多显示一行残缺记录，也别把真实存在的光猫静默吞掉。</p>
+     */
+    private static List<OltOntAutofind> autofindFromBlocks(String text) {
+        List<OltOntAutofind> items = new ArrayList<>();
+        for (LinkedHashMap<String, String> block : parseOntKeyValueBlocks(text)) {
+            OltOntAutofind item = new OltOntAutofind();
+            boolean recognized = false;
+            for (Map.Entry<String, String> entry : block.entrySet()) {
+                String key = autofindKey(entry.getKey());
+                String value = entry.getValue();
+                if (value == null || value.isBlank() || "-".equals(value.trim())) {
+                    continue;
+                }
+                switch (key) {
+                    case "number" -> {
+                        Integer number = toInt(value);
+                        if (number != null) {
+                            item.setId(number);
+                            recognized = true;
+                        }
+                    }
+                    case "f/s/p" -> {
+                        item.setFsp(value.trim());
+                        recognized = true;
+                    }
+                    case "ontsn", "sn", "serialnumber" -> {
+                        item.setSn(stripSnNote(value));
+                        recognized = true;
+                    }
+                    case "password" -> item.setPassword(value.trim());
+                    case "loid", "logicalid", "logicid" -> item.setLoid(value.trim());
+                    case "checkcode" -> item.setCheckCode(value.trim());
+                    case "vendorid" -> item.setVendorId(value.trim());
+                    case "ontversion" -> item.setHardwareVersion(value.trim());
+                    case "ontsoftwareversion", "softwareversion" -> item.setSoftwareVersion(value.trim());
+                    // 部分版本不单列型号，型号就在 EquipmentID 里
+                    case "ontequipmentid", "equipmentid" -> {
+                        item.setEquipmentId(value.trim());
+                        item.setModel(value.trim());
+                    }
+                    case "ontmodel", "model" -> item.setModel(value.trim());
+                    case "ontautofindtime", "autofindtime" -> item.setLastTime(value.trim());
+                    default -> { }
+                }
+            }
+            if (recognized) {
+                if (item.getFsp() != null) {
+                    String[] parts = item.getFsp().split("/");
+                    if (parts.length == 3) {
+                        try {
+                            item.setFrameNo(Integer.parseInt(parts[0].trim()));
+                            item.setSlotNo(Integer.parseInt(parts[1].trim()));
+                            item.setPortNo(Integer.parseInt(parts[2].trim()));
+                        } catch (NumberFormatException ignored) {
+                            // 端口号不是数字就留着 fsp 原样，别因为一条怪数据丢整条记录
+                        }
+                    }
+                }
+                items.add(item);
+            }
+        }
+        return items;
+    }
+
+    /** SN 后面设备自带的对照注解（"43494F5429ABE539 (CIOT-29ABE539)"）只留前半截 */
+    private static String stripSnNote(String value) {
+        return value.replaceAll("\\s*\\([^)]*\\)\\s*$", "").trim();
+    }
+
+    /**
+     * 按列之间的宽空白（两个以上空格）把一行切成若干列，返回每列的起止下标。
+     *
+     * <p>不能拿 {@code ----} 分隔线来量列宽：华为那根分隔线是连成一整条的，
+     * 中间没有空格，看得出表有多宽，看不出列在哪。实际用来定列的是表头行——
+     * 列之间一般用多个空格分开，而列名内部的单词只用一个空格
+     * （{@code Ont Software Version} 是同一列，不能被拆成三列）。</p>
+     */
+    private static int[][] autofindColumnBounds(String rawLine) {
+        String line = rawLine.replace("\t", "    ");
+        List<int[]> spans = new ArrayList<>();
+        int index = 0;
+        int length = line.length();
+        while (index < length) {
+            while (index < length && line.charAt(index) == ' ') {
+                index++;
+            }
+            if (index >= length) {
+                break;
+            }
+            int start = index;
+            while (index < length) {
+                if (line.charAt(index) != ' ') {
+                    index++;
+                    continue;
+                }
+                int next = index;
+                while (next < length && line.charAt(next) == ' ') {
+                    next++;
+                }
+                // 单个空格是列名内部的词间距，两个以上才当作列分隔
+                if (next - index >= 2) {
+                    break;
+                }
+                index = next;
+            }
+            spans.add(new int[]{start, index});
+        }
+        return spans.toArray(new int[0][]);
+    }
+
+    /**
+     * 按列边界切单元格。
+     *
+     * <p>一列的宽度是「本列起点 → 下一列起点」，不是这一列<b>列名</b>的宽度：SN 十六位、
+     * 软件版本号也很长，都比列名宽，按列名宽度去截只能拿到前几个字符。</p>
+     */
+    private static List<String> autofindCells(String line, int[][] bounds) {
+        List<String> cells = new ArrayList<>();
+        for (int i = 0; i < bounds.length; i++) {
+            int start = Math.min(bounds[i][0], line.length());
+            int end = i + 1 < bounds.length ? Math.min(bounds[i + 1][0], line.length()) : line.length();
+            cells.add(start >= end ? "" : line.substring(start, end).trim());
+        }
+        return cells;
+    }
+
+    /** 表头行：要同时能认出 Number，以及端口列或 SN 列（缺一个就当它不是这张表） */
+    private static boolean autofindIsHeader(List<String> cells) {
+        boolean number = false;
+        boolean identity = false;
+        for (String cell : cells) {
+            String key = autofindKey(cell);
+            if (key.isEmpty()) {
+                continue;
+            }
+            if (key.startsWith("number")) {
+                number = true;
+            }
+            if (key.contains("s/p") || (key.contains("port") && key.contains("slot"))
+                    || key.contains("frameslot") || key.contains("sn") || key.contains("serial")) {
+                identity = true;
+            }
+        }
+        return number && identity;
+    }
+
+    private static List<String> autofindHeaders(List<String> cells) {
+        List<String> headers = new ArrayList<>();
+        for (String cell : cells) {
+            headers.add(autofindKey(cell));
+        }
+        return headers;
+    }
+
+    /** 列名规范化：小写、只留字母数字和斜杠（"Ont SN" → "ontsn"，"F/S/P" → "f/s/p"） */
+    private static String autofindKey(String cell) {
+        return cell == null ? "" : cell.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9/]", "");
+    }
+
+    /**
+     * 一行数据。Number 必须是整数，顺带把「命令回执」「提示语」这类混在回显里的
+     * 杂行挡在外面——它们的首列不是数字。
+     */
+    private static OltOntAutofind autofindRow(List<String> cells, List<String> headers) {
+        OltOntAutofind item = new OltOntAutofind();
+        for (int i = 0; i < headers.size() && i < cells.size(); i++) {
+            String header = headers.get(i);
+            String value = clean(cells.get(i));
+            if (header.isEmpty() || value == null || value.isEmpty()) {
+                continue;
+            }
+            if (header.startsWith("number")) {
+                item.setId(autofindInt(value));
+            } else if (header.contains("password")) {
+                item.setPassword(value);
+            } else if (header.contains("loid")) {
+                item.setLoid(value);
+            } else if (header.contains("checkcode")) {
+                item.setCheckCode(value);
+            } else if (header.contains("equipment")) {
+                item.setEquipmentId(value);
+            } else if (header.contains("software")) {
+                item.setSoftwareVersion(value);
+            } else if (header.contains("version")) {
+                item.setHardwareVersion(value);
+            } else if (header.contains("s/p") || header.contains("frameslot")
+                    || (header.contains("slot") && header.contains("port"))) {
+                autofindSetPort(item, value);
+            } else if (header.contains("vendor") || header.contains("vender")) {
+                // VenderID 单独占一列时它就是厂商；只有 "Vendor/Model" 这种合并列才要拆
+                if (header.contains("model")) {
+                    autofindSetVendorModel(item, value);
+                } else {
+                    item.setVendorId(value);
+                }
+            } else if (header.contains("model")) {
+                item.setModel(value);
+            } else if (header.contains("time")) {
+                item.setLastTime(value);
+            } else if (header.contains("serial") || header.endsWith("sn")) {
+                item.setSn(value);
+            }
+        }
+        // 光连个 SN 或端口都认不出来就别收了，多半是回显里的杂行
+        return item.getSn() != null || item.getFsp() != null ? item : null;
+    }
+
+    /** F/S/P 拆成框/槽/端口，方便按端口匹配注册模板 */
+    private static void autofindSetPort(OltOntAutofind item, String value) {
+        item.setFsp(value);
+        String[] parts = value.split("/");
+        if (parts.length == 3) {
+            item.setFrameNo(autofindInt(parts[0]));
+            item.setSlotNo(autofindInt(parts[1]));
+            item.setPortNo(autofindInt(parts[2]));
+        }
+    }
+
+    /** 厂商和型号有时挤在一列（HWTC/HG8010H），有时分列；挤一块就从斜杠处拆开 */
+    private static void autofindSetVendorModel(OltOntAutofind item, String value) {
+        int slash = value.indexOf('/');
+        if (slash > 0) {
+            item.setVendorId(value.substring(0, slash).trim());
+            item.setModel(value.substring(slash + 1).trim());
+            return;
+        }
+        if (item.getModel() == null) {
+            // 分不清厂商还是型号时先当型号：页面挑模板主要看型号
+            item.setModel(value);
+        }
+    }
+
+    private static Integer autofindInt(String value) {
+        try {
+            return Integer.valueOf(value.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static String clean(String value) {

@@ -48,6 +48,15 @@ public class OltQuickSetupRequest {
     private OltTr069ProfileRequest tr069;
 
     /**
+     * 华为开局参数；不为 null 时整态都按华为那套模板流程走。
+     *
+     * <p>华为开局要建 DBA、线路、业务、TR-069 四套模板，跟上面「改端口 VLAN 模式」
+     * 那三个字段没什么关系，所以另开一段：带上这段就走 {@code HuaweiQuickSetupPlanner}，
+     * 上面的 {@link #ports} / {@link #mode} / {@link #createVlanIds} 全部忽略。</p>
+     */
+    private HuaweiQuickSetupRequest huawei;
+
+    /**
      * 页面勾选的一个端口：{@code {"type":"epon","no":1}}。
      *
      * <p>用 type + no 而不是 {@code epon1} 这种字符串，是因为这里既要拼

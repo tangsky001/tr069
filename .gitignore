@@ -11,6 +11,7 @@ target/
 .mvn/timing.properties
 #configuration/
 deploy/
+tmp/
 abc/
 #############
 ## 前端（server/web，vue-admin-template）

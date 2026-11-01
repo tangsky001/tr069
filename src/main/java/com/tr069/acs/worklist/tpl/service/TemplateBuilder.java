@@ -297,7 +297,7 @@ public class TemplateBuilder {
         deviceWanDao.upsert(wan);
         r.setWan(1);
 
-        upsertVlan(device, WAN_SLOT_DHCP, p + "X_CMCC_VLANID");
+        upsertVlan(device, WAN_SLOT_DHCP, p);
         r.setVlan(1);
 
         log.info("生成 WAN DHCP 模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
@@ -334,7 +334,7 @@ public class TemplateBuilder {
         deviceWanDao.upsert(wan);
         r.setWan(1);
 
-        upsertVlan(device, WAN_SLOT_PPPOE, p + "X_CMCC_VLANID");
+        upsertVlan(device, WAN_SLOT_PPPOE, p);
         r.setVlan(1);
 
         log.info("生成 WAN PPPoE 模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
@@ -367,10 +367,14 @@ public class TemplateBuilder {
         wan.setValGw(TemplateVariables.WAN_GW);
         wan.setPathDns(p + "DNSServers");
         wan.setValDns(TemplateVariables.WAN_DNS);
+        // 静态与 DHCP 同为 WANIPConnection，绑定端口也一样要能绑：
+        // 漏了这条 path，静态连接就永远绑不上 LAN，以前是 Take("没登记端口") 当成不支持
+        wan.setPathBindPort(p + "X_CMCC_BindLANPort");
+        wan.setValBindPort("");
         deviceWanDao.upsert(wan);
         r.setWan(1);
 
-        upsertVlan(device, WAN_SLOT_STATIC, p + "X_CMCC_VLANID");
+        upsertVlan(device, WAN_SLOT_STATIC, p);
         r.setVlan(1);
 
         log.info("生成 WAN 静态地址模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
@@ -403,7 +407,7 @@ public class TemplateBuilder {
         deviceWanDao.upsert(wan);
         r.setWan(1);
 
-        upsertVlan(device, WAN_SLOT_BRIDGE, p + "X_CMCC_VLANID");
+        upsertVlan(device, WAN_SLOT_BRIDGE, p);
         r.setVlan(1);
 
         log.info("生成 WAN 桥接模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
@@ -488,15 +492,28 @@ public class TemplateBuilder {
         return wan.getObjectPath() + INSTANCE_PLACEHOLDER + ".";
     }
 
-    /** VLAN 独立成表，{@code wanInstance} 关联到对应业务 WAN 的排位号。 */
-    private void upsertVlan(Device device, int wanInstance, String path) {
+    /**
+     * VLAN 独立成表，{@code wanInstance} 关联到对应业务 WAN 的排位号。
+     *
+     * <p>VLAN 号之外还要登记模式 / 802.1p / 组播 VLAN 三条路径：移动定制机上它们都真实存在
+     * （{@code X_CMCC_VLANMode} / {@code X_CMCC_802-1pMark} / {@code X_CMCC_MulticastVlan}），
+     * 而桥接能不能通取决于 VLAN 模式对不对。以前只登记 VLAN 号，模板上填了模式与优先级
+     * 也一律按「没登记路径」跳过。值一律留空＝不修改，只有模板上明确填了才下发。</p>
+     */
+    private void upsertVlan(Device device, int wanInstance, String prefix) {
         Vlan vlan = new Vlan();
         vlan.setDeviceId(device.getId());
         vlan.setWanInstance(wanInstance);
         vlan.setAction("ADD");
         vlan.setVerified("UNVERIFIED");
-        vlan.setPathVlanId(path);
+        vlan.setPathVlanId(prefix + "X_CMCC_VLANID");
         vlan.setValVlanId(TemplateVariables.VLAN_ID);
+        vlan.setPathVlanMode(prefix + "X_CMCC_VLANMode");
+        vlan.setValVlanMode("");
+        vlan.setPath8021p(prefix + "X_CMCC_802-1pMark");
+        vlan.setVal8021p("");
+        vlan.setPathMulticast(prefix + "X_CMCC_MulticastVlan");
+        vlan.setValMulticast("");
         vlanDao.upsert(vlan);
     }
 

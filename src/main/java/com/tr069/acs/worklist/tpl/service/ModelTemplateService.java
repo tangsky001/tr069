@@ -8,14 +8,6 @@ import org.springframework.stereotype.Service;
 
 /**
  * 按型号的能力申报生成该型号的下发模板，落 SQLite 模板库。
- *
- * <p>型号主表（{@code device}）记的是「这台型号申报了什么能力」——几个网口、几路语音、
- * 什么 WiFi 规格；下发真正要用的「写哪个节点、值是什么」则由
- * {@link TemplateBuilder} 推导后落到各业务表。两者分开，是因为同一份能力申报
- * 换一台设备、换一次采集都要能重新推一遍，而不是把结果写死在型号档案里。</p>
- *
- * <p>所以每次型号档案更新（采集导出、能力申报变更）都要重新生成一次模板，
- * 否则库里留着旧路径，下发就会照着过时的适配结果去写。</p>
  */
 @Slf4j
 @Service
@@ -52,7 +44,8 @@ public class ModelTemplateService {
         log.info("生成型号模板: id={}, model={}, wifi={}, sip={}, wan={}, lan={}",
                 device.getId(), device.getModelKey(),
                 r.wifi.total(), r.sip.getSip(),
-                r.wanDhcp.getWan() + r.wanPppoe.getWan() + r.wanStatic.getWan(), r.lan);
+                r.wanDhcp.getWan() + r.wanPppoe.getWan() + r.wanStatic.getWan()
+                        + r.wanBridge.getWan(), r.lan);
         return r;
     }
 

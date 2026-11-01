@@ -10,6 +10,8 @@ import com.tr069.acs.domain.entity.CpeModel;
 import com.tr069.acs.domain.entity.CpeParameter;
 import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.mapper.CpeParameterMapper;
+import com.tr069.acs.worklist.tpl.dao.DeviceDao;
+import com.tr069.acs.worklist.tpl.entity.Device;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,6 +60,8 @@ public class ModelAdaptationService {
     private final ModelTreeStore modelTreeStore;
     private final AcsCoreLog coreLog;
     private final ModelAdaptationProfileStore profileStore;
+    /** SQLite 模板库：适配结果的唯一权威，下发查的就是它，列表判定必须跟它一致 */
+    private final DeviceDao deviceDao;
 
     /** 测试时等待光猫返回参数树的最长时间，秒。 */
     @Value("${acs.adapt.test-timeout-seconds:120}")
@@ -70,10 +74,12 @@ public class ModelAdaptationService {
     // ==================== 适配状态 ====================
 
     /**
-     * 单台设备的适配状态：库里有没有该型号的能力树 XML 文件。
+     * 单台设备的适配状态：先查 SQLite 模板库，再退到文件与 MySQL 档案。
      *
-     * <p>判定标准就一条——{@code cpe_model.config_path} 非空且文件真实存在，
-     * 即「先在库里查该光猫 xml 配置文件路径，有 = 已适配」。</p>
+     * <p>判据必须与下发一致：下发能不能发看的是 SQLite 模板库里那份适配结果
+     * （能力申报 + 业务字段到参数路径的映射），列表上的「已适配」也必须以它为准。
+     * 能力树 XML 与适配档 YML 只是归档产物，删了不代表适配结果没了——以前先看文件，
+     * 于是「删掉 XML → 列表又挂出适配入口，可下发照旧能发」，自相矛盾。</p>
      */
     public Map<String, Object> status(String sn) {
         Map<String, Object> data = new LinkedHashMap<>();
@@ -88,6 +94,26 @@ public class ModelAdaptationService {
         CpeModel model = modelMappingService.resolveOrRegister(device.getIsp(),
                 device.getManufacturer(), device.getProductClass(),
                 device.getSoftwareVersion(), device.getHardwareVersion(), sn);
+        if (model == null) {
+            // 型号表登记不上（库不可用 / 唯一键冲突回查也没查到）时不能抛异常：
+            // status 是批量接口，一台抛了整页拿不到结果，列表会把所有设备都显示成未适配。
+            // 适配结果在 SQLite 模板库里，照旧能判
+            Device only = adaptedInTemplateLib(device.getIsp(), ModelMappingService.buildModelKey(
+                    device.getProductClass(), device.getSoftwareVersion()));
+            data.put("isp", device.getIsp());
+            data.put("productClass", device.getProductClass());
+            data.put("softwareVersion", device.getSoftwareVersion());
+            data.put("adapted", only != null);
+            if (only != null) {
+                data.put("adaptedFrom", "sqlite");
+                data.put("adaptedIsp", only.getIsp());
+                data.put("templateLibId", only.getId());
+            } else {
+                data.put("adaptedFrom", "none");
+                data.put("hint", "型号未登记，请先采集设备能力树");
+            }
+            return data;
+        }
         data.put("isp", model.getIsp());
         data.put("productClass", model.getProductClass());
         data.put("softwareVersion", model.getSoftwareVersion());
@@ -97,9 +123,24 @@ public class ModelAdaptationService {
         data.put("capLanSpeed", model.getCapLanSpeed());
         data.put("capSipCount", model.getCapSipCount());
         data.put("capWifiSpec", model.getCapWifiSpec());
-        // 已适配看同名 YML 里的 adapted，XML 只是能力档案，存在不算适配过
-        boolean adapted = profileStore.isAdapted(model);
+        // 一、SQLite 模板库：适配结果在这里，下发也查这里，判定以它为准
+        Device tpl = adaptedInTemplateLib(model.getIsp(), model.getModelKey());
+        boolean adapted = tpl != null;
         String adaptedIsp = null;
+        if (adapted) {
+            adaptedIsp = tpl.getIsp();
+            data.put("adaptedFrom", "sqlite");
+            data.put("adaptedIsp", adaptedIsp);
+            data.put("templateLibId", tpl.getId());
+        }
+        // 二、模板库里没有（老库迁移前）才退到同名 YML 适配档：
+        // 已适配看 adapted 标记，XML 只是能力档案，存在不算适配过
+        if (!adapted) {
+            adapted = profileStore.isAdapted(model);
+            if (adapted) {
+                data.put("adaptedFrom", "yml");
+            }
+        }
         if (!adapted) {
             // 设备上报的 isp 可能与适配申报的 isp 不同（上报为空/standard 而适配给了 CMCC），
             // 同型号只要在任意运营商下有 adapted: true 的档案就视为已适配——
@@ -107,6 +148,7 @@ public class ModelAdaptationService {
             adaptedIsp = profileStore.findAdaptedIsp(model.getModelKey());
             if (adaptedIsp != null) {
                 adapted = true;
+                data.put("adaptedFrom", "yml");
                 data.put("adaptedIsp", adaptedIsp);
                 data.put("profile", profileStore.readByIsp(model.getModelKey(), adaptedIsp));
             }
@@ -119,6 +161,7 @@ public class ModelAdaptationService {
                     && CpeModel.STATUS_READY.equals(model.getStatus())) {
                 adapted = true;
                 data.put("adaptedFromDb", true);
+                data.put("adaptedFrom", "mysql");
                 data.put("adaptedIsp", adaptedIsp != null ? adaptedIsp : model.getIsp());
                 data.putIfAbsent("profile", profileStore.read(model));
             }
@@ -128,6 +171,50 @@ public class ModelAdaptationService {
         data.put("adaptPath", model.getAdaptPath());
         data.putIfAbsent("profile", profileStore.read(model));
         return data;
+    }
+
+    /**
+     * SQLite 模板库里这个型号的适配结果，查不到返回 null。
+     *
+     * <p>查找顺序与下发时的 {@code IntentDeliveryService#findAdaptedModel} 完全一致：
+     * 台账运营商 → 同型号任一份有申报的归档 → {@code standard} 档。同型号可能散成多份
+     * （早期采集留下的空档 + 带完整申报的那份），只按运营商查会命中没申报的那份，
+     * 于是明明适配过、下发也发得出去，列表却判成未适配。</p>
+     */
+    private Device adaptedInTemplateLib(String isp, String modelKey) {
+        if (modelKey == null || modelKey.isBlank()) {
+            return null;
+        }
+        String owner = (isp == null || isp.isBlank()) ? "standard" : isp.trim();
+        Device row = deviceDao.findByIspModelKey(owner, modelKey).orElse(null);
+        if (row == null || !declared(row)) {
+            Device withCap = deviceDao.findByModelKey(modelKey).stream()
+                    .filter(ModelAdaptationService::declared)
+                    .findFirst().orElse(null);
+            if (withCap != null) {
+                return withCap;
+            }
+        }
+        if (row == null && !"standard".equals(owner)) {
+            row = deviceDao.findByIspModelKey("standard", modelKey).orElse(null);
+        }
+        return row != null && declared(row) ? row : null;
+    }
+
+    /** 这份归档有没有真正做过能力申报：没申报的生成不出模板，等于没适配。 */
+    private static boolean declared(Device row) {
+        if (row == null) {
+            return false;
+        }
+        if ("ADAPTED".equalsIgnoreCase(row.getStatus())) {
+            return true;
+        }
+        return notBlank(row.getCapWifiSpec()) || notBlank(row.getCapSipCount())
+                || notBlank(row.getCapLanPorts());
+    }
+
+    private static boolean notBlank(String v) {
+        return v != null && !v.isBlank();
     }
 
     /**

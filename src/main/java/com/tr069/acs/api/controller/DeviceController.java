@@ -236,12 +236,15 @@ public class DeviceController {
     /**
      * 查询设备本地账号（超管 telecomadmin 等）。
      *
-     * <p>每台设备的超管口令可能不一样，只能到设备上现读。这里对在线设备下发
-     * {@code GetParameterValues} 读 {@code User.{i}.Username} / {@code Password}，
+     * <p>每台设备的超管口令可能不一样，只能到设备上现读。这里先反向唤醒设备（CWMP 指令
+     * 只能捎带在设备自己发起的那轮会话里，不叫它上来就得等下一次周期上报），再下发
+     * {@code GetParameterValues} 读超管节点的 {@code Username} / {@code Password}，
      * 账号与口令都是明文返回，前端直接展示给运维登后台用。</p>
      *
-     * <p>请求会挂起等设备回值，最长 {@code acs.device.account.read-timeout-seconds}
-     * （默认 30s）；设备离线立即返回 offline，不空等。</p>
+     * <p>请求会挂起等设备回值，整次查询的总预算是
+     * {@code acs.device.account.total-timeout-seconds}（默认 70s，唤醒与几轮读取共用），
+     * 单轮读取不超过 {@code acs.device.account.read-timeout-seconds}（默认 30s）；
+     * 设备离线立即返回 offline，不空等。</p>
      *
      * @return {@code accounts}：账号列表，每项 instance / path / username / password；
      *         {@code status}：success / empty / timeout / fail / offline

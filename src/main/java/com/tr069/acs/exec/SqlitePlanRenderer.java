@@ -82,6 +82,7 @@ public class SqlitePlanRenderer {
             case "WiFi_5G" -> wifi(device, values, instance, items, errors, false, overrides);
             case "Voice_Service" -> voice(device, values, instance, items, errors, overrides);
             case "Internet_WAN" -> wan(category, device, values, items, objectsToAdd, errors, overrides, instance);
+            case "Bridge_WAN" -> wan(category, device, values, items, objectsToAdd, errors, overrides, instance);
             case "Device_Mgmt" -> deviceMgmt(values, overrides, errors);
             default -> errors.add("该业务还没有适配模板，请先对该型号做适配: " + bizObject);
         }
@@ -275,8 +276,8 @@ public class SqlitePlanRenderer {
             put(items, errors, biz, "wan_gw", row.getPathGw(), row.getValGw(), values, instance, overrides);
             put(items, errors, biz, "wan_dns", row.getPathDns(), row.getValDns(), values, instance, overrides);
         }
-        put(items, errors, biz, "bind_port", row.getPathBindPort(), row.getValBindPort(), values, instance, overrides);
         put(items, errors, biz, "ip_protocol", row.getPathIpMode(), row.getValIpMode(), values, instance, overrides);
+        put(items, errors, biz, "bind_port", row.getPathBindPort(), row.getValBindPort(), values, instance, overrides);
         putMtu(items, errors, device, row, values, instance, overrides);
 
         Vlan vlan = vlanDao.findOne(device.getId(), slot).orElse(null);
@@ -409,6 +410,12 @@ public class SqlitePlanRenderer {
                      String path, String val, Map<String, Object> values, int instance,
                      Map<String, String> overrides) {
         if (path == null || path.isBlank()) {
+            // 模板上明明填了值、型号却没登记这条路径（如 802.1p / 组播 VLAN 还没做映射）：
+            // 静默跳过会让「填了不生效」查不到原因，这里留一条能落地的告警
+            String wanted = effectiveValue(null, overrides, field);
+            if (wanted != null && !wanted.isBlank()) {
+                log.warn("模板上填了 {}={}，但该型号没有登记对应的参数路径，本次不下发", field, wanted);
+            }
             return;
         }
         String value = normalize(field,
@@ -456,7 +463,12 @@ public class SqlitePlanRenderer {
             "sip_proxy", List.of("proxy"),
             "sip_port", List.of("proxy_port"),
             "sip_registrar", List.of("registrar"),
-            "sip_registrar_port", List.of("registrar_port"));
+            "sip_registrar_port", List.of("registrar_port"),
+            // 渲染器内部叫 bind_port / vlan_8021p，配置模板与语义映射里叫 bind_ports /
+            // vlan_priority。少了这两个别名，页面上勾的端口与填的 QoS 优先级一个都传不进去：
+            // 取不到覆盖值就回退到 SQLite 里的空默认，绑定端口整条被跳过
+            "bind_port", List.of("bind_ports"),
+            "vlan_8021p", List.of("vlan_priority"));
 
     private static List<String> keysToTry(String field) {
         List<String> aliases = ALIASES.get(field);
@@ -685,6 +697,10 @@ public class SqlitePlanRenderer {
                 return !sipDao.findByDeviceId(id).isEmpty();
             case "Internet_WAN":
                 return !deviceWanDao.findByDeviceId(id).isEmpty();
+            // 桥接模板行就在同一张表里（slot 4）。这里认不出 Bridge_WAN 的话，
+            // 每次下发桥接都会先跑一遍全量补生成，再在渲染时报「没有适配模板」
+            case "Bridge_WAN":
+                return deviceWanDao.findOne(id, TemplateBuilder.WAN_SLOT_BRIDGE).isPresent();
             case "LAN":
                 return !deviceLanDao.findByDeviceId(id).isEmpty();
             default:

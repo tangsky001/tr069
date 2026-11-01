@@ -13,9 +13,9 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.tr069.acs.exec.mapper", "com.tr069.acs.openapi.mapper", "com.tr069.acs.olt.mapper"})
 @ConfigurationPropertiesScan("com.tr069.acs")
 @SpringBootApplication
-public class JavaAcsApplication {
+public class PilotAcsApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(JavaAcsApplication.class, args);
+        SpringApplication.run(PilotAcsApplication.class, args);
     }
 }

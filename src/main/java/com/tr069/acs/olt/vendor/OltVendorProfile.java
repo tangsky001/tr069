@@ -2,10 +2,12 @@ package com.tr069.acs.olt.vendor;
 
 import com.tr069.acs.olt.entity.OltBoard;
 import com.tr069.acs.olt.model.OltAction;
+import com.tr069.acs.olt.model.OltTerminalUserRequest;
 import com.tr069.acs.olt.telnet.OltSnapshot;
 import com.tr069.acs.olt.telnet.OltVendor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 一家 OLT 厂商（或一条产品线）的全部差异。
@@ -196,6 +198,57 @@ public interface OltVendorProfile {
     }
 
     /**
+     * 这台设备能不能采集「待注册 ONT」（还没被授权的那批，光猫报上 SN 但没正式上线）。
+     *
+     * <p>和 {@link #supportsTr069Profile()} 一样是道开关：没接过 {@code display ont autofind}
+     * 回显格式的设备不去瞎猜，页面上也就不会给出「查找新的 ONT 设备」这种点了没反应的按钮。</p>
+     */
+    default boolean supportsOntAutofind() {
+        return false;
+    }
+
+    /** 查询待注册 ONT 的命令；不支持时返回空表 */
+    default List<String> ontAutofindCommands() {
+        return List.of();
+    }
+
+    /** 解析 {@link #ontAutofindCommands()} 的回显，得到待注册 ONT 列表 */
+    default List<com.tr069.acs.olt.model.OltOntAutofind> parseOntAutofind(String text) {
+        return List.of();
+    }
+
+    // ------------------------------------------------------------ PON 口自动发现开关
+
+    /**
+     * 能不能查/开 PON 口的自动发现（{@code ont-auto-find}）。
+     *
+     * <p>这个开关不开，光猫接上去设备根本不会去发现，待注册列表就永远是空的。</p>
+     */
+    default boolean supportsOntAutoFind() {
+        return false;
+    }
+
+    /** 进某块 PON 板视图的命令，如 {@code interface gpon 0/1} */
+    default String ponViewCommand(int frame, int slot) {
+        return null;
+    }
+
+    /** 查单个 PON 口开关的命令（在上面那个视图里执行） */
+    default String ontAutoFindQueryCommand(int port) {
+        return null;
+    }
+
+    /** 从查询回显里认这个口开着没；认不出返回 null，别瞎猜 */
+    default Boolean parseOntAutoFindState(String output) {
+        return null;
+    }
+
+    /** 开启指定 PON 口的命令块（含进视图、退视图、保存），fsp 形如 0/1/3 */
+    default List<String> ontAutoFindEnableCommands(List<String> fspList) {
+        return List.of();
+    }
+
+    /**
      * 这台设备能不能用「一键开局」一次性下发端口模式、业务 VLAN 和 TR-069 模板。
      *
      * <p>开局这几步的写法各厂商不一样，没接过命令的设备不允许下发——
@@ -222,5 +275,126 @@ public interface OltVendorProfile {
             return null;
         }
         return com.tr069.acs.olt.telnet.OltInfoParser.parseSlotCount(boardText);
+    }
+
+    // ------------------------------------------------------------ ONT 注册（ont confirm）
+
+    /**
+     * 这台设备能不能把「自动发现到的 ONT」确认成正式 ONT（{@code ont confirm}）。
+     *
+     * <p>没接过回显与命令的厂商不猜：命令发出去只会得到一串语法错误，
+     * 不如当面说不支持，页面也就不会给出点了没反应的按钮。</p>
+     */
+    default boolean supportsOntConfirm() {
+        return false;
+    }
+
+    /**
+     * 确认一台待注册 ONT 的命令（在 {@link #ponViewCommand} 进的 PON 板视图里执行）。
+     *
+     * <p>ONT ID 由设备自己分配：不用先查一遍该口用了哪些 ID，少一个来回，
+     * 也避免了自己挑的 ID 正好被占。</p>
+     *
+     * @param port          PON 口号
+     * @param authMode      注册方式：SN / MAC / LOID / PASSWORD
+     * @param authValue     认证串（SN / MAC / LOID / 密码）。设备语法里 sn-auth 后面
+     *                      必须跟值，只给关键字会被回 {@code % Unknown command}
+     * @param lineProfileId 线路模板 ID，为空就不带这个参数
+     * @param srvProfileId  业务模板 ID，为空就不带这个参数
+     * @return 命令；不支持时返回 null
+     */
+    default String ontConfirmCommand(int port, String authMode, String authValue,
+                                     Integer lineProfileId, Integer srvProfileId) {
+        return null;
+    }
+
+    /**
+     * 确认所有待确认板卡的命令（config 视图下执行）。
+     *
+     * <p>新插的板卡上电后停在 auto-find 状态，不确认就不加载业务——
+     * 华为的确认命令是 {@code board confirm 0}（0 是机框号）。
+     * 没有这套机制的厂商返回 null。</p>
+     */
+    default String boardConfirmCommand() {
+        return null;
+    }
+
+    /**
+     * 查一条 ONT 线路模板详情的命令（config 视图下执行），用来读它 GEM 映射了哪些 VLAN。
+     *
+     * @param ponType    GPON / EPON
+     * @param profileId  线路模板 ID
+     * @return 命令；不支持时返回 null
+     */
+    default String lineProfileDetailCommand(String ponType, int profileId) {
+        return null;
+    }
+
+    /**
+     * 这台设备支不支持给已注册的 ONT 建业务虚口。
+     *
+     * <p>光猫注册上（{@code ont confirm}）只是通了 OMCI 管理通道，用户流量要走
+     * 业务虚口（service-port）绑 GEM Port 才放得出去——没这层虚口，页面「业务流」
+     * 就是空的，用户也没网。</p>
+     */
+    default boolean supportsServicePorts() {
+        return false;
+    }
+
+    /**
+     * 给一台已注册的 ONT 建一条业务虚口的命令（config 视图下执行）。
+     *
+     * @param index   业务虚口索引，调用方保证不与现有冲突
+     * @param vlan    业务 VLAN（OLT 侧 = 用户侧，translate 透传）
+     * @param frame   框号
+     * @param slot    槽位号
+     * @param port    端口号
+     * @param ontId   注册后设备分配的 ONT ID
+     * @param gemPort 线路模板里的 GEM Port 号
+     * @return 命令；不支持时返回 null
+     */
+    default String servicePortCommand(int index, int vlan, int frame, int slot, int port,
+                                      int ontId, int gemPort) {
+        return null;
+    }
+
+    /** 删掉一个已注册 ONT 的命令（PON 板视图里执行）：{@code ont delete <port> <ontId>} */
+    default String ontDeleteCommand(int port, int ontId) {
+        return null;
+    }
+
+    /** 整块板所有 PON 口的 ONT 明细命令（config 视图执行），用于判断 SN 是不是已经注册过 */
+    default String ontListCommand(int frame, int slot) {
+        return null;
+    }
+
+    /** 解析 {@link #ontListCommand} 的回显：key 是端口号，value 是该口下的 ONT */
+    default Map<Integer, List<com.tr069.acs.olt.model.OltOnt>> parseOntList(String text) {
+        return Map.of();
+    }
+
+    /** 存盘命令：华为只写运行配置，不 save 掉电就回到注册前 */
+    default String saveCommand() {
+        return "save";
+    }
+
+    // ------------------------------------------------------------ OLT 本地用户
+
+    /** 这台设备能不能建本地用户（登 OLT 用的账号） */
+    default boolean supportsTerminalUser() {
+        return false;
+    }
+
+    /**
+     * 建本地用户的命令序列，{@code >>} 开头的行是对设备追问的应答。
+     *
+     * <p>华为的 {@code terminal user name} 是交互式命令：回车后设备一问一答地把用户名、
+     * 密码、级别这些信息逐个要过去。普通命令发完就回提示符，这条不回——所以这里给的
+     * 不只是命令，还得带上按提问顺序排好的应答，会话那边照着问一条回一条。</p>
+     *
+     * @return 命令序列；不支持或参数不合规时返回空表
+     */
+    default List<String> terminalUserAddCommands(OltTerminalUserRequest request) {
+        return List.of();
     }
 }

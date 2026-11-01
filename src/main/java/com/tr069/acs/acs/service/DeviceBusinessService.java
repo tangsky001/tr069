@@ -321,6 +321,7 @@ public class DeviceBusinessService {
             item.put("statusText", wanStatusText(params));
             item.put("title", wanTitle(params, path));
             item.put("connMode", connModeOf(params));
+            item.put("bindPorts", bindPortsOf(params));
             item.put("natEnabled", boolOf(params.get("NATEnabled"), false));
             item.put("ipProtocol", ipProtocolOf(params));
             item.put("mtu", mtuOf(params));
@@ -366,6 +367,8 @@ public class DeviceBusinessService {
      * 地址兜底：两边都有地址算双栈，只有一边就报那一边。</p>
      */
     private static String ipProtocolOf(Map<String, String> params) {
+        // 桥接也有地址族：真机页面上这条能改（IPv4 / IPv6 / IPv4+IPv6），
+        // 别替设备决定，X_CMCC_IPMode 是多少就显示多少
         String mode = firstNonBlank(params, "X_CMCC_IPMode", "IPMode");
         switch (mode) {
             case "1":
@@ -415,18 +418,56 @@ public class DeviceBusinessService {
     }
 
     /**
-     * 连接模式 + 地址类型的组合文案，如「路由 / DHCP」。
+     * 连接模式 + 地址类型的组合文案，如「路由 / DHCP」「桥接」。
+     *
+     * <p>桥接没有地址类型这一维：它不取地址、不做 NAT，{@code IPAddressingType} 是空的。
+     * 以前空值会退回按连接类型里的 PPPoE 拼上去，于是真机上的「桥模式」被显示成
+     * 「桥接 / PPPoE」——PPPoE 是这条桥接的承载方式，不是地址类型，放在这个位置会让人
+     * 以为它是条 PPPoE 拨号连接。</p>
      */
     private static String connModeOf(Map<String, String> params) {
         String type = firstNonBlank(params, "ConnectionType");
         String typeLower = type.toLowerCase(Locale.ROOT);
-        String mode = typeLower.contains("bridged") ? "桥接" : "路由";
+        if (typeLower.contains("bridged")) {
+            return "桥接";
+        }
         String addr = firstNonBlank(params, "IPAddressingType", "AddressingType");
         if (addr.isBlank()) {
             addr = typeLower.contains("ppp") ? "PPPoE" : "-";
         }
-        return mode + " / " + addr;
+        return "路由 / " + addr;
     }
+
+    /**
+     * 绑定端口：设备存的是 LAN 口参数路径（{@code X_CMCC_LanInterface}），
+     * 逗号分隔，空串表示不绑定（设备默认绑全部口）。页面上要的是「LAN1,LAN2」。
+     *
+     * @return 形如 {@code LAN1,LAN2}；没绑定返回空串
+     */
+    private static String bindPortsOf(Map<String, String> params) {
+        String raw = firstNonBlank(params, "LanInterface", "BindLANPort");
+        if (raw.isBlank()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String part : raw.split("[,;\\s]+")) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            Matcher m = LAN_PORT_INDEX.matcher(p);
+            String port = m.find() ? "LAN" + m.group(1) : p;
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            sb.append(port);
+        }
+        return sb.toString();
+    }
+
+    /** LAN 口路径末段：{@code LANEthernetInterfaceConfig.1} → 1。 */
+    private static final Pattern LAN_PORT_INDEX =
+            Pattern.compile("LANEthernetInterfaceConfig\\.(\\d+)$", Pattern.CASE_INSENSITIVE);
 
     /** 连接标题：设备报了 Name（如 1_TR069_R_VID_46）就用它，否则用实例序号。 */
     private static String wanTitle(Map<String, String> params, String path) {
@@ -622,7 +663,20 @@ public class DeviceBusinessService {
         if ("disconnected".equals(s) || "down".equals(s)) {
             return "未连接";
         }
-        return raw.isBlank() ? "-" : raw;
+        // 中间态照设备原词翻成中文：直接回显 "Connecting" 会让页面上中英混排
+        switch (s) {
+            case "connecting":
+                return "连接中";
+            case "authenticating":
+                return "认证中";
+            case "pending":
+                return "等待中";
+            case "error":
+            case "unconfigured":
+                return "异常";
+            default:
+                return raw.isBlank() ? "-" : raw;
+        }
     }
 
     /**
@@ -737,6 +791,24 @@ public class DeviceBusinessService {
     /** URI 里 @ 前面的号码部分。 */
     private static final Pattern SIP_URI_NUMBER = Pattern.compile("^([^@]+)@");
 
+    /** VoiceProfile 级的 SIP 对象：整档语音的服务器地址挂在它身上，不是某个话机口。 */
+    private static final Pattern SIP_PROFILE_INSTANCE =
+            Pattern.compile("VoiceService\\.\\d+\\.VoiceProfile\\.\\d+\\.SIP\\.$");
+
+    /**
+     * 从 VoiceProfile 级补到每一路 Line 上的字段：只有服务器相关的才补。
+     *
+     * <p>RegistrarServer / ProxyServer 这类地址整档共用一份，补进线路是为了页面能
+     * 一次拿全；反过来不能把 Line 自己的值覆盖掉——个别厂商会把 OutboundProxy
+     * 也写进 Line 里，那种以线路自己的为准。</p>
+     */
+    private static final List<String> SIP_SERVER_KEYS = List.of(
+            "RegistrarServer", "RegistrarServerPort", "RegistrarServerTransport",
+            "ProxyServer", "ProxyServerPort", "ProxyServerTransport",
+            "OutboundProxy", "OutboundProxyPort",
+            "UserAgentDomain", "UserAgentPort", "UserAgentTransport",
+            "RegisterExpires");
+
     /**
      * 过滤 SIP 分组里的非线路实例。
 
@@ -773,8 +845,49 @@ public class DeviceBusinessService {
                 filtered.add(row);
             }
         }
+        // 服务器地址要先补再算语义：statusText / number / server 都读 params，
+        // 顺序反了的话 server 会先被判成「-」再也没机会改回来
+        Map<String, String> profileParams = profileSipParams(list);
+        for (Map<String, Object> row : filtered) {
+            mergeServerParams(row, profileParams);
+        }
         applySipSemantics(filtered);
         data.put(SIP_KEY, filtered);
+    }
+
+    /** VoiceProfile 级 SIP 对象里的服务器类参数。 */
+    private static Map<String, String> profileSipParams(List<Map<String, Object>> rows) {
+        Map<String, String> profile = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String path = String.valueOf(row.getOrDefault("path", ""));
+            if (!SIP_PROFILE_INSTANCE.matcher(path).find()) {
+                continue;
+            }
+            Map<String, String> params = paramsOf(row);
+            for (String key : SIP_SERVER_KEYS) {
+                String value = params.get(key);
+                if (value != null && !value.isBlank()) {
+                    profile.putIfAbsent(key, value);
+                }
+            }
+        }
+        return profile;
+    }
+
+    /** 把整档服务器参数并进一条线路，线路自己没报的才补。 */
+    private static void mergeServerParams(Map<String, Object> row, Map<String, String> profileParams) {
+        if (profileParams.isEmpty()) {
+            return;
+        }
+        Object raw = row.get("params");
+        if (!(raw instanceof Map<?, ?>)) {
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, String> params = (Map<String, String>) raw;
+        for (Map.Entry<String, String> entry : profileParams.entrySet()) {
+            params.putIfAbsent(entry.getKey(), entry.getValue());
+        }
     }
 
     /**
