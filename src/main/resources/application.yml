@@ -42,8 +42,8 @@ springdoc:
     - /openapi/**
 
 # Knife4j 文档界面（左侧主页 / Swagger Models / 文档管理，右侧简介与接口统计）
-# 界面偏好（语言 zh_cn、我们的页脚）都在 com.tr069.acs.config.DocEnvDefaults 里，
-# 这里不重复一遍
+# 总开关：改成 false 会把 /doc.html、/v3/api-docs、Swagger UI 一起关掉，
+# 生产环境不想暴露接口结构时只改这一处就够了
 knife4j:
   # 跟随上面的总开关，不用再改第二处
   enable: ${springdoc.enabled}
@@ -118,18 +118,12 @@ acs:
   public-host: 10.101.125.100
 
   cwmp:
-    # CPE 上报监听端口，可填多个（逗号 / 空格分隔）。
-    # 不同厂商光猫出厂固化的 ACS URL 端口并不一致，这里按厂商常用端口列出：
-    #   9090 华为   8080 烽火   8012 中兴   6060 其他   8172 / 5481 通用备用
-    # 这里列出的端口都会额外开启监听，与主 server.port 重复的会自动跳过。
-    # 注意：贝尔/阿尔卡特常用 8888，与本服务的 server.port 撞车，
-    # 加了也会被自动跳过——要收这类设备得先把 server.port 挪走。
+    # 监听的端口，逗号分隔
     listen-ports: 9090,8082,6060,8012,8080,8172,5481
     # CPE 上报的路径
     cpe-path: /ACS-server/ACS
     # 额外兼容的上报路径（逗号分隔）。各厂商出厂固化的 URL 路径不一致，
     # 未在清单内的 POST 会被判成 405，设备只会周期性重试，日志里会打印未匹配路径。
-    # 默认值已覆盖常见写法，现场遇到新写法直接在这里追加即可。
     extra-cpe-paths: /acs,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/
     # PortalAgent / 内部节点回调路径
     user-path: /user
@@ -138,9 +132,6 @@ acs:
 
   session:
     # 在线判定窗口(秒)：台账里最近一次上报落在窗口内就算在线，设备列表、详情页、
-    # 台账统计都按这一条判。不能按「TCP 连着没有」判——CWMP 是短连接，
-    # 光猫报完一轮就断，刚报过的设备会被判成离线。
-    # 取值要覆盖常见的周期性 Inform 间隔（多为 300~1800 秒）
     online-window-seconds: 900
     # 超过窗口还没再上报的设备，隔多久被清扫成离线(毫秒)
     offline-sweep-interval-millis: 60000
@@ -357,6 +348,8 @@ acs:
     command-timeout-ms: 20000
     # 单次采集留档的回显上限(字符)，超出截断
     max-raw-output-chars: 60000
+    # 会话池（每设备 2 会话轮换）的「保活开关」在管理页面切换，不在这里配置：
+    # 开 = 定期 display client 探活、会话一直沿用；关（默认）= 1 分钟没人用就 quit 退出登录
 
   # ==================== 北向接口 ====================
   openapi:

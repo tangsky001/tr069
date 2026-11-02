@@ -2,7 +2,6 @@ package com.tr069.acs.olt.service;
 
 import com.tr069.acs.olt.entity.OltDevice;
 import com.tr069.acs.olt.telnet.OltCharset;
-import com.tr069.acs.olt.telnet.OltCliSession;
 import com.tr069.acs.olt.telnet.OltSnapshot;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,24 +14,22 @@ import java.util.List;
 /**
  * OLT 命令行采集入口。
  *
- * <p>负责两件事：按配置超时打开会话、字符集自动识别失败时换 GBK 重试一次。
- * 命令与解析细节在 {@link OltCliSession} / {@code OltInfoParser} 里。</p>
+ * <p>负责两件事：按配置超时从会话池借会话、字符集自动识别失败时换 GBK 重试一次。
+ * 命令与解析细节在 {@link OltCliSession} / {@code OltInfoParser} 里；
+ * 会话的复用/保活/排队在 {@link OltSessionPool} 里。</p>
  */
 @Slf4j
 @Service
 public class OltTelnetService {
 
-    @Value("${acs.olt.connect-timeout-ms:8000}")
-    private int connectTimeoutMs;
-
-    @Value("${acs.olt.login-timeout-ms:15000}")
-    private int loginTimeoutMs;
-
-    @Value("${acs.olt.command-timeout-ms:20000}")
-    private int commandTimeoutMs;
+    private final OltSessionPool sessionPool;
 
     @Value("${acs.olt.max-raw-output-chars:60000}")
     private int maxRawOutputChars;
+
+    public OltTelnetService(OltSessionPool sessionPool) {
+        this.sessionPool = sessionPool;
+    }
 
     /**
      * 登录并采集。
@@ -60,10 +57,8 @@ public class OltTelnetService {
     }
 
     private OltSnapshot doCollect(OltDevice device, Charset charset, boolean withBoards) throws IOException {
-        try (OltCliSession session = OltCliSession.open(
-                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
-            return session.collect(withBoards);
-        }
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.collect(withBoards));
     }
 
     /**
@@ -90,10 +85,8 @@ public class OltTelnetService {
     }
 
     private OltSnapshot doCollectBoards(OltDevice device, Charset charset) throws IOException {
-        try (OltCliSession session = OltCliSession.open(
-                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
-            return session.collectBoardsOnly();
-        }
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.collectBoardsOnly());
     }
 
     /**
@@ -112,10 +105,8 @@ public class OltTelnetService {
 
     private String doQueryOnt(OltDevice device, Charset charset, int slot, int port,
                               int ontId, String subcommand) throws IOException {
-        try (OltCliSession session = OltCliSession.open(
-                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
-            return session.queryOntDetail(slot, port, ontId, subcommand);
-        }
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.queryOntDetail(slot, port, ontId, subcommand));
     }
 
     /**
@@ -134,10 +125,8 @@ public class OltTelnetService {
 
     private String[] doQueryOntConfig(OltDevice device, Charset charset, int slot, int port, int ontId)
             throws IOException {
-        try (OltCliSession session = OltCliSession.open(
-                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
-            return session.queryOntConfigAndServicePorts(slot, port, ontId);
-        }
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.queryOntConfigAndServicePorts(slot, port, ontId));
     }
 
     /**
@@ -154,10 +143,8 @@ public class OltTelnetService {
 
     private String doQueryOntServicePorts(OltDevice device, Charset charset, int slot, int port, int ontId)
             throws IOException {
-        try (OltCliSession session = OltCliSession.open(
-                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
-            return session.queryServicePorts(slot, port, ontId);
-        }
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.queryServicePorts(slot, port, ontId));
     }
 
     /**
@@ -175,10 +162,8 @@ public class OltTelnetService {
 
     private List<String> doQueryCommands(OltDevice device, Charset charset, List<String> commands)
             throws IOException {
-        try (OltCliSession session = OltCliSession.open(
-                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
-            return session.queryCommands(commands);
-        }
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.queryCommands(commands));
     }
 
     /**
@@ -207,10 +192,18 @@ public class OltTelnetService {
 
     private List<String> doSendConfig(OltDevice device, Charset charset, List<String> commands,
                                       boolean tolerateExisting) throws IOException {
-        try (OltCliSession session = OltCliSession.open(
-                device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)) {
-            return session.sendConfigCommands(commands, tolerateExisting);
-        }
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.sendConfigCommands(commands, tolerateExisting));
+    }
+
+    /**
+     * 池中会话的字符集要不要严格匹配：台账指定了编码、或者这次是 GBK 重试
+     * （请求的编码跟「自动」解析出来的不一样）时必须一致才复用；
+     * 「自动」编码首次采集时哪种都行——解错了上层会用 GBK 重试。
+     */
+    private boolean charsetStrict(OltDevice device, Charset charset) {
+        return !OltCharset.isAuto(device.getCharset())
+                || !charset.equals(OltCharset.resolve(device.getCharset()));
     }
 
     private boolean garbled(OltSnapshot snapshot) {
