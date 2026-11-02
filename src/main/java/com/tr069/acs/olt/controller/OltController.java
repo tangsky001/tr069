@@ -34,9 +34,11 @@ import com.tr069.acs.olt.model.OltTerminalUserRequest;
 import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltTr069ProfileRequest;
 import com.tr069.acs.olt.model.OltVlanRequest;
+import com.tr069.acs.olt.model.OltKeepaliveRequest;
 import com.tr069.acs.olt.service.OltOntRegService;
 import com.tr069.acs.olt.service.OltQuickSetupConfigService;
 import com.tr069.acs.olt.service.OltService;
+import com.tr069.acs.olt.service.OltSessionPool;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -71,6 +73,8 @@ public class OltController {
 
     private final OltQuickSetupConfigService quickSetupConfigService;
 
+    private final OltSessionPool sessionPool;
+
     /**
      * OLT 列表，keyword 匹配名称 / 地址 / 型号。
      */
@@ -92,6 +96,35 @@ public class OltController {
     @GetMapping("/web-accounts")
     public Result<List<Map<String, Object>>> webAccounts() {
         return Result.success(oltService.webAccounts());
+    }
+
+    /**
+     * 会话池状态：保活开关、探活周期、每台设备的空闲会话数。
+     *
+     * <p>同样必须排在 {@code /{id}} 之前声明。</p>
+     */
+    @GetMapping("/session-pool")
+    public Result<Map<String, Object>> sessionPool() {
+        return Result.success(sessionPool.status());
+    }
+
+    /**
+     * 保活开关（管理页）。
+     *
+     * <p>开：每台 OLT 池中最多 2 个会话轮换，定期 {@code display client} 探活，
+     * 死了重新登录建立；关（默认）：会话 1 分钟没人用就 {@code quit} 退出登录，
+     * 之后的全局轮询采集要用时自己再登录。</p>
+     */
+    @PostMapping("/session-pool/keepalive")
+    public Result<Map<String, Object>> setSessionKeepalive(@RequestBody OltKeepaliveRequest request) {
+        if (request.getEnabled() == null) {
+            return Result.failure("缺少 enabled 参数");
+        }
+        try {
+            return Result.success(sessionPool.setKeepalive(request.getEnabled(), request.getIntervalMs()));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        }
     }
 
     /**

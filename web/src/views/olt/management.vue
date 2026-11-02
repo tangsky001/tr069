@@ -58,6 +58,16 @@
               <el-option :value="60" label="60 秒" />
             </el-select>
           </span>
+          <span class="olt-auto">
+            <el-switch v-model="keepalive" :disabled="!keepaliveReady" @change="handleKeepaliveChange" />
+            <span class="olt-auto-label">会话保活</span>
+            <el-select v-model="keepaliveMinutes" size="small" style="width:86px;margin-left:4px" :disabled="!keepalive || !keepaliveReady" @change="handleKeepaliveChange">
+              <el-option :value="1" label="1 分钟" />
+              <el-option :value="2" label="2 分钟" />
+              <el-option :value="5" label="5 分钟" />
+              <el-option :value="10" label="10 分钟" />
+            </el-select>
+          </span>
         </div>
 
         <div class="olt-meta-row">
@@ -110,7 +120,7 @@
 
 <script>
 import OltFormDialog from './components/OltFormDialog'
-import { fetchOltList, deleteOlt, testOltById, quickSyncOlt } from '@/api/olt'
+import { fetchOltList, deleteOlt, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive } from '@/api/olt'
 import { componentOfVendor } from './vendors'
 
 /**
@@ -131,7 +141,12 @@ export default {
       // 台账列表的自动刷新（30 秒起），默认关；面板数据由视图自己按 10 秒拉
       autoRefresh: false,
       pollSeconds: 30,
-      pollTimer: null
+      pollTimer: null,
+      // Telnet 会话保活开关（后端会话池）：开 = 2 会话轮换 + 定期 display client 探活；
+      // 关 = 会话 1 分钟没人用就 quit 退出登录。状态从后端取，取到前不允许切换
+      keepalive: false,
+      keepaliveMinutes: 2,
+      keepaliveReady: false
     }
   },
   computed: {
@@ -173,6 +188,7 @@ export default {
   },
   created() {
     this.loadList()
+    this.loadSessionPool()
   },
   beforeDestroy() {
     this.stopPolling()
@@ -203,6 +219,37 @@ export default {
         .catch(() => {})
         .finally(() => {
           this.loading = false
+        })
+    },
+    /** 拉会话池状态，把后端的开关和探活周期同步到页面上 */
+    loadSessionPool() {
+      return fetchOltSessionPool()
+        .then(res => {
+          const data = res.data || {}
+          this.keepalive = !!data.keepaliveEnabled
+          const minutes = Math.round((data.keepaliveIntervalMs || 120000) / 60000)
+          // 没有对应档位（比如后端配了 3 分钟）就就近落一档，别显示成空
+          const options = [1, 2, 5, 10]
+          this.keepaliveMinutes = options.reduce((prev, cur) =>
+            Math.abs(cur - minutes) < Math.abs(prev - minutes) ? cur : prev, 2)
+          this.keepaliveReady = true
+        })
+        .catch(() => {})
+    },
+    /** 切换保活开关/周期：成不了功就把开关回退，并提示后端的拒绝原因 */
+    handleKeepaliveChange() {
+      if (!this.keepaliveReady) return
+      const target = this.keepalive
+      setOltKeepalive(target, this.keepaliveMinutes * 60000)
+        .then(res => {
+          const data = res.data || {}
+          this.keepalive = !!data.keepaliveEnabled
+          this.$message.success(target
+            ? '会话保活已开启：每台 OLT 最多 2 个会话轮换，' + this.keepaliveMinutes + ' 分钟探活一次'
+            : '会话保活已关闭：会话 1 分钟没人用将退出登录')
+        })
+        .catch(() => {
+          this.keepalive = !target
         })
     },
     openCreate() {

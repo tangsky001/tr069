@@ -78,6 +78,26 @@ export function quickSyncOlt(id) {
   })
 }
 
+/** 会话池状态：保活开关、探活周期、每台设备的空闲会话数 */
+export function fetchOltSessionPool() {
+  return request({
+    url: '/olt/session-pool',
+    method: 'get'
+  })
+}
+
+/**
+ * 保活开关：开 = 每台 OLT 池中最多 2 个会话轮换，定期 display client 探活；
+ * 关（默认）= 会话 1 分钟没人用就 quit 退出登录，轮询采集要用时自己再登录
+ */
+export function setOltKeepalive(enabled, intervalMs) {
+  return request({
+    url: '/olt/session-pool/keepalive',
+    method: 'post',
+    data: { enabled, intervalMs }
+  })
+}
+
 /**
  * 实时刷新：直连 OLT 采最新数据并写库，返回最新那份。
  * 页面打开、对 OLT 做过操作之后都走它，数据以设备为准。

@@ -1408,6 +1408,91 @@ public class OltCliSession implements Closeable {
         client.close();
     }
 
+    /**
+     * 会话池复用前的体检与复位。
+     *
+     * <p>池里的会话用完不关、下次接着用，但 telnet 长连接有两个问题必须先处理：</p>
+     * <ul>
+     *   <li>半开连接：OLT 侧可能已经把空闲会话踢掉（最大会话数超限、空闲超时），
+     *       TCP 还显示 ESTABLISHED，实际早死了——发一个回车看提示符还回不回来；</li>
+     *   <li>视图残留：上一轮操作可能停在 config / 接口视图里（queryCommands、
+     *       sendConfigCommands 发完不退视图），不退回去，下一轮的 enable/config 会报错。</li>
+     * </ul>
+     *
+     * @return 会话可用（活着、已回基础视图、上一轮回显记录已清）返回 true；要重开返回 false
+     */
+    public boolean reviveForPool(int timeoutMs) {
+        try {
+            String out = ping(timeoutMs);
+            // 最多退三层（接口视图 → config → 特权），再退就是 logout，会停在 y/n 确认上
+            for (int round = 0; isSubView(out) && round < 3; round++) {
+                client.resetBuffer();
+                client.sendLine("quit");
+                out = client.readUntilAny(List.of(SHELL_PROMPT), Math.min(2000, timeoutMs));
+            }
+            if (!SHELL_PROMPT.matcher(out).find() || isSubView(out)) {
+                return false;
+            }
+            // 上一轮的记录不能带进下一轮：transcript 会整段落库，lastError 也是上一轮的
+            transcript.setLength(0);
+            lastError = null;
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * 发一条 {@code display client} 探活：活着就回在线用户表 + 提示符，死了等满超时
+     * 只拿到空串（readUntilAny 超时抛 IOException，交给调用方判死）。
+     *
+     * <p>用真命令而不是空回车——华为 OLT 上它带回设备的在线会话表，别的厂商不认
+     * 也只会回一句 Unknown command + 提示符，同样证明连接活着。</p>
+     */
+    private String ping(int timeoutMs) throws IOException {
+        client.resetBuffer();
+        client.sendLine("display client");
+        return client.readUntilAny(List.of(SHELL_PROMPT), Math.min(5000, Math.max(1000, timeoutMs)));
+    }
+
+    /** 是否停在 config / 接口视图里：华为 {@code (config)#}、{@code (config-if-gpon-0/1)#}，第三方同类写法 */
+    private static boolean isSubView(String out) {
+        return out != null && (out.contains("(config") || out.contains("-if-"));
+    }
+
+    /** 退出登录过程中的停点：y/n 确认、回到提示符（quit 不被认时）、重新出登录提示 */
+    private static final List<Pattern> LOGOUT_STOPS = List.of(INTERACTIVE_ASK, SHELL_PROMPT, USERNAME_PROMPT);
+
+    /**
+     * 优雅退出登录并关闭连接：发 {@code quit}，停在「确认退出? (y/n)」上就答 y，
+     * 在子视图里就逐层退出去再退登录。
+     *
+     * <p>不保活模式下归还会话用：比直接断 TCP 好——OLT 当场释放会话名额，
+     * 不用等设备自己的空闲超时去回收，别的运维登录也不至于被顶在门外。</p>
+     */
+    public void logoutAndClose() {
+        try {
+            for (int round = 0; round < 4; round++) {
+                client.resetBuffer();
+                client.sendLine("quit");
+                String out = client.readUntilAny(LOGOUT_STOPS, 3000);
+                if (isAsking(out)) {
+                    client.resetBuffer();
+                    client.sendLine("y");
+                    out = client.readUntilAny(LOGOUT_STOPS, 3000);
+                }
+                // 连接已被设备断开（读到空），或者退回到登录界面，就是退出完成
+                if (out == null || out.isBlank() || USERNAME_PROMPT.matcher(out).find()) {
+                    break;
+                }
+            }
+        } catch (IOException e) {
+            // 设备退出登录后直接断连接，读抛异常是正常收尾
+        } finally {
+            close();
+        }
+    }
+
     // ---------------------------------------------------------------- 登录
 
     private void login(String username, String password, long timeoutMs) throws IOException {
