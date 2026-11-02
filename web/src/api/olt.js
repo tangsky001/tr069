@@ -160,6 +160,72 @@ export function deleteDbaProfiles(id, profileIds) {
 }
 
 /**
+ * 线路模板里加一条 T-CONT：下发 tcont <索引> dba-profile-id <DBA 模板>，
+ * 成功后只重读这条线路模板。data: { profileId, ponType, tcontId, dbaProfileId }
+ */
+export function addLineTcont(id, data) {
+  return request({
+    url: '/olt/' + id + '/line-profile/tcont',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 线路模板里加一个 GEM Port：gem add <索引> eth tcont <T-CONT> encrypt on。
+ * data: { profileId, ponType, tcontId, gemportId }
+ */
+export function addLineGemport(id, data) {
+  return request({
+    url: '/olt/' + id + '/line-profile/gemport',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 给 GEM Port 加映射：gem mapping <GEM> <映射序号> vlan <VLAN>（逗号分隔可一次多条）。
+ * data: { profileId, ponType, gemportId, mappingIds, vlans }
+ */
+export function addLineGemMapping(id, data) {
+  return request({
+    url: '/olt/' + id + '/line-profile/gem-mapping',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 线路模板三个弹窗的表单元数据：默认值、已占用的索引、可用区间、灰字提示
+ * 全在后端按快照算好，页面只管渲染。
+ * @param {number|string} id OLT ID
+ * @param {number} profileId 线路模板 ID
+ * @param {number} [gemportId] 加映射时带上，后端才算得出来这个 GEM 里哪些序号占了
+ */
+export function fetchLineProfileForm(id, profileId, gemportId) {
+  return request({
+    url: '/olt/' + id + '/line-profile/form',
+    method: 'get',
+    params: { profileId, gemportId }
+  })
+}
+
+/**
+ * 线路模板三个弹窗的命令预演：不下发，只返回这次会执行的命令与提醒。
+ * data: { kind: 'tcont'|'gemport'|'mapping', profileId, tcontId, dbaProfileId, gemportId, mappingIds, vlans }
+ */
+export function previewLineProfile(id, data) {
+  return request({
+    url: '/olt/' + id + '/line-profile/preview',
+    method: 'post',
+    data
+  })
+}
+
+/**
  * 这台 OLT 支持的命令动作目录（鸿升光对应手册 13 章里的功能格）。
  * 返回 [{ code, chapter, label, view, commands, params, query, danger, note }]
  */
@@ -202,6 +268,32 @@ export function deleteOltVlans(id, vlanIds) {
     method: 'delete',
     data: vlanIds,
     timeout: 180000
+  })
+}
+
+/**
+ * 上行口放通 VLAN：下发 port vlan <列表> <框/槽> <端口>（Native 时带 native），
+ * 成功后立刻只重读 VLAN，返回的详情里就是最新的 VLAN 数据。
+ * data: { iface: '0/7/0', vlanIds: '41,45-46', nativeVlan: false }
+ */
+export function addOltPortVlan(id, data) {
+  return request({
+    url: '/olt/' + id + '/vlan/port-vlan',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 上行口解除 VLAN 绑定：下发 no port vlan ...，成功后同样立刻只重读 VLAN。
+ */
+export function removeOltPortVlan(id, data) {
+  return request({
+    url: '/olt/' + id + '/vlan/port-vlan',
+    method: 'delete',
+    data,
+    timeout: 120000
   })
 }
 
@@ -252,6 +344,21 @@ export function enableOntAutoFind(id) {
     url: '/olt/' + id + '/ont-auto-find/enable',
     method: 'post',
     timeout: 180000
+  })
+}
+
+/**
+ * 删除业务板上的全部 ONT：后端按库里的板卡定位槽位（如 0/2）和采到 ONT 的端口，
+ * 逐口下发 ont delete <端口> all（设备逐条问 y/n），成功后整机重采。
+ *
+ * @param slots 只清这几块业务板（槽位号）；留空表示所有业务板
+ */
+export function deleteAllOnts(id, slots) {
+  return request({
+    url: '/olt/' + id + '/ont/delete-all',
+    method: 'post',
+    data: { slots: slots || [] },
+    timeout: 300000
   })
 }
 

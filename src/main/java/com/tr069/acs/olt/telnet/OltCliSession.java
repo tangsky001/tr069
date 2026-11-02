@@ -10,6 +10,7 @@ import com.tr069.acs.olt.model.OltSrvProfile;
 import com.tr069.acs.olt.model.OltTrafficTable;
 import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltOnt;
+import com.tr069.acs.olt.model.OltOntDeleteResult;
 import com.tr069.acs.olt.model.OltTemplateInfo;
 import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltPortVlan;
@@ -624,6 +625,164 @@ public class OltCliSession implements Closeable {
             info.setCollectedAt(LocalDateTime.now().withNano(0).toString().replace('T', ' '));
             snapshot.setVlanInfo(info);
         }
+    }
+
+    /**
+     * 只重读一条线路模板：加完 T-CONT / GEM Port / GEM 映射后刷新页面用。
+     *
+     * <p>一条 {@code display ont-lineprofile gpon profile-id X} 就够——模板改了什么，
+     * 详情回显里 T-CONT、GEM、映射表全都在。不跑全量采集。</p>
+     *
+     * @return 解析出的模板；回显认不出时返回 null（调用方保留旧数据）
+     */
+    public OltLineProfile collectLineProfile(int profileId, String ponType) throws OltTelnetException {
+        prepareTerminal(vendorHint);
+        int timeout = commandTimeoutMs;
+        String command = profile().lineProfileDetailCommand(ponType, profileId);
+        if (command == null) {
+            throw new OltTelnetException("这台设备的厂商还没接入线路模板查询命令");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），线路模板未重读");
+        }
+        try {
+            String text = runCommand(command, timeout);
+            return OltInfoParser.parseLineProfiles(text).stream()
+                    .filter(profile -> Integer.valueOf(profileId).equals(profile.getProfileId()))
+                    .findFirst()
+                    .orElse(null);
+        } finally {
+            // 退回 config 视图：留在模板视图里下次登录的状态就对不上了
+            runQuietly("quit", timeout);
+        }
+    }
+
+    /**
+     * 清空业务板上的全部 ONT：现场怎么敲这里就怎么发，不跑全量采集、不探版本/温度。
+     *
+     * <p>命令就这几条：
+     * <pre>
+     * display board 0          ← 业务板插在哪个槽位（这台是 2 号槽位）
+     * enable
+     * config
+     * display board 0/2        ← 这块板上哪些口挂着 ONT
+     * interface gpon 0/2
+     * ont delete 0 all         ← 设备追问「确定执行该命令? (y/n)[n]」，应答 y
+     * quit
+     * </pre>
+     * 只对「有 ONT 的口」发删除命令：空口设备回一句 Failure，白等一个来回还容易被判成失败。
+     * </p>
+     *
+     * @param wantedSlots 只清这几块板（槽位号）；空表示所有 PON 业务板
+     * @return 每块板一份结果：删掉了哪些口、哪几个口被设备拒绝
+     */
+    public List<OltOntDeleteResult> deleteBoardOnts(List<Integer> wantedSlots) throws OltTelnetException {
+        prepareTerminal(vendorHint, true);
+        int timeout = commandTimeoutMs;
+        List<OltBoard> boards = serviceBoards(wantedSlots, Math.min(timeout, BOARD_PROBE_TIMEOUT_MS));
+        if (boards.isEmpty()) {
+            throw new OltTelnetException("display board 0 里没有 PON 业务板，没地方可删");
+        }
+        OltVendorProfile profile = profile();
+        if (profile.boardDetailCommand(0, 0) == null || profile.ontDeleteAllCommand(0) == null) {
+            throw new OltTelnetException("这台设备的厂商还没接入 ONT 删除命令");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），ONT 未删除");
+        }
+        List<OltOntDeleteResult> results = new ArrayList<>();
+        for (OltBoard board : boards) {
+            results.add(deleteBoardOnts(board, profile, timeout));
+        }
+        return results;
+    }
+
+    /** {@code display board 0} → 只要业务板（PON 板）；指定了槽位就只留那几块 */
+    private List<OltBoard> serviceBoards(List<Integer> wantedSlots, int timeout) {
+        String text = "";
+        for (String command : profile().boardCommands()) {
+            String out = runCommand(command, timeout);
+            if (out != null && !out.isBlank()) {
+                text = out;
+                break;
+            }
+        }
+        List<OltBoard> service = new ArrayList<>();
+        for (OltBoard board : OltInfoParser.parseBoards(text)) {
+            if (board.getSlotNo() == null
+                    || !OltInfoParser.BoardKind.SERVICE.name().equals(board.getBoardKind())) {
+                continue;
+            }
+            if (wantedSlots != null && !wantedSlots.isEmpty() && !wantedSlots.contains(board.getSlotNo())) {
+                continue;
+            }
+            service.add(board);
+        }
+        return service;
+    }
+
+    /** 一块板的完整删除流程：看 ONT → 进 PON 板视图 → 逐口 ont delete all（答 y）→ quit */
+    private OltOntDeleteResult deleteBoardOnts(OltBoard board, OltVendorProfile profile, int timeout) {
+        int slot = board.getSlotNo();
+        String ponType = "EPON".equalsIgnoreCase(board.getPortMode()) ? "epon" : "gpon";
+        OltOntDeleteResult result = new OltOntDeleteResult();
+        result.setSlot(slot);
+        result.setPonType(ponType);
+        List<Integer> ports = portsWithOnts(runCommand(profile.boardDetailCommand(0, slot), timeout));
+        if (ports.isEmpty()) {
+            return result;
+        }
+        runCommand(profile.ponViewCommand(0, slot, ponType), timeout);
+        for (int port : ports) {
+            String out = runInteractive(profile.ontDeleteAllCommand(port), List.of("y"));
+            result.getOutputs().add(out == null ? "" : out);
+            if (commandRejected(out) != null) {
+                result.getFailedPorts().add(port);
+            } else {
+                result.getDeletedPorts().add(port);
+            }
+        }
+        // 退回 config 视图：留在接口视图里，下一块板的命令就发错地方了
+        runQuietly("quit", timeout);
+        return result;
+    }
+
+    /** {@code display board 0/2} 回显里「挂了 ONT 的端口」：认每口末尾那句 total of ONTs */
+    private static List<Integer> portsWithOnts(String text) {
+        Map<Integer, int[]> counts = OltInfoParser.parseOntCounts(text);
+        List<Integer> ports = new ArrayList<>();
+        counts.forEach((port, value) -> {
+            if (value != null && value.length > 0 && value[0] > 0) {
+                ports.add(port);
+            }
+        });
+        ports.sort(Integer::compareTo);
+        return ports;
+    }
+
+    /**
+     * 只重采 VLAN：{@code display vlan all} + 各上行/主控口 {@code display port vlan}，
+     * 顺手把三层接口与路由表带上（各一条，开销很小）。
+     *
+     * <p>VLAN 下发后页面要立刻看到新数据，没必要为一次 VLAN 变更把板卡、端口、ONT
+     * 全采一遍（华为那套几十条命令十几秒）。</p>
+     *
+     * @param boards 库里已有的板卡：只用来知道哪些槽位是上行口、每个口有多少端口
+     */
+    public OltVlanInfo collectVlansOnly(List<OltBoard> boards) throws OltTelnetException {
+        prepareTerminal(vendorHint);
+        int timeout = Math.min(commandTimeoutMs, 8000);
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），VLAN 未重采");
+        }
+        OltSnapshot snapshot = new OltSnapshot();
+        try {
+            collectVlans(boards == null ? List.of() : boards, snapshot, timeout);
+        } finally {
+            // 只退到特权视图：再 quit 一次就是 logout，设备会停下来问 y/n
+            runQuietly("quit", timeout);
+        }
+        return snapshot.getVlanInfo();
     }
 
     /**
@@ -1632,9 +1791,7 @@ public class OltCliSession implements Closeable {
         int timeout = Math.min(commandTimeoutMs, 4000);
         if (vendor != null && vendor != OltVendor.GENERIC) {
             List<String> commands = OltVendorProfiles.of(vendor).pagingCommands();
-            for (String command : firstOnly && !commands.isEmpty() ? commands.subList(0, 1) : commands) {
-                runQuietly(command, timeout);
-            }
+            runPaging(firstOnly && !commands.isEmpty() ? commands.subList(0, 1) : commands, timeout);
             return;
         }
         List<String> huawei = OltVendorProfiles.of(OltVendor.HUAWEI).pagingCommands();
@@ -1642,16 +1799,36 @@ public class OltCliSession implements Closeable {
         List<String> generic = OltVendorProfiles.of(OltVendor.GENERIC).pagingCommands();
         if (firstOnly) {
             // 认不出厂商：华为的 scroll 与第三方通用的 terminal length 0 各来一条
-            runQuietly(huawei.get(0), timeout);
-            runQuietly(generic.get(0), timeout);
+            runPaging(List.of(first(huawei), first(generic)), timeout);
             return;
         }
-        for (String command : huawei) {
-            runQuietly(command, timeout);
+        List<String> all = new ArrayList<>(huawei);
+        all.addAll(thirdParty);
+        all.addAll(generic);
+        runPaging(all, timeout);
+    }
+
+    /**
+     * 逐条关分页，设备认下第一条就收手。
+     *
+     * <p>华为 {@code scroll} 生效后，列表里后面那条 {@code screen-length 0 temporary}
+     * （VRP 交换机的写法）在 OLT 上必然回 {@code % Unknown command}——以前照发不误，
+     * 每次采集都白搭一个来回还多一段报错回显。认下一条就够了，后面的不必再试。</p>
+     */
+    private void runPaging(List<String> commands, int timeout) {
+        for (String command : commands) {
+            if (command == null || command.isBlank()) {
+                continue;
+            }
+            String out = runQuietly(command, timeout);
+            if (out != null && !out.isBlank() && commandRejected(out) == null) {
+                return;
+            }
         }
-        for (String command : thirdParty) {
-            runQuietly(command, timeout);
-        }
+    }
+
+    private static String first(List<String> commands) {
+        return commands == null || commands.isEmpty() ? "" : commands.get(0);
     }
 
     /**

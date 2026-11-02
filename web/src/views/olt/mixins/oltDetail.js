@@ -7,8 +7,14 @@ import {
   confirmOltBoards,
   createDbaProfile,
   deleteDbaProfiles,
+  addLineTcont,
+  addLineGemport,
+  addLineGemMapping,
   createOltVlan,
   deleteOltVlans,
+  addOltPortVlan,
+  removeOltPortVlan,
+  deleteAllOnts,
   fetchOltActions,
   quickSetupOlt,
   execOltAction,
@@ -498,6 +504,21 @@ export const oltDetailMixin = {
       return deleteDbaProfiles(this.detailId, profileIds)
         .then(res => this.applyAfterConfig(res, '删除DBA模板'))
     },
+    /** 线路模板加 T-CONT（下发 tcont <索引> dba-profile-id <DBA>） */
+    addTcont(payload) {
+      return addLineTcont(this.detailId, payload)
+        .then(res => this.applyAfterConfig(res, '新增T-CONT'))
+    },
+    /** 线路模板加 GEM Port（下发 gem add <索引> eth tcont <T-CONT> encrypt on） */
+    addGemport(payload) {
+      return addLineGemport(this.detailId, payload)
+        .then(res => this.applyAfterConfig(res, '新增GEM Port'))
+    },
+    /** 给 GEM Port 加映射（下发 gem mapping <GEM> <序号> vlan <VLAN>） */
+    addGemMapping(payload) {
+      return addLineGemMapping(this.detailId, payload)
+        .then(res => this.applyAfterConfig(res, '新增GEM映射'))
+    },
     /** 新增 VLAN（鸿升光下发 vlan standard），VLAN 面板的弹窗调用 */
     createVlan(payload) {
       return createOltVlan(this.detailId, payload)
@@ -507,6 +528,27 @@ export const oltDetailMixin = {
     deleteVlan(vlanIds) {
       return deleteOltVlans(this.detailId, vlanIds)
         .then(res => this.applyAfterConfig(res, '删除VLAN'))
+    },
+    /**
+     * 上行口放通 VLAN（下发 port vlan 41,45-46 0/7 0），VLAN 透传表的「添加」调用。
+     * 后端下发成功后只重读 VLAN，接口返回的就是最新快照，页面换上即可。
+     */
+    addPortVlan(payload) {
+      return addOltPortVlan(this.detailId, payload)
+        .then(res => this.applyAfterConfig(res, '放通 VLAN'))
+    },
+    /** 上行口解除 VLAN 绑定（下发 no port vlan ...） */
+    removePortVlan(payload) {
+      return removeOltPortVlan(this.detailId, payload)
+        .then(res => this.applyAfterConfig(res, '移除 VLAN'))
+    },
+    /**
+     * 删除业务板上的全部 ONT（interface gpon 0/<槽位> → 逐口 ont delete <端口> all）。
+     * 槽位/端口由后端按库里采到的实际板卡算，接口返回的就是重采后的最新详情。
+     */
+    deleteAllOnts(slots) {
+      return deleteAllOnts(this.detailId, slots)
+        .then(res => this.applyAfterConfig(res, '删除业务板 ONU'))
     },
     /** 拉「设备配置」页签的命令动作目录（按厂商 profile 给，没接入动作目录的厂商是空表） */
     loadActions() {
