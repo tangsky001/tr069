@@ -1,6 +1,10 @@
 package com.tr069.acs.olt.service;
 
+import com.tr069.acs.olt.entity.OltBoard;
 import com.tr069.acs.olt.entity.OltDevice;
+import com.tr069.acs.olt.model.OltLineProfile;
+import com.tr069.acs.olt.model.OltOntDeleteResult;
+import com.tr069.acs.olt.model.OltVlanInfo;
 import com.tr069.acs.olt.telnet.OltCharset;
 import com.tr069.acs.olt.telnet.OltSnapshot;
 import lombok.extern.slf4j.Slf4j;
@@ -87,6 +91,78 @@ public class OltTelnetService {
     private OltSnapshot doCollectBoards(OltDevice device, Charset charset) throws IOException {
         return sessionPool.execute(device, charset, charsetStrict(device, charset),
                 session -> session.collectBoardsOnly());
+    }
+
+    /**
+     * 只重读一条线路模板（加完 T-CONT / GEM Port / 映射后刷新用）：一条
+     * {@code display ont-lineprofile gpon profile-id X}，不跑全量采集。
+     */
+    public OltLineProfile collectLineProfile(OltDevice device, int profileId, String ponType)
+            throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.collectLineProfile(profileId, ponType));
+    }
+
+    /**
+     * 清空业务板上的全部 ONT：登录一次，只发那几条命令（板卡位置 → 进板视图 → 逐口删除），
+     * 不跑全量采集。「自动」编码解出乱码时换 GBK 再来一次。
+     */
+    public List<OltOntDeleteResult> deleteBoardOnts(OltDevice device, List<Integer> slots) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        List<OltOntDeleteResult> results = doDeleteBoardOnts(device, charset, slots);
+        if (OltCharset.isAuto(device.getCharset()) && garbledDelete(results)) {
+            log.debug("OLT {} 删除 ONT 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            results = doDeleteBoardOnts(device, OltCharset.fallback(), slots);
+        }
+        return results;
+    }
+
+    private List<OltOntDeleteResult> doDeleteBoardOnts(OltDevice device, Charset charset, List<Integer> slots)
+            throws IOException {
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.deleteBoardOnts(slots));
+    }
+
+    private static boolean garbledDelete(List<OltOntDeleteResult> results) {
+        if (results == null) {
+            return false;
+        }
+        return results.stream().flatMap(result -> result.getOutputs().stream())
+                .anyMatch(out -> out != null && out.indexOf('\uFFFD') >= 0);
+    }
+
+    /**
+     * 只重采 VLAN（上行口 VLAN 下发后立刻刷新用）：一条 {@code display vlan all}
+     * + 各上行口 {@code display port vlan}，不跑全量采集；「自动」编码解出乱码时同样换 GBK 再来一次。
+     *
+     * @param boards 库里已有的板卡，用来判断哪些槽位是上行口
+     */
+    public OltVlanInfo collectVlans(OltDevice device, List<OltBoard> boards) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        OltVlanInfo info = doCollectVlans(device, charset, boards);
+        if (OltCharset.isAuto(device.getCharset()) && garbledVlans(info)) {
+            log.debug("OLT {} VLAN 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            info = doCollectVlans(device, OltCharset.fallback(), boards);
+        }
+        return info;
+    }
+
+    private OltVlanInfo doCollectVlans(OltDevice device, Charset charset, List<OltBoard> boards)
+            throws IOException {
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.collectVlansOnly(boards));
+    }
+
+    /** VLAN 快照里有没有解错的替换符（端口清单这类文本最可能先暴露出来） */
+    private static boolean garbledVlans(OltVlanInfo info) {
+        if (info == null || info.getVlans() == null) {
+            return false;
+        }
+        return info.getVlans().stream().anyMatch(vlan ->
+                (vlan.getType() != null && vlan.getType().indexOf('\uFFFD') >= 0)
+                        || (vlan.getTaggedPorts() != null && vlan.getTaggedPorts().indexOf('\uFFFD') >= 0)
+                        || (vlan.getUntaggedPorts() != null && vlan.getUntaggedPorts().indexOf('\uFFFD') >= 0));
     }
 
     /**

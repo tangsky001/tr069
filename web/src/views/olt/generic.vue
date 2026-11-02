@@ -113,6 +113,8 @@
               :vlan-ip-interfaces="vlanIpInterfaces"
               :static-routes="staticRoutes"
               :vlan-group-rows="vlanGroupRows"
+              :add-port-vlan-handler="addPortVlan"
+              :remove-port-vlan-handler="removePortVlan"
               empty-text="尚未采集到 VLAN 信息，也可以点上面的「同步」立即刷新。"
             />
           </template>

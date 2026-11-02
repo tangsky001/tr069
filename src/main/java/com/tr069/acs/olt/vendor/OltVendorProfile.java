@@ -159,6 +159,27 @@ public interface OltVendorProfile {
     }
 
     /**
+     * 上行口放通 VLAN 的命令（华为例：{@code port vlan 41,45-46 0/7 0}）。
+     *
+     * @param iface      页面上的口，写法 {@code 0/7/0}
+     * @param vlanIds    要放通的 VLAN，升序去重
+     * @param nativeVlan true 表示按 Native（不打标签）下发
+     * @return 要逐条下发的命令；不支持时返回空表
+     */
+    default List<String> addPortVlanCommands(String iface, List<Integer> vlanIds, boolean nativeVlan) {
+        return List.of();
+    }
+
+    /**
+     * 上行口解除 VLAN 绑定的命令（华为例：{@code no port vlan 41,45-46 0/7 0}）。
+     *
+     * @return 要逐条下发的命令；不支持时返回空表
+     */
+    default List<String> removePortVlanCommands(String iface, List<Integer> vlanIds) {
+        return List.of();
+    }
+
+    /**
      * 这台设备支持在页面上直接下发的命令动作（对应手册里一个个「功能 / 命令」格子）。
      *
      * <p>默认空表：没接入动作目录的厂商，页面不显示「设备配置」入口。
@@ -231,6 +252,16 @@ public interface OltVendorProfile {
     /** 进某块 PON 板视图的命令，如 {@code interface gpon 0/1} */
     default String ponViewCommand(int frame, int slot) {
         return null;
+    }
+
+    /**
+     * 进某块 PON 板视图的命令，端口类型不同写法不同（{@code interface epon 0/1}）。
+     * 默认不管类型，按 {@link #ponViewCommand(int, int)} 给。
+     *
+     * @param ponType {@code gpon} / {@code epon}
+     */
+    default String ponViewCommand(int frame, int slot, String ponType) {
+        return ponViewCommand(frame, slot);
     }
 
     /** 查单个 PON 口开关的命令（在上面那个视图里执行） */
@@ -331,6 +362,43 @@ public interface OltVendorProfile {
     }
 
     /**
+     * 线路模板里加一条 T-CONT（华为例：{@code tcont 1 dba-profile-id 1000}）。
+     *
+     * <p>返回值是「整段命令」：进模板视图 → 配 T-CONT → commit → quit。模板必须 commit
+     * 才生效，留在模板视图里下一条命令就发错地方了，所以这里一次给全。</p>
+     *
+     * @param ponType      gpon / epon
+     * @param profileId    线路模板 ID
+     * @param tcontId      T-CONT 索引
+     * @param dbaProfileId 这条 T-CONT 引用的 DBA 模板 ID
+     * @return 要逐条下发的命令；不支持时返回空表
+     */
+    default List<String> lineTcontAddCommands(String ponType, int profileId, int tcontId, int dbaProfileId) {
+        return List.of();
+    }
+
+    /**
+     * 线路模板里加一个 GEM Port（华为例：{@code gem add 1 eth tcont 1 encrypt on}）。
+     *
+     * @param tcontId GEM Port 挂在哪条 T-CONT 上
+     * @return 要逐条下发的命令；不支持时返回空表
+     */
+    default List<String> lineGemportAddCommands(String ponType, int profileId, int gemportId, int tcontId) {
+        return List.of();
+    }
+
+    /**
+     * 给线路模板里的一个 GEM Port 加映射（华为例：{@code gem mapping 1 0 vlan 46}）。
+     *
+     * @param mappings 每项是 {@code {映射序号, VLAN ID}}
+     * @return 要逐条下发的命令；不支持时返回空表
+     */
+    default List<String> lineGemMappingAddCommands(String ponType, int profileId, int gemportId,
+                                                   List<int[]> mappings) {
+        return List.of();
+    }
+
+    /**
      * 这台设备支不支持给已注册的 ONT 建业务虚口。
      *
      * <p>光猫注册上（{@code ont confirm}）只是通了 OMCI 管理通道，用户流量要走
@@ -360,6 +428,21 @@ public interface OltVendorProfile {
 
     /** 删掉一个已注册 ONT 的命令（PON 板视图里执行）：{@code ont delete <port> <ontId>} */
     default String ontDeleteCommand(int port, int ontId) {
+        return null;
+    }
+
+    /**
+     * 单块板的详情命令（华为例：{@code display board 0/2}）：板卡型号、每个 PON 口
+     * 的光模块状态，以及每口挂了几个 ONT。清空 ONT 前用它看清楚哪些口上有东西。
+     *
+     * @return 命令；不支持时返回 null
+     */
+    default String boardDetailCommand(int frame, int slot) {
+        return null;
+    }
+
+    /** 清空一个 PON 口下全部 ONT 的命令（华为例：{@code ont delete 0 all}） */
+    default String ontDeleteAllCommand(int port) {
         return null;
     }
 

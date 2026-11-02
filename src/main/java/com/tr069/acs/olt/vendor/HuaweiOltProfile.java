@@ -295,10 +295,64 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
      */
     @Override
     public String lineProfileDetailCommand(String ponType, int profileId) {
-        // 模板上没写 PON 类型就按 gpon：华为这两台都是 GPON 业务板
+        return "display " + lineProfileView(ponType, profileId);
+    }
+
+    /**
+     * 加 T-CONT：{@code tcont 1 dba-profile-id 1000}，必须先有那条 DBA 模板。
+     *
+     * <pre>
+     * ont-lineprofile gpon profile-id 100
+     * tcont 1 dba-profile-id 1000
+     * commit
+     * quit
+     * </pre>
+     */
+    @Override
+    public List<String> lineTcontAddCommands(String ponType, int profileId, int tcontId, int dbaProfileId) {
+        return lineProfileCommands(lineProfileView(ponType, profileId),
+                "tcont " + tcontId + " dba-profile-id " + dbaProfileId);
+    }
+
+    /**
+     * 加 GEM Port：{@code gem add 1 eth tcont 1 encrypt on}。
+     * 第二个参数是它挂的 T-CONT，设备上那条 T-CONT 得先存在。
+     */
+    @Override
+    public List<String> lineGemportAddCommands(String ponType, int profileId, int gemportId, int tcontId) {
+        return lineProfileCommands(lineProfileView(ponType, profileId),
+                "gem add " + gemportId + " eth tcont " + tcontId + " encrypt on");
+    }
+
+    /** 加 GEM 映射：{@code gem mapping <GEM Port> <映射序号> vlan <VLAN>}，一条映射一条命令 */
+    @Override
+    public List<String> lineGemMappingAddCommands(String ponType, int profileId, int gemportId,
+                                                  List<int[]> mappings) {
+        if (mappings == null || mappings.isEmpty()) {
+            return List.of();
+        }
+        List<String> body = new ArrayList<>();
+        for (int[] mapping : mappings) {
+            body.add("gem mapping " + gemportId + " " + mapping[0] + " vlan " + mapping[1]);
+        }
+        return lineProfileCommands(lineProfileView(ponType, profileId), body.toArray(new String[0]));
+    }
+
+    /** {@code ont-lineprofile gpon profile-id 100}；模板上没写 PON 类型就按 gpon */
+    private static String lineProfileView(String ponType, int profileId) {
         String view = ponType == null || ponType.isBlank()
                 ? "gpon" : ponType.trim().toLowerCase(Locale.ROOT);
-        return "display ont-lineprofile " + view + " profile-id " + profileId;
+        return "ont-lineprofile " + view + " profile-id " + profileId;
+    }
+
+    /** 模板视图里的一段命令：进视图 → 配置 → commit（不 commit 不生效）→ quit 回 config 视图 */
+    private static List<String> lineProfileCommands(String view, String... body) {
+        List<String> commands = new ArrayList<>();
+        commands.add(view);
+        commands.addAll(java.util.Arrays.asList(body));
+        commands.add("commit");
+        commands.add("quit");
+        return commands;
     }
 
     /**
@@ -326,6 +380,24 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
     @Override
     public String ontDeleteCommand(int port, int ontId) {
         return "ont delete " + port + " " + ontId;
+    }
+
+    /** 单块板详情：{@code display board 0/2}，回显里就有每口挂了几个 ONT */
+    @Override
+    public String boardDetailCommand(int frame, int slot) {
+        return "display board " + frame + "/" + slot;
+    }
+
+    /** 清空一个 PON 口下全部 ONT：{@code ont delete 0 all}（设备随后问 y/n） */
+    @Override
+    public String ontDeleteAllCommand(int port) {
+        return "ont delete " + port + " all";
+    }
+
+    /** EPON 板进 {@code interface epon 0/2}，GPON 板进 {@code interface gpon 0/2} */
+    @Override
+    public String ponViewCommand(int frame, int slot, String ponType) {
+        return "interface " + ("epon".equalsIgnoreCase(ponType) ? "epon" : "gpon") + " " + frame + "/" + slot;
     }
 
     /**
@@ -411,5 +483,95 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
                 OltCliSession.ANSWER_PREFIX + info,
                 OltCliSession.ANSWER_PREFIX + "n"        // 只建这一个，不再接着建
         );
+    }
+
+    // ---------------------------------------------------------------- 上行口 VLAN 透传
+
+    /**
+     * 上行口放通 VLAN：先确保 VLAN 存在，再 {@code port vlan 41,45-46 0/7 0}。
+     *
+     * <p>设备上 VLAN 不存在时 {@code port vlan 104 0/7 0} 直接回
+     * {@code Failure: VLAN does not exist}——光放通不建 VLAN 是配不上的，所以每条
+     * VLAN 前面补一条 {@code vlan <ID> smart}：已经存在的会回 {@code VLAN has existed}，
+     * 下发时按「已有配置」跳过，不影响后面的放通。</p>
+     *
+     * <p>命令把「框/槽」和「端口号」当两个参数给（{@code 0/7} + {@code 0}），
+     * 页面上的 {@code 0/7/0} 得拆开；尾巴上带 {@code native} 表示这个 VLAN 在口上不打标签。
+     * 一条 {@code port vlan} 能带一串 VLAN（逗号/区间都认），所以多个 VLAN 一次放通；
+     * 一条命令只能带一个端口，页面填了多个口（{@code 0/7/0,0/7/1}）就逐口各发一条。</p>
+     */
+    @Override
+    public List<String> addPortVlanCommands(String iface, List<Integer> vlanIds, boolean nativeVlan) {
+        List<String> targets = uplinkTargets(iface);
+        if (targets.isEmpty() || vlanIds == null || vlanIds.isEmpty()) {
+            return List.of();
+        }
+        List<String> commands = new ArrayList<>();
+        // 先建 VLAN：省略这一步，设备回「Failure: VLAN does not exist」，端口上一次也放不通
+        vlanIds.stream().filter(id -> id != null).distinct().sorted()
+                .forEach(id -> commands.add("vlan " + id + " smart"));
+        for (String target : targets) {
+            commands.add("port vlan " + joinVlans(vlanIds) + " " + target + (nativeVlan ? " native" : ""));
+        }
+        return commands;
+    }
+
+    /** 上行口解除 VLAN 绑定：{@code no port vlan 41,45-46 0/7 0}，多个口逐口各一条 */
+    @Override
+    public List<String> removePortVlanCommands(String iface, List<Integer> vlanIds) {
+        List<String> targets = uplinkTargets(iface);
+        if (targets.isEmpty() || vlanIds == null || vlanIds.isEmpty()) {
+            return List.of();
+        }
+        List<String> commands = new ArrayList<>();
+        for (String target : targets) {
+            commands.add("no port vlan " + joinVlans(vlanIds) + " " + target);
+        }
+        return commands;
+    }
+
+    /**
+     * 一个或多个上行口：{@code 0/7/0}、{@code 0/7/0,0/7/1}、{@code 0/7/0 0/17/0} 都认，
+     * 逐个转成命令里的 {@code 0/7 0} 写法，去重保序。
+     */
+    private static List<String> uplinkTargets(String iface) {
+        if (iface == null || iface.isBlank()) {
+            return List.of();
+        }
+        List<String> targets = new ArrayList<>();
+        for (String piece : iface.trim().split("[,，;；\\s]+")) {
+            String target = uplinkTarget(piece);
+            if (target != null && !targets.contains(target)) {
+                targets.add(target);
+            }
+        }
+        return targets;
+    }
+
+    /**
+     * {@code 0/7/0} → {@code 0/7 0}：把端口号从路径里拆出来。
+     * 只写到框和槽的（{@code 0/7}）不知道具体哪个口，返回 null 由上层提示，不替用户猜。
+     */
+    private static String uplinkTarget(String iface) {
+        if (iface == null || iface.isBlank()) {
+            return null;
+        }
+        String[] pieces = iface.trim().split("/");
+        if (pieces.length < 3) {
+            return null;
+        }
+        String port = pieces[pieces.length - 1];
+        String path = String.join("/", java.util.Arrays.copyOf(pieces, pieces.length - 1));
+        return path + " " + port;
+    }
+
+    /** {@code [41, 46, 45]} → {@code 41,45,46}：命令里的 VLAN 列表，升序去重 */
+    private static String joinVlans(List<Integer> vlanIds) {
+        return vlanIds.stream()
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .sorted()
+                .map(String::valueOf)
+                .collect(java.util.stream.Collectors.joining(","));
     }
 }

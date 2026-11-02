@@ -8,7 +8,13 @@ import com.tr069.acs.olt.model.OltDbaForm;
 import com.tr069.acs.olt.model.OltDbaProfileRequest;
 import com.tr069.acs.olt.model.OltExecRequest;
 import com.tr069.acs.olt.model.OltExecResult;
+import com.tr069.acs.olt.model.OltOntDeleteAllRequest;
 import com.tr069.acs.olt.model.OltOntQueryRequest;
+import com.tr069.acs.olt.model.OltLineProfileForm;
+import com.tr069.acs.olt.model.OltLineProfilePreviewRequest;
+import com.tr069.acs.olt.model.OltTcontRequest;
+import com.tr069.acs.olt.model.OltGemportRequest;
+import com.tr069.acs.olt.model.OltGemMappingRequest;
 import com.tr069.acs.olt.model.OltOntQueryResult;
 import com.tr069.acs.olt.model.OltQuickSetupRequest;
 import com.tr069.acs.olt.model.OltDeviceOptions;
@@ -35,6 +41,7 @@ import com.tr069.acs.olt.model.OltTr069Profile;
 import com.tr069.acs.olt.model.OltTr069ProfileRequest;
 import com.tr069.acs.olt.model.OltVlanRequest;
 import com.tr069.acs.olt.model.OltKeepaliveRequest;
+import com.tr069.acs.olt.model.OltPortVlanRequest;
 import com.tr069.acs.olt.service.OltOntRegService;
 import com.tr069.acs.olt.service.OltQuickSetupConfigService;
 import com.tr069.acs.olt.service.OltService;
@@ -342,6 +349,92 @@ public class OltController {
     }
 
     /**
+     * 线路模板三个弹窗的表单元数据：默认值、已占用的索引、可用区间、提示文字
+     * 全由后端按库里的快照算好，页面只管渲染。
+     */
+    @GetMapping("/{id}/line-profile/form")
+    public Result<OltLineProfileForm> lineProfileForm(@PathVariable Long id,
+                                                      @RequestParam Integer profileId,
+                                                      @RequestParam(required = false) Integer gemportId) {
+        try {
+            return Result.success(oltService.lineProfileForm(id, profileId, gemportId));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("查询线路模板表单异常 id={}", id, e);
+            return Result.failure("查询线路模板表单失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 线路模板三个弹窗的命令预演：不下发，返回这次会执行的命令与提醒。
+     */
+    @PostMapping("/{id}/line-profile/preview")
+    public Result<OltQuickSetupPreview> previewLineProfile(@PathVariable Long id,
+                                                           @RequestBody OltLineProfilePreviewRequest request) {
+        try {
+            return Result.success(oltService.previewLineProfile(id, request));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("线路模板命令预演异常 id={}", id, e);
+            return Result.failure("命令预演失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 线路模板里加一条 T-CONT：{@code tcont <索引> dba-profile-id <DBA 模板>}，
+     * 下发成功后只重读这条模板。
+     */
+    @PostMapping("/{id}/line-profile/tcont")
+    public Result<OltDetail> addLineTcont(@PathVariable Long id,
+                                          @RequestBody OltTcontRequest request,
+                                          HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.addLineTcont(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("线路模板加 T-CONT 异常 id={}", id, e);
+            return Result.failure("线路模板加 T-CONT 失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 线路模板里加一个 GEM Port：{@code gem add <GEM 索引> eth tcont <T-CONT> encrypt on}。
+     */
+    @PostMapping("/{id}/line-profile/gemport")
+    public Result<OltDetail> addLineGemport(@PathVariable Long id,
+                                            @RequestBody OltGemportRequest request,
+                                            HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.addLineGemport(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("线路模板加 GEM Port 异常 id={}", id, e);
+            return Result.failure("线路模板加 GEM Port 失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 给 GEM Port 加映射：{@code gem mapping <GEM> <映射序号> vlan <VLAN>}（可一次多条）。
+     */
+    @PostMapping("/{id}/line-profile/gem-mapping")
+    public Result<OltDetail> addLineGemMapping(@PathVariable Long id,
+                                               @RequestBody OltGemMappingRequest request,
+                                               HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.addLineGemMapping(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("线路模板加 GEM 映射异常 id={}", id, e);
+            return Result.failure("线路模板加 GEM 映射失败：" + e.getMessage());
+        }
+    }
+
+    /**
      * 删除勾选的 DBA 模板：逐条下发 dba-profile delete，成功后自动重采。
      */
     @DeleteMapping("/{id}/dba-profile")
@@ -443,6 +536,45 @@ public class OltController {
     }
 
     /**
+     * 上行口放通 VLAN：下发 {@code port vlan 41,45-46 0/7 0}（Native 时带 native 关键字），
+     * 成功后立刻只重读 VLAN（不跑全量采集），返回的详情里就是最新的 VLAN 数据。
+     */
+    @PostMapping("/{id}/vlan/port-vlan")
+    public Result<OltDetail> addPortVlan(@PathVariable Long id,
+                                         @RequestBody OltPortVlanRequest request,
+                                         HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.addPortVlan(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("上行口放通 VLAN 异常 id={}", id, e);
+            return Result.failure("上行口放通 VLAN 失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 上行口解除 VLAN 绑定：下发 {@code no port vlan ...}，成功后同样立刻只重读 VLAN。
+     */
+    @DeleteMapping("/{id}/vlan/port-vlan")
+    public Result<OltDetail> removePortVlan(@PathVariable Long id,
+                                            @RequestBody OltPortVlanRequest request,
+                                            HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.removePortVlan(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("上行口移除 VLAN 异常 id={}", id, e);
+            return Result.failure("上行口移除 VLAN 失败：" + e.getMessage());
+        }
+    }
+
+    /**
      * 删除勾选的 VLAN：下发 {@code no vlan ...}，成功后自动重采。
      */
     @DeleteMapping("/{id}/vlan")
@@ -529,6 +661,29 @@ public class OltController {
         } catch (Exception e) {
             log.error("开启 PON 口自动发现异常 id={}", id, e);
             return Result.failure("开启自动发现失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 删除业务板上的全部 ONT：进该项业务的 PON 板视图逐口下发
+     * {@code ont delete <端口> all}（设备每条都问 y/n，应答随命令带过去），成功后整机重采。
+     *
+     * <p>槽位和端口都按库里采到的实际板卡来（这台是 2 号槽位就发
+     * {@code interface gpon 0/2}），body 里的 slots 留空表示所有业务板。</p>
+     */
+    @PostMapping("/{id}/ont/delete-all")
+    public Result<OltDetail> deleteAllOnts(@PathVariable Long id,
+                                           @RequestBody(required = false) OltOntDeleteAllRequest request,
+                                           HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.deleteAllOnts(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("删除业务板 ONT 异常 id={}", id, e);
+            return Result.failure("删除业务板 ONT 失败：" + e.getMessage());
         }
     }
 

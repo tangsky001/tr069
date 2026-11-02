@@ -1,7 +1,12 @@
 <template>
   <div>
-    <!-- 顶部操作条：写操作先占位（下发能力稍后接入），同步ONT状态接实时刷新 -->
+    <!-- 顶部操作条：左边 ONT 汇总，右边写操作（先占位）+ 实时刷新 -->
     <div class="ont-toolbar">
+      <div v-if="ontSummary" class="ont-stat">
+        <span>总数：<b>{{ ontSummary.total }}</b></span>
+        <span class="ont-stat-online">在线：<b>{{ ontSummary.online }}</b></span>
+        <span class="ont-stat-offline">离线：<b>{{ ontSummary.offline }}</b></span>
+      </div>
       <el-button size="small" disabled icon="el-icon-position">下发 TR069 VLAN 及 ACS 地址</el-button>
       <el-button size="small" disabled icon="el-icon-plus">增加业务流</el-button>
       <el-button size="small" disabled icon="el-icon-setting">TR069位重配</el-button>
@@ -111,7 +116,7 @@
       </el-table-column>
     </el-table>
 
-    <!-- 底部批量操作：勾选行后生效，写通道还没接，点了只提示 -->
+    <!-- 底部批量操作：勾选行后生效，写通道还没接，点了只提示；最后一个是整块业务板的清理 -->
     <div class="ont-table-foot">
       <span class="ont-selected-hint">
         {{ selected.length ? '已选 ' + selected.length + ' 条' : '勾选 ONT 后可批量操作' }}
@@ -122,6 +127,18 @@
         </el-button>
         <el-button size="small" type="danger" :disabled="!selected.length" @click="batchDelete">
           删除注册
+        </el-button>
+        <el-button
+          size="small"
+          type="danger"
+          plain
+          icon="el-icon-delete"
+          title="删除这块业务板全部 PON 口上的 ONT（不需要勾选）"
+          :loading="deleting"
+          :disabled="!deletableOntTotal"
+          @click="confirmDeleteAllOnts"
+        >
+          删除业务板 ONU
         </el-button>
       </div>
     </div>
@@ -483,9 +500,19 @@ export default {
       type: [Number, String],
       default: null
     },
+    /** ONT 汇总（总数/在线/离线）：由父页面算好传进来，和操作按钮排在同一行 */
+    ontSummary: {
+      type: Object,
+      default: null
+    },
     emptyText: {
       type: String,
       default: '尚未采集到端口/ONT 数据。点右上角「同步ONT状态」立即采集。'
+    },
+    /** 删除业务板全部 ONT：父页面传进来，槽位/端口由后端按库里板卡算 */
+    deleteAllHandler: {
+      type: Function,
+      default: null
     }
   },
   data() {
@@ -493,6 +520,8 @@ export default {
       stateFilter: '',
       portFilter: '',
       selected: [],
+      /** 删除业务板 ONT 下发中：按钮转圈，防止连点重复下发 */
+      deleting: false,
       queryVisible: false,
       queryLoading: false,
       queryAction: '',
@@ -572,6 +601,21 @@ export default {
         })
       })
       return options
+    },
+    /**
+     * 有 ONT 的业务板：按钮是否可用、确认框里列哪几块板都按它来。
+     * 槽位取的是采到的实际值（这台是 2 号槽位就是 0/2），不写死。
+     */
+    deletableBoards() {
+      return this.ontBoards
+        .map(board => ({
+          slotNo: board.no,
+          total: board.ports.reduce((sum, port) => sum + (port.onuTotal || 0), 0)
+        }))
+        .filter(board => board.slotNo != null && board.total > 0)
+    },
+    deletableOntTotal() {
+      return this.deletableBoards.reduce((sum, board) => sum + board.total, 0)
     },
     /**
      * 查询弹窗的卡片数据：每块回显转成「字段 / 值」行，英文标签翻成中文，
@@ -722,6 +766,38 @@ export default {
     },
     batchDelete() {
       this.$message.info('写操作暂未开放：删除注册（ont delete）后续接入')
+    },
+    /**
+     * 删除业务板上的全部 ONU：按采到的业务板逐块清（这台是 2 号槽位就发
+     * {@code interface gpon 0/2} 再逐口 {@code ont delete <端口> all}），后端下发成功后整机重采。
+     */
+    confirmDeleteAllOnts() {
+      const boards = this.deletableBoards
+      if (!boards.length) {
+        this.$message.warning('当前没有采到 ONT，先「同步ONT状态」再试')
+        return
+      }
+      if (typeof this.deleteAllHandler !== 'function') {
+        this.$message.warning('当前页面没有接上删除业务板 ONU 的接口')
+        return
+      }
+      const detail = boards.map(board => '0/' + board.slotNo + '（' + board.total + ' 个）').join('、')
+      const hint = '将删除 ' + detail + ' 上的全部 ONT，共 ' + this.deletableOntTotal +
+        ' 个；设备上的注册与业务配置随之消失，确定继续？'
+      this.$confirm(
+        hint,
+        '删除业务板 ONU',
+        { type: 'warning', confirmButtonText: '确定删除', cancelButtonText: '取消' }
+      )
+        .then(() => {
+          this.deleting = true
+          return this.deleteAllHandler(boards.map(board => board.slotNo))
+            .catch(() => {})
+            .finally(() => {
+              this.deleting = false
+            })
+        })
+        .catch(() => {})
     },
     /**
      * 点 SN 打开详情：display ont info，IP / 模板 / 掉线原因都在这份里。
@@ -1010,5 +1086,28 @@ export default {
   word-break: break-all;
   max-height: 320px;
   overflow: auto;
+}
+/* 操作条最左边的 ONT 汇总窗：总数 / 在线 / 离线，和按钮同一行 */
+.ont-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  margin-right: 4px;
+  padding: 4px 12px;
+  font-size: 13px;
+  color: #606266;
+  background: #f5f7fa;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+.ont-stat b {
+  font-size: 15px;
+  color: #303133;
+}
+.ont-stat-online b {
+  color: #67c23a;
+}
+.ont-stat-offline b {
+  color: #909399;
 }
 </style>

@@ -136,6 +136,8 @@
             :vlan-ip-interfaces="vlanIpInterfaces"
             :static-routes="staticRoutes"
             :vlan-group-rows="vlanGroupRows"
+            :add-port-vlan-handler="addPortVlan"
+            :remove-port-vlan-handler="removePortVlan"
             empty-text="尚未采集到 VLAN 信息。后台启动后会自动采一轮、之后每 5 分钟一次（display vlan all），也可以点上面的「同步」立即刷新。"
             @save="afterOltOperation"
           />
@@ -155,6 +157,9 @@
             :line-profiles="lineProfiles"
             :create-handler="createDba"
             :delete-handler="deleteDba"
+            :tcont-handler="addTcont"
+            :gemport-handler="addGemport"
+            :gem-mapping-handler="addGemMapping"
             empty-text="尚未采集到 DBA / 线路模板。点上面的「同步」，采集时会跑 display dba-profile all 与 display ont-lineprofile gpon all。"
           />
         </el-tab-pane>
@@ -168,22 +173,12 @@
         </el-tab-pane>
 
         <el-tab-pane label="ONT 配置/状态" name="ont">
-          <div class="olt-summary">
-            <div>
-              业务板 <b>{{ ontBoards.length }}</b> 块，端口 <b>{{ ontPortTotal }}</b> 个，
-              ONT <b>{{ ontSummary.total }}</b> 个（在线 {{ ontSummary.online }} / 离线 {{ ontSummary.offline }}）。
-            </div>
-            <div>
-              列表数据来自每块业务板一条 <code>display ont info 0 &lt;槽位&gt; all</code>；
-              行上的「详情 / 光信息 / 版本 / 注册历史」图标点开时才登录设备查一次
-              （<code>display ont info / optical-info / version / register-info</code>）；
-              点 SN 或「线路/业务模板」列还能看到这条 ONT 的 IP、绑定的模板与业务流。
-            </div>
-          </div>
-
+          <!-- 汇总窗（总数 / 在线 / 离线）由面板渲染，和操作按钮排在同一行 -->
           <olt-ont-status-panel
             :ont-boards="ontBoards"
+            :ont-summary="ontSummary"
             :olt-id="detailId"
+            :delete-all-handler="deleteAllOnts"
             :empty-text="'尚未采集到端口/ONT 数据。点右上角「同步ONT状态」立即采集。'"
             @sync="refreshFull"
           />
@@ -528,4 +523,5 @@ export default {
   background: #fcf8e3;
   border-left: 3px solid #f0c36d;
 }
+
 </style>
