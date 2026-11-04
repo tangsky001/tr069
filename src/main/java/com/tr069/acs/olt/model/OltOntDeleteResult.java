@@ -3,13 +3,7 @@ package com.tr069.acs.olt.model;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 一块业务板清空 ONT 的结果：哪些口删掉了、哪几个口被设备顶回来了。
- *
- * <p>流程是现场敲的那几条命令（{@code display board 0/2} 看哪些口有 ONT →
- * {@code interface gpon 0/2} → {@code ont delete <端口> all} 答 y），
- * 一块板一份结果，删成功的口由服务层当场把库里的 ONT 清掉。</p>
- */
+/** 一块业务板清空 ONT 的结果：哪些口删掉了、哪几个口被设备顶回来了 */
 public class OltOntDeleteResult {
 
     /** 板卡槽位号 */

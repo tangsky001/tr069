@@ -2,9 +2,7 @@ package com.tr069.acs.worklist.tpl.entity;
 
 import lombok.Data;
 
-/**
- * SIP 语音配置。一行 = 一个 Line 实例（P22g-CIac 是 1-4）。
- */
+/** SIP 语音配置。一行 = 一个 Line 实例（P22g-CIac 是 1-4） */
 @Data
 public class Sip {
 

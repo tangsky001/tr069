@@ -5,12 +5,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 一次命令动作的执行结果。
- *
- * <p>查询类（{@link OltAction#query()}）只看 {@code outputs}，页面上原样贴回显；
- * 配置类执行完会重采一次，{@code detail} 带着最新的板卡/VLAN 等数据，页面直接换上去。</p>
- */
+/** 一次命令动作的执行结果 */
 @Data
 public class OltExecResult {
 

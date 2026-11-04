@@ -10,22 +10,18 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 按运营商的能力采集标准。
- */
+/** 按运营商的能力采集标准 */
 @Data
 @ConfigurationProperties(prefix = "acs.device.capability")
 public class CapabilityProfiles {
 
-    /** 总开关：关掉后一律走内置默认标准（等同移动那套）。 */
+    /** 总开关：关掉后一律走内置默认标准（等同移动那套） */
     private boolean profileEnabled = true;
 
-    /** 各家运营商的采集标准。 */
+    /** 各家运营商的采集标准 */
     private Map<String, Profile> profiles = new LinkedHashMap<>();
 
-    /**
-     * 取某家运营商的采集标准：yml 里配了就用配的，没配用 {@link #builtin} 里写死的那份。
-     */
+    /** 取某家运营商的采集标准：yml 里配了就用配的，没配用 {@link #builtin} 里写死的那份 */
     public Profile forIsp(Isp isp) {
         Isp target = isp == null ? Isp.STANDARD : isp;
         if (!profileEnabled) {
@@ -35,9 +31,7 @@ public class CapabilityProfiles {
         return configured != null ? configured : builtin(target);
     }
 
-    /**
-     * 写死的采集标准：四家运营商 + 通用档各一份。
-     */
+    /** 写死的采集标准：四家运营商 + 通用档各一份 */
     public static Profile builtin(Isp isp) {
         Profile profile = new Profile();
         Isp target = isp == null ? Isp.STANDARD : isp;
@@ -147,80 +141,59 @@ public class CapabilityProfiles {
         return null;
     }
 
-    /**
-     * 一家运营商的采集标准。
-     */
+    /** 一家运营商的采集标准 */
     @Data
     public static class Profile {
 
-        /** 递归优先：先 {@code NextLevel=false} 一次拿全量，失败再逐层展开。 */
+        /** 递归优先：先 {@code NextLevel=false} 一次拿全量，失败再逐层展开 */
         public static final String STRATEGY_RECURSIVE_FIRST = "recursive-first";
 
-        /** 逐层优先：先 {@code NextLevel=true} 逐层下钻，设备不吃递归时用它。 */
+        /** 逐层优先：先 {@code NextLevel=true} 逐层下钻，设备不吃递归时用它 */
         public static final String STRATEGY_LEVEL_FIRST = "level-first";
 
-        /**
-         * 只读关键字段：一条 GetParameterNames 都不发，直接按需 GetParameterValues。
-         */
+        /** 只读关键字段：一条 GetParameterNames 都不发，直接按需 GetParameterValues */
         public static final String STRATEGY_VALUES_ONLY = "values-only";
 
-        /**
-         * 自适应：先按参数树扫，扫不动就降级为只读关键字段，并记住这台设备。
-         */
+        /** 自适应：先按参数树扫，扫不动就降级为只读关键字段，并记住这台设备 */
         public static final String STRATEGY_ADAPTIVE = "adaptive";
 
-        /** 展示名，只进日志。 */
+        /** 展示名，只进日志 */
         private String name = "";
 
-        /**
-         * GPN 策略：{@code recursive-first}（默认）或 {@code level-first}。
-         */
+        /** GPN 策略：{@code recursive-first}（默认）或 {@code level-first} */
         private String gpnStrategy = STRATEGY_RECURSIVE_FIRST;
 
-        /**
-         * 父对象整棵拉不到时，是否按实例号 {@code 1..N} 逐个探测。
-         */
+        /** 父对象整棵拉不到时，是否按实例号 {@code 1..N} 逐个探测 */
         private boolean instanceProbe = true;
 
-        /** 实例探测的最大实例号，探到第一个不存在的实例号就停。 */
+        /** 实例探测的最大实例号，探到第一个不存在的实例号就停 */
         private int maxInstances = 4;
 
-        /**
-         * TR-098（{@code InternetGatewayDevice.}）下的业务子树，相对根节点书写。
-         * 留空用内置默认：WAN / LAN 网口（含 WiFi）/ 语音。
-         */
+        /** TR-098（{@code InternetGatewayDevice.}）下的业务子树，相对根节点书写 */
         private List<String> subtrees = List.of();
 
-        /** TR-181（{@code Device.}）下的业务子树，留空用内置默认。 */
+        /** TR-181（{@code Device.}）下的业务子树，留空用内置默认 */
         private List<String> subtreesTr181 = List.of();
 
-        /**
-         * 兜底探测路径：GPN 各种姿势都失败时，改用 GetParameterValues 直接读这些路径。
-         *
-         * <p>逐个路径单独发（一条一回），代价是每条等一个上报周期，只在已知关键路径时填。</p>
-         */
+        /** 兜底探测路径：GPN 各种姿势都失败时，改用 GetParameterValues 直接读这些路径 */
         private List<String> probePaths = List.of();
 
-        /**
-         * 逐层展开时要绕开的对象名前缀：命中就记下这个对象，但不再往下展开。
-         */
+        /** 逐层展开时要绕开的对象名前缀：命中就记下这个对象，但不再往下展开 */
         private List<String> skipPrefixes = List.of();
 
-        /**
-         * 是否逐层优先。
-         */
+        /** 是否逐层优先 */
         public boolean isLevelFirst() {
             return STRATEGY_LEVEL_FIRST.equalsIgnoreCase(
                     gpnStrategy == null ? "" : gpnStrategy.trim());
         }
 
-        /** 是否只读关键字段、完全不扫参数树。 */
+        /** 是否只读关键字段、完全不扫参数树 */
         public boolean isValuesOnly() {
             return STRATEGY_VALUES_ONLY.equalsIgnoreCase(
                     gpnStrategy == null ? "" : gpnStrategy.trim());
         }
 
-        /** 是否先试参数树、扫不动再降级为只读关键字段。 */
+        /** 是否先试参数树、扫不动再降级为只读关键字段 */
         public boolean isAdaptive() {
             return STRATEGY_ADAPTIVE.equalsIgnoreCase(
                     gpnStrategy == null ? "" : gpnStrategy.trim());

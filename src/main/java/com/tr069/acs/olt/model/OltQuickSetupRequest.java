@@ -4,26 +4,11 @@ import lombok.Data;
 
 import java.util.List;
 
-/**
- * 一键开局的请求体：把开局要做的几件事一次性提交，后端按顺序编成命令下发。
- *
- * <p>三个步骤各自独立，哪个字段是空就跳过哪一步：</p>
- * <ol>
- *   <li>{@link #ports} 非空 → 改端口 VLAN 模式（默认 trunk）；</li>
- *   <li>{@link #createVlanIds} 非空 → 创建业务 VLAN，勾了 {@link #addCreatedToPorts}
- *       再把上面那些端口当 tagged 成员加进去；</li>
- *   <li>{@link #tr069} 非空 → 建一个 TR-069（ACS）模板。</li>
- * </ol>
- */
+/** 一键开局的请求体：把开局要做的几件事一次性提交，后端按顺序编成命令下发 */
 @Data
 public class OltQuickSetupRequest {
 
-    /**
-     * 页面上「统一端口 VLAN 模式」这一步勾没勾。
-     *
-     * <p>没勾就完全不动端口——即使 {@link #ports} 里有内容也忽略，
-     * 免得页面取消了勾选、后端照着残留的端口清单把命令发出去。</p>
-     */
+    /** 页面上「统一端口 VLAN 模式」这一步勾没勾 */
     private Boolean portModeEnabled = Boolean.TRUE;
 
     /** 要改模式的端口，空就是不改端口 */
@@ -32,10 +17,7 @@ public class OltQuickSetupRequest {
     /** 端口 VLAN 模式：access / hybrid / trunk */
     private String mode;
 
-    /**
-     * trunk、hybrid 放通的 VLAN 列表，写法 {@code 100-200,300}；
-     * 空表示只改模式，不动已经在放通的 VLAN。
-     */
+    /** trunk、hybrid 放通的 VLAN 列表，写法 {@code 100-200,300} */
     private String vlanList;
 
     /** 要创建的 VLAN ID，写法 {@code 100,200} 或 {@code 100-105}；空就是不建 */
@@ -47,21 +29,10 @@ public class OltQuickSetupRequest {
     /** TR-069 模板参数，null 就是不建 */
     private OltTr069ProfileRequest tr069;
 
-    /**
-     * 华为开局参数；不为 null 时整态都按华为那套模板流程走。
-     *
-     * <p>华为开局要建 DBA、线路、业务、TR-069 四套模板，跟上面「改端口 VLAN 模式」
-     * 那三个字段没什么关系，所以另开一段：带上这段就走 {@code HuaweiQuickSetupPlanner}，
-     * 上面的 {@link #ports} / {@link #mode} / {@link #createVlanIds} 全部忽略。</p>
-     */
+    /** 华为开局参数；不为 null 时整态都按华为那套模板流程走 */
     private HuaweiQuickSetupRequest huawei;
 
-    /**
-     * 页面勾选的一个端口：{@code {"type":"epon","no":1}}。
-     *
-     * <p>用 type + no 而不是 {@code epon1} 这种字符串，是因为这里既要拼
-     * {@code interface epon 1} 又要拼 {@code port epon 1 tagged}，分开存不用再拆一遍。</p>
-     */
+    /** 页面勾选的一个端口：{@code {"type":"epon","no":1}} */
     @Data
     public static class PortRef {
 

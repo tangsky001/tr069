@@ -29,18 +29,18 @@
       <el-table-column label="业务域" prop="domain" width="110" />
       <el-table-column label="状态" width="100">
         <template slot-scope="{ row }">
-          <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
+          <el-tag :type="row.statusLevel || 'info'" size="small">{{ row.statusText || row.status }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作人" prop="username" width="100" />
       <el-table-column label="创建时间" min-width="160">
         <template slot-scope="{ row }">
-          <span>{{ formatTime(row.timeInit) }}</span>
+          <span>{{ row.timeInitText }}</span>
         </template>
       </el-table-column>
       <el-table-column label="完成时间" min-width="160">
         <template slot-scope="{ row }">
-          <span>{{ formatTime(row.timeExecFinish) }}</span>
+          <span>{{ row.timeExecFinishText }}</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
@@ -68,7 +68,7 @@
         <el-table-column label="方法" prop="rpc" width="170" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template slot-scope="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
+            <el-tag :type="row.statusLevel || 'info'" size="small">{{ row.statusText || row.status }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="耗时(ms)" prop="durationMs" width="90" />
@@ -166,16 +166,17 @@ export default {
       }
       this.tracking.push(id)
       let finished = false
-      let result = ''
+      let last = null
       // 每 3 秒查一次，最多约 10 分钟
       for (let i = 0; i < 200; i++) {
         await this.sleep(3000)
         try {
           const res = await fetchInstance(id)
           const record = res.data
-          if (record && record.status) {
-            result = record.status
-            if (record.status === 'success' || record.status === 'fail' || record.status === 'abnormal') {
+          if (record) {
+            last = record
+            // 是不是跑完了由后端判（finished）：status 的终态集合只在后端维护一份
+            if (record.finished) {
               finished = true
               break
             }
@@ -188,10 +189,10 @@ export default {
       this.tracking = this.tracking.filter(x => x !== id)
       this.load()
       if (finished) {
-        if (result === 'success') {
+        if (last && last.status === 'success') {
           this.$message.success('工单 ' + id + ' 执行成功')
         } else {
-          this.$message.warning('工单 ' + id + ' 执行结束，状态 ' + result)
+          this.$message.warning('工单 ' + id + ' 执行结束，状态 ' + (last ? last.statusText : ''))
         }
       } else {
         this.$message.info('工单 ' + id + ' 仍在执行，稍后可刷新查看')
@@ -200,16 +201,7 @@ export default {
     sleep(ms) {
       return new Promise(resolve => setTimeout(resolve, ms))
     },
-    statusType(status) {
-      if (status === 'success') return 'success'
-      if (status === 'fail' || status === 'abnormal') return 'danger'
-      if (status === 'running') return 'primary'
-      return 'info'
-    },
-    formatTime(value) {
-      if (!value) return '-'
-      return String(value).replace('T', ' ')
-    },
+    // 状态中文/标签色与两个时间文本都由后端随工单记录给（statusText / statusLevel / *Text）
     formatJson(value) {
       if (!value) return '-'
       if (typeof value === 'string') {

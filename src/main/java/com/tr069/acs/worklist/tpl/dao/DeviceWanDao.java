@@ -10,15 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * WAN 杩炴帴瀹炰緥 DAO銆備竴琛?= 涓€鏉?WAN 杩炴帴鐨勫叏閮ㄤ笅鍙戣矾寰勪笌鍙橀噺鍊笺€?
- *
- * <p><b>瀹炰緥鍙蜂笉鍚屽瀷鍙峰樊鍒緢澶?/b>锛氫腑鍏?P22g-CIac 瀹炴祴鏄?9-12锛屽埆鐨勫瀷鍙峰彲鑳戒粠 1 寮€濮嬶紝
- * 鎵€浠ユ寜璁惧瀹為檯閲囬泦鍊煎瓨锛屼笉鍋氫换浣?浠?1 杩炵画缂栧彿"鐨勫亣璁俱€?/p>
- *
- * <p>{@code conn_type} 鏍囧嚭杩欐潯杩炴帴鐨勪笟鍔＄被鍒紙IPoE / PPPoE / Bridge锛夛紝
- * 涓嬪彂鍏ュ彛鎹鎸戣鐢ㄥ摢濂楁ā鏉裤€?/p>
- */
+/** WAN 杩炴帴瀹炰緥 DAO銆備竴琛?= 涓€鏉?WAN 杩炴帴鐨勫叏閮ㄤ笅鍙戣矾寰勪笌鍙橀噺鍊笺€? */
 @Repository
 public class DeviceWanDao {
 
@@ -98,7 +90,7 @@ public class DeviceWanDao {
         return jdbc.update("DELETE FROM device_wan WHERE device_id = ?", deviceId);
     }
 
-    /** 鎸?(device_id, instance_no) 鏂板鎴栨洿鏂帮紝杩斿洖涓婚敭骞跺洖濉埌瀹炰綋銆?*/
+    /** 鎸?(device_id, instance_no) 鏂板鎴栨洿鏂帮紝杩斿洖涓婚敭骞跺洖濉埌瀹炰綋銆? */
     public long upsert(DeviceWan r) {
         Optional<DeviceWan> exist = findOne(r.getDeviceId(), r.getInstanceNo());
         if (exist.isPresent()) {

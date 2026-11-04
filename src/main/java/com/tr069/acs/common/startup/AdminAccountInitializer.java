@@ -11,28 +11,19 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
-/**
- * 初始管理员账号兜底。
- *
- * <p>初始管理员本身由建库脚本写入（见 sql/schema.sql 末尾的种子账号），这里只是兜底：
- * 存量库执行过旧脚本时 sys_user 可能仍为空，启动时检查到没有账号才补一个。</p>
- *
- * <p>账号几乎一律以数据库为准：一旦库里已有账号这里就什么都不做，
- * 改这里的常量不会影响已有账号。口令这样写代码里而不是配置里，是因为它只在
- * 「一条数据都没有」的首次部署瞬间生效，可被配置文件改动的空间只会带来误解。</p>
- */
+/** 初始管理员账号兜底 */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AdminAccountInitializer implements ApplicationRunner {
 
-    /** 兜底账号的登录名，与 sql/schema.sql 里的种子账号一致。 */
+    /** 兜底账号的登录名，与 sql/schema.sql 里的种子账号一致 */
     private static final String DEFAULT_USERNAME = "admin";
 
-    /** 兜底账号的初始口令，首次登录后应在管理端立即修改。 */
+    /** 兜底账号的初始口令，首次登录后应在管理端立即修改 */
     private static final String DEFAULT_PASSWORD = "admin";
 
-    /** 兜底账号的显示名。 */
+    /** 兜底账号的显示名 */
     private static final String DEFAULT_NICKNAME = "系统管理员";
 
     private final SysUserMapper sysUserMapper;

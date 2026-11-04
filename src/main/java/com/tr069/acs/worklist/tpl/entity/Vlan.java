@@ -2,11 +2,7 @@ package com.tr069.acs.worklist.tpl.entity;
 
 import lombok.Data;
 
-/**
- * VLAN 配置。真实存储位置是 WAN 连接下的 X_CMCC_VLAN* 私有参数（部分型号是标准
- * IEEE 802.1Q），但为管理便利独立成表，{@code wanInstance} 关联
- * {@link DeviceWan#getInstanceNo()}。
- */
+/** VLAN 配置。真实存储位置是 WAN 连接下的 X_CMCC_VLAN* 私有参数（部分型号是标准 */
 @Data
 public class Vlan {
 

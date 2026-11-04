@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 端口下一个 ONT（也就是页面常说的 ONU）的状态。
- *
- * <p>来自 config 视图的 {@code display ont info 0 <槽位> all}：一行一条 ONT，
- * 在线和不在线都会列出来（{@code Run state} 写 online / offline）。</p>
- */
+/** 端口下一个 ONT（也就是页面常说的 ONU）的状态 */
 @Data
 public class OltOnt {
 
@@ -35,6 +30,12 @@ public class OltOnt {
     /** Run state 是不是在线 */
     private Boolean online;
 
+    /** 在线状态中文：在线 / 离线 / 未知（采集没给 runState 时不算离线） */
+    private String stateText;
+
+    /** 配置状态中文：正常 / 初始 / 失败，未采集为空 */
+    private String configText;
+
     /** 设备上的 ONU 名称（鸿升光 {@code show onu-info all} 的 ONU-Name 列，如 ONU01/01） */
     private String name;
 
@@ -61,4 +62,22 @@ public class OltOnt {
 
     /** 接收光功率，回显原样（如 {@code -21.4267 dBm}） */
     private String rxPower;
+
+    /** 管理地址（{@code display ont info} 单台详情里的 ONT IP 0 地址/掩码） */
+    private String mgmtIp;
+
+    /** MAC 地址：优先取单台详情回显里的 MAC 字段；MAC 认证（EPON）的认证码本身就是 MAC */
+    private String mac;
+
+    /** 线路模板编号（单台详情里的 Line profile ID） */
+    private Integer lineProfileId;
+
+    /** 线路模板名称 */
+    private String lineProfileName;
+
+    /** 业务模板编号（单台详情里的 Service profile ID） */
+    private Integer srvProfileId;
+
+    /** 业务模板名称 */
+    private String srvProfileName;
 }

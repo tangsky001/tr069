@@ -2,9 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 一条静态路由，来自 {@code display ip routing-table} 里 Proto 为 Static 的行。
- */
+/** 一条静态路由，来自 {@code display ip routing-table} 里 Proto 为 Static 的行 */
 @Data
 public class OltStaticRoute {
 

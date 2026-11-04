@@ -12,7 +12,7 @@
           <el-select
             v-model="row.role"
             size="mini"
-            :disabled="superAdminCount <= 1 && row.role === 'SUPER_ADMIN'"
+            :disabled="!row.canChangeRole"
             @change="v => changeRole(row, v)"
           >
             <el-option v-for="r in roles" :key="r.code" :label="r.name" :value="r.code" />
@@ -27,7 +27,7 @@
         </template>
       </el-table-column>
       <el-table-column label="最近登录" min-width="150">
-        <template slot-scope="{ row }">{{ formatTime(row.lastLoginAt) }}</template>
+        <template slot-scope="{ row }">{{ row.lastLoginAtText }}</template>
       </el-table-column>
       <el-table-column label="登录地址" min-width="120">
         <template slot-scope="{ row }">{{ row.lastLoginIp || '-' }}</template>
@@ -36,7 +36,7 @@
         <template slot-scope="{ row }">
           <!-- 来源只是个标签，用来知道这个人是从哪儿登进来的 -->
           <el-tag v-if="row.lastLoginSource" size="mini" type="info">
-            {{ sourceText(row.lastLoginSource) }}
+            {{ row.lastLoginSourceText }}
           </el-tag>
           <span v-else>-</span>
         </template>
@@ -46,14 +46,15 @@
           <el-button type="text" @click="openPassword(row)">改密码</el-button>
           <el-button
             type="text"
-            :disabled="superAdminCount <= 1 && row.role === 'SUPER_ADMIN'"
+            :disabled="!row.canToggleStatus"
+            :title="row.canToggleStatus ? '' : '至少要留一个系统管理员'"
             @click="toggleStatus(row)"
           >{{ row.status === 1 ? '禁用' : '启用' }}</el-button>
           <el-button
             type="text"
             class="danger-text"
-            :disabled="row.builtin"
-            :title="row.builtin ? '系统用户禁止删除' : ''"
+            :disabled="!row.canDelete"
+            :title="row.deleteDisabledReason"
             @click="onDelete(row)"
           >删除</el-button>
         </template>
@@ -63,10 +64,10 @@
     <el-dialog title="新建用户" :visible.sync="createVisible" width="420px" append-to-body>
       <el-form label-width="80px">
         <el-form-item label="登录名">
-          <el-input v-model="createForm.username" placeholder="字母数字下划线，4-32 位" />
+          <el-input v-model="createForm.username" :placeholder="policy.usernamePattern" />
         </el-form-item>
         <el-form-item label="密码">
-          <el-input v-model="createForm.password" type="password" placeholder="至少 6 位" show-password />
+          <el-input v-model="createForm.password" type="password" :placeholder="policy.passwordHint" show-password />
         </el-form-item>
         <el-form-item label="显示名">
           <el-input v-model="createForm.nickname" placeholder="不填就用登录名" />
@@ -98,7 +99,7 @@
           />
         </el-form-item>
         <el-form-item label="新密码">
-          <el-input v-model="pwd" type="password" placeholder="至少 6 位" show-password />
+          <el-input v-model="pwd" type="password" :placeholder="policy.passwordHint" show-password />
         </el-form-item>
         <el-form-item label="新密码">
           <el-input v-model="pwd2" type="password" placeholder="和上面一致" show-password />
@@ -114,9 +115,9 @@
 </template>
 
 <script>
-import { fetchUsers, createUser, updateUser, removeUser, fetchRoles } from '@/api/system'
-
-const SOURCE_TEXT = { WEB: '网页端', CLIENT: '客户端', MOBILE: '移动端' }
+import {
+  fetchUsers, createUser, updateUser, removeUser, fetchRoles, fetchPasswordPolicy
+} from '@/api/system'
 
 export default {
   name: 'SystemUsers',
@@ -132,19 +133,24 @@ export default {
       pwdRow: null,
       pwd: '',
       pwd2: '',
-      myPassword: ''
-    }
-  },
-  computed: {
-    // 只剩一个系统管理员时，它的角色与状态都不许动，不然系统就没人能管了
-    superAdminCount() {
-      return this.list.filter(u => u.role === 'SUPER_ADMIN').length
+      myPassword: '',
+      /** 账号与密码策略：最小长度、输入提示都由后端下发，页面不写死 */
+      policy: { minLength: 6, usernamePattern: '', passwordHint: '至少 6 位' }
     }
   },
   created() {
     this.load()
+    fetchPasswordPolicy()
+      .then(res => {
+        if (res.data) {
+          this.policy = { ...this.policy, ...res.data }
+        }
+      })
+      .catch(() => {})
   },
   methods: {
+    // 每行的 canDelete / canToggleStatus / canChangeRole 由后端判好（系统用户、最后一个超管、不能删自己），
+    // 页面只按布尔禁用按钮，不再自己数超管个数
     load() {
       this.loading = true
       fetchRoles()
@@ -154,13 +160,6 @@ export default {
         .then(res => { this.list = res.data || [] })
         .catch(() => {})
         .then(() => { this.loading = false })
-    },
-    sourceText(source) {
-      return SOURCE_TEXT[source] || source
-    },
-    // 后端给的是 ISO 格式（2026-10-29T21:50:02），把中间的 T 换成空格才像给人看的
-    formatTime(value) {
-      return value ? String(value).replace('T', ' ') : '从未登录'
     },
     openCreate() {
       this.createForm = { username: '', password: '', nickname: '', role: '' }
@@ -209,8 +208,9 @@ export default {
         this.$message.warning('先输入你自己的密码做验证')
         return
       }
-      if (this.pwd.length < 6) {
-        this.$message.warning('新密码至少 6 位')
+      // 长度下限来自后端策略；真正的强校验后端还会再做一遍
+      if (this.pwd.length < this.policy.minLength) {
+        this.$message.warning('新密码' + (this.policy.passwordHint || '长度不够'))
         return
       }
       // 两遍不一致就别提交，省得改成一个自己都不知道的密码

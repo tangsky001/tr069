@@ -6,9 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-/**
- * 按型号的能力申报生成该型号的下发模板，落 SQLite 模板库。
- */
+/** 按型号的能力申报生成该型号的下发模板，落 SQLite 模板库 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -16,15 +14,7 @@ public class ModelTemplateService {
 
     private final TemplateBuilder templateBuilder;
 
-    /**
-     * 生成该型号全部业务的模板。
-     *
-     * <p>各业务独立生成，某一项失败不影响其余——能力申报里没有的业务本来就不该写，
-     * 而已经申报的业务不能因为别的一项出问题就一起丢掉。</p>
-     *
-     * @param device 型号主表记录，需已落库有 id
-     * @return 各业务写了几条
-     */
+    /** 生成该型号全部业务的模板 */
     public GenerateResult generateAll(Device device) {
         GenerateResult r = new GenerateResult();
         if (device == null || device.getId() == null) {
@@ -49,7 +39,7 @@ public class ModelTemplateService {
         return r;
     }
 
-    /** 各业务本次写了几条，供回显与日志。 */
+    /** 各业务本次写了几条，供回显与日志 */
     @Data
     public static class GenerateResult {
 
@@ -62,7 +52,7 @@ public class ModelTemplateService {
         private int vlan;
         private int lan;
 
-        /** 落库的总条数，用来判断「这次到底生成出东西没有」。 */
+        /** 落库的总条数，用来判断「这次到底生成出东西没有」 */
         public int total() {
             return wifi.total() + sip.getSip()
                     + wanDhcp.getWan() + wanPppoe.getWan() + wanStatic.getWan()

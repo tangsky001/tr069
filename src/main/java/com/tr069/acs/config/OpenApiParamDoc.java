@@ -3,27 +3,22 @@ package com.tr069.acs.config;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * 在线文档的「参数说明」文字表：请求参数（path / query）一句、响应字段一句。*/
+/** 在线文档的「参数说明」文字表：请求参数（path / query）一句、响应字段一句 */
 final class OpenApiParamDoc {
 
     private OpenApiParamDoc() {
     }
 
-    /** 请求参数说明：参数名 → 一句话。 */
+    /** 请求参数说明：参数名 → 一句话 */
     private static final Map<String, String> PARAM = new HashMap<>();
 
-    /**
-     * 路径里的 {@code {id}} 指的是什么：把 {@code /{id}} 去掉之后的路径 → 主语。
-     *
-     * <p>同一个 {@code id} 在不同接口里是 OLT、模板还是工单，只有路径能区分。</p>
-     */
+    /** 路径里的 {@code {id}} 指的是什么：把 {@code /{id}} 去掉之后的路径 → 主语 */
     private static final Map<String, String> ID_OWNER = new HashMap<>();
 
-    /** 响应字段说明：字段名 → 一句话。同名字段按最主要的那层含义写。 */
+    /** 响应字段说明：字段名 → 一句话。同名字段按最主要的那层含义写 */
     private static final Map<String, String> FIELD = new HashMap<>();
 
-    /** 通用响应体 {@code Result} 的字段说明。 */
+    /** 通用响应体 {@code Result} 的字段说明 */
     private static final Map<String, String> RESULT = new HashMap<>();
 
     static {
@@ -431,13 +426,7 @@ final class OpenApiParamDoc {
         FIELD.put(name, text);
     }
 
-    /**
-     * 取请求参数的说明。
-     *
-     * @param key  `方法 路径`，如 {@code GET /api/olt/{id}}
-     * @param name 参数名
-     * @return 说明，没有就返回 null（界面上那一格留空）
-     */
+    /** 取请求参数的说明 */
     static String param(String key, String name) {
         if (name == null || name.isEmpty()) {
             return null;
@@ -454,17 +443,17 @@ final class OpenApiParamDoc {
         return PARAM.get(name);
     }
 
-    /** 取响应字段的说明，没有就返回 null。 */
+    /** 取响应字段的说明，没有就返回 null */
     static String field(String name) {
         return name == null ? null : FIELD.get(name);
     }
 
-    /** 取通用响应体 {@code Result} 字段的说明，没有就返回 null。 */
+    /** 取通用响应体 {@code Result} 字段的说明，没有就返回 null */
     static String resultField(String name) {
         return name == null ? null : RESULT.get(name);
     }
 
-    /** 响应状态码的说明，灌进「响应状态」那张表。 */
+    /** 响应状态码的说明，灌进「响应状态」那张表 */
     static String status(String httpCode) {
         if ("200".equals(httpCode)) {
             return "接口正常返回；业务是否成功看响应体里的 code，200 才算成功";

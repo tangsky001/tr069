@@ -10,14 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * SIP 语音实例 DAO。一行 = 一路 SIP 账号的全部下发路径与变量值。
- *
- * <p>实例个数由 {@code device.cap_sip_count} 决定。</p>
- *
- * <p>注意：账号口令落 {@code val_pwd} 时必须是变量（如 {@code %sip_pwd%}），
- * 库里出现明文视为 Bug——模板库是要能整个拷走的。</p>
- */
+/** SIP 语音实例 DAO。一行 = 一路 SIP 账号的全部下发路径与变量值 */
 @Repository
 public class SipDao {
 
@@ -77,7 +70,7 @@ public class SipDao {
         return jdbc.update("DELETE FROM sip WHERE device_id = ?", deviceId);
     }
 
-    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体。 */
+    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体 */
     public long upsert(Sip r) {
         Optional<Sip> exist = findOne(r.getDeviceId(), r.getInstanceNo());
         if (exist.isPresent()) {

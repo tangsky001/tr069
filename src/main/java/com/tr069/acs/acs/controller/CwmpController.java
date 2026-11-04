@@ -43,9 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * CWMP 接入端点，设备侧 HTTP 入口：接收 Inform、空 POST 与 RPC 响应。
- */
+/** CWMP 接入端点，设备侧 HTTP 入口：接收 Inform、空 POST 与 RPC 响应 */
 @Slf4j
 @RestController
 @RequiredArgsConstructor
@@ -64,7 +62,7 @@ public class CwmpController {
     private final RpcDeliveryWaiter deliveryWaiter;
     private final CwmpSessionMutex sessionMutex;
 
-    /** 留空即免认证，任何设备凭据都放行；填真实账号才校验，见 {@link CpeAuthenticator#isOpenAccess}。 */
+    /** 留空即免认证，任何设备凭据都放行；填真实账号才校验，见 {@link CpeAuthenticator#isOpenAccess} */
     @Value("${acs.auth.cpe-to-acs-username:}")
     private String defaultCpeUser;
 
@@ -77,35 +75,30 @@ public class CwmpController {
     @Value("${acs.session.wait-rpc-response-timeout:60}")
     private long waitRpcResponseTimeout;
 
-    /**
-     * 队列空时把这一跳请求挂起多久再回 204（毫秒）。挂起期间不占 Tomcat 线程，
-     * 指令入队时按 SN 唤醒，见 {@link RpcDeliveryWaiter}。
-     */
+    /** 队列空时把这一跳请求挂起多久再回 204（毫秒）。挂起期间不占 Tomcat 线程 */
     @Value("${acs.session.piggyback-wait-ms:1500}")
     private long piggybackWaitMs;
 
-    /**
-     * 会话 Cookie 的路径。留空则不写 Path 属性，部分固件对带 Path 的 Cookie 认不全。
-     */
+    /** 会话 Cookie 的路径。留空则不写 Path 属性，部分固件对带 Path 的 Cookie 认不全 */
     @Value("${acs.cwmp.cookies-path:}")
     private String cookiesPath;
 
-    /** 会话号 Cookie 的宽松解析，分隔符认逗号也认分号：部分设备不合规范。 */
+    /** 会话号 Cookie 的宽松解析，分隔符认逗号也认分号：部分设备不合规范 */
     private static final Pattern SESSION_COOKIE = Pattern.compile(
             "\\s*([a-zA-Z0-9\\-_]+?)\\s*=\\s*\"?([a-zA-Z0-9\\-_]*?)\"?\\s*(,|;|$)");
 
-    /** 等下一条指令时的轮询间隔，仅在队列关闭（内存模式）时用得上。 */
+    /** 等下一条指令时的轮询间隔，仅在队列关闭（内存模式）时用得上 */
     private static final long PIGGYBACK_POLL_INTERVAL_MS = 20L;
 
-    /** 单条指令最多尝试下发几次。只有没收到回应才重试；设备回了 fault 直接判失败。 */
+    /** 单条指令最多尝试下发几次。只有没收到回应才重试；设备回了 fault 直接判失败 */
     @Value("${acs.session.max-delivery-attempts:2}")
     private int maxDeliveryAttempts;
 
-    /** 重发前的基本等待（秒），每次按 2 的幂递增，取值参照设备上报周期。 */
+    /** 重发前的基本等待（秒），每次按 2 的幂递增，取值参照设备上报周期 */
     @Value("${acs.session.retry-delay-seconds:60}")
     private long retryDelaySeconds;
 
-    /** 报文顺序不对时是否直接回绝。默认 false，只记日志。 */
+    /** 报文顺序不对时是否直接回绝。默认 false，只记日志 */
     @Value("${acs.session.strict-state-check:false}")
     private boolean strictStateCheck;
 
@@ -116,9 +109,7 @@ public class CwmpController {
                 return t;
             });
 
-    /**
-     * CPE 上报入口，同时兼容 CPE 的 /cpe 路径。
-     */
+    /** CPE 上报入口，同时兼容 CPE 的 /cpe 路径 */
     @RequestMapping(value = {"${acs.cwmp.cpe-path:/ACS-server/ACS}", "/cpe"},
             method = {org.springframework.web.bind.annotation.RequestMethod.POST})
     public void handleCpe(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -139,7 +130,7 @@ public class CwmpController {
 
     // ==================== 空 POST ====================
 
-    /** 处理 CPE 的空 POST：有指令则下发，否则回 204。 */
+    /** 处理 CPE 的空 POST：有指令则下发，否则回 204 */
     private void handleEmptyPost(String connId, HttpServletRequest request, HttpServletResponse response)
             throws IOException {
         // 请求来自哪台设备：优先按 Cookie 里的会话号，退而求其次才是 ip:端口
@@ -165,11 +156,7 @@ public class CwmpController {
         deliverOrSuspend(sn, session, request, response);
     }
 
-    /**
-     * 捎带下一条指令；队列暂时是空的就把这一跳挂起来等入队信号。
-     *
-     * <p>队列关闭（内存 outbox）时没有入队信号，退回短轮询。</p>
-     */
+    /** 捎带下一条指令；队列暂时是空的就把这一跳挂起来等入队信号 */
     private void deliverOrSuspend(String sn, CpeSession session,
                                   HttpServletRequest request, HttpServletResponse response)
             throws IOException {
@@ -187,9 +174,7 @@ public class CwmpController {
         suspendForNextRpc(sn, request, response);
     }
 
-    /**
-     * 把这一跳请求挂起，等指令入队信号把它叫起来。
-     */
+    /** 把这一跳请求挂起，等指令入队信号把它叫起来 */
     private void suspendForNextRpc(String sn, HttpServletRequest request, HttpServletResponse response) {
         if (request == null || !request.isAsyncSupported()) {
             // 拿不到原生请求（降级处理、内嵌调用）或容器不支持异步，
@@ -231,9 +216,7 @@ public class CwmpController {
         deliveryWaiter.register(sn, delivery);
     }
 
-    /**
-     * 取一条待下发指令捎带出去，队列暂时空时轮询一小会儿（仅内存模式用）。
-     */
+    /** 取一条待下发指令捎带出去，队列暂时空时轮询一小会儿（仅内存模式用） */
     private boolean deliverNextRpcWithWait(String sn, CpeSession session, HttpServletResponse response)
             throws IOException {
         if (deliverNextRpc(sn, session, response)) {
@@ -254,12 +237,7 @@ public class CwmpController {
         return false;
     }
 
-    /**
-     * 取一条待下发指令并写进当前 HTTP 响应。
-     *
-     * @return 是否真的下发了指令；{@code false} 表示队列已空（或指令非法已被丢弃），
-     *         由调用方回复 204 结束这一轮
-     */
+    /** 取一条待下发指令并写进当前 HTTP 响应 */
     private boolean deliverNextRpc(String sn, CpeSession session, HttpServletResponse response)
             throws IOException {
         // 「取指令 -> 标记在途 -> 写响应」必须整段串行：并发进来会互相覆盖在途那条
@@ -386,7 +364,7 @@ public class CwmpController {
         deliverOrSuspend(sn, session, request, response);
     }
 
-    /** 抢占这一轮会话的操作权；被别的实例抢到时回 400，让设备下次再来。 */
+    /** 抢占这一轮会话的操作权；被别的实例抢到时回 400，让设备下次再来 */
     private boolean acquireSession(String sn, String sessionId, String previousSessionId,
                                    HttpServletResponse response) throws IOException {
         if (previousSessionId != null && !previousSessionId.equals(sessionId)) {
@@ -400,9 +378,7 @@ public class CwmpController {
         return false;
     }
 
-    /**
-     * 本轮会话到此为止：放开会话锁，之后设备的下一次请求落到哪个实例都能接住。
-     */
+    /** 本轮会话到此为止：放开会话锁，之后设备的下一次请求落到哪个实例都能接住 */
     private void endSessionRound(String sn, CpeSession session, HttpServletResponse response) {
         if (session != null) {
             sessionMutex.release(sn, session.getSessionId());
@@ -410,12 +386,7 @@ public class CwmpController {
         sendStatus(response, 204);
     }
 
-    /**
-     * 处理 TransferComplete：设备下载完文件后的主动上报。
-     *
-     * <p>下载结果不记在 Download 指令的账上：那条指令在设备回 DownloadResponse 时就已经结了，
-     * 这条上报是几分钟之后才到的独立结果，只用来确认这次下载到底成没成。</p>
-     */
+    /** 处理 TransferComplete：设备下载完文件后的主动上报 */
     private void handleTransferComplete(String connId, SoapMessage message,
                                         HttpServletRequest request,
                                         HttpServletResponse response) throws IOException {
@@ -449,7 +420,7 @@ public class CwmpController {
         armWaitPostNullTimer(session);
     }
 
-    /** FaultStruct 有的设备摊平写、有的套一层 Fault，两种都取一遍。 */
+    /** FaultStruct 有的设备摊平写、有的套一层 Fault，两种都取一遍 */
     private static String nested(SoapMessage message, String key) {
         String value = message.stringValue(key);
         if (!value.isEmpty()) {
@@ -463,11 +434,7 @@ public class CwmpController {
         return "";
     }
 
-    /**
-     * 处理 Inform：认证、建会话、回复 InformResponse，参数入库与事件调度交给队列消费者。
-     *
-     * @param cwmpId 设备报文头里的会话 ID，必须原样回显，否则设备判定本次未被接受
-     */
+    /** 处理 Inform：认证、建会话、回复 InformResponse，参数入库与事件调度交给队列消费者 */
     private void handleInform(String connId, String body, HttpServletRequest request,
                               HttpServletResponse response, String cwmpId) throws IOException {
         InformRequest inform = SoapParser.parseInform(body);
@@ -554,11 +521,7 @@ public class CwmpController {
 
     // ==================== 超时控制 ====================
 
-    /**
-     * 等待 CPE 空 POST 的定时器。超时只结束本轮下发窗口、作废没等到回应的指令，
-     * 不判设备离线：部分光猫 Inform 后不发空 POST，是否离线由 SessionManager
-     * 按无通信时长判定。
-     */
+    /** 等待 CPE 空 POST 的定时器。超时只结束本轮下发窗口、作废没等到回应的指令 */
     private void armWaitPostNullTimer(CpeSession session) {
         session.setWaitPostNullTimer(timeoutScheduler.schedule(() -> {
             if (session.getState() != SessionState.WAIT_POST_NULL) {
@@ -585,12 +548,7 @@ public class CwmpController {
         }, waitRpcResponseTimeout, TimeUnit.SECONDS));
     }
 
-    /**
-     * 没等到回应的指令怎么收场：还能再试的重排到队列队首，次数用尽则判失败。
-     *
-     * <p>只重排队列里的指令（taskId &gt; 0）：内存 outbox 的指令已随 failAwaiting 完成给
-     * 调用方，再塞回队列两边就对不上了。</p>
-     */
+    /** 没等到回应的指令怎么收场：还能再试的重排到队列队首，次数用尽则判失败 */
     private void settleUndelivered(CpeSession session, PendingRpc rpc, String reason) {
         String sn = session.getSn();
         if (rpc.getRpcId() <= 0) {
@@ -625,9 +583,7 @@ public class CwmpController {
                 reason, delayMs / 1000, sn, rpc.getRpcName(), task.getAttempts(), maxDeliveryAttempts);
     }
 
-    /**
-     * 指令被捎带出去后标记为执行中，便于调用方看到进度。
-     */
+    /** 指令被捎带出去后标记为执行中，便于调用方看到进度 */
     private void markRunning(RpcTaskQueue.RpcTask task) {
         RpcTaskQueue.RpcTaskResult running = new RpcTaskQueue.RpcTaskResult();
         running.setTaskId(task.getTaskId());
@@ -640,9 +596,7 @@ public class CwmpController {
 
     // ==================== 挂起的下发 ====================
 
-    /**
-     * 挂起来等着的那一跳下发请求。唤醒与超时可能同时到达，用 settled 保证只结算一次。
-     */
+    /** 挂起来等着的那一跳下发请求。唤醒与超时可能同时到达，用 settled 保证只结算一次 */
     private final class PendingDelivery implements RpcDeliveryWaiter.Waiter {
 
         private final String sn;
@@ -669,7 +623,7 @@ public class CwmpController {
             settle();
         }
 
-        /** 再试着取一次指令：取到就捎带，取不到回 204 结束本轮。 */
+        /** 再试着取一次指令：取到就捎带，取不到回 204 结束本轮 */
         private void settle() {
             if (!settled.compareAndSet(false, true)) {
                 return;
@@ -704,10 +658,7 @@ public class CwmpController {
         return ip + ":" + request.getRemotePort();
     }
 
-    /**
-     * 把本轮会话号写进 Set-Cookie 下发给设备。设备后续请求常从另一个源端口过来，
-     * 凭它续接会话；不认 Cookie 的设备由 {@link #resolveSn} 按 ip:端口 兜底。
-     */
+    /** 把本轮会话号写进 Set-Cookie 下发给设备。设备后续请求常从另一个源端口过来 */
     private void writeSessionCookie(HttpServletResponse response, CpeSession session) {
         String sessionId = session.getSessionId();
         if (sessionId == null || sessionId.isBlank()) {
@@ -721,7 +672,7 @@ public class CwmpController {
         response.setHeader("Set-Cookie", cookie);
     }
 
-    /** 从请求头里取会话号。分隔符除分号还要认逗号：部分设备不合规范。 */
+    /** 从请求头里取会话号。分隔符除分号还要认逗号：部分设备不合规范 */
     private String sessionCookie(HttpServletRequest request) {
         if (request == null) {
             return null;
@@ -740,9 +691,7 @@ public class CwmpController {
         return null;
     }
 
-    /**
-     * 请求来自哪台设备：Cookie 里的会话号优先，退而求其次才是 TCP 连接标识。
-     */
+    /** 请求来自哪台设备：Cookie 里的会话号优先，退而求其次才是 TCP 连接标识 */
     private String resolveSn(String connId, HttpServletRequest request) {
         String sessionId = sessionCookie(request);
         if (sessionId != null) {

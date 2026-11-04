@@ -2,22 +2,7 @@ package com.tr069.acs.olt.model;
 
 import java.util.List;
 
-/**
- * 一条可下发动作的参数定义。
- *
- * <p>页面按这个定义自动生成输入框（数字 / 文本 / 下拉 / 端口列表），
- * 服务端按同一份定义校验，避免「前端填得进、设备不认」。</p>
- *
- * @param key          占位符名字，命令模板里写 {@code {key}}
- * @param label        页面上的字段名
- * @param type         number / text / ports / enum
- * @param min          number 类型的最小值
- * @param max          number 类型的最大值
- * @param options      enum 类型的可选值
- * @param required     是否必填
- * @param hint         字段下面的说明文字
- * @param defaultValue 默认值
- */
+/** 一条可下发动作的参数定义 */
 public record OltActionParam(String key, String label, String type, Integer min, Integer max,
                              List<String> options, boolean required, String hint, String defaultValue) {
 

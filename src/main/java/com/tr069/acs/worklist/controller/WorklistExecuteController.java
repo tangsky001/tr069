@@ -28,9 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 工单下发与执行记录查询。
- */
+/** 工单下发与执行记录查询 */
 @Slf4j
 @RestController
 @RequestMapping("/api/worklist")
@@ -41,22 +39,13 @@ public class WorklistExecuteController {
     private final WorklistStepMapper worklistStepMapper;
     private final WorklistDeliveryService deliveryService;
 
-    /**
-     * 某类业务需要填写哪些变量，前端据此渲染下发表单。
-     *
-     * <p>变量清单由 {@link TemplateVariables} 统一定义，新增业务只需改那里，页面不用动。</p>
-     */
+    /** 某类业务需要填写哪些变量，前端据此渲染下发表单 */
     @GetMapping("/variables")
     public Result<List<TemplateVariables.Var>> variables(@RequestParam String category) {
         return Result.success(TemplateVariables.forCategory(category));
     }
 
-    /**
-     * 提交一张下发工单。
-     *
-     * <p>以 {@code worklistDesc} 做幂等键：重复提交只受理一次，返回首次创建的工单，
-     * 用户手抖点两下或网络重试都不会给设备重复开业务。</p>
-     */
+    /** 提交一张下发工单 */
     @PostMapping("/instances")
     public Result<Worklist> create(@RequestBody CreateRequest body) {
         String category = body.getCategory();
@@ -81,18 +70,13 @@ public class WorklistExecuteController {
         return Result.success(created);
     }
 
-    /**
-     * 工单状态全集。
-     *
-     * <p>状态流转定义在 {@link Worklist} 上，筛选下拉直接取它，不另行维护一份——
-     * 两边各写一份的后果是：后端加了状态，页面的筛选下拉里永远选不到它。</p>
-     */
+    /** 工单状态全集 */
     @GetMapping("/statuses")
     public Result<List<String>> statuses() {
         return Result.success(Worklist.STATUSES);
     }
 
-    /** 建单入参。 */
+    /** 建单入参 */
     @Data
     public static class CreateRequest {
         /** 设备序列号 */
@@ -107,16 +91,11 @@ public class WorklistExecuteController {
         private String username;
         /** 开通模板 id；不传则按业务类型自动取第一条模板 */
         private Long templateId;
-        /**
-         * WiFi 编辑的业务字段。传了它就不必再传 category 与 values：
-         * 业务类型与意图键由后端翻译，页面只管提交「改成什么」。
-         */
+        /** WiFi 编辑的业务字段。传了它就不必再传 category 与 values */
         private WifiEdit wifi;
     }
 
-    /**
-     * 工单执行记录，按设备或状态查询。
-     */
+    /** 工单执行记录，按设备或状态查询 */
     @GetMapping("/instances")
     public Result<PageResult<Worklist>> instances(
             @RequestParam(required = false) String sn,
@@ -133,27 +112,23 @@ public class WorklistExecuteController {
         query.orderByDesc(Worklist::getId);
         Page<Worklist> pager = Page.of(page, size);
         IPage<Worklist> result = worklistMapper.selectPage(pager, query);
+        // 状态中文/标签色/时间文本随记录下发，页面不再维护状态码表
+        result.getRecords().forEach(Worklist::decorate);
         return Result.success(PageResult.of(result.getRecords(), result.getTotal(), page, size));
     }
 
-    /**
-     * 单张工单的执行进度。
-     *
-     * <p>工单是异步执行的，调用方提交后只拿到工单号，靠这个接口轮询结果，
-     * 配合 {@code /instances/{id}/steps} 可以看到每一步的明细。</p>
-     */
+    /** 单张工单的执行进度 */
     @GetMapping("/instances/{id}")
     public Result<Worklist> instance(@PathVariable Long id) {
         Worklist record = worklistMapper.selectById(id);
         if (record == null) {
             return Result.failure("工单不存在: " + id);
         }
-        return Result.success(record);
+        // 轮询端也拿得到 statusText，页面不必再翻一遍码表
+        return Result.success(Worklist.decorate(record));
     }
 
-    /**
-     * 某个设备的工单历史。
-     */
+    /** 某个设备的工单历史 */
     @GetMapping("/instances/device/{sn}")
     public Result<List<Worklist>> listByDevice(@PathVariable String sn) {
         return Result.success(worklistMapper.selectList(
@@ -163,9 +138,7 @@ public class WorklistExecuteController {
                         .last("limit 100")));
     }
 
-    /**
-     * 单张工单的步骤明细。
-     */
+    /** 单张工单的步骤明细 */
     @GetMapping("/instances/{id}/steps")
     public Result<List<WorklistStepRecord>> steps(@PathVariable Long id) {
         return Result.success(worklistStepMapper.selectList(

@@ -1,6 +1,7 @@
 package com.tr069.acs.domain.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -8,9 +9,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * CPE 设备。
- */
+/** CPE 设备 */
 @Data
 @TableName("cpe_device")
 public class CpeDevice {
@@ -30,18 +29,14 @@ public class CpeDevice {
 
     private String hardwareVersion;
 
-    /**
-     * 根数据模型节点：InternetGatewayDevice. 或 Device.
-     */
+    /** 根数据模型节点：InternetGatewayDevice. 或 Device */
     private String rootNode;
 
     private String connectionRequestUrl;
 
     private String cwmpVersion;
 
-    /**
-     * 认证类型：digest / basic / None
-     */
+    /** 认证类型：digest / basic / None */
     private String authType;
 
     private String cpeToAcsName;
@@ -56,24 +51,28 @@ public class CpeDevice {
 
     private String ispVersion;
 
-    /**
-     * 设备类型，如 GPON_4+1，对应原 DOMAIN
-     */
+    /** 设备类型，如 GPON_4+1，对应原 DOMAIN */
     private String deviceType;
 
-    /**
-     * 房间号，下发时用它替换模板里的 {@code %room%} 变量，如 0001
-     */
+    /** 房间号，下发时用它替换模板里的 {@code %room%} 变量，如 0001 */
     private String roomNo;
 
-    /**
-     * 备注，运维随手记的设备说明
-     */
+    /** 备注，运维随手记的设备说明 */
     private String remark;
 
     private String status;
 
     private LocalDateTime lastContactTime;
+
+    /** 在线标记（不落库）：由 {@link #getStatus()} 换算 */
+    @TableField(exist = false)
+    private Boolean online;
+
+    /** 台账状态 → 在线标记，与 {@code /device/stat} 的口径一致 */
+    public static boolean onlineOf(String status) {
+        String value = status == null ? "" : status.trim().toLowerCase(java.util.Locale.ROOT);
+        return value.contains("online") || value.contains("在线");
+    }
 
     private Integer soapInformTimeout;
 

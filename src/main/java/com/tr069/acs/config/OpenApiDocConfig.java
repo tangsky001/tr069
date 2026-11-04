@@ -24,12 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 在线接口文档（springdoc / Swagger UI）：启动后打开 {@code /doc/index.html} 就能看到全部接口。
- *
- * <p>开关统一由 {@code springdoc.enabled} 控制：置 false 时本类不装载，OpenAPI 都不生成，
- * 文档端点也就无处可返。作者信息写在下面的 info 里，不放配置文件。</p>
- */
+/** 在线接口文档（springdoc / Swagger UI）：启动后打开 {@code /doc/index.html} 就能看到全部接口 */
 @Configuration
 @ConditionalOnProperty(name = "springdoc.enabled", havingValue = "true", matchIfMissing = true)
 public class OpenApiDocConfig {
@@ -37,11 +32,7 @@ public class OpenApiDocConfig {
     /** 令牌请求头：管理端页面用的就是这个，和 AdminAuthInterceptor 一致 */
     private static final String TOKEN_HEADER = "X-Token";
 
-    /**
-     * 接口说明表：`方法 路径` → 说明。
-     *
-     * <p>第一段是列表里显示的一句话，后面（换行起）是展开后的参数与注意事项。</p>
-     */
+    /** 接口说明表：`方法 路径` → 说明，第一段是列表里显示的一句话 */
     private static final Map<String, String> DOC = new HashMap<>();
 
     /** 分组名：`Controller 简单类名` → 中文分组，不登记的就是默认的类名 */
@@ -343,9 +334,7 @@ public class OpenApiDocConfig {
                 .addSecurityItem(new SecurityRequirement().addList(TOKEN_HEADER));
     }
 
-    /**
-     * 把 {@link #DOC} 里的中文说明挂到对应接口上：匹配 `方法 路径`，命中就写 summary 与 description。
-     */
+    /** 把 {@link #DOC} 里的中文说明挂到对应接口上：匹配 `方法 路径`，命中就写 summary 与 description */
     @Bean
     public OperationCustomizer docCustomizer() {
         return (Operation operation, HandlerMethod handlerMethod) -> {
@@ -376,11 +365,7 @@ public class OpenApiDocConfig {
         };
     }
 
-    /**
-     * 给「请求参数」那张表补说明：路径参数与查询参数逐个按名字查 {@link OpenApiParamDoc}。
-     *
-     * <p>{@code id} 这类名字在不同接口里指向不同对象，查表时带上 {@code 方法 路径} 作上下文。</p>
-     */
+    /** 给「请求参数」那张表补说明：路径参数与查询参数逐个按名字查 {@link OpenApiParamDoc} */
     private static void fillParameters(Operation operation, String key) {
         if (operation.getParameters() == null) {
             return;
@@ -409,11 +394,7 @@ public class OpenApiDocConfig {
         }
     }
 
-    /**
-     * 给「响应参数」那张表补说明：遍历 {@code components.schemas}，按字段名查表写 description。
-     *
-     * <p>Swagger Models 页面用的是同一份 schema，所以那边也会一起有说明。</p>
-     */
+    /** 给「响应参数」那张表补说明：遍历 {@code components.schemas}，按字段名查表写 description */
     @Bean
     public OpenApiCustomizer fieldDocCustomizer() {
         return openApi -> {

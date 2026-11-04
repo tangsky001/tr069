@@ -24,18 +24,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 北向只读查询：给上层系统看设备台账、在线状态、能力树、业务快照与下发任务结果。
- *
- * <p>读口径与管理端完全一致，差别只在返回结构——管理端要适配页面组件，
- * 北向要的是稳定的字段名与含义，所以这里重新组装视图，而不是直接把管理端的 Map 透出去。</p>
- */
+/** 北向只读查询：给上层系统看设备台账、在线状态、能力树、业务快照与下发任务结果 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class OpenApiQueryService {
 
-    /** 单次最多返回的明细条数，防止一台设备的超大能力树把调用方打爆。 */
+    /** 单次最多返回的明细条数，防止一台设备的超大能力树把调用方打爆 */
     private static final int MAX_DETAIL = 5000;
 
     private final CpeDeviceMapper deviceMapper;
@@ -46,9 +41,7 @@ public class OpenApiQueryService {
     private final DeviceCapabilityService capabilityService;
     private final DeviceBusinessService businessService;
 
-    /**
-     * 设备台账分页查询。
-     */
+    /** 设备台账分页查询 */
     public Map<String, Object> devices(String keyword, String isp, long page, long size) {
         LambdaQueryWrapper<CpeDevice> query = new LambdaQueryWrapper<>();
         if (keyword != null && !keyword.isBlank()) {
@@ -75,9 +68,7 @@ public class OpenApiQueryService {
         return data;
     }
 
-    /**
-     * 单台设备的完整视图：台账 + 会话状态 + 数据模型。
-     */
+    /** 单台设备的完整视图：台账 + 会话状态 + 数据模型 */
     public Map<String, Object> device(String sn) {
         CpeDevice device = findDevice(sn);
         if (device == null) {
@@ -88,9 +79,7 @@ public class OpenApiQueryService {
         return data;
     }
 
-    /**
-     * 在线状态：会话存在且未超时才算在线。
-     */
+    /** 在线状态：会话存在且未超时才算在线 */
     public Map<String, Object> online(String sn) {
         CpeSession session = sessionManager.find(sn);
         Map<String, Object> data = new LinkedHashMap<>();
@@ -101,11 +90,7 @@ public class OpenApiQueryService {
         return data;
     }
 
-    /**
-     * 能力树的某一层：返回 parent 的直接子节点，调用方从根节点开始逐级展开。
-     *
-     * @param parent 父路径，传 null 或空时返回根节点层
-     */
+    /** 能力树的某一层：返回 parent 的直接子节点，调用方从根节点开始逐级展开 */
     public List<Map<String, Object>> capabilityTree(String sn, String parent) {
         LambdaQueryWrapper<CpeParameter> query = new LambdaQueryWrapper<CpeParameter>()
                 .eq(CpeParameter::getSn, sn)
@@ -129,9 +114,7 @@ public class OpenApiQueryService {
         return items;
     }
 
-    /**
-     * 能力树上的参数值：支持按前缀过滤。
-     */
+    /** 能力树上的参数值：支持按前缀过滤 */
     public List<Map<String, Object>> params(String sn, String prefix) {
         LambdaQueryWrapper<CpeParameter> query = new LambdaQueryWrapper<CpeParameter>()
                 .eq(CpeParameter::getSn, sn)
@@ -151,16 +134,12 @@ public class OpenApiQueryService {
         return items;
     }
 
-    /**
-     * 业务快照：WAN / WiFi / SIP 分区，数据来源是能力树快照，不与设备交互。
-     */
+    /** 业务快照：WAN / WiFi / SIP 分区，数据来源是能力树快照，不与设备交互 */
     public Map<String, Object> business(String sn) {
         return businessService.summary(sn);
     }
 
-    /**
-     * 该设备的下发任务历史，最新的在前。
-     */
+    /** 该设备的下发任务历史，最新的在前 */
     public List<Map<String, Object>> tasks(String sn, int limit) {
         List<DeviceTask> tasks = taskMapper.selectList(new LambdaQueryWrapper<DeviceTask>()
                 .eq(DeviceTask::getSn, sn)
@@ -182,9 +161,7 @@ public class OpenApiQueryService {
         return items;
     }
 
-    /**
-     * 工单执行结果查询。工单表是历史链路留下的执行记录，北向按设备或外部单号查。
-     */
+    /** 工单执行结果查询。工单表是历史链路留下的执行记录，北向按设备或外部单号查 */
     public List<Map<String, Object>> workOrders(String sn, String worklistDesc, int limit) {
         LambdaQueryWrapper<Worklist> query = new LambdaQueryWrapper<Worklist>()
                 .orderByDesc(Worklist::getId)

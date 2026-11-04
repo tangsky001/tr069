@@ -10,13 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * OLT 三张表的自动补建与字段补齐。
- *
- * <p>存量部署的库里没有 OLT 台账，从唯一的 {@code sql/schema.sql} 里挑出这几张表补建；
- * 已经建过表但后续加字段（背板型号、板卡类别等）的库，在这里按列补 ALTER。
- * 建表失败不阻断启动（设备侧 TR-069 不依赖 OLT 模块）。</p>
- */
+/** OLT 三张表的自动补建与字段补齐 */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -68,9 +62,7 @@ public class OltSchemaInitializer implements InitializingBean {
         }
     }
 
-    /**
-     * 老库升级：新增字段靠 ALTER 补，避免用户手工改表。
-     */
+    /** 老库升级：新增字段靠 ALTER 补，避免用户手工改表 */
     private void ensureColumns() {
         for (String[] spec : EXPECTED_COLUMNS) {
             if (columnExists(spec[0], spec[1])) {

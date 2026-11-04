@@ -131,10 +131,12 @@ export default {
     boards() {
       return this.slots || []
     },
-    /** 实际槽位数：至少 12 个，有板子插在更大的槽位号上就补齐 */
+    /**
+     * 槽位数：后端已按「设备回的槽位表 → 板卡最大槽位 → 码表兜底」算好（detail.chassisSlotCount）。
+     * detail 没加载完或后端没带这个字段时按 12 个槽位画——机框不能因为缺一个数整个消失。
+     */
     count() {
-      const maxNo = this.boards.reduce((max, board) => Math.max(max, board.no == null ? -1 : board.no), -1)
-      return Math.max(this.slotCount, maxNo + 1)
+      return this.slotCount || 12
     },
     /**
      * 槽位仓和槽位号用同一套栅格，保证号码对准槽位。

@@ -7,12 +7,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * OLT 连接与同步记录。
- *
- * <p>命令行回显是解析的唯一依据，型号/板卡解析不对时靠这里的原文改正则，
- * 因此原文留档（超长截断）。</p>
- */
+/** OLT 连接与同步记录 */
 @Data
 @TableName("olt_sync_record")
 public class OltSyncRecord {

@@ -11,78 +11,40 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * CPE -> ACS 的 HTTP 认证。
- *
- * <p>支持的认证类型：digest / basic / None。</p>
- *
- * <p><b>重要：这里的 Digest 计算与 RFC 2617 有一处刻意的不同。</b>
- * 当 CPE 请求中<b>不带 qop</b> 时按 {@code H(HA1 + ":" + nonce + HA2)} 计算
- * （nonce 与 HA2 之间缺少标准要求的英文冒号），而非标准的
- * {@code H(HA1 + ":" + nonce + ":" + HA2)}。现网设备是按这一行为实现的，
- * 改成标准写法会导致设备认证失败。带 qop 的分支按 RFC 标准计算。</p>
- */
+/** CPE -> ACS 的 HTTP 认证 */
 @Slf4j
 @Component
 public class CpeAuthenticator {
 
-    /**
-     * 认证结果。
-     */
+    /** 认证结果 */
     public enum AuthResult {
-        /**
-         * 认证通过
-         */
+        /** 认证通过 */
         PASS,
-        /**
-         * 请求中未携带认证头，已下发 challenge，需等待下一次请求
-         */
+        /** 请求中未携带认证头，已下发 challenge，需等待下一次请求 */
         NO_AUTHENTICATION,
-        /**
-         * 认证失败
-         */
+        /** 认证失败 */
         FAIL
     }
 
-    /**
-     * 默认 Digest realm。
-     */
+    /** 默认 Digest realm */
     public static final String DEFAULT_DIGEST_REALM = "tr069";
 
-    /**
-     * Basic 认证的 realm
-     */
+    /** Basic 认证的 realm */
     public static final String BASIC_REALM = "tr069 basic realm";
 
-    /**
-     * 认证类型：digest / basic / None
-     */
+    /** 认证类型：digest / basic / None */
     public static final String AUTH_TYPE_DIGEST = "digest";
 
     public static final String AUTH_TYPE_BASIC = "basic";
 
     public static final String AUTH_TYPE_NONE = "None";
 
-    /**
-     * 免认证标记：账号或密码填 auto，即不校验凭据，任何设备都放行。
-     */
+    /** 免认证标记：账号或密码填 auto，即不校验凭据，任何设备都放行 */
     public static final String AUTO_CREDENTIAL = "auto";
 
     private final AtomicBoolean openAccessWarned = new AtomicBoolean(false);
 
-    /**
-     * 校验 CPE 请求。
-     *
-     * @param authorization      HTTP Authorization 头，可能为 null
-     * @param method             HTTP 方法
-     * @param uri                请求 URI
-     * @param expectedUser       期望的用户名（通常为设备级配置）
-     * @param expectedPassword   期望的密码
-     * @param fallbackUser       回落用户名（全局默认账号）
-     * @param fallbackPassword   回落密码
-     * @param authType           认证类型
-     * @return 认证结果
-     */
+    /** 校验 CPE 请求 */
     public AuthResult authenticate(String authorization, String method, String uri,
                                     String expectedUser, String expectedPassword,
                                     String fallbackUser, String fallbackPassword,
@@ -105,12 +67,7 @@ public class CpeAuthenticator {
                 fallbackUser, fallbackPassword);
     }
 
-    /**
-     * 是否为免认证配置：账号或密码其一为 {@code auto} 或留空。
-     *
-     * <p>账号留空在语义上等于「没有指定账号」，此时无从比对，按免认证处理；
-     * 这与配置项注释里「不填写也可以自由账号密码认证」一致。</p>
-     */
+    /** 是否为免认证配置：账号或密码其一为 {@code auto} 或留空 */
     public static boolean isOpenAccess(String user, String password) {
         return isAuto(user) || isAuto(password);
     }
@@ -119,9 +76,7 @@ public class CpeAuthenticator {
         return value == null || value.isBlank() || AUTO_CREDENTIAL.equalsIgnoreCase(value.trim());
     }
 
-    /**
-     * 免认证只在首次命中时告警一次，避免每台设备每次上报都刷一行日志。
-     */
+    /** 免认证只在首次命中时告警一次，避免每台设备每次上报都刷一行日志 */
     private void warnOpenAccessOnce() {
         if (openAccessWarned.compareAndSet(false, true)) {
             log.warn("CPE -> ACS 认证已关闭：账号或密码配置为 auto 或留空，任何设备凭据都会被放行，"
@@ -129,9 +84,7 @@ public class CpeAuthenticator {
         }
     }
 
-    /**
-     * Basic 认证：b64(username:password) 直接比较。
-     */
+    /** Basic 认证：b64(username:password) 直接比较 */
     private AuthResult authenticateBasic(String authorization,
                                          String user, String password,
                                          String fallbackUser, String fallbackPassword) {
@@ -155,9 +108,7 @@ public class CpeAuthenticator {
         return credential.equals(message);
     }
 
-    /**
-     * Digest 认证。
-     */
+    /** Digest 认证 */
     private AuthResult authenticateDigest(String authorization, String method, String uri,
                                           String user, String password,
                                           String fallbackUser, String fallbackPassword) {
@@ -181,9 +132,7 @@ public class CpeAuthenticator {
         return AuthResult.FAIL;
     }
 
-    /**
-     * 校验凭据：先比用户名，再比 realm 与 response。
-     */
+    /** 校验凭据：先比用户名，再比 realm 与 response */
     private boolean tryUsernamePassword(Map<String, String> fields, String user, String password) {
         if (user == null || !user.equals(fields.get("username"))) {
             return false;
@@ -196,11 +145,7 @@ public class CpeAuthenticator {
         return expected != null && expected.equals(fields.get("response"));
     }
 
-    /**
-     * 计算期望的 response。
-     *
-     * <p>计算 Digest response。无 qop 分支按前述非标准写法，缺少 nonce 与 HA2 之间的冒号。</p>
-     */
+    /** 计算期望的 response */
     private String createResponse(String user, String password, String realm,
                                   Map<String, String> fields) {
         String ha1 = md5(a1(fields, user, password, realm));
@@ -221,9 +166,7 @@ public class CpeAuthenticator {
         return null;
     }
 
-    /**
-     * 计算 A1。
-     */
+    /** 计算 A1 */
     private String a1(Map<String, String> fields, String user, String password, String realm) {
         String algorithm = fields.get("algorithm");
         if ("MD5-sess".equals(algorithm)) {
@@ -233,9 +176,7 @@ public class CpeAuthenticator {
         return user + ":" + realm + ":" + password;
     }
 
-    /**
-     * 计算 A2。
-     */
+    /** 计算 A2 */
     private String a2(Map<String, String> fields) {
         String method = fields.getOrDefault("method", "");
         String uri = fields.getOrDefault("uri", "");
@@ -248,13 +189,7 @@ public class CpeAuthenticator {
         return method + ":" + uri + ":" + md5(body);
     }
 
-    /**
-     * 构造 Digest challenge 响应头。
-     *
-     * <pre>
-     * Digest realm="tr069", nonce="&lt;md5(秒级时间戳:realm)&gt;", opaque="&lt;md5(秒级时间戳+realm)&gt;", qop="auth"
-     * </pre>
-     */
+    /** 构造 Digest challenge 响应头 */
     public String digestChallenge() {
         String realm = DEFAULT_DIGEST_REALM;
         String nonce = md5(currentSeconds() + ":" + realm);
@@ -263,9 +198,7 @@ public class CpeAuthenticator {
                 realm, nonce, opaque, "auth");
     }
 
-    /**
-     * 构造 Basic challenge 响应头。
-     */
+    /** 构造 Basic challenge 响应头 */
     public String basicChallenge() {
         return String.format("Basic realm=\"%s\"", BASIC_REALM);
     }
@@ -274,12 +207,7 @@ public class CpeAuthenticator {
         return System.currentTimeMillis() / 1000L;
     }
 
-    /**
-     * 解析 Authorization 头为字段表。
-     *
-     * <p>以第一个空格分割出认证类型，其余按逗号切分，带引号的取引号内内容，
-     * 不带引号的直接取值。</p>
-     */
+    /** 解析 Authorization 头为字段表 */
     public Map<String, String> parseAuthFields(String authorization) {
         Map<String, String> fields = new LinkedHashMap<>();
         if (authorization == null || authorization.isEmpty()) {
@@ -313,9 +241,7 @@ public class CpeAuthenticator {
         return fields;
     }
 
-    /**
-     * 按逗号切分，忽略引号内的逗号。
-     */
+    /** 按逗号切分，忽略引号内的逗号 */
     private static java.util.List<String> splitTopLevel(String input) {
         java.util.List<String> parts = new java.util.ArrayList<>();
         StringBuilder current = new StringBuilder();

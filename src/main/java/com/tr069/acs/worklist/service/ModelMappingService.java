@@ -22,13 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 型号语义映射：登记型号、保存「业务字段 → CWMP 节点」映射、给候选节点。
- *
- * <p>这是「一次性人工适配」的落点：同型号同固件只在库里存在一条型号记录，
- * 人工把业务语义字段映射到这台样机真实的 CWMP 节点后，后续同型号设备上线直接复用，
- * 不需要再人工介入。</p>
- */
+/** 型号语义映射：登记型号、保存「业务字段 → CWMP 节点」映射、给候选节点 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -59,12 +53,7 @@ public class ModelMappingService {
         return modelMapper.selectById(id);
     }
 
-    /**
-     * 型号详情：档案 + 该型号在网设备数。
-     *
-     * <p>参数/对象映射已随适配结果迁到 SQLite 适配库，不再由 MySQL 维护，
-     * 这里不再回带映射列表——适配结果以 SQLite 为准。</p>
-     */
+    /** 型号详情：档案 + 该型号在网设备数 */
     public Map<String, Object> detail(Long id) {
         CpeModel model = modelMapper.selectById(id);
         if (model == null) {
@@ -76,9 +65,7 @@ public class ModelMappingService {
         return data;
     }
 
-    /**
-     * 该型号在网设备数：按型号 + 固件统计（运营商字段可空，空则不参与）。
-     */
+    /** 该型号在网设备数：按型号 + 固件统计（运营商字段可空，空则不参与） */
     public long countDevices(CpeModel model) {
         try {
             return deviceMapper.selectCount(new LambdaQueryWrapper<CpeDevice>()
@@ -111,9 +98,7 @@ public class ModelMappingService {
         return input;
     }
 
-    /**
-     * 局部更新：只覆盖传入的非空字段。
-     */
+    /** 局部更新：只覆盖传入的非空字段 */
     public CpeModel update(Long id, CpeModel patch) {
         CpeModel current = modelMapper.selectById(id);
         if (current == null) {
@@ -138,21 +123,11 @@ public class ModelMappingService {
         return current;
     }
 
-    /**
-     * 语义映射已整体迁到 SQLite 适配库：型号采集适配后由
-     * {@code ModelTemplateService} 生成「业务字段 → 参数路径」的适配结果，
-     * 不再由人工在 MySQL 里逐条登记，因此这里不再提供保存入口。
-     */
+    /** 语义映射已整体迁到 SQLite 适配库：型号采集适配后由 */
 
     // ==================== 设备上线登记 ====================
 
-    /**
-     * 设备上线登记：按「运营商 + 型号 + 固件」定位型号，没有就登记为待适配。
-     *
-     * <p>同型号同固件只会登记一次；并发上线时唯一键冲突后回查即可。</p>
-     *
-     * @return 命中的型号记录，不会为 null（登记失败时返回 null，调用方按无映射处理）
-     */
+    /** 设备上线登记：按「运营商 + 型号 + 固件」定位型号，没有就登记为待适配 */
     public CpeModel resolveOrRegister(String isp, String manufacturer, String productClass,
                                       String softwareVersion, String hardwareVersion, String sn) {
         String owner = (isp == null || isp.isBlank()) ? "standard" : isp.trim();
@@ -190,22 +165,14 @@ public class ModelMappingService {
         }
     }
 
-    /**
-     * 该型号是否已完成映射可直接下发。
-     */
+    /** 该型号是否已完成映射可直接下发 */
     public boolean isReady(CpeModel model) {
         return model != null && CpeModel.STATUS_READY.equals(model.getStatus());
     }
 
     // ==================== 映射候选 ====================
 
-    /**
-     * 从样机能力树取候选参数节点，按业务对象的推荐关键字打分排序，便于人工选择。
-     *
-     * @param sn        样机序列号，能力树须已采集
-     * @param bizObject 业务对象编码，用于推荐排序
-     * @param keyword   路径关键字过滤，可空
-     */
+    /** 从样机能力树取候选参数节点，按业务对象的推荐关键字打分排序，便于人工选择 */
     public List<Map<String, Object>> candidates(String sn, String bizObject, String keyword) {
         LambdaQueryWrapper<CpeParameter> wrapper = new LambdaQueryWrapper<CpeParameter>()
                 .eq(CpeParameter::getSn, sn)
@@ -231,9 +198,7 @@ public class ModelMappingService {
         return result;
     }
 
-    /**
-     * 语义字典：前端映射页左侧的业务对象与字段列表。
-     */
+    /** 语义字典：前端映射页左侧的业务对象与字段列表 */
     public List<Map<String, Object>> schema() {
         List<Map<String, Object>> result = new ArrayList<>();
         for (SemanticSchema.BizObject object : SemanticSchema.OBJECTS) {
@@ -258,10 +223,7 @@ public class ModelMappingService {
 
     // ==================== 内部方法 ====================
 
-    /**
-     * 必填字段是否齐备，改由 SQLite 适配结果判断：型号有没有生成出对应业务的模板。
-     * 这里不再按 MySQL 映射逐条比对。
-     */
+    /** 必填字段是否齐备，改由 SQLite 适配结果判断：型号有没有生成出对应业务的模板 */
 
     private List<String> hintsOf(String bizObject) {
         SemanticSchema.BizObject object = SemanticSchema.objectOf(bizObject);
@@ -291,48 +253,30 @@ public class ModelMappingService {
         return keyword != null && !keyword.isBlank();
     }
 
-    /**
-     * 型号标识：型号 + 固件，固件为空时只用型号。
-     */
+    /** 型号标识：型号 + 固件，固件为空时只用型号 */
     public static String buildModelKey(String productClass, String softwareVersion) {
         String model = productClass == null || productClass.isBlank() ? "UNKNOWN" : productClass.trim();
         String fw = softwareVersion == null || softwareVersion.isBlank() ? "" : softwareVersion.trim();
         return fw.isEmpty() ? model : model + "_" + fw;
     }
 
-    /**
-     * 型号文件存放的子目录：按运营商分目录，移动 CM / 电信 CT / 联通 CU / 其它 standard。
-     *
-     * <p>型号文件一律放在该目录下再进一层 {@code standard/}，即
-     * {@code models/CM/standard/{型号}.xml}、{@code models/CM/standard/{型号}.yml}，
-     * 走的是「运营商 -> 标准档位」两级，后续同一运营商再有别的档位可直接加同级目录。</p>
-     */
+    /** 型号文件存放的子目录：按运营商分目录，移动 CM / 电信 CT / 联通 CU / 其它 standard */
     public static String ispDir(String isp) {
         // 归一化与目录名集中在 Isp 枚举里：四家运营商 + 广电 + 通用档只维护一处
         return Isp.of(isp).getDir();
     }
 
-    /**
-     * 型号能力树 XML 的默认相对路径：{运营商}/standard/{型号标识}.xml。
-     *
-     * <p>例：{@code CM/standard/p22g-ciac_v1.0.00.488.xml}（相对 models/ 目录）。</p>
-     */
+    /** 型号能力树 XML 的默认相对路径：{运营商}/standard/{型号标识}.xml */
     public static String defaultConfigPath(String isp, String modelKey) {
         return ispDir(isp) + "/standard/" + modelFileName(modelKey) + ".xml";
     }
 
-    /**
-     * 适配状态文件 YML 的默认相对路径：与能力树 XML 同名同目录，后缀 .yml。
-     *
-     * <p>XML 只是型号的能力档案（支持哪些节点、路径怎么写），
-     * 它存在并不代表这个型号适配过了——「是否已适配」由这份 YML 里的
-     * {@code adapted: true} 说了算，测试通过才会写入。</p>
-     */
+    /** 适配状态文件 YML 的默认相对路径：与能力树 XML 同名同目录，后缀 .yml */
     public static String defaultAdaptPath(String isp, String modelKey) {
         return ispDir(isp) + "/standard/" + modelFileName(modelKey) + ".yml";
     }
 
-    /** 型号文件名（不含扩展名）：小写 + 非法字符转下划线，xml 与 yml 同名。 */
+    /** 型号文件名（不含扩展名）：小写 + 非法字符转下划线，xml 与 yml 同名 */
     public static String modelFileName(String modelKey) {
         return String.valueOf(modelKey).toLowerCase().replaceAll("[^a-z0-9._-]", "_");
     }

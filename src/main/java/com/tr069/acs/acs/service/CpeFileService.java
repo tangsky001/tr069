@@ -19,27 +19,17 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 
-/**
- * 文件存储：落盘 + 算摘要 + 登记台账，设备从 {@code /files/{id}} 取。
- *
- * <p>存的路径不给设备，设备只认 {@code /files/{id}} 这一个地址，
- * 这样文件挪位置、换目录都不影响已经下发的下载任务。</p>
- */
+/** 文件存储：落盘 + 算摘要 + 登记台账，设备从 {@code /files/{id}} 取 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class CpeFileService {
 
-    /** 文件存放根目录，相对工作目录。 */
+    /** 文件存放根目录，相对工作目录 */
     @Value("${acs.file.dir:files}")
     private String fileDir;
 
-    /**
-     * 设备取文件用的地址前缀。
-     *
-     * <p>留空时按 {@code public-host} 与上报端口拼。<b>ACS 的 public-host 与设备在不在同一个网段
-     * 是两回事</b>，现场地址不同就把这里配成设备真正能访问到的那个地址。</p>
-     */
+    /** 设备取文件用的地址前缀 */
     @Value("${acs.file.base-url:}")
     private String baseUrl;
 
@@ -55,11 +45,7 @@ public class CpeFileService {
 
     private static final int BUFFER = 8192;
 
-    /**
-     * 保存文件并登记台账。
-     *
-     * @return 台账记录，含落盘路径与内容摘要
-     */
+    /** 保存文件并登记台账 */
     public CpeFile save(String originalName, String fileType, String version, String remark,
                         InputStream in) throws IOException {
         Path dir = Paths.get(fileDir).resolve(LocalDate.now().format(DAY));
@@ -92,7 +78,7 @@ public class CpeFileService {
         return file;
     }
 
-    /** 台账记录对应的磁盘文件；文件不在时返回 null。 */
+    /** 台账记录对应的磁盘文件；文件不在时返回 null */
     public Path pathOf(CpeFile file) {
         if (file == null || file.getStorePath() == null) {
             return null;
@@ -100,14 +86,12 @@ public class CpeFileService {
         return Paths.get(fileDir).resolve(file.getStorePath()).normalize();
     }
 
-    /**
-     * 设备取这个文件用的完整地址。
-     */
+    /** 设备取这个文件用的完整地址 */
     public String urlOf(Long id) {
         return publicUrl() + "/files/" + id;
     }
 
-    /** 删除台账并清掉磁盘文件；文件已经不在了也照样删台账。 */
+    /** 删除台账并清掉磁盘文件；文件已经不在了也照样删台账 */
     public void delete(CpeFile file) {
         if (file == null) {
             return;
@@ -123,7 +107,7 @@ public class CpeFileService {
         fileMapper.deleteById(file.getId());
     }
 
-    /** 设备可达的地址前缀：优先用现场配的 base-url。 */
+    /** 设备可达的地址前缀：优先用现场配的 base-url */
     private String publicUrl() {
         if (baseUrl != null && !baseUrl.isBlank()) {
             return trimEnd(baseUrl.trim());
@@ -146,7 +130,7 @@ public class CpeFileService {
         return "9090";
     }
 
-    /** 文件名只留可用字符：路径分隔符会把文件写到别的目录去。 */
+    /** 文件名只留可用字符：路径分隔符会把文件写到别的目录去 */
     private static String safeName(String original) {
         String name = original == null || original.isBlank() ? "unnamed" : original.trim();
         name = name.replaceAll("[\\\\/:*?\"<>|]", "_");

@@ -7,12 +7,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * DBA 模板与线路模板的快照，随同步整体覆盖，JSON 存在 olt_device.template_json。
- *
- * <p>这两条命令只在华为 config 视图下认，其它厂商的版本不适用；采不到就整份不写，
- * 页面上按「未采集」提示，而不是拿空表冒充采集成功。</p>
- */
+/** DBA 模板与线路模板的快照，随同步整体覆盖，JSON 存在 olt_device.template_json */
 @Data
 public class OltTemplateInfo {
 

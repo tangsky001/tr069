@@ -26,15 +26,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import com.tr069.acs.common.log.AcsCoreLog;
 
-/**
- * RPC 下发服务。
- *
- * <p>下发流程：</p>
- * <ul>
- *   <li>{@link #submitAsync} 把指令放进 Redis 队列，立即返回任务号与结果凭据，不占用线程</li>
- *   <li>CPE 空 POST 时由 {@code CwmpController} 从队列取出捎带</li>
- *   <li>响应到达后由 {@link #completeTask} 回填结果与审计</li>
- */
+/** RPC 下发服务 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -46,58 +38,31 @@ public class RpcDispatchService {
     private final AcsCoreLog coreLog;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * RPC 审计流水号，入库失败时兜底。
-     */
+    /** RPC 审计流水号，入库失败时兜底 */
     private final AtomicLong rpcSequence = new AtomicLong(1);
 
-    /**
-     * 方法名非法时的故障码：不是设备返回的 CWMP 故障，属 ACS 内部错误。
-     */
+    /** 方法名非法时的故障码：不是设备返回的 CWMP 故障，属 ACS 内部错误 */
     private static final String FAULT_BAD_METHOD = "8005";
 
     @Value("${acs.agent.rpc-timeout:510}")
     private long rpcTimeout;
 
-    /**
-     * 指令在队列中等待被设备取走的最长时间，超时判失败。
-     */
+    /** 指令在队列中等待被设备取走的最长时间，超时判失败 */
     @Value("${acs.agent.pending-timeout-seconds:600}")
     private long pendingTimeoutSeconds;
 
-    /**
-     * 提交一条指令，立即返回。
-     *
-     * <p>不要求设备当前在线：指令先进队列，等 CPE 空 POST 时捎带，
-     * 设备离线或处理慢都不会占用线程。</p>
-     *
-     * @param sn         设备序列号
-     * @param rpcName    CWMP 方法名
-     * @param args       方法参数
-     * @param worklistId 关联工单号，可为空
-     * @return 提交句柄，含任务号与结果凭据
-     */
+    /** 提交一条指令，立即返回 */
     public DispatchHandle submitAsync(String sn, String rpcName,
                                       Map<String, Object> args, String worklistId) {
         return submitAsync(sn, rpcName, args, worklistId, null);
     }
 
-    /**
-     * 丢弃上一轮采集压在队列里的旧指令（见 {@link RpcTaskQueue#dropStale}）。
-     *
-     * @param sn           设备序列号
-     * @param currentBatch 本次采集批次号
-     * @return 丢弃的指令条数
-     */
+    /** 丢弃上一轮采集压在队列里的旧指令（见 {@link RpcTaskQueue#dropStale}） */
     public int dropStaleCollectTasks(String sn, String currentBatch) {
         return rpcTaskQueue.dropStale(sn, currentBatch);
     }
 
-    /**
-     * 同 {@link #submitAsync(String, String, Map, String)}，多带一个采集批次号。
-     *
-     * @param batch 所属采集批次，用于新采集开始时丢弃上一轮压在队列里的旧指令；非采集指令传空
-     */
+    /** 同 {@link #submitAsync(String, String, Map, String)}，多带一个采集批次号 */
     public DispatchHandle submitAsync(String sn, String rpcName,
                                       Map<String, Object> args, String worklistId, String batch) {
         long taskId = insertRecord(sn, rpcName, args, worklistId);
@@ -133,11 +98,7 @@ public class RpcDispatchService {
         return new DispatchHandle(taskId, future, true);
     }
 
-    /**
-     * 同步等待版本，保留给需要立即拿到结果的调用方。
-     *
-     * <p>内部仍然走队列，只是调用方选择阻塞等待，超时后任务标记失败。</p>
-     */
+    /** 同步等待版本，保留给需要立即拿到结果的调用方 */
     public SoapMessage dispatch(String sn, String rpcName,
                                 Map<String, Object> args, String worklistId) {
         DispatchHandle handle = submitAsync(sn, rpcName, args, worklistId);
@@ -161,9 +122,7 @@ public class RpcDispatchService {
         }
     }
 
-    /**
-     * 设备响应到达：回填 Redis 结果、完成结果凭据、回写审计记录。
-     */
+    /** 设备响应到达：回填 Redis 结果、完成结果凭据、回写审计记录 */
     public void completeTask(long taskId, SoapMessage result) {
         RpcTaskQueue.RpcTaskResult stored = rpcTaskQueue.getResult(taskId);
         RpcTaskQueue.RpcTaskResult result2 = new RpcTaskQueue.RpcTaskResult();
@@ -197,9 +156,7 @@ public class RpcDispatchService {
         finishRecord(taskId, result);
     }
 
-    /**
-     * 指令以失败结束：下发超时、会话关闭、设备无响应等。
-     */
+    /** 指令以失败结束：下发超时、会话关闭、设备无响应等 */
     public void failTask(long taskId, String faultCode, String faultString) {
         RpcTaskQueue.RpcTaskResult stored = rpcTaskQueue.getResult(taskId);
         RpcTaskQueue.RpcTaskResult result = new RpcTaskQueue.RpcTaskResult();
@@ -222,19 +179,12 @@ public class RpcDispatchService {
         finishRecord(taskId, null);
     }
 
-    /**
-     * 查询指令结果，供管理端按任务号轮询。
-     */
+    /** 查询指令结果，供管理端按任务号轮询 */
     public RpcTaskQueue.RpcTaskResult queryResult(long taskId) {
         return rpcTaskQueue.getResult(taskId);
     }
 
-    /**
-     * 定期把排队过久仍未被设备取走的指令判失败。
-     *
-     * <p>设备离线时指令会一直堆在队列里，挂在结果凭据上的工单步骤会永远等下去，
-     * 工单既不前进也不结束。这里统一收尾，让工单带着失败继续推进或结束。</p>
-     */
+    /** 定期把排队过久仍未被设备取走的指令判失败 */
     @Scheduled(fixedDelayString = "${acs.agent.pending-sweep-interval:30000}")
     public void sweepPendingTasks() {
         List<Long> stale = rpcTaskRegistry.drainStale(pendingTimeoutSeconds * 1000L);
@@ -247,9 +197,7 @@ public class RpcDispatchService {
         }
     }
 
-    /**
-     * 工单号可能为非数字形态，解析失败时不阻塞下发流程。
-     */
+    /** 工单号可能为非数字形态，解析失败时不阻塞下发流程 */
     private Long parseWorklistId(String worklistId) {
         if (worklistId == null || worklistId.isBlank()) {
             return null;
@@ -312,19 +260,17 @@ public class RpcDispatchService {
                 .build();
     }
 
-    /**
-     * 提交句柄。
-     */
+    /** 提交句柄 */
     @Data
     public static class DispatchHandle {
 
-        /** 任务号，同时是 rpc_record 主键。 */
+        /** 任务号，同时是 rpc_record 主键 */
         private final long taskId;
 
-        /** 结果凭据，工单引擎通过回调串联步骤，不阻塞线程。 */
+        /** 结果凭据，工单引擎通过回调串联步骤，不阻塞线程 */
         private final CompletableFuture<SoapMessage> future;
 
-        /** 是否成功入队。 */
+        /** 是否成功入队 */
         private final boolean queued;
     }
 }

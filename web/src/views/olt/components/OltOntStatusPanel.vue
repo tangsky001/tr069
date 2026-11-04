@@ -20,7 +20,7 @@
         <el-option label="离线" value="offline" />
       </el-select>
       <el-select v-model="portFilter" size="small" clearable placeholder="板卡端口" style="width: 190px">
-        <el-option v-for="option in portOptions" :key="option.value" :label="option.label" :value="option.value" />
+        <el-option v-for="option in ontPortOptions" :key="option.value" :label="option.label" :value="option.value" />
       </el-select>
       <span class="ont-count">共 <b>{{ filteredRows.length }}</b> 条</span>
     </div>
@@ -59,7 +59,7 @@
           <div class="ont-sub">{{ row.desc }}</div>
         </template>
       </el-table-column>
-      <!-- 管理 IP：整板回显没有，点「详情」图标查过 display ont info 后回填本行 -->
+      <!-- 管理 IP / MAC / 线路 / 业务模板：同步采集时后端已随单台详情采回，直接显示 -->
       <el-table-column label="管理IP" width="150" align="center">
         <template slot-scope="{ row }">{{ ipOf(row) || '-' }}</template>
       </el-table-column>
@@ -71,21 +71,18 @@
           <span class="ont-link" @click="openServicePorts(row)">查看</span>
         </template>
       </el-table-column>
-      <!-- 整板回显里没有模板号，第一次点这两列时顺那条 ONT 的配置取回来存本地 -->
-      <el-table-column label="线路模板" width="90" align="center">
+      <el-table-column label="线路模板" width="80" align="center">
         <template slot-scope="{ row }">
-          <span v-if="lineText(row)" class="ont-link" @click="openOntConfig(row)">
-            {{ lineText(row) }}
+          <span :class="{ 'ont-link': lineText(row) }" @click="toggleOntConfig(row)">
+            {{ lineText(row) || '-' }}
           </span>
-          <span v-else class="ont-link ont-link-hint" @click="openOntConfig(row)">查看</span>
         </template>
       </el-table-column>
-      <el-table-column label="业务模板" width="90" align="center">
+      <el-table-column label="业务模板" width="80" align="center">
         <template slot-scope="{ row }">
-          <span v-if="srvText(row)" class="ont-link" @click="openOntConfig(row)">
-            {{ srvText(row) }}
+          <span :class="{ 'ont-link': srvText(row) }" @click="toggleOntConfig(row)">
+            {{ srvText(row) || '-' }}
           </span>
-          <span v-else class="ont-link ont-link-hint" @click="openOntConfig(row)">查看</span>
         </template>
       </el-table-column>
       <el-table-column label="ONT 描述" min-width="120">
@@ -298,7 +295,7 @@
 </template>
 
 <script>
-import { queryOnt } from '@/api/olt'
+import { queryOnt, fetchOltOptions } from '@/api/olt'
 
 const ACTION_TITLES = {
   optical: '光信息',
@@ -307,148 +304,7 @@ const ACTION_TITLES = {
   capability: '硬件能力/状态'
 }
 
-/**
- * 设备英文回显 → 中文标签：光信息 / 版本 / 注册历史的字段名照现场中文对照翻，
- * 没对上的键原样显示（设备切了 language-mode 时回显本身就是中文，不走这张表）。
- */
-const KEY_LABELS = {
-  // 注册历史
-  Index: '索引编号',
-  'Auth-type': '认证方式',
-  'Auth type': '认证方式',
-  SN: '序列号',
-  Type: 'ONT 类型',
-  UpTime: '上线时间',
-  DownTime: '下线时间',
-  DownReason: '下线原因',
-  // 光信息
-  'ONU NNI port ID': 'ONU网络侧端口编号',
-  'Module type': '光模块类型',
-  'Module sub-type': '光模块子类型',
-  'Used type': '使用场景',
-  'Encapsulation Type': '封装类型',
-  'Optical power precision(dBm)': '光功率精度(dBm)',
-  'Vendor name': '生产厂商',
-  'Vendor rev': '厂商版本',
-  'Vendor PN': '厂商产品编号',
-  'Vendor SN': '厂商产品序列号',
-  'Vendor Code': '厂商代码',
-  'Date Code': '出厂日期',
-  'Rx optical power(dBm)': '接收功率(dBm)',
-  'Rx power current warning threshold(dBm)': '接收功率警示门限值(dBm)',
-  'Rx power current alarm threshold(dBm)': '接收功率告警门限值(dBm)',
-  'Tx optical power(dBm)': '发送功率(dBm)',
-  'Tx power warning threshold(dBm)': '发送功率警示门限值(dBm)',
-  'Tx power alarm threshold(dBm)': '发送功率告警门限值(dBm)',
-  'Laser bias current(mA)': '偏置电流(mA)',
-  'Laser bias current warning threshold(mA)': '偏置电流警示门限值(mA)',
-  'Laser bias current alarm threshold(mA)': '偏置电流告警门限值(mA)',
-  'Temperature(C)': '温度(℃)',
-  'Temperature warning threshold(C)': '温度警示门限值(℃)',
-  'Temperature alarm threshold(C)': '温度告警门限值(℃)',
-  'Voltage(V)': '电压(V)',
-  'Supply voltage warning threshold(V)': '电压警示门限值(V)',
-  'Supply voltage alarm threshold(V)': '电压告警门限值(V)',
-  'OLT Rx ONT optical power(dBm)': 'OLT接收ONT光功率(dBm)',
-  'CATV Rx optical power(dBm)': 'CATV接收光功率(dBm)',
-  'CATV Rx power alarm threshold(dBm)': 'CATV接收功率告警门限值(dBm)',
-  // 版本信息
-  'F/S/P': '框/槽/端口',
-  'ONT-ID': 'ONT编号',
-  'Equipment ID': '设备ID号',
-  'Main Software Version': '主用软件版本',
-  'Backup Software Version': '备用软件版本',
-  'Ont Product ID': '产品编号',
-  // 硬件能力/状态（display ont capability 0/<槽位> <端口> <ONT ID>）
-  'ONT description': 'ONT的描述信息',
-  'ONT ID': 'ONT编号',
-  'Number of uplink PON ports': '上行PON口数目',
-  'Number of POTS ports': 'POTS端口数目',
-  'Number of ETH ports': 'ETH端口数目',
-  'Number of VDSL ports': 'VDSL端口数目',
-  'Number of TDM ports': 'TDM端口数目',
-  'Number of MOCA ports': 'MOCA端口数目',
-  'Number of CATV ANI ports': 'CATV ANI端口数目',
-  'Number of CATV UNI ports': 'CATV UNI端口数目',
-  'Number of GEM ports': 'GEM port数目',
-  'IP configuration': '是否支持IP配置',
-  'Number of traffic Schedulers': '流量控制器数目',
-  'Number of T-CONTs': 'TCONT数目',
-  'The type of flow control': '流控类型',
-  'ONT optical module power control capability': 'ONT光模块电源控制能力',
-  'ONT type': 'ONT类型',
-  'Extended OMCI message format': '是否支持可变长OMCI消息格式',
-  'VoIP configuration method': '语音业务配置方式',
-  'VoIP signalling protocol': '语音业务协议类型',
-  ETHOAM: 'ETHOAM',
-  'Single ring check': '环网单次检测',
-  'Multicast encrypt': '组播加密'
-}
-
-/** KEY_LABELS 的小写索引：设备回显里 Traffic/Schedulers 大小写不稳定，兜底用 */
-const KEY_LABELS_LOWER = {}
-Object.keys(KEY_LABELS).forEach(key => {
-  KEY_LABELS_LOWER[key.toLowerCase()] = KEY_LABELS[key]
-})
-
-/** capability 回显的值也翻：support / not support / 流控类型 / 电源控制能力 */
-const CAP_VALUES = {
-  support: '支持',
-  'not support': '不支持',
-  'gemport car and pq': 'GEMPORT CAR和优先级队列',
-  'the tx and rx power can be controlled separately': '支持TX和RX独立控制'
-}
-
-/** 认证方式的值也顺手翻一下 */
-const AUTH_VALUES = {
-  'SN-auth': 'SN认证',
-  'SN': 'SN认证',
-  'MAC-auth': 'MAC认证',
-  'MAC': 'MAC认证',
-  'password-auth': '密码认证',
-  'Password-auth': '密码认证'
-}
-
-/** 详情弹窗里的英文状态值 → 中文 */
-const INFO_VALUES = {
-  online: '在线',
-  offline: '离线',
-  normal: '正常',
-  initial: '初始状态',
-  failed: '失败',
-  match: '匹配',
-  mismatch: '不匹配'
-}
-
-/** 业务流 VLAN 属性 → 中文（display service-port 表格的 VLAN ATTR 列） */
-const VLAN_ATTRS = {
-  common: '通用VLAN',
-  translation: '转换VLAN',
-  qinq: 'QinQ',
-  smart: '智能VLAN'
-}
-
-/** 最后一次下线原因的常见英文值，对照现场中文叫法补全说明 */
-const DOWN_REASONS = {
-  'LOSi/LOBi': 'LOSi/LOBi【光质量差/光纤断】',
-  LOSi: 'LOSi【光信号丢失】',
-  LOFi: 'LOFi【OLT无法学到ONi序列号】',
-  SuFi: 'SuFi【ONi上行流量异常】',
-  'dying-gasp': '掉电（Dying-Gasp）'
-}
-
-/**
- * MAC 列：OLT 侧只有 MAC 认证（EPON）的认证码本身就是 MAC，GPON 的 SN 认证查不到 MAC，
- * 这里把 12 个十六进制字符的认证码格式化成 aa:bb:cc:dd:ee:ff，其余返回 null（列里显示 -）。
- */
-function macText(sn) {
-  if (!sn) return null
-  const hex = String(sn).split(' ')[0].replace(/[-:.]/g, '')
-  if (!/^[0-9A-Fa-f]{12}$/.test(hex)) return null
-  return hex.match(/.{2}/g).join(':')
-}
-
-/** 在线时长英文格式翻中文：1 day(s), 10 hour(s) → 1天, 10小时 */
+/** 在线时长英文格式翻中文：1 day(s), 10 hour(s) → 1天, 10小时（纯格式化） */
 function formatDuration(text) {
   return String(text)
     .replace(/(\d+)\s*day\(s\)/g, '$1天')
@@ -457,15 +313,20 @@ function formatDuration(text) {
     .replace(/(\d+)\s*second\(s\)/g, '$1秒')
 }
 
-/** 详情弹窗按字段翻译值：状态/掉线原因/在线时长，其余原样 */
-function infoValueText(label, value) {
+/**
+ * 详情弹窗按字段翻译值：状态 / 掉线原因 / 在线时长。
+ * 码表（哪种状态叫什么、掉线原因怎么解释）由后端 /olt/options 下发，这里只查表。
+ */
+function infoValueText(label, value, tables) {
   const text = String(value == null ? '' : value).trim()
   if (!text) return ''
+  const infoValues = (tables && tables.ontInfoValues) || {}
+  const downReasons = (tables && tables.ontDownReasons) || {}
   if (label === '运行标志' || label === '配置状态' || label === '匹配状态') {
-    return INFO_VALUES[text.toLowerCase()] || text
+    return infoValues[text.toLowerCase()] || text
   }
   if (label === '最后下线原因') {
-    return DOWN_REASONS[text] || text
+    return downReasons[text] || text
   }
   if (label === '在线时长') {
     return formatDuration(text)
@@ -480,21 +341,38 @@ function infoValueText(label, value) {
  * 是块状明细，几百条 ONT 逐个采不现实，点行上的图标时才登录设备查一次
  * （display ont optical-info / version / register-info），弹窗里铺成表格。
  *
- * 另外两类也按需查：点 SN / 业务流 / 线路模板 / 业务模板列查的是
- * display current-configuration ont 0/<槽位>/<端口> <ONT ID>——授权行
- * （SN / 线路模板 / 业务模板 / 描述）和这条 ONT 的业务流行一条命令全带回来，
- * 查到的模板号写回本行，线路模板、业务模板两列随后显示成 100 和 100；「详情」图标出
- * display ont info——IP、运行状态、最后一次掉线原因、在线时长在这一份里。
+ * 管理 IP、MAC、线路模板、业务模板这几列在同步采集时就由后端随每条 ONT 的
+ * 单台详情（display ont info 0 <槽位> <端口> <ONT ID>）一起采回，打开列表就是全的，
+ * 不用再点着查；老快照没有这些字段时显示 -，点一次「同步ONT状态」即补齐。
+ *
+ * 仍按需查的：点 SN / 模板列查 display current-configuration ont（授权行与业务流），
+ * 「详情」图标查 display ont info（运行状态、掉线原因、在线时长），业务流列单独查
+ * display service-port port 0/<槽位>/<端口> ont <ONT ID>。
  *
  * 下发 TR069 / 业务流那些写操作是占位，下发能力稍后接入。
  */
 export default {
   name: 'OltOntStatusPanel',
   props: {
-    /** 板卡折算结果（mixin 的 ontBoards），只列有端口的业务板 */
-    ontBoards: {
+    /** 后端摊好的 ONT 行（板卡 × 端口 × ONT 一条一行），页签只渲染 */
+    ontRows: {
       type: Array,
       default: () => []
+    },
+    /** 后端给的「板卡端口」筛选下拉：value 是 槽位/端口，label 是「槽位 2 - 0/2/1」 */
+    ontPortOptions: {
+      type: Array,
+      default: () => []
+    },
+    /** 有 ONT 的业务板（后端算好的 slotNo / total），「删除业务板 ONU」用 */
+    deletableBoards: {
+      type: Array,
+      default: () => []
+    },
+    /** 这些业务板上的 ONT 总数，0 表示按钮置灰 */
+    deletableOntTotal: {
+      type: Number,
+      default: 0
     },
     oltId: {
       type: [Number, String],
@@ -528,8 +406,6 @@ export default {
       queryCommand: '',
       queryRaw: '',
       queryBlocks: [],
-      // 每条 ONT 查过的详情按 槽位/端口/ONT ID 存一份：模板号、IP 只在单条详情里有
-      ontInfoMap: {},
       infoVisible: false,
       infoLoading: false,
       infoRow: null,
@@ -553,36 +429,24 @@ export default {
       spPorts: [],
       spRaw: '',
       spCommand: '',
-      spSelected: []
+      spSelected: [],
+      /** 回显键值翻译码表，来自后端 /olt/options */
+      optionTables: null
     }
   },
   computed: {
-    /** 板卡 × 端口 × ONT 摊平成一行一条 */
-    ontRows() {
-      const rows = []
-      this.ontBoards.forEach(board => {
-        board.ports.forEach(port => {
-          (port.onts || []).forEach(ont => {
-            rows.push({
-              key: board.no + '/' + port.no + '/' + ont.id,
-              // mixin 折算后的槽位字段是 no（板卡对象），端口是 no，ONT 是 id
-              slotNo: board.no,
-              portNo: port.no,
-              iface: port.iface,
-              ontId: ont.id,
-              sn: ont.sn,
-              desc: ont.desc,
-              online: ont.online,
-              stateText: ont.stateText,
-              configText: ont.configText,
-              // GPON 走 SN 认证、EPON 走 MAC 认证，SN 长相就是区分标志
-              authMethod: 'sn'
-            })
-          })
-        })
-      })
-      return rows
+    /** 码表：ONT 回显键值、认证方式、VLAN 属性、掉线原因，全部由后端下发 */
+    codeTables() {
+      return (this.optionTables && this.optionTables.codeTables) || {}
     },
+    /**
+     * 只按页面上的两个筛选条件过滤。
+     *
+     * <p>摊平（板卡 → 端口 → ONT）、字段改名（{@code desc} / {@code stateText} /
+     * {@code configText}）和认证方式判定都在后端做——原来这里按 {@code ont.id}、
+     * {@code ont.stateText} 取值，而接口给的是 {@code ontId}、{@code runState}，
+     * 于是状态列一直是空的。</p>
+     */
     filteredRows() {
       return this.ontRows.filter(row => {
         if (this.stateFilter === 'online' && !row.online) return false
@@ -591,32 +455,11 @@ export default {
         return true
       })
     },
-    portOptions() {
-      const options = []
-      this.ontBoards.forEach(board => {
-        board.ports.forEach(port => {
-          if (port.onts && port.onts.length) {
-            options.push({ value: board.no + '/' + port.no, label: '槽位 ' + board.no + ' - ' + port.iface })
-          }
-        })
-      })
-      return options
-    },
     /**
      * 有 ONT 的业务板：按钮是否可用、确认框里列哪几块板都按它来。
      * 槽位取的是采到的实际值（这台是 2 号槽位就是 0/2），不写死。
      */
-    deletableBoards() {
-      return this.ontBoards
-        .map(board => ({
-          slotNo: board.no,
-          total: board.ports.reduce((sum, port) => sum + (port.onuTotal || 0), 0)
-        }))
-        .filter(board => board.slotNo != null && board.total > 0)
-    },
-    deletableOntTotal() {
-      return this.deletableBoards.reduce((sum, board) => sum + board.total, 0)
-    },
+
     /**
      * 查询弹窗的卡片数据：每块回显转成「字段 / 值」行，英文标签翻成中文，
      * 全是「-」的空块（比如注册历史末尾的占位段）直接丢掉。
@@ -670,7 +513,7 @@ export default {
       const fields = []
       const push = (label, value) => {
         if (value !== null && value !== undefined && value !== '') {
-          fields.push({ label, value: infoValueText(label, value) })
+          fields.push({ label, value: infoValueText(label, value, this.codeTables) })
         }
       }
       const profile = (id, name) => {
@@ -692,19 +535,26 @@ export default {
       return fields
     }
   },
+  created() {
+    fetchOltOptions()
+      .then(res => {
+        this.optionTables = res.data || null
+      })
+      .catch(() => {
+        this.optionTables = null
+      })
+  },
   methods: {
-    /** 行缓存用的 key：槽位/端口/ONT ID */
-    cacheKey(row) {
-      return row.slotNo + '/' + row.portNo + '/' + row.ontId
-    },
-    /** 英文键翻中文（先精确后忽略大小写），没对上的原样返回；T-CONT 的 PQ 行是动态键 */
+    /** 英文键翻中文（后端码表小写键），没对上的原样返回；T-CONT 的 PQ 行是动态键 */
     keyLabel(key) {
       const trimmed = (key || '').trim()
       const pq = trimmed.match(/^Number of PQs in T-CONT\s+(\d+)$/i)
       if (pq) {
         return 'T-CONT ' + pq[1] + ' 的 PQ 数目'
       }
-      return KEY_LABELS[trimmed] || KEY_LABELS_LOWER[trimmed.toLowerCase()] || trimmed
+      // 键→中文由后端下发（键统一小写），没对上的原样显示
+      const labels = this.codeTables.ontKeyLabels || {}
+      return labels[trimmed.toLowerCase()] || trimmed
     },
     /**
      * 一块回显转成卡片行：字段顺序按原回显、空键跳过、
@@ -717,11 +567,13 @@ export default {
         if (value === null || value === undefined || value === '') return
         value = String(value).trim()
         const label = this.keyLabel(key)
-        if (label === '认证方式' && AUTH_VALUES[value]) {
-          value = AUTH_VALUES[value]
+        const authValues = this.codeTables.ontAuthValues || {}
+        const capValues = this.codeTables.ontCapValues || {}
+        if (label === '认证方式' && authValues[value]) {
+          value = authValues[value]
         }
-        if (CAP_VALUES[value.toLowerCase()]) {
-          value = CAP_VALUES[value.toLowerCase()]
+        if (capValues[value.toLowerCase()]) {
+          value = capValues[value.toLowerCase()]
         }
         rows.push({ label, value: value || '-' })
       })
@@ -729,32 +581,30 @@ export default {
       const meaningful = rows.filter(row => row.value !== '-')
       return meaningful.length ? meaningful : []
     },
-    /** 线路模板号：没查过这条 ONT 的配置时为空 */
+    /** 线路模板：同步时随单台详情采回，只显示编号（如 100）；老快照没有显示 - */
     lineText(row) {
-      const info = this.ontInfoMap[this.cacheKey(row)]
-      if (!info) return ''
-      return info.lineProfileId === null || info.lineProfileId === undefined ? '' : String(info.lineProfileId)
+      if (row.lineProfileId === null || row.lineProfileId === undefined) return ''
+      return String(row.lineProfileId)
     },
-    /** 业务模板号：没查过这条 ONT 的配置时为空 */
+    /** 业务模板：同线路模板，只显示编号 */
     srvText(row) {
-      const info = this.ontInfoMap[this.cacheKey(row)]
-      if (!info) return ''
-      return info.srvProfileId === null || info.srvProfileId === undefined ? '' : String(info.srvProfileId)
+      if (row.srvProfileId === null || row.srvProfileId === undefined) return ''
+      return String(row.srvProfileId)
     },
-    /** 管理 IP：整板回显里没有，点「详情」查过 display ont info 后回填本行 */
+    /** 管理 IP：同步时随单台详情采回；桥接模式设备没上报管理地址就显示 - */
     ipOf(row) {
-      const info = this.ontInfoMap[this.cacheKey(row)]
-      return info ? info.ip : null
+      return row.mgmtIp || null
     },
-    /** MAC：只有 MAC 认证的行能从认证码里还原，其余显示 - */
+    /** MAC：后端从单台详情回显或 MAC 认证码还原，前端不再自己拼 */
     macOf(row) {
-      return macText(row.sn)
+      return row.mac || null
     },
     /** VLAN 属性翻中文，没对上的原样 */
     vlanAttrText(attr) {
       if (!attr) return '-'
       const text = String(attr).trim().toLowerCase()
-      return VLAN_ATTRS[text] || attr
+      const attrs = this.codeTables.vlanAttrs || {}
+      return attrs[text] || attr
     },
     /** 业务流上的操作（查询 GMP / 删除 / 新增等）：能力还没接入，先提示 */
     notReady(name) {
@@ -781,7 +631,8 @@ export default {
         this.$message.warning('当前页面没有接上删除业务板 ONU 的接口')
         return
       }
-      const detail = boards.map(board => '0/' + board.slotNo + '（' + board.total + ' 个）').join('、')
+      // 板卡表示法（0/2（12 个））与总数都由后端给，页面只拼这句确认语气
+      const detail = boards.map(board => board.text || ('0/' + board.slotNo + '（' + board.total + ' 个）')).join('、')
       const hint = '将删除 ' + detail + ' 上的全部 ONT，共 ' + this.deletableOntTotal +
         ' 个；设备上的注册与业务配置随之消失，确定继续？'
       this.$confirm(
@@ -800,8 +651,8 @@ export default {
         .catch(() => {})
     },
     /**
-     * 点 SN 打开详情：display ont info，IP / 模板 / 掉线原因都在这份里。
-     * 查到的模板号写回行缓存，模板列随后就显示成 100:100。
+     * 点 SN 打开详情：display ont info，运行状态 / 掉线原因 / 在线时长在这一份里
+     * （IP 与模板同步时已采进快照，这里再看的是补充字段）。
      */
     openOntInfo(row) {
       if (this.oltId == null) return
@@ -826,9 +677,6 @@ export default {
           this.infoData = data.ontInfo || null
           this.infoRaw = data.raw || ''
           this.infoCommand = data.command || ''
-          if (this.infoData) {
-            this.$set(this.ontInfoMap, this.cacheKey(row), this.infoData)
-          }
         })
         .catch(err => {
           const data = (err && err.response && err.response.data) || {}
@@ -841,7 +689,6 @@ export default {
     /**
      * 点 SN / 模板列打开配置弹窗：display current-configuration ont 0/<槽位>/<端口> <ONT ID>，
      * 授权行（SN / 线路模板 / 业务模板 / 描述）和业务流行一条命令全带回来。
-     * 查到的模板号写回行缓存，模板列随后显示成 100:100。
      */
     openOntConfig(row) {
       if (this.oltId == null) return
@@ -849,6 +696,17 @@ export default {
       this.cfgRow = row
       this.cfgVisible = true
       this.loadOntConfig(row)
+    },
+    /**
+     * 模板列点击：同一行的模板编号再点一次就是收起弹窗（可点击取消）；
+     * 点别的行则切换到那条 ONT 的配置。
+     */
+    toggleOntConfig(row) {
+      if (this.cfgVisible && this.cfgRow && this.cfgRow.key === row.key) {
+        this.cfgVisible = false
+        return
+      }
+      this.openOntConfig(row)
     },
     loadOntConfig(row) {
       if (!row) return
@@ -870,9 +728,6 @@ export default {
           // 改授权表单预填当前认证码（注册方式默认 SN）
           this.cfgAuthType = 'sn-auth'
           this.cfgAuthCode = (data.ontInfo && data.ontInfo.sn) || ''
-          if (this.cfgData) {
-            this.$set(this.ontInfoMap, this.cacheKey(row), this.cfgData)
-          }
         })
         .catch(err => {
           const data = (err && err.response && err.response.data) || {}

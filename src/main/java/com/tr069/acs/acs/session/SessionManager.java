@@ -11,55 +11,32 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * CPE 会话注册表。
- */
+/** CPE 会话注册表 */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class SessionManager {
 
-    /**
-     * SN -> 会话
-     */
+    /** SN -> 会话 */
     private final Map<String, CpeSession> snToSession = new ConcurrentHashMap<>();
 
-    /**
-     * TCP 连接标识 -> SN，用于双会话检测
-     */
+    /** TCP 连接标识 -> SN，用于双会话检测 */
     private final Map<String, String> connectionToSn = new ConcurrentHashMap<>();
 
-    /**
-     * CWMP 会话标识 -> SN，来自 ACS 下发 Set-Cookie 的 session 值。
-     *
-     * <p>这是同一轮会话跨 TCP 连接续接的正道：设备的空 POST、RPC 响应常常从
-     * 另一个源端口过来，ip:端口 对不上，只有 Cookie 能认出来。</p>
-     */
+    /** CWMP 会话标识 -> SN，来自 ACS 下发 Set-Cookie 的 session 值 */
     private final Map<String, String> sessionIdToSn = new ConcurrentHashMap<>();
 
     @Value("${acs.device.online-check-interval:86400}")
     private long onlineCheckInterval;
 
-    /**
-     * 会话对象回收倍率：静默时长超过 onlineCheckInterval 的这个倍数才移除会话。
-     */
+    /** 会话对象回收倍率：静默时长超过 onlineCheckInterval 的这个倍数才移除会话 */
     private static final long SESSION_RECLAIM_FACTOR = 10L;
 
-    /**
-     * 疑似双会话的告警窗口(秒)：旧会话在该窗口内仍有通信，说明设备可能同时存在两条连接。
-     * 取值要小于设备周期上报间隔，否则每次周期上报都会告警。只用于告警，不据此关闭会话。
-     */
+    /** 疑似双会话的告警窗口(秒)：旧会话在该窗口内仍有通信，说明设备可能同时存在两条连接 */
     @Value("${acs.session.duplicate-grace-seconds:30}")
     private long duplicateGraceSeconds;
 
-    /**
-     * 获取或创建会话。
-     *
-     * @param oui    设备 OUI
-     * @param sn     设备序列号
-     * @param connId 本次 TCP 连接标识
-     * @return 会话实例
-     */
+    /** 获取或创建会话 */
     public CpeSession getOrCreate(String oui, String sn, String connId) {
         CpeSession session = snToSession.computeIfAbsent(sn, key -> {
             log.info("新设备注册: sn={}, oui={}", key, oui);
@@ -95,20 +72,12 @@ public class SessionManager {
         return session;
     }
 
-    /**
-     * 按 CWMP 会话号反查序列号，对应 Cookie 里那个 session 字段。
-     */
+    /** 按 CWMP 会话号反查序列号，对应 Cookie 里那个 session 字段 */
     public String findSnBySessionId(String sessionId) {
         return sessionId == null ? null : sessionIdToSn.get(sessionId);
     }
 
-    /**
-     * 把会话重新绑到当前这条 TCP 连接上。
-     *
-     * <p>设备在会话中途换连接（NAT 换端口、或同一轮会话里空 POST 和 RPC 响应各开一条）
-     * 走到这里是正常的：会话没变，只是承载它的连接变了。旧连接的映射要清掉，
-     * 否则 connectionToSn 会随每次请求一直堆积。</p>
-     */
+    /** 把会话重新绑到当前这条 TCP 连接上 */
     public void rebindConnection(String sn, String connId) {
         CpeSession session = snToSession.get(sn);
         if (session == null) {
@@ -127,28 +96,12 @@ public class SessionManager {
         return snToSession.get(sn);
     }
 
-    /**
-     * 按 TCP 连接标识反查设备序列号。
-     */
+    /** 按 TCP 连接标识反查设备序列号 */
     public String findSnByConnection(String connId) {
         return connectionToSn.get(connId);
     }
 
-    /**
-     * 双会话检测。
-     *
-     * <p><b>注意：连接标识不同不等于重复会话。</b>连接标识取自 {@code ip:源端口}，
-     * 而 CPE 每次新建 TCP 连接都会换一个临时端口，周期上报（常见 60 秒）几乎每次都是新连接。
-     * 若只比连接标识，每台设备每次周期上报都会被判成重复会话，会话被关、设备被判离线，
-     * 上线记录每分钟抖动一次，正在等待回应的指令也会被作废。</p>
-     *
-     * <p>真正的判据是"旧会话是否还活着"：旧会话在宽限窗口内仍有活动，
-     * 说明设备上确实同时存在两条连接（例如设备重启后立刻重连），这才需要关掉旧的。</p>
-     *
-     * @param sn     设备序列号
-     * @param connId 本次连接标识
-     * @return true 表示检测到设备已通过另一条<strong>仍在活动</strong>的连接建立了会话
-     */
+    /** 双会话检测 */
     public boolean detectDuplicateSession(String sn, String connId) {
         CpeSession session = snToSession.get(sn);
         if (session == null) {
@@ -169,9 +122,7 @@ public class SessionManager {
         return !session.isExpired(duplicateGraceSeconds);
     }
 
-    /**
-     * 关闭并移除会话，同时对该 SN 上所有未完成的 RPC 进行超时处理。
-     */
+    /** 关闭并移除会话，同时对该 SN 上所有未完成的 RPC 进行超时处理 */
     public void closeSession(String sn, String reason) {
         CpeSession session = snToSession.remove(sn);
         if (session == null) {
@@ -191,9 +142,7 @@ public class SessionManager {
         log.info("会话关闭: sn={}, reason={}", sn, reason);
     }
 
-    /**
-     * TCP 连接断开时的清理。
-     */
+    /** TCP 连接断开时的清理 */
     public void onConnectionLost(String connId) {
         String sn = connectionToSn.remove(connId);
         if (sn == null) {
@@ -212,9 +161,7 @@ public class SessionManager {
         return snToSession.values();
     }
 
-    /**
-     * 周期性清理长期未通信的会话。
-     */
+    /** 周期性清理长期未通信的会话 */
     @Scheduled(fixedDelayString = "${acs.device.session-sweep-interval:300000}")
     public void sweepExpiredSessions() {
         long now = System.currentTimeMillis();

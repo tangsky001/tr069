@@ -4,20 +4,11 @@ import lombok.Data;
 
 import java.util.List;
 
-/**
- * 新建 VLAN 的表单（页面「创建」弹窗）。
- *
- * <p>页面填的是表达式（{@code 100}、{@code 100-200,300}）+ tagged / untagged 端口，
- * 服务端按厂商拼命令：{@code vlan standard 100} → {@code port epon 1,2 tagged} → {@code exit}。</p>
- */
+/** 新建 VLAN 的表单（页面「创建」弹窗） */
 @Data
 public class OltVlanRequest {
 
-    /**
-     * VLAN ID 表达式，支持 {@code ,} 与 {@code -} 连接，如 {@code 100}、{@code 100-200,300}。
-     *
-     * <p>留空时退回 {@link #vlanId} / {@link #endVlanId}（老页面只填起止 ID）。</p>
-     */
+    /** VLAN ID 表达式，支持 {@code ,} 与 {@code -} 连接，如 {@code 100}、{@code 100-200,300} */
     private String vlanIds;
 
     /** 起止写法（兼容旧表单）：只建一个时 {@link #endVlanId} 留空 */

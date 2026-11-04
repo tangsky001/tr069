@@ -31,21 +31,12 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 命令行回显解析。
- *
- * <p>以华为 MA5600T / MA5683T 的实际回显为主，中兴、烽火按它们的 show 命令格式兼容。
- * 解析原则：能解析就填，解析不出留空（页面显示「-」），不让一条正则失败导致整次同步失败——
- * 原始回显会落到 olt_sync_record，现场按原文补规则即可。</p>
- */
+/** 命令行回显解析 */
 public final class OltInfoParser {
 
     // ------------------------------------------------------------ 型号 / 版本
 
-    /**
-     * 型号 / 版本的提取要看厂商：这块搬到各家 profile 了（见 {@link #extractModel}），
-     * 版本 / 补丁 / 背板 / MAC 这些各家写法一致的还在这里。
-     */
+    /** 型号 / 版本的提取要看厂商：这块搬到各家 profile 了（见 {@link #extractModel}） */
 
     /** 产品版本号：MA5600V800R015C00（华为型号+版本拼在一起，优先于纯 VRP 号） */
     private static final Pattern VERSION_PRODUCT = Pattern.compile(
@@ -63,10 +54,7 @@ public final class OltInfoParser {
     private static final Pattern PATCH = Pattern.compile(
             "(?im)^\\s*patch(?:\\s*version)?\\s*[:：]\\s*([A-Za-z0-9._-]{2,32})");
 
-    /**
-     * 背板/主板型号：PCB Version : H802MABO VER.B。
-     * 只认 PCB Version / Backplane，「Board Type」在部分版本里回的是主控板型号，不能当背板。
-     */
+    /** 背板/主板型号：PCB Version : H802MABO VER.B */
     private static final Pattern BACKPLANE = Pattern.compile(
             "(?im)^\\s*(?:main\\s+board\\s*[:：]?\\s*)?(?:pcb\\s*version|backplane(?:\\s*type)?)"
                     + "\\s*[:：]\\s*([A-Z][A-Z0-9]{3,19})\\b");
@@ -75,7 +63,7 @@ public final class OltInfoParser {
             "(?im)^\\s*(?:main\\s+board\\s+|base\\s+)?mac(?:\\s*address)?\\s*[:：]\\s*"
                     + "([0-9A-Fa-f]{2}(?:[-:][0-9A-Fa-f]{2}){5}|[0-9A-Fa-f]{4}(?:[-:][0-9A-Fa-f]{4}){2})\\b");
 
-    /** 运行时长：MA5683T uptime is 59 day(s), 18 hour(s), ... */
+    /** 运行时长：MA5683T uptime is 59 day(s), 18 hour(s) */
     private static final Pattern UPTIME = Pattern.compile("(?i)uptime\\s+is\\s+([^\\r\\n]+)");
 
     // ------------------------------------------------------------ 板卡
@@ -105,10 +93,7 @@ public final class OltInfoParser {
     /** 槽位表里的空槽位行：整行只有一个槽位号，没有板卡名 */
     private static final Pattern EMPTY_SLOT_LINE = Pattern.compile("(?m)^\\s*(\\d{1,2})\\s*$");
 
-    /**
-     * 华为 display temperature all 的表头：
-     * Slot Card Sensor Status Current(C) Lower(C) Upper(C)
-     */
+    /** 华为 display temperature all 的表头 */
     private static final Pattern TEMPERATURE_SENSOR_HEADER = Pattern.compile(
             "(?i)(?:sensor\\s+status|current\\s*\\(c\\))");
 
@@ -127,10 +112,7 @@ public final class OltInfoParser {
     private OltInfoParser() {
     }
 
-    /**
-     * 板卡状态枚举。各家写法差异大，这里统一列一遍：
-     * Normal / Active_normal / Standby_normal / InService / Auto_find / Failed ...
-     */
+    /** 板卡状态枚举。各家写法差异大，这里统一列一遍 */
     private static String statuses() {
         return "normal|active[_ ]normal|standby[_ ]normal|active|standby|inservice|in[_ ]service|in[_ ]position|"
                 + "working|online|up|fault|faulty|abnormal|offline|failed|config|configured|auto[_ ]?find|"
@@ -139,13 +121,7 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ 版本信息
 
-    /**
-     * 从版本回显里提取型号。
-     *
-     * <p>各家型号写法不一样（华为 MA5683T、中兴 ZXA10 C320、鸿升光 HSGQ-E04），
-     * 规则在各家 profile 的 {@code extractModel} 里，这里只认出来是哪一家然后转过去。
-     * 认不出厂商时兜底那份会挨家试一遍。</p>
-     */
+    /** 从版本回显里提取型号 */
     public static String extractModel(OltVendor vendor, String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -153,9 +129,7 @@ public final class OltInfoParser {
         return OltVendorProfiles.of(vendor).extractModel(text);
     }
 
-    /**
-     * 软件版本：优先取 MA5600V800R015C00 这种产品版本号，其次 VRP 号，最后 version: 行。
-     */
+    /** 软件版本：优先取 MA5600V800R015C00 这种产品版本号，其次 VRP 号，最后 version: 行 */
     public static String extractSoftwareVersion(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -176,9 +150,7 @@ public final class OltInfoParser {
         return fallback.find() ? fallback.group() : null;
     }
 
-    /**
-     * 补丁版本，如 SPC107。
-     */
+    /** 补丁版本，如 SPC107 */
     public static String extractPatchVersion(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -187,9 +159,7 @@ public final class OltInfoParser {
         return matcher.find() ? clean(matcher.group(1)) : null;
     }
 
-    /**
-     * 背板/主板型号，如 MA5683T 的 H802MABO。
-     */
+    /** 背板/主板型号，如 MA5683T 的 H802MABO */
     public static String extractBackplane(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -198,9 +168,7 @@ public final class OltInfoParser {
         return matcher.find() ? clean(matcher.group(1)) : null;
     }
 
-    /**
-     * 从 display board 0 的回显里找背板型号，版本命令没带 PCB 时兜底。
-     */
+    /** 从 display board 0 的回显里找背板型号，版本命令没带 PCB 时兜底 */
     public static String extractBackplaneBoard(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -209,9 +177,7 @@ public final class OltInfoParser {
         return matcher.find() ? matcher.group(1).toUpperCase(Locale.ROOT) : null;
     }
 
-    /**
-     * 主控 MAC。设备回显里没写就是 null，页面显示「-」。
-     */
+    /** 主控 MAC。设备回显里没写就是 null，页面显示「-」 */
     public static String extractMacAddress(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -220,9 +186,7 @@ public final class OltInfoParser {
         return matcher.find() ? clean(matcher.group(1)).toUpperCase(Locale.ROOT) : null;
     }
 
-    /**
-     * 运行时长，统一转成「59天18小时21分11秒」。
-     */
+    /** 运行时长，统一转成「59天18小时21分11秒」 */
     public static String extractUptime(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -274,9 +238,7 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ 板卡
 
-    /**
-     * 解析板卡列表，已按槽位排序。
-     */
+    /** 解析板卡列表，已按槽位排序 */
     public static List<OltBoard> parseBoards(String text) {
         List<OltBoard> boards = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -322,13 +284,7 @@ public final class OltInfoParser {
         return boards;
     }
 
-    /**
-     * 机框槽位数：{@code display board 0} 槽位表里最大的 SlotID + 1。
-     *
-     * <p>表里空槽位也占一行（只有槽位号，没有板卡名），所以不能只看解析出来的板卡行——
-     * 现场这台 MA5683T 的槽位表是 0..12 共 13 个槽位，只有 1/6/8 插了板卡，
-     * 机框要按 13 个槽位画，而不是只画到 8 号。</p>
-     */
+    /** 机框槽位数：{@code display board 0} 槽位表里最大的 SlotID + 1 */
     public static Integer parseSlotCount(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -346,9 +302,7 @@ public final class OltInfoParser {
         return max < 0 ? null : max + 1;
     }
 
-    /**
-     * 解析板卡温度，返回「槽位 -> 温度」。命令不支持时返回空表。
-     */
+    /** 解析板卡温度，返回「槽位 -> 温度」。命令不支持时返回空表 */
     public static Map<Integer, Integer> parseTemperatures(String text) {
         Map<Integer, Integer> temperatures = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -388,9 +342,7 @@ public final class OltInfoParser {
         return temperature >= -20 && temperature <= 150;
     }
 
-    /**
-     * 板卡类别。先按板卡型号关键字判断，认不出再按 MA5600T/MA5683T 的槽位约定兜底。
-     */
+    /** 板卡类别。先按板卡型号关键字判断，认不出再按 MA5600T/MA5683T 的槽位约定兜底 */
     public static BoardKind classifyBoard(String boardType, Integer slotNo) {
         String type = boardType == null ? "" : boardType.toUpperCase(Locale.ROOT);
         if (type.contains("SCU") || type.contains("MPL") || type.contains("CCU") || type.contains("SRVC")) {
@@ -434,9 +386,7 @@ public final class OltInfoParser {
         return BoardKind.UNKNOWN;
     }
 
-    /**
-     * 生成页面上的「描述」列，如 8口GPON（业务板）。
-     */
+    /** 生成页面上的「描述」列，如 8口GPON（业务板） */
     static String describeBoard(String boardType, BoardKind kind, int ports, String portMode) {
         switch (kind) {
             case CONTROL:
@@ -455,9 +405,7 @@ public final class OltInfoParser {
         }
     }
 
-    /**
-     * 按板卡型号猜端口类型，猜不出返回 null（页面显示「-」）。
-     */
+    /** 按板卡型号猜端口类型，猜不出返回 null（页面显示「-」） */
     static String guessPortMode(String boardType) {
         if (boardType == null || boardType.isBlank()) {
             return null;
@@ -480,9 +428,7 @@ public final class OltInfoParser {
         return null;
     }
 
-    /**
-     * 常见华为板卡的端口数，设备回显不带端口数时兜底（display board 0 就不带）。
-     */
+    /** 常见华为板卡的端口数，设备回显不带端口数时兜底（display board 0 就不带） */
     static int knownPortCount(String boardType) {
         if (boardType == null || boardType.isBlank()) {
             return 0;
@@ -510,7 +456,7 @@ public final class OltInfoParser {
     private static final Pattern PORT_ROW_FSP = Pattern.compile(
             "^\\s*(\\d{1,2})/(\\d{1,2})/(\\d{1,2})\\s+(.*)$");
 
-    /** 只有端口号的端口行：P0 ... / Port 0 ... */
+    /** 只有端口号的端口行：P0 ... / Port 0 */
     private static final Pattern PORT_ROW_SIMPLE = Pattern.compile(
             "(?i)^\\s*(?:P|port\\s*)?(\\d{1,2})\\s+(.*)$");
 
@@ -518,10 +464,7 @@ public final class OltInfoParser {
     private static final Pattern PORT_KEY_FSP = Pattern.compile(
             "(?i)port\\s*(?:id)?\\s*[:：]\\s*(\\d{1,2})/(\\d{1,2})/(\\d{1,2})");
 
-    /**
-     * 光模块状态关键字，取值来自华为 Optic Status：
-     * normal 在位、absence 不在位、abnormal 故障、mismatch 类型不匹配。
-     */
+    /** 光模块状态关键字，取值来自华为 Optic Status */
     private static final Pattern OPTIC_STATUS_WORD = Pattern.compile(
             "(?i)\\b(normal|absence|absent|abnormal|mismatch|present|fault|not\\s+installed)\\b");
 
@@ -531,13 +474,7 @@ public final class OltInfoParser {
     /** 表头写了 RXPower(dBm)、数值列只留数字的版本，按小数和量程兜底 */
     private static final Pattern RX_POWER_LOOSE = Pattern.compile("(?<![\\d.])(-?\\d{1,2}\\.\\d+)(?![\\d.])");
 
-    /**
-     * 解析端口光模块状态，供页面点亮「在位」指示灯。
-     *
-     * <p>两种回显都认：表格行（{@code 0/1/0 GPON normal -8.12}）和键值块
-     * （{@code Port ID : 0/1/0} 换行 {@code Optic status : normal}）。都没有时返回空表，
-     * 页面显示灰灯（未采集），不会误报「不在位」。</p>
-     */
+    /** 解析端口光模块状态，供页面点亮「在位」指示灯 */
     public static List<OltPort> parsePorts(String text) {
         List<OltPort> ports = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -655,9 +592,7 @@ public final class OltInfoParser {
         return OPTIC_STATUS_WORD.matcher(line).find() || RX_POWER.matcher(line).find();
     }
 
-    /**
-     * 同一端口多行出现时合并：保留先出现的信息，缺的字段用后面的补。
-     */
+    /** 同一端口多行出现时合并：保留先出现的信息，缺的字段用后面的补 */
     private static List<OltPort> mergePorts(List<OltPort> ports) {
         Map<String, OltPort> merged = new LinkedHashMap<>();
         for (OltPort port : ports) {
@@ -680,49 +615,32 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ ONT 数量
 
-    /**
-     * 汇总行（GPON）：{@code In port 0/ 1/0 , the total of ONTs are: 23, online: 22}。
-     * 注意设备会把端口写成带空格的 {@code 0/ 1/0}，逗号前也带空格。
-     * EPON 版本只给总数不带在线数，在线数得自己从表格里数。
-     */
+    /** 汇总行（GPON）：{@code In port 0/ 1/0 , the total of ONTs are: 23, online: 22} */
     private static final Pattern ONT_SUMMARY = Pattern.compile(
             "(?i)In\\s+port\\s+(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*,\\s*the\\s+total\\s+of\\s+ONTs"
                     + "\\s+are\\s*[:：]?\\s*(\\d+)(?:\\s*,\\s*online\\s*[:：]?\\s*(\\d+))?");
 
-    /**
-     * ONT 明细行：F/S/P ONT-ID SN Control Run Config Match。
-     * 设备会把 F/S/P 写成带空格的 {@code 0/ 1/0}，所以斜杠后面允许空格。
-     */
-    private static final Pattern ONT_ROW = Pattern.compile(
-            "^\\s*(\\d{1,2})/\\s*(\\d{1,2})/\\s*(\\d{1,2})\\s+(\\d{1,3})\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)",
-            Pattern.MULTILINE);
+    /** ONT 明细行：F/S/P ONT-ID SN Control Run Config Match */
+    /** Run state 列的已知取值。两个明细正则都拿它对号 */
+    private static final String RUN_STATES =
+            "(online|offline|up|down|los|dyinggasp|working|alarm)";
 
-    /**
-     * ONT 明细行（取明细用）。和 {@link #ONT_ROW} 的区别：<strong>不锚定行首</strong>。
-     * 分页时设备会把提示直接打在行中间：
-     * {@code ( Press 'Q' to break ) ----                   0/ 1/0   32  534B... active online ...}，
-     * 锚定行首的写法会漏掉这些 ONT，数量对得上、明细却少几条。
-     * SN 限定成十六进制（GPON）或带横杠的十六进制（EPON 的 MAC），避免把 Description 表
-     * （{@code 0/ 1/0   0   SK-D748S}）也当成明细行。
-     */
+    private static final Pattern ONT_ROW = Pattern.compile(
+            "^\\s*(\\d{1,2})/\\s*(\\d{1,2})/\\s*(\\d{1,2})\\s+(\\d{1,3})\\s+(\\S+)\\s+(\\S+)\\s+"
+                    + RUN_STATES + "\\s+(\\S+)\\s+(\\S+)",
+            Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
+
+    /** ONT 明细行（取明细用）。和 {@link #ONT_ROW} 的区别：不锚定行首 */
     private static final Pattern ONT_DETAIL = Pattern.compile(
             "(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s+(\\d{1,3})\\s+([0-9A-Fa-f][0-9A-Fa-f-]{7,20})"
-                    + "\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)");
+                    + "\\s+(\\S+)\\s+" + RUN_STATES + "\\s+(\\S+)\\s+(\\S+)",
+            Pattern.CASE_INSENSITIVE);
 
     /** Description 表：{@code 0/ 1/0   0   SK-D748S}，行尾那个就是 ONT 型号 */
     private static final Pattern ONT_DESCRIPTION = Pattern.compile(
             "(?m)(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s+(\\d{1,3})\\s+(\\S+)\\s*$");
 
-    /**
-     * 解析整块板的 ONT 数量。
-     *
-     * <p>命令是 config 视图的 {@code display ont info 0 <槽> all}——参数用空格分隔，不是 0/1，
-     * 而且必须先进 config 视图，用户视图下设备不认这条。一条命令就把这块板所有端口的
-     * ONT 明细都带回来了，按端口分组统计。优先用每个端口末尾的汇总行，
-     * 没有汇总行时按明细行数，Run state 为 online（EPON 是 up）的算在线。</p>
-     *
-     * @return key 是端口号，value 是 {总数, 在线数}
-     */
+    /** 解析整块板的 ONT 数量 */
     public static Map<Integer, int[]> parseOntCounts(String text) {
         Map<Integer, int[]> counts = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -763,15 +681,7 @@ public final class OltInfoParser {
         return online;
     }
 
-    /**
-     * 解析整块板的 ONT 明细：每个端口下有哪些 ONT，各自的 SN、在线/离线、型号描述。
-     *
-     * <p>页面要看的不是「23 个」这个数字，而是 23 条 ONT 各自的 ID、SN 和在线状态，
-     * 所以这里把回显的主表逐行拆出来，再用 Description 表把型号补上。
-     * 分页提示打在行中间的那几行也一起收进来（见 {@link #ONT_DETAIL}）。</p>
-     *
-     * @return key 是端口号，value 是该端口下的 ONT 明细（按 ONT ID 升序）
-     */
+    /** 解析整块板的 ONT 明细：每个端口下有哪些 ONT，各自的 SN、在线/离线、型号描述 */
     public static Map<Integer, List<OltOnt>> parseOntDetails(String text) {
         Map<Integer, List<OltOnt>> result = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -806,10 +716,7 @@ public final class OltInfoParser {
         return result;
     }
 
-    /**
-     * 单板温度：{@code The temperature of the board:  41C( 105F)}。
-     * 部分版本不支持 display temperature all，只能按槽位一条条问。
-     */
+    /** 单板温度：{@code The temperature of the board:  41C( 105F)} */
     private static final Pattern BOARD_TEMPERATURE = Pattern.compile(
             "(?i)temperature\\s+of\\s+the\\s+board\\s*[:：]?\\s*(-?\\d{1,3})\\s*C");
 
@@ -821,20 +728,12 @@ public final class OltInfoParser {
         return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
     }
 
-    /**
-     * {@code display board 0/<槽位>} 的端口状态表：
-     * {@code 0  GE  absence  1  auto  auto  auto  off  active  offline}
-     * 端口号 / 端口类型 / 光模块状态 / ... / 链路状态（online / offline）。
-     * 光模块不在位（absence）、链路离线（offline）的口也照记——同步就要把空口的状态记进去。
-     */
+    /** {@code display board 0/<槽位>} 的端口状态表 */
     private static final Pattern BOARD_PORT_STATE = Pattern.compile(
             "(?im)^\\s*(\\d{1,2})\\s+(?:GE|10GE|XGE|ETH)\\s+"
                     + "(normal|absence|abnormal|mismatch)\\b.*?(online|offline)\\s*$");
 
-    /**
-     * 解析 display board 0/<槽位> 回显：端口号 → {光模块状态, 链路状态}。
-     * 表头行（Port Port Optic ...）不含类型词，不会误命中。
-     */
+    /** 解析 display board 0/<槽位> 回显：端口号 → {光模块状态, 链路状态} */
     public static Map<Integer, String[]> parseBoardPortStates(String text) {
         Map<Integer, String[]> result = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -859,19 +758,10 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ 端口光模块数值
 
-    /**
-     * {@code display port state <口>}（接口视图）里的键值行：
-     * {@code TX power(dBm)      : 4.23}、{@code Temperature(C)    : 35}。
-     */
+    /** {@code display port state <口>}（接口视图）里的键值行 */
     private static final Pattern PORT_STATE_ROW = Pattern.compile("^([^:：]{2,48})[:：]\\s*(\\S.*)$");
 
-    /**
-     * 解析光模块数值：Optical Module status / Laser state / TX fault /
-     * Temperature(C) / TX Bias current(mA) / Supply Voltage(V) / TX power(dBm) / RX power(dBm)。
-     *
-     * <p>回显里还有 Port Information 段（Port state、Last up time 等），这里只挑光模块的字段；
-     * 一个都没认出来（命令不认、端口不存在）返回 null，调用方据此判断要不要继续问下一个口。</p>
-     */
+    /** 解析光模块数值：Optical Module status / Laser state / TX fault / */
     public static OltPort parsePortStateOptics(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -933,11 +823,7 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ VLAN
 
-    /**
-     * {@code display vlan all} 的数据行：
-     * {@code "   41   smart  common          6              57             -"}。
-     * 表头（VLAN Type Attribute ...）和汇总行（Total: 4）都不是数字开头，靠行首数字天然排除。
-     */
+    /** {@code display vlan all} 的数据行 */
     private static final Pattern VLAN_ROW = Pattern.compile(
             "(?m)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+(\\d{1,6})\\s+(\\d{1,6})\\s+(\\S+)\\s*$");
 
@@ -950,9 +836,7 @@ public final class OltInfoParser {
     /** 端口 VLAN 列表里允许的字符：数字、空白、逗号 */
     private static final Pattern PORT_VLAN_LINE = Pattern.compile("[\\d\\s,]+");
 
-    /**
-     * 解析 {@code display vlan all} 的 VLAN 列表。
-     */
+    /** 解析 {@code display vlan all} 的 VLAN 列表 */
     public static List<OltVlan> parseVlans(String text) {
         List<OltVlan> vlans = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -981,14 +865,7 @@ public final class OltInfoParser {
         return matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
     }
 
-    /**
-     * 解析 {@code display port vlan 0/<槽位>/<端口>}：这个口放通了哪些 VLAN、Native VLAN 是多少。
-     *
-     * <p>回显除了几行数字，还有命令本身、Total、Native VLAN 和分页/参数提示，
-     * 这里只收「整行都是 VLAN 数字」的行，避免把 Total 或提示里的数字当成 VLAN。</p>
-     *
-     * @return 解析不出（命令不支持、端口不存在）时返回 null
-     */
+    /** 解析 {@code display port vlan 0/<槽位>/<端口>}：这个口放通了哪些 VLAN、Native VLAN 是多少 */
     public static OltPortVlan parsePortVlan(String text) {
         if (text == null || text.isBlank() || looksUnsupported(text)) {
             return null;
@@ -1030,19 +907,11 @@ public final class OltInfoParser {
         return portVlan;
     }
 
-    /**
-     * {@code display ip interface brief} 里的 vlanif 行：
-     * {@code "vlanif46         10.172.10.254/24      up          up"}。
-     * meth0 这种带外管理口不算三层 VLAN 接口，直接跳过。
-     */
+    /** {@code display ip interface brief} 里的 vlanif 行 */
     private static final Pattern IP_IF_ROW = Pattern.compile(
             "(?mi)^\\s*vlanif(\\d{1,4})\\s+([\\d.]+)/(\\d{1,2})\\s+(\\S+)\\s+(\\S+)\\s*$");
 
-    /**
-     * {@code display ip routing-table} 的数据行：
-     * {@code "        0.0.0.0/0   Static  60   0          RD   10.172.10.1     vlanif46"}。
-     * 只留 Proto=Static 的，Direct/OSPF 这些不是静态路由。
-     */
+    /** {@code display ip routing-table} 的数据行 */
     private static final Pattern ROUTE_ROW = Pattern.compile(
             "(?m)^\\s*([\\d.]+/\\d{1,2})\\s+(\\S+)\\s+(\\d{1,5})\\s+(\\d{1,6})\\s+(\\S+)\\s+([\\d.]+)\\s+(\\S+)\\s*$");
 
@@ -1092,14 +961,7 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ DBA / 线路模板
 
-    /**
-     * {@code display dba-profile all} 的数据行，三种回显写法都认：
-     * 现网 MA5683T 的 {@code 0  3  No  0  8192  20480  1}——列是
-     * Profile-ID / type(纯数字) / Bandwidth compensation / Fix / Assure / Max / Bind times，
-     * <strong>总表里没有模板名</strong>（名字要靠 {@code profile-id} 详情的块状回显补）；
-     * 还有带名字的表格式 {@code 1  DBA-1  type3  1024  2048  102400}，
-     * 和老版本的一行式 {@code 1  DBA-1  type3  fix 1024 assure 2048 max 102400}。
-     */
+    /** {@code display dba-profile all} 的数据行，三种回显写法都认 */
     private static final Pattern DBA_ROW_MA5600 = Pattern.compile(
             "(?im)^\\s*(\\d{1,4})\\s+(\\d)\\s+(\\S+)\\s+(\\d{1,9})\\s+(\\d{1,9})\\s+(\\d{1,9})(?:\\s+\\d{1,4})?\\s*$");
 
@@ -1109,25 +971,15 @@ public final class OltInfoParser {
     private static final Pattern DBA_ROW_INLINE = Pattern.compile(
             "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(type\\d)\\s+fix\\s+(\\d+)\\s+assure\\s+(\\d+)\\s+max\\s+(\\d+)\\s*$");
 
-    /**
-     * {@code display ont-lineprofile gpon all} 的模板行：{@code 1  line-1  ONT  dFEC  OMCI}。
-     * 前面三列是 ID / 名字 / 类型（ONT），后面 FEC、OMCI 这些列各版本多少不一，不参与解析。
-     */
+    /** {@code display ont-lineprofile gpon all} 的模板行：{@code 1  line-1  ONT  dFEC  OMCI} */
     private static final Pattern LINE_PROFILE_ROW = Pattern.compile(
             "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(\\S+)(?:\\s+.*)?$");
 
-    /**
-     * T-CONT 行，两种写法都认：display 回显 {@code T-CONT  1  DBA-profile  1}
-     * 与配置脚本 {@code tcont 1 dba-profile-id 100}。
-     */
+    /** T-CONT 行，两种写法都认：display 回显 {@code T-CONT  1  DBA-profile  1} */
     private static final Pattern LINE_TCONT_ROW = Pattern.compile(
             "(?i)t-?cont\\s+(\\d{1,4})\\s+DBA-profile(?:-id)?\\s+(\\d{1,4})");
 
-    /**
-     * {@code GEM port 1  T-CONT 1  Mapping mode VLAN  41}。
-     * 各字段分头取：整行里有没有这几段都不一定（有的版本只给 GEM port 编号），
-     * 用一个正则带一串可选组会因为惰性匹配全部取到 null，所以拆成四条单独找。
-     */
+    /** {@code GEM port 1  T-CONT 1  Mapping mode VLAN  41} */
     /** GEM port 行：回显 {@code GEM port 1 ...} 与配置脚本 {@code gem add 0 eth tcont 1} */
     private static final Pattern LINE_GEM_ROW = Pattern.compile(
             "(?i)^\\s*(?:GEM\\s+port\\s+|gem\\s+add\\s+)(\\d{1,4})\\b");
@@ -1136,32 +988,20 @@ public final class OltInfoParser {
 
     private static final Pattern LINE_GEM_MODE = Pattern.compile("(?i)mapping\\s+mode\\s+(\\S+)");
 
-    /**
-     * GEM 映射行（配置脚本）：{@code gem mapping 0 0 vlan 46}——
-     * GEM port 号、GEM 内映射序号、映射的 VLAN，页面「GEM 映射ID」那一列就是第二个数字。
-     */
+    /** GEM 映射行（配置脚本）：{@code gem mapping 0 0 vlan 46}—— */
     /** 配置脚本里的模板概要：{@code ont-lineprofile gpon profile-id 100 profile-name "FTTH-GPON-100"} */
     private static final Pattern LINE_PROFILE_CONFIG = Pattern.compile(
             "(?i)ont-lineprofile\\s+gpon\\s+profile-id\\s+(\\d{1,4})\\s+profile-name\\s+\"?([^\"\\s]+)\"?");
 
-    /**
-     * 明细回显的 T-CONT 块头：{@code <T-CONT  0>       DBA Profile-ID:1}（注意双空格与冒号）。
-     */
+    /** 明细回显的 T-CONT 块头：{@code        DBA Profile-ID:1}（注意双空格与冒号） */
     private static final Pattern LINE_TCONT_BLOCK = Pattern.compile(
             "(?i)^\\s*<T-CONT\\s+(\\d{1,4})>\\s+DBA\\s*Profile-ID:\\s*(\\d{1,4})");
 
-    /**
-     * 明细回显的 GEM 块头：{@code <Gem Index:0>}（冒号后空格、尖括号缺失都容忍），
-     * 后面的映射表格行都归它。
-     */
+    /** 明细回显的 GEM 块头：{@code }（冒号后空格、尖括号缺失都容忍） */
     private static final Pattern LINE_GEM_BLOCK = Pattern.compile(
             "(?i)^\\s*<?Gem\\s+Index\\s*:\\s*(\\d{1,4})\\s*>?");
 
-    /**
-     * GEM 块内的映射数据行：{@code 0    45   -    -    -    -    -    -}——
-     * 映射序号 + VLAN + 后面的列（"-" 或具体值都行）。要求至少三列且当前处于
-     * GEM 块内，避免吞掉概要行。
-     */
+    /** GEM 块内的映射数据行：{@code 0    45   -    -    -    -    -    -}—— */
     private static final Pattern LINE_GEM_MAP_DATA = Pattern.compile(
             "^\\s*(\\d{1,4})\\s+(\\d{1,4})(\\s+\\S+)+\\s*$");
 
@@ -1212,13 +1052,7 @@ public final class OltInfoParser {
         return profiles;
     }
 
-    /**
-     * {@code display dba-profile all detail} 的块状详情：一块一条模板，
-     * 含 Profile-name / Profile-ID / type / Fix / Assure / Max / bind-times。
-     *
-     * <p>总表（display dba-profile all）没有名字列，名字只能从这里按 ID 对回去；
-     * detail 解析成功时也能单独当数据源（总表行式对不上时兜底）。</p>
-     */
+    /** {@code display dba-profile all detail} 的块状详情：一块一条模板 */
     public static List<OltDbaProfile> parseDbaDetails(String text) {
         List<OltDbaProfile> profiles = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -1255,10 +1089,7 @@ public final class OltInfoParser {
         return profiles;
     }
 
-    /**
-     * 解析线路模板列表：模板行之后跟着的 T-CONT / GEM port 行归到这条模板下，
-     * 一行一行扫下去（回显就是先模板概要、再逐个 T-CONT 与 GEM port 这么排的）。
-     */
+    /** 解析线路模板列表：模板行之后跟着的 T-CONT / GEM port 行归到这条模板下 */
     public static List<OltLineProfile> parseLineProfiles(String text) {
         List<OltLineProfile> profiles = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -1466,26 +1297,8 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ 业务流 / ONT 能力模板
 
-    /**
-     * 业务流行：{@code INDEX VLAN VLAN PORT F/S/P ONT GEM ...}。
-     *
-     * <pre>{@code
-     * INDEX  VLAN  VLAN  PORT  F/S/P    VPI  VCI  FLOW  FLOW  RX  TX  STATE
-     *        ID    ATTR  TYPE
-     *   0    45    45    gpon  0/ 1/0   1    0    -     -     -   -   -
-     * }</pre>
-     *
-     * <p>不同版本列数不一样，这里只抓前面固定那几列（索引、VLAN、端口、F/S/P），
-     * 后面的 ONT ID / GEM port 按出现顺序取，取不到就留空——页面宁可少一列，
-     * 也不能把 VPI/VCI 当 ONT ID。</p>
-     */
-    /**
-     * 配置脚本里的 service-port 行（{@code display current-configuration}）：
-     * {@code service-port 0 vlan 41 gpon 0/1/1 ont 21 gemport 1 multi-service user-vlan 41 tag-transform translate}。
-     *
-     * <p>这一行比表格回显规整，字段含义不会随版本变；回显会被终端宽度折断
-     * （tag-transform 常被挤到下一行），所以 user-vlan 之后的部分一律不解析。</p>
-     */
+    /** 业务流行：{@code INDEX VLAN VLAN PORT F/S/P ONT GEM ...} */
+    /** 配置脚本里的 service-port 行（{@code display current-configuration}） */
     private static final Pattern SERVICE_PORT_CONFIG = Pattern.compile(
             "(?im)^\\s*service-port\\s+(\\d{1,4})\\s+vlan\\s+(\\d{1,4})\\s+gpon\\s+(\\d{1,2})/(\\d{1,2})/(\\d{1,3})"
                     + "\\s+ont\\s+(\\d{1,3})\\s+gemport\\s+(\\d{1,4})(?:\\s+.*?user-vlan\\s+(\\d{1,4}))?");
@@ -1512,19 +1325,11 @@ public final class OltInfoParser {
         return ports;
     }
 
-    /**
-     * TR069 服务器模板（{@code display ont tr069-server-profile all}）。
-     *
-     * <p>两种回显都认：总表行式 {@code 10  TR069_ACS  http://10.172.10.1:9090/  acs123}（靠 URL 认行），
-     * 以及 {@code profile-id} 详情的块状 {@code URL : http://...}。</p>
-     */
+    /** TR069 服务器模板（{@code display ont tr069-server-profile all}） */
     private static final Pattern TR069_ROW = Pattern.compile(
             "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(https?://\\S+)(?:\\s+(\\S+))?");
 
-    /**
-     * 配置脚本写法：{@code ont tr069-server-profile add profile-id 10 profile-name "TR069_ACS"
-     * url "http://10.172.10.1:9090/" user "acs123" "<密文>"}。
-     */
+    /** 配置脚本写法：{@code ont tr069-server-profile add profile-id 10 profile-name "TR069_ACS" */
     private static final Pattern TR069_CONFIG = Pattern.compile(
             "(?i)ont\\s+tr069-server-profile\\s+add\\s+profile-id\\s+(\\d{1,4})\\s+profile-name\\s+\"?([^\"\\s]+)\"?"
                     + ".*?url\\s+\"?([^\\s\"]+)\"?(?:\\s+user\\s+\"?([^\\s\"]+)\"?)?");
@@ -1594,11 +1399,7 @@ public final class OltInfoParser {
     /** 映射数据行：{@code    0       46    -        -       -     -       -     -} */
     private static final Pattern MAPPING_ROW = Pattern.compile("^\\s*(\\d{1,3})\\s+(\\d{1,4})\\s+.*");
 
-    /**
-     * 线路模板详情里的 GEM 索引（{@code <Gem Index 1>}）。
-     *
-     * <p>建业务虚口时 gemport 要写模板里那个 GEM 号，写错设备直接报参数错。</p>
-     */
+    /** 线路模板详情里的 GEM 索引（{@code }） */
     public static Integer parseGemIndex(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -1607,16 +1408,7 @@ public final class OltInfoParser {
         return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
     }
 
-    /**
-     * 线路模板详情里「VLAN → GEM Port」的对应关系（{@code display ont-lineprofile gpon profile-id X}）。
-     *
-     * <p>模板上「业务 VLAN 映射」留空时，业务虚口就按线路模板里 GEM 实际映射的结构下发——
-     * 页面提示写的是「留空表示沿用线路模板里的 GEM 映射」。现场的标准结构是
-     * 一个 VLAN 一个 GEM（GEM 0→46、1→41、2→45，映射 ID 都是 0），
-     * 建业务虚口时每条 VLAN 要用它自己的 GEM 号，写错设备直接报参数错。</p>
-     *
-     * @return key 是 VLAN，value 是承载它的 GEM 索引；按回显顺序排列，解析不到返回空表
-     */
+    /** 线路模板详情里「VLAN → GEM Port」的对应关系（{@code display ont-lineprofile gpon profile-id X}） */
     public static Map<Integer, Integer> parseGemVlanPairs(String text) {
         Map<Integer, Integer> pairs = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -1672,11 +1464,7 @@ public final class OltInfoParser {
             "^\\s*(\\d{1,4})\\s+(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})"
                     + "(?:\\s+(\\d{1,4}))?(?:\\s+(\\d{1,4}))?");
 
-    /**
-     * 业务流表格整行：INDEX VLAN-ID VLAN-ATTR PORT-TYPE F/S/P VPI VCI FLOW-TYPE FLOW-PARA RX TX STATE。
-     * VPI 是 ONT ID、VCI 是 GEM index（回显 Note 里写明），FLOW TYPE=vlan 时 FLOW PARA
-     * 就是用户侧 VLAN，行尾 STATE 是 up/down。
-     */
+    /** 业务流表格整行：INDEX VLAN-ID VLAN-ATTR PORT-TYPE F/S/P VPI VCI FLOW-TYPE FLOW-PARA RX TX STATE */
     private static final Pattern SERVICE_PORT_FULL_ROW = Pattern.compile(
             "^\\s*(\\d{1,4})\\s+(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+(\\d{1,2})\\s*/\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})"
                     + "\\s+(\\d{1,3})\\s+(\\d{1,4})\\s+(\\S+)\\s+(\\S+)\\s+\\S+\\s+\\S+\\s+([Uu]p|[Dd]own)\\b.*$");
@@ -1728,11 +1516,7 @@ public final class OltInfoParser {
         return ports;
     }
 
-    /**
-     * ONT 能力模板（{@code display ont-srvprofile gpon all}）：回显是块状 key-value，
-     * 一块一条模板，按 Profile-ID / Profile-name 定字段，其余按原样收进 items；
-     * TR069 相关的键另收一份，页面单独展示管理参数。
-     */
+    /** ONT 能力模板（{@code display ont-srvprofile gpon all}）：回显是块状 key-value */
     private static final Pattern TR069_KEY = Pattern.compile("(?i)tr069|acs");
 
     /** 配置脚本里的能力模板概要：{@code ont-srvprofile gpon profile-id 100 profile-name "100"} */
@@ -1744,10 +1528,7 @@ public final class OltInfoParser {
 
     private static final Pattern SRV_ETH_PORTS = Pattern.compile("(?i)eth\\s+adaptive\\s+(\\d{1,3})");
 
-    /**
-     * {@code display ont-srvprofile gpon all} 的概要表行：{@code 100  100  0}——
-     * ID / 名字 / 绑定次数（绑定次数列有的版本没有，可有可无）。
-     */
+    /** {@code display ont-srvprofile gpon all} 的概要表行：{@code 100  100  0}—— */
     private static final Pattern SRV_PROFILE_ROW = Pattern.compile(
             "^\\s*(\\d{1,4})\\s+([A-Za-z0-9_.\\-]+)\\s*(\\d{1,8})?\\s*$");
 
@@ -1858,11 +1639,7 @@ public final class OltInfoParser {
         }
     }
 
-    /**
-     * 流量限速模板（{@code display traffic table ip all}）：
-     * {@code 0  traffic_table_0  -  1024000 ...}（索引 / 名称 / CIR / PIR，后面还有
-     * CBS/PBS/优先级列，只抓前四列；CIR 为 - 表示没有承诺速率）。
-     */
+    /** 流量限速模板（{@code display traffic table ip all}） */
     private static final Pattern TRAFFIC_ROW = Pattern.compile(
             "^\\s*(\\d{1,4})\\s+(\\S+)\\s+(\\d{1,9}|-)\\s+(\\d{1,9}|-)\\s");
 
@@ -1893,23 +1670,7 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ ONT 按需查询
 
-    /**
-     * ONT 按需查询的块状回显（{@code display ont optical-info / version / register-info}）：
-     *
-     * <pre>{@code
-     * ------------------------------
-     * 索引编号          : 2
-     * 认证方式          : SN认证
-     * ...
-     * ------------------------------
-     * 索引编号          : 1
-     * ...
-     * ------------------------------
-     * }</pre>
-     *
-     * <p>分隔线之间是一块（一条 ONT 的一段信息，注册历史有多块），块内一行「键 : 值」。
-     * 命令回显行与提示符行不进结果。</p>
-     */
+    /** ONT 按需查询的块状回显（{@code display ont optical-info / version / register-info}） */
     private static final Pattern ONT_KV_ROW = Pattern.compile(
             // 标签最长给到 64：英文回显的标签会被设备填到 40 多列才放冒号（如 Supply voltage alarm threshold(V)）
             "^([^:：]{2,64})[:：]\\s*(.*)$");
@@ -2005,14 +1766,7 @@ public final class OltInfoParser {
         carry.setLength(0);
     }
 
-    /**
-     * 单条 ONT 详情里的关键字段：{@code display ont info 0 <槽位> <端口> <ONT ID>}。
-     *
-     * <p>整板的 {@code all} 表只给 ID / SN / 在线状态，线路模板、业务模板、IP、
-     * 最后一次掉线原因只有详单里有，这里按「标签 : 值」逐项挑出来给页面直接显示。
-     * 同一台设备中英文回显都见过（language-mode 切换），标签两套都认，
-     * 以现场真实回显为准：SN / Line profile ID / Service profile ID / Last down cause…。</p>
-     */
+    /** 单条 ONT 详情里的关键字段：{@code display ont info 0 <槽位> <端口> } */
     public static OltOntInfo parseOntInfoDetail(String text) {
         OltOntInfo info = new OltOntInfo();
         if (text == null || text.isBlank()) {
@@ -2024,6 +1778,17 @@ public final class OltInfoParser {
         info.setIp(ontField(text,
                 "ONT IP 0 address/mask",
                 "ONT IP 0 地址/掩码", "ONT IP 0地址/掩码"));
+        // MAC：不同版本写法不一，具体的在前、笼统的在后；都没有就是设备不给，采集侧按认证码还原。
+        // 标签匹配落空时再试 ASCII 锚定（标签中文部分被字符集解成乱码时照样能取到值）
+        String mac = ontField(text,
+                "MAC address", "MAC 地址", "MAC地址", "ONT MAC address", "MAC");
+        if (mac == null) {
+            Matcher macFallback = ONT_IPCONFIG_MAC.matcher(text);
+            if (macFallback.find()) {
+                mac = macFallback.group(1);
+            }
+        }
+        info.setMac(mac == null ? null : normalizeMac(mac));
         info.setLastDownReason(ontField(text, "Last down cause", "最后一次下线原因"));
         info.setLastUpTime(ontField(text, "Last up time", "最后一次上线时间"));
         info.setLastDownTime(ontField(text, "Last down time", "最后一次下线时间"));
@@ -2050,23 +1815,52 @@ public final class OltInfoParser {
         return null;
     }
 
-    /**
-     * 配置脚本里的 ONT 授权行（{@code display current-configuration ont 0/1/0 1}）：
-     * {@code ont add 0 1 sn-auth "4648545474095C80" omci ont-lineprofile-id 100
-     * ont-srvprofile-id 100 desc "HG5145F"}。
-     *
-     * <p>终端宽度会把行折断（ont-srvprofile-id 经常掉到下一行），所以各段之间用
-     * 跨行匹配；EPON 的 mac-auth、password-auth 也顺带认。</p>
-     */
+    /** {@code display ont ipconfig <端口> }（接口视图）回显：部分版本的单台详情 */
+    public static OltOntInfo parseOntIpconfig(String text) {
+        OltOntInfo info = new OltOntInfo();
+        if (text == null || text.isBlank()) {
+            return info;
+        }
+        // MAC 不按中文标签匹配：ONT MAC 这段永远是 ASCII，后面的「地址」两个字
+        // 在字符集解错时就是乱码，标签匹配会整个丢掉——锚定 ONT MAC、懒跳过 ≤10 个
+        // 任意字符（中文/英文/乱码都行）再取冒号后的值，稳得多
+        Matcher mac = ONT_IPCONFIG_MAC.matcher(text);
+        info.setMac(mac.find() ? normalizeMac(mac.group(1)) : null);
+        // ONT IP 后必须紧跟空白：这样不会误配到第一行的「ONT IP索引 : 0」
+        Matcher ip = ONT_IPCONFIG_IP.matcher(text);
+        if (ip.find() && !"-".equals(ip.group(1))) {
+            info.setIp(ip.group(1));
+        }
+        return info;
+    }
+
+    /** {@code ONT MAC地址 : 8487-FF20-13A5} 的 ASCII 锚定版 */
+    private static final Pattern ONT_IPCONFIG_MAC = Pattern.compile(
+            "(?im)^\\s*ONT\\s+MAC.{0,10}?[:：]\\s*(\\S+)");
+
+    /** {@code ONT IP : -}，IP 后必须紧跟空白，避免吃进第一行的「ONT IP索引」 */
+    private static final Pattern ONT_IPCONFIG_IP = Pattern.compile(
+            "(?im)^\\s*ONT\\s+IP\\s+[^:：\\r\\n]{0,8}[:：]\\s*(\\S+)");
+
+    /** MAC 归一成 {@code AA:BB:CC:DD:EE:FF}：华为 4-4-4 写法（8487-FF20-13A5）、 */
+    public static String normalizeMac(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String hex = raw.trim().replaceAll("[-:.\\s]", "");
+        if (!hex.matches("[0-9A-Fa-f]{12}")) {
+            return null;
+        }
+        return hex.toUpperCase().replaceAll("(..)(?!$)", "$1:");
+    }
+
+    /** 配置脚本里的 ONT 授权行（{@code display current-configuration ont 0/1/0 1}） */
     private static final Pattern ONT_ADD_CONFIG = Pattern.compile(
             "(?is)ont\\s+add\\s+\\d+\\s+\\d+\\s+(sn-auth|mac-auth|password-auth)\\s+\"?([^\"\\s]+)\"?"
                     + "[\\s\\S]*?ont-lineprofile-id\\s+(\\d{1,4})"
                     + "[\\s\\S]*?ont-srvprofile-id\\s+(\\d{1,4})(?:[\\s\\S]{0,200}?desc\\s+\"([^\"]*)\")?");
 
-    /**
-     * 从配置摘录里解析授权信息：SN / 线路模板 ID / 业务模板 ID / 描述。
-     * 解不出时字段留空，页面还有原始回显可看。
-     */
+    /** 从配置摘录里解析授权信息：SN / 线路模板 ID / 业务模板 ID / 描述 */
     public static OltOntInfo parseOntBindInfo(String text) {
         OltOntInfo info = new OltOntInfo();
         if (text == null || text.isBlank()) {
@@ -2082,21 +1876,7 @@ public final class OltInfoParser {
         return info;
     }
 
-    /**
-     * 表格式回显（{@code display ont optical-info} 单台查询给的是一行表格，不是 key-value 块）：
-     *
-     * <pre>{@code
-     *  ------------------------------------------------------------------
-     *  ONT  Rx power(dBm)  Tx power(dBm)  OLT Rx ONT power(dBm)  Temperature(°C)  Voltage(V)
-     *  ------------------------------------------------------------------
-     *   0    -22.14          2.15           -25.31                 41.20            3.25
-     *  ------------------------------------------------------------------
-     * }</pre>
-     *
-     * <p>列名与数据按连续两个以上空格切开对上；表头认「含字母（含中文）」的行，
-     * 数据行认「首列是纯数字」的行（单台查询首列就是 ONT ID）。key-value 块
-     * 解析不出时（{@link #parseOntKeyValueBlocks} 返回空）用它兜底。</p>
-     */
+    /** 表格式回显（{@code display ont optical-info} 单台查询给的是一行表格，不是 key-value 块） */
     public static List<LinkedHashMap<String, String>> parseOntTableBlocks(String text) {
         List<LinkedHashMap<String, String>> blocks = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -2168,9 +1948,7 @@ public final class OltInfoParser {
         }
     }
 
-    /**
-     * 设备不支持这条命令时的常见说法，采到就别再接着试了。
-     */
+    /** 设备不支持这条命令时的常见说法，采到就别再接着试了 */
     public static boolean looksUnsupported(String text) {
         if (text == null || text.isBlank()) {
             return true;
@@ -2182,13 +1960,7 @@ public final class OltInfoParser {
 
     // --------------------------------------------------- 待注册 ONT（display ont autofind）
 
-    /**
-     * 回显是不是「设备上现在没有待注册 ONT」。
-     *
-     * <p>华为在这种情况下不返回空表，而是回一句
-     * {@code Failure: The automatically found ONTs do not exist}——带 Failure 字样，
-     * 但这属于正常结果，跟「命令不认识」是两码事，不能当成失败往上抛。</p>
-     */
+    /** 回显是不是「设备上现在没有待注册 ONT」 */
     public static boolean autofindIsEmpty(String text) {
         if (text == null || text.isBlank()) {
             return true;
@@ -2200,16 +1972,7 @@ public final class OltInfoParser {
                 || lower.contains("no ont") || lower.contains("0 ont");
     }
 
-    /**
-     * 解析 {@code display ont autofind all} 的回显，得到已经上报、但还没授权的那批 ONT。
-     *
-     * <p>这张表各版本差别不小：简版只有 Number / F/S/P / SN 三列，完整版还带
-     * Password / Loid / Checkcode / VenderID / Ont Version / Ont SoftwareVersion，
-     * 列宽也跟着变。所以不硬背某一版的列宽——先从 {@code ----} 分隔线量出列边界，
-     * 再看表头认每列是什么，最后按列取值。换版本、换兄弟机型照样能对上。</p>
-     *
-     * <p>认不出表头就返回空表，页面按「没有待注册光猫」处理，不会把别的内容塞进来。</p>
-     */
+    /** 解析 {@code display ont autofind all} 的回显，得到已经上报、但还没授权的那批 ONT */
     public static List<OltOntAutofind> parseOntAutofind(String text) {
         List<OltOntAutofind> items = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -2256,29 +2019,7 @@ public final class OltInfoParser {
         return items;
     }
 
-    /**
-     * 竖排键值格式：一台 ONT 一段「标签 : 值」，段与段之间用分隔线隔开。
-     *
-     * <pre>
-     * ------------------------------------------
-     *   Number              : 1
-     *   F/S/P               : 0/2/0
-     *   Ont SN              : 43494F5429ABE539 (CIOT-29ABE539)
-     *   Password            : 0x00000000000000000000
-     *   Loid                :
-     *   Checkcode           :
-     *   VendorID            : CIOT
-     *   Ont Version         : HW1.00.00.488
-     *   Ont SoftwareVersion : V1.0.00.488
-     *   Ont EquipmentID     : PZg-Clac
-     *   Ont autofind time   : 2026-11-01 17:47:51+08:00
-     * ------------------------------------------
-     * </pre>
-     *
-     * <p>复用 {@link #parseOntKeyValueBlocks} 按分隔线切段，再逐键对号。
-     * 判定成一条有效记录的条件放宽：编号、端口、SN 里认出任意一样就算——
-     * 宁可页面上多显示一行残缺记录，也别把真实存在的光猫静默吞掉。</p>
-     */
+    /** 竖排键值格式：一台 ONT 一段「标签 : 值」，段与段之间用分隔线隔开 */
     private static List<OltOntAutofind> autofindFromBlocks(String text) {
         List<OltOntAutofind> items = new ArrayList<>();
         for (LinkedHashMap<String, String> block : parseOntKeyValueBlocks(text)) {
@@ -2346,14 +2087,7 @@ public final class OltInfoParser {
         return value.replaceAll("\\s*\\([^)]*\\)\\s*$", "").trim();
     }
 
-    /**
-     * 按列之间的宽空白（两个以上空格）把一行切成若干列，返回每列的起止下标。
-     *
-     * <p>不能拿 {@code ----} 分隔线来量列宽：华为那根分隔线是连成一整条的，
-     * 中间没有空格，看得出表有多宽，看不出列在哪。实际用来定列的是表头行——
-     * 列之间一般用多个空格分开，而列名内部的单词只用一个空格
-     * （{@code Ont Software Version} 是同一列，不能被拆成三列）。</p>
-     */
+    /** 按列之间的宽空白（两个以上空格）把一行切成若干列，返回每列的起止下标 */
     private static int[][] autofindColumnBounds(String rawLine) {
         String line = rawLine.replace("\t", "    ");
         List<int[]> spans = new ArrayList<>();
@@ -2387,12 +2121,7 @@ public final class OltInfoParser {
         return spans.toArray(new int[0][]);
     }
 
-    /**
-     * 按列边界切单元格。
-     *
-     * <p>一列的宽度是「本列起点 → 下一列起点」，不是这一列<b>列名</b>的宽度：SN 十六位、
-     * 软件版本号也很长，都比列名宽，按列名宽度去截只能拿到前几个字符。</p>
-     */
+    /** 按列边界切单元格 */
     private static List<String> autofindCells(String line, int[][] bounds) {
         List<String> cells = new ArrayList<>();
         for (int i = 0; i < bounds.length; i++) {
@@ -2436,10 +2165,7 @@ public final class OltInfoParser {
         return cell == null ? "" : cell.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9/]", "");
     }
 
-    /**
-     * 一行数据。Number 必须是整数，顺带把「命令回执」「提示语」这类混在回显里的
-     * 杂行挡在外面——它们的首列不是数字。
-     */
+    /** 一行数据。Number 必须是整数，顺带把「命令回执」「提示语」这类混在回显里的 */
     private static OltOntAutofind autofindRow(List<String> cells, List<String> headers) {
         OltOntAutofind item = new OltOntAutofind();
         for (int i = 0; i < headers.size() && i < cells.size(); i++) {
@@ -2521,9 +2247,7 @@ public final class OltInfoParser {
         return value == null ? null : value.replaceAll("\\s+", " ").trim();
     }
 
-    /**
-     * 板卡类别，中文名给页面直接用。
-     */
+    /** 板卡类别，中文名给页面直接用 */
     public enum BoardKind {
         SERVICE("业务板"),
         CONTROL("主控板"),

@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 一条业务流（{@code display service-port all} 的一行）。
- *
- * <p>业务流把 ONT 的用户侧 VLAN 和 OLT 上的端口、ONT、GEM port 绑在一起：
- * 一条流就是「0/1/0 这个 PON 口的 1 号 ONT，VLAN 45 的流量走 GEM port 0」。</p>
- */
+/** 一条业务流（{@code display service-port all} 的一行） */
 @Data
 public class OltServicePort {
 

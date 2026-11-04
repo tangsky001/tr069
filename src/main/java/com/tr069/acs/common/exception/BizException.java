@@ -3,9 +3,7 @@ package com.tr069.acs.common.exception;
 import com.tr069.acs.common.Result;
 import lombok.Getter;
 
-/**
- * 管理端业务异常。
- */
+/** 管理端业务异常 */
 @Getter
 public class BizException extends RuntimeException {
 

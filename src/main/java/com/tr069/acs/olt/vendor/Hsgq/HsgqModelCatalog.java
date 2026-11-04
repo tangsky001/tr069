@@ -1,4 +1,4 @@
-package com.tr069.acs.olt.vendor;
+package com.tr069.acs.olt.vendor.Hsgq;
 
 import com.tr069.acs.olt.model.OltFrontPanel;
 
@@ -6,34 +6,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * 鸿升光整机型号规格：一体化 OLT 没有板卡，型号直接决定前面板长什么样。
- *
- * <p>同一家的机器前面板差别不小：XE08R 是 8 口 PON + 4 个 GE + 4 个 XGE，
- * G04R 是 4 口 PON + 4 GE + 4 XGE，G04L 则是 2 个 XGE，右边还少一排指示灯。
- * 以前按 {@code HSGQ-[A-Z]*(\d+)} 只抠出「几个 PON 口」，上行口、NMS、CONSOLE
- * 一个都没表示，页面只能画成一块光秃秃的板卡。</p>
- *
- * <p>型号匹配不上时按「几个 PON 口」兜底（{@link #fallback}），面板不至于空着。</p>
- */
+/** 鸿升光整机型号规格：一体化 OLT 没有板卡，型号直接决定前面板长什么样 */
 public final class HsgqModelCatalog {
 
     private HsgqModelCatalog() {
     }
 
-    /**
-     * 一款整机的规格。
-     *
-     * @param code       型号（设备回显里会出现的那串）
-     * @param label      面板上印的说明
-     * @param ponType    PON 口类型：GPON / EPON
-     * @param ponCount   PON 口数
-     * @param geCount    上联 GE 口数（RJ45 电口）
-     * @param xgeCount   上联 10GE 口数（SFP+ 光口）
-     * @param hasNms     有没有独立的 NMS 管理口
-     * @param hasConsole 有没有 CONSOLE 口
-     * @param hasUsb     有没有 USB 口
-     */
+    /** 一款整机的规格 */
     public record Spec(String code, String label, String ponType, int ponCount,
                        int geCount, int xgeCount, boolean hasNms, boolean hasConsole, boolean hasUsb) {
 
@@ -90,12 +69,7 @@ public final class HsgqModelCatalog {
         return null;
     }
 
-    /**
-     * 按型号给出整机前面板规格；不是鸿升光整机（型号不认识）返回 null。
-     *
-     * <p>库里的旧快照没有这块数据（它是画图用的运行时字段），所以读详情时要按型号
-     * 现补一份，不然页面上整机面板只剩一个空括号。</p>
-     */
+    /** 按型号给出整机前面板规格；不是鸿升光整机（型号不认识）返回 null */
     public static OltFrontPanel frontPanelOf(String model) {
         if (model == null || model.isBlank()) {
             return null;

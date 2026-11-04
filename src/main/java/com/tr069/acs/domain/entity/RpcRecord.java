@@ -7,9 +7,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * RPC 执行记录。
- */
+/** RPC 执行记录 */
 @Data
 @TableName("rpc_record")
 public class RpcRecord {
@@ -23,19 +21,13 @@ public class RpcRecord {
 
     private Long worklistId;
 
-    /**
-     * 请求参数，JSON 序列化
-     */
+    /** 请求参数，JSON 序列化 */
     private String requestArgs;
 
-    /**
-     * 结果内容
-     */
+    /** 结果内容 */
     private String resultContent;
 
-    /**
-     * init / success / fail / timeout
-     */
+    /** init / success / fail / timeout */
     private String status;
 
     private LocalDateTime startTime;

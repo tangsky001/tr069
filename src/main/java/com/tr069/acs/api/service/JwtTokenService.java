@@ -11,12 +11,7 @@ import javax.crypto.SecretKey;
 import java.time.Duration;
 import java.util.Date;
 
-/**
- * 管理端令牌服务。
- *
- * <p>令牌通过 X-Token 头传递，与 vue-admin-template 的 request 拦截器一致。
- * 签名密钥由 {@link JwtSecretProvider} 提供，不取自配置文件。</p>
- */
+/** 管理端令牌服务 */
 @Slf4j
 @Component
 public class JwtTokenService {
@@ -42,9 +37,7 @@ public class JwtTokenService {
                 .compact();
     }
 
-    /**
-     * 解析令牌中的用户名，失败返回 null。
-     */
+    /** 解析令牌中的用户名，失败返回 null */
     public String parse(String token) {
         try {
             Claims claims = Jwts.parser()

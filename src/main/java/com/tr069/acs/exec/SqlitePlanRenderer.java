@@ -29,27 +29,13 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 业务意图 → CWMP 下发计划（读 SQLite 适配库）。
- *
- * <p>与旧的 {@link IntentPlanRenderer} 的区别：旧版读 MySQL 的
- * {@code model_param_mapping}（人工逐条登记「业务字段 → 参数路径」），
- * 这一版读 SQLite 里由 {@link TemplateBuilder} 生成的适配结果——
- * 型号采集过、适配过了，库里就有现成的路径和值，下发直接取用。</p>
- *
- * <p>库里的 {@code val_xx} 存的是变量（{@code %room%} / {@code %sip_pwd%}）
- * 或常量（{@code 1} / {@code IP_Routed}），真实值由本次下发的
- * {@code values} 填进来；填不出来的变量直接记为错误，不带占位符下发给设备。</p>
- *
- * <p>没有适配结果的型号不是渲染器能补的——那要回到适配流程重新采集，
- * 由 {@link com.tr069.acs.worklist.tpl.service.ModelTemplateService} 在采集后生成。</p>
- */
+/** 业务意图 → CWMP 下发计划（读 SQLite 适配库） */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SqlitePlanRenderer {
 
-    /** 变量占位符，如 %room%。 */
+    /** 变量占位符，如 %room% */
     private static final Pattern VAR = Pattern.compile("%([A-Za-z0-9_]+)%");
 
     private final WlanADao wlanADao;
@@ -59,17 +45,7 @@ public class SqlitePlanRenderer {
     private final VlanDao vlanDao;
     private final DeviceLanDao deviceLanDao;
 
-    /**
-     * 渲染下发计划。
-     *
-     * @param bizObject 业务对象：WiFi_2G / WiFi_5G / Voice_Service / Internet_WAN
-     * @param category  下发业务类型：WIFI_24G / SIP / WAN_DHCP ...，WAN 用它挑对应的连接模板
-     * @param device     SQLite 里的已适配型号
-     * @param values     本次下发的业务字段值，键可以是 {@code %room%} 或 {@code room}
-     * @param instance   实例号，写第几个（第几个 SSID、第几路语音、第几个网口）
-     * @param overrides  配置模板里保存的字段值，按字段名覆盖 SQLite 表里的默认值；
-     *                   允许模板里的值再带 {@code %room%} 等变量，会被 {@code values} 二次替换
-     */
+    /** 渲染下发计划 */
     public IntentPlan render(String bizObject, String category, Device device,
                              Map<String, Object> values, int instance,
                              Map<String, String> overrides) {
@@ -98,16 +74,7 @@ public class SqlitePlanRenderer {
         return new IntentPlan(bizObject, instance, objectsToAdd, items, errors);
     }
 
-    /**
-     * 设备管理类意图（OTHER / Device_Mgmt）。
-     *
-     * <p>重启是标准 TR-069 RPC，不依赖任何型号适配：模板勾了
-     * 「下发业务完成后重启光猫」，这张计划就是合法的空计划——参数一条不用写，
-     * 执行器收尾时按 {@code intentFields} 里的 {@code reboot_after} 发 Reboot。</p>
-     *
-     * <p>其余字段（Telnet、超管、LOID、IGMP 等）是厂商私有节点，没有按型号映射过，
-     * 照抄路径发只会回 9003/9005——明确报出来，比静默丢掉强。</p>
-     */
+    /** 设备管理类意图（OTHER / Device_Mgmt） */
     private void deviceMgmt(Map<String, Object> values, Map<String, String> overrides,
                             List<String> errors) {
         if (on(values == null ? null : values.get("reboot_after"))
@@ -137,7 +104,7 @@ public class SqlitePlanRenderer {
         }
     }
 
-    /** 开关类取值：非空且不是「否/关/忽略」就算启用。 */
+    /** 开关类取值：非空且不是「否/关/忽略」就算启用 */
     private static boolean on(Object value) {
         if (value == null) {
             return false;
@@ -181,16 +148,7 @@ public class SqlitePlanRenderer {
         }
     }
 
-    /**
-     * 按实例号取模板行，取不到就回退到该频段的第一行。
-     *
-     * <p>设备上报的 WLANConfiguration 索引和模板里登记的实例号常常不是一回事：
-     * 中兴 P22g-CIac 实测 2.4G 从 SSID1 起、5.8G 从 SSID5 起，中间 2~4 是别的 2.4G 网络，
-     * 而模板每组只登记了起始那一个。遇到没登记的实例号，宁可用该频段的起始实例继续下发，
-     * 也好过整单失败——回退会打 WARN，现场据此能看出写的是哪个实例。</p>
-     *
-     * <p>整张表为空说明这个型号压根没申报该频段的能力，回退也没意义，只能提示重新适配。</p>
-     */
+    /** 按实例号取模板行，取不到就回退到该频段的第一行 */
     private static <T> T pick(List<T> rows, Function<T, Integer> instanceNo, int wanted,
                               String label, String modelKey, List<String> errors) {
         if (rows == null || rows.isEmpty()) {
@@ -230,10 +188,7 @@ public class SqlitePlanRenderer {
         put(items, errors, "Voice_Service", "sip_registrar_port", row.getPathRegistrarPort(), row.getValRegistrarPort(), values, instance, overrides);
     }
 
-    /**
-     * WAN 连接：先按业务类型挑模板行（DHCP / PPPoE / Static 各一行），
-     * 再把 VLAN 一并带上——VLAN 参数是挂在 WAN 下的，分开表存只是管理上的拆分。
-     */
+    /** WAN 连接：先按业务类型挑模板行（DHCP / PPPoE / Static 各一行） */
     private void wan(String category, Device device, Map<String, Object> values,
                        List<PlanItem> items, List<String> objectsToAdd, List<String> errors,
                        Map<String, String> overrides, int instance) {
@@ -294,9 +249,7 @@ public class SqlitePlanRenderer {
         }
     }
 
-    /**
-     * 本段计划里的桥接类型是不是 PPPoE（值已被归一成 {@code PPPoE_Bridged}）。
-     */
+    /** 本段计划里的桥接类型是不是 PPPoE（值已被归一成 {@code PPPoE_Bridged}） */
     private static boolean isPppoeBridge(List<PlanItem> items, int from) {
         for (int i = from; i < items.size(); i++) {
             PlanItem item = items.get(i);
@@ -308,10 +261,7 @@ public class SqlitePlanRenderer {
         return false;
     }
 
-    /**
-     * 把本段计划的 AddObject 对象名与参数前缀从 {@code WANIPConnection} 换成
-     * {@code WANPPPConnection}（PPPoE 桥接挂在后者下）。
-     */
+    /** 把本段计划的 AddObject 对象名与参数前缀从 {@code WANIPConnection} 换成 */
     private static void swapConnObject(List<PlanItem> items, List<String> objectsToAdd,
                                        int itemStart, int addStart) {
         for (int i = addStart; i < objectsToAdd.size(); i++) {
@@ -336,16 +286,7 @@ public class SqlitePlanRenderer {
                 : path;
     }
 
-    /**
-     * MTU 单独走一段，不直接 put——这是个填错了会把网搞断的字段。
-     *
-     * <p>留空表示不动设备的现有值：各现网 MTU 取值不同（PPPoE 常见 1492、IPoE/静态常见 1500），
-     * 模板没明确要求就不替现场决定。</p>
-     *
-     * <p><b>填 0 一律按下发失败处理</b>：MaxMTUSize 收到 0 会被设备真的按 0 处理，
-     * 触发 9003 并可能直接断网。不下发最多是 MTU 保持原样，下发了 0 是整台设备失联，
-     * 两害相权取下不下。</p>
-     */
+    /** MTU 单独走一段，不直接 put——这是个填错了会把网搞断的字段 */
     private void putMtu(List<PlanItem> items, List<String> errors, Device device, DeviceWan row,
                         Map<String, Object> values, int instance, Map<String, String> overrides) {
         // 先判值再判路径：没填 MTU 就完全不碰路径，存量型号的行为与改动前一致
@@ -376,7 +317,7 @@ public class SqlitePlanRenderer {
         put(items, errors, "Internet_WAN", "mtu", path, mtu, values, instance, overrides);
     }
 
-    /** 各宽带业务在模板库里的排位号，与 {@link TemplateBuilder} 生成时一致。 */
+    /** 各宽带业务在模板库里的排位号，与 {@link TemplateBuilder} 生成时一致 */
     private static int wanSlot(String category, List<String> errors) {
         if (category == null) {
             errors.add("下发未指定宽带业务类型");
@@ -399,13 +340,7 @@ public class SqlitePlanRenderer {
 
     // ==================== 取值 ====================
 
-    /**
-     * 落一条待下发参数。路径为空表示该型号没有这个参数（不是错误，跳过）；
-     * 值为空同理（如绑定端口留空＝不修改）。
-     *
-     * <p>取值优先级：配置模板字段 {@code overrides} > SQLite 适配库默认值 {@code val} >
-     * 变量替换。这样模板里填的 SSID / 密码等才会真正下发，而不是被适配时的默认值顶掉。</p>
-     */
+    /** 落一条待下发参数。路径为空表示该型号没有这个参数（不是错误，跳过） */
     private void put(List<PlanItem> items, List<String> errors, String bizObject, String field,
                      String path, String val, Map<String, Object> values, int instance,
                      Map<String, String> overrides) {
@@ -435,14 +370,7 @@ public class SqlitePlanRenderer {
         items.add(new PlanItem(bizObject, field, realPath, value, type));
     }
 
-    /**
-     * 配置模板字段覆盖 SQLite 默认值。模板没填（空串）时回退到默认值，
-     * 这样用户只改 SSID 时不会把其它字段清成空。
-     *
-     * <p>键按 {@link #ALIASES} 逐个试：配置模板里叫 {@code encryption} / {@code radio_enable}，
-     * 渲染器内部字段叫 {@code wpa_mode} / {@code enable}，两边命名不一样，
-     * 不认别名的话模板上配的加密方式与开关就等于白填。</p>
-     */
+    /** 配置模板字段覆盖 SQLite 默认值。模板没填（空串）时回退到默认值 */
     private static String effectiveValue(String val, Map<String, String> overrides, String field) {
         if (overrides == null) {
             return val;
@@ -456,7 +384,7 @@ public class SqlitePlanRenderer {
         return val;
     }
 
-    /** 本字段及其在配置模板里的等价名字，按优先级排列。 */
+    /** 本字段及其在配置模板里的等价名字，按优先级排列 */
     private static final Map<String, List<String>> ALIASES = Map.of(
             "enable", List.of("radio_enable"),
             "wpa_mode", List.of("encryption"),
@@ -481,13 +409,7 @@ public class SqlitePlanRenderer {
         return keys;
     }
 
-    /**
-     * 把业务侧的写法归一成设备认的写法。
-     *
-     * <p>配置模板面向人，取值是「auto」「WPA2-PSK」这类说法；设备参数只认自己那套枚举或数字，
-     * 照原样发一律 9003 Invalid arguments。SPV 又是按批生效的，一条不合法整批都废，
-     * 所以必须在渲染阶段兜住，而不是指望每个填模板的人都记得设备要什么。</p>
-     */
+    /** 把业务侧的写法归一成设备认的写法 */
     private static String normalize(String field, String value) {
         if (value == null) {
             return null;
@@ -501,7 +423,7 @@ public class SqlitePlanRenderer {
         };
     }
 
-    /** 信道：模板里的 auto/自动 落到设备上是数字，0 表示自动选道。 */
+    /** 信道：模板里的 auto/自动 落到设备上是数字，0 表示自动选道 */
     private static String normalizeChannel(String value) {
         String v = value.trim();
         if (v.isEmpty() || v.matches("\\d+")) {
@@ -511,11 +433,7 @@ public class SqlitePlanRenderer {
         return "0";
     }
 
-    /**
-     * 加密方式：{@code IEEE11iEncryptionModes} 只认 {@code *Encryption} 写法，
-     * 而配置模板给的是 {@code BeaconType} 那套（Basic / WPA / 11i / WPAand11i），
-     * 两套枚举混用是实测 9003 的直接原因。
-     */
+    /** 加密方式：{@code IEEE11iEncryptionModes} 只认 {@code *Encryption} 写法 */
     private static final Map<String, String> ENCRYPTION_MODES = Map.ofEntries(
             Map.entry("none", "None"),
             Map.entry("basic", "WEPEncryption"),
@@ -538,14 +456,7 @@ public class SqlitePlanRenderer {
         return mapped != null ? mapped : "AESEncryption";
     }
 
-    /**
-     * IP 协议版本：配置模板上给的是 {@code IPv4 / IPv6 / IPv4+IPv6}，
-     * 设备节点 {@code X_CMCC_IPMode} 认的是数字枚举，直接发字符串会回 9007。
-     *
-     * <p>枚举：{@code 1=IPv4 / 2=IPv6 / 3=IPv4+IPv6}。1 与 3 有实测样本（型号能力树里
-     * 采到过），2 是按枚举顺序推断的——拿到只跑 IPv6 的连接时可验证掉这个不确定性。
-     * 模板库里本来就是数字的（运维直接填 1/2/3）原样下发。</p>
-     */
+    /** IP 协议版本：配置模板上给的是 {@code IPv4 / IPv6 / IPv4+IPv6} */
     private static final Map<String, String> IP_PROTOCOL_MODES = Map.of(
             "ipv4", "1",
             "ipv6", "2",
@@ -566,11 +477,7 @@ public class SqlitePlanRenderer {
         return mapped;
     }
 
-    /**
-     * 桥接类型：配置模板上给的是 {@code IP / PPPoE}，设备的 {@code ConnectionType}
-     * 只认 {@code IP_Bridged / PPPoE_Bridged}（TR-098 标准枚举）。
-     * 已经是标准值的原样放行，认不出的按 IP 桥接下发——桥接总比不建强。
-     */
+    /** 桥接类型：配置模板上给的是 {@code IP / PPPoE}，设备的 {@code ConnectionType} */
     private static String normalizeBridgeType(String value) {
         String v = value.trim();
         if (v.isEmpty()) {
@@ -587,10 +494,7 @@ public class SqlitePlanRenderer {
         return "IP_Bridged";
     }
 
-    /**
-     * 把变量换成真实值。键既接受 {@code %room%} 也接受 {@code room}，
-     * 两种前端表单写法都能对上。
-     */
+    /** 把变量换成真实值。键既接受 {@code %room%} 也接受 {@code room} */
     private String resolve(String field, String val, Map<String, Object> values, List<String> errors) {
         if (val == null || val.isBlank()) {
             return null;
@@ -624,12 +528,7 @@ public class SqlitePlanRenderer {
         return out.trim();
     }
 
-    /**
-     * 设备参数名里这些在设备上是整数或布尔，纯数字的值才该按数字下发。
-     *
-     * <p>反过来，SIP 账号、密码、电话号码常是纯数字（如 2026），而设备声明的是 string；
-     * 只看值就会把它们写成 unsignedInt，设备回 9007 Invalid parameter value。</p>
-     */
+    /** 设备参数名里这些在设备上是整数或布尔，纯数字的值才该按数字下发 */
     private static final Pattern NUMERIC_LEAF = Pattern.compile(
             "(?i)(channel|port|count|numberofentries|index|interval|seconds|"
                     + "timeout|priority|gain|tail|vlanid|status|mode|level|length|rate|limit|"
@@ -637,18 +536,11 @@ public class SqlitePlanRenderer {
                     // 设备不认字符串形式的 MTU，直接回 9007
                     + "mtusize)$");
 
-    /**
-     * 设备参数名里这些是布尔：{@code Enable} / {@code SSIDAdvertisementEnabled} 等。
-     *
-     * <p>值常写成 1/0，按数字发出去设备回 9007——它要的是 xsd:boolean。</p>
-     */
+    /** 设备参数名里这些是布尔：{@code Enable} / {@code SSIDAdvertisementEnabled} 等 */
     private static final Pattern BOOLEAN_LEAF = Pattern.compile(
             "(?i)(enable|enabled|disable|disabled)$");
 
-    /**
-     * 没有登记类型时按参数名与值一起判断：布尔语义的一律 boolean，
-     * 数字语义且值是纯数字才给 unsignedInt，其余一律 string。
-     */
+    /** 没有登记类型时按参数名与值一起判断：布尔语义的一律 boolean */
     private static String valueTypeOf(String path, String value) {
         if (isBooleanLeaf(path)) {
             return "boolean";
@@ -675,7 +567,7 @@ public class SqlitePlanRenderer {
         return leaf.startsWith("NumberOf") || NUMERIC_LEAF.matcher(leaf).find();
     }
 
-    /** 参数路径的最后一段，如 {@code ...Line.1.Enable} 取 {@code Enable}。 */
+    /** 参数路径的最后一段，如 {@code ...Line.1.Enable} 取 {@code Enable} */
     private static String leafOf(String path) {
         if (path == null || path.isBlank()) {
             return null;
@@ -685,7 +577,7 @@ public class SqlitePlanRenderer {
         return dot >= 0 ? leaf.substring(dot + 1) : leaf;
     }
 
-    /** 供调用方判断某类业务是否有适配结果，避免下发时才报「查不到」。 */
+    /** 供调用方判断某类业务是否有适配结果，避免下发时才报「查不到」 */
     public boolean hasTemplate(Device device, String bizObject) {
         long id = device.getId();
         switch (bizObject == null ? "" : bizObject) {
@@ -708,7 +600,7 @@ public class SqlitePlanRenderer {
         }
     }
 
-    /** LAN 网口：按实例号取对应网口。 */
+    /** LAN 网口：按实例号取对应网口 */
     public List<PlanItem> lan(Device device, Map<String, Object> values, int instance,
                               List<String> errors, Map<String, String> overrides) {
         List<PlanItem> items = new ArrayList<>();
@@ -725,7 +617,7 @@ public class SqlitePlanRenderer {
         return items;
     }
 
-    /** 变量清单入口，前端下发表单据此渲染输入框。 */
+    /** 变量清单入口，前端下发表单据此渲染输入框 */
     public static String sample(String varName) {
         return TemplateVariables.ROOM.equals(varName) ? "房间号" : varName;
     }

@@ -19,12 +19,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/**
- * 设备取文件的口子。
- *
- * <p>挂在上报端口上（所有端口共用一个 Web 容器，上报口设备必然能连上），
- * 路径不在 {@code /api} 与 {@code /openapi} 下，因此不鉴权——设备下载时不会带令牌。</p>
- */
+/** 设备取文件的口子 */
 @Slf4j
 @RestController
 @RequestMapping("/files")
@@ -34,9 +29,7 @@ public class FileController {
     private final CpeFileMapper fileMapper;
     private final CpeFileService fileService;
 
-    /**
-     * 取文件：支持断点续传（Range）与缓存校验（ETag / Last-Modified）。
-     */
+    /** 取文件：支持断点续传（Range）与缓存校验（ETag / Last-Modified） */
     @GetMapping("/{id}")
     public void download(@PathVariable Long id,
                          @RequestHeader(value = "Range", required = false) String range,
@@ -116,7 +109,7 @@ public class FileController {
         }
     }
 
-    /** 范围不满足：告诉设备真实长度，让它自己重算。 */
+    /** 范围不满足：告诉设备真实长度，让它自己重算 */
     private static void unsatisfiable(HttpServletResponse response, long size) {
         response.setStatus(416);
         response.setHeader("Content-Range", "bytes */" + size);

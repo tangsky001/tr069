@@ -5,11 +5,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 一个端口上放通的 VLAN，来自 {@code display port vlan 0/<槽位>/<端口>}。
- *
- * <p>上行口才有 Native VLAN 这一行，PON 口只有 VLAN 列表。</p>
- */
+/** 一个端口上放通的 VLAN，来自 {@code display port vlan 0/<槽位>/<端口>} */
 @Data
 public class OltPortVlan {
 
@@ -23,8 +19,11 @@ public class OltPortVlan {
     /** 接口标识，如 0/6/0，和命令行一致 */
     private String iface;
 
-    /** 该口放通的 VLAN，升序；页面把连续段压成 45-46 显示 */
+    /** 该口放通的 VLAN，升序 */
     private List<Integer> vlans = new ArrayList<>();
+
+    /** 压好的 VLAN 串：「1、41、45-46」，与网管写法一致 */
+    private String vlanText;
 
     /** Native VLAN（PVID），回显里没有这一行时为 null */
     private Integer nativeVlan;

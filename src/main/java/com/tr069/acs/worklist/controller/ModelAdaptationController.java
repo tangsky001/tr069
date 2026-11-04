@@ -14,26 +14,20 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 机型适配接口。
- *
- * <p>设备列表按 sn 批量查库里有没有该型号的能力树 XML——有 = 已适配（直接调库），
- * 没有 = 列表上出「适配」入口，申报 运营商/网口/速率/SIP/WIFI 后向光猫下发采集
- * 做能力测试，通过才导出型号 XML 并落 {@code cpe_model}。</p>
- */
+/** 机型适配接口 */
 @RestController
 @RequiredArgsConstructor
 public class ModelAdaptationController {
 
     private final ModelAdaptationService service;
 
-    /** 单台设备的适配状态。 */
+    /** 单台设备的适配状态 */
     @GetMapping("/api/device/{sn}/adaptation/status")
     public Result<Map<String, Object>> status(@PathVariable String sn) {
         return Result.success(service.status(sn));
     }
 
-    /** 整页设备批量适配状态，sns 逗号分隔。 */
+    /** 整页设备批量适配状态，sns 逗号分隔 */
     @GetMapping("/api/models/adapt-status")
     public Result<Map<String, Map<String, Object>>> statusBatch(@RequestParam String sns) {
         List<String> list = Arrays.stream(sns.split(","))
@@ -43,31 +37,20 @@ public class ModelAdaptationController {
         return Result.success(service.statusBatch(list));
     }
 
-    /**
-     * 能力申报的候选值（运营商 / 网口数量 / 网口速率 / WIFI 规格）。
-     *
-     * <p>后端逐项比对时按这些取值解析，页面下拉里冒出一个后端不认的值，
-     * 该项会按「不申报」处理，等于白填，所以候选由后端给。</p>
-     */
+    /** 能力申报的候选值（运营商 / 网口数量 / 网口速率 / WIFI 规格） */
     @GetMapping("/api/models/capability-options")
     public Result<Map<String, Object>> capabilityOptions() {
         return Result.success(service.capabilityOptions());
     }
 
-    /**
-     * 能力测试：向光猫下发采集 RPC，解析实测能力并与申报比对。
-     * 申报单为 运营商 / 网口数量 / 网口速率 / SIP 数量 / WIFI 规格。
-     */
+    /** 能力测试：向光猫下发采集 RPC，解析实测能力并与申报比对 */
     @PostMapping("/api/device/{sn}/adaptation/test")
     public Result<Map<String, Object>> test(@PathVariable String sn,
                                             @RequestBody ModelAdaptationService.AdaptRequest request) {
         return Result.success(service.test(sn, request));
     }
 
-    /**
-     * 测试通过后保存：导出型号能力树 XML（models/{运营商}/{型号}.xml）并写库，
-     * 下次同运营商同型号不再适配，直接调库。
-     */
+    /** 测试通过后保存：导出型号能力树 XML（models/{运营商}/{型号}.xml）并写库 */
     @PostMapping("/api/device/{sn}/adaptation/save")
     public Result<Map<String, Object>> save(@PathVariable String sn,
                                             @RequestBody ModelAdaptationService.AdaptRequest request) {

@@ -5,9 +5,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 采集记录视图：列表只带原文片段，完整原文留给排查接口。
- */
+/** 采集记录视图：列表只带原文片段，完整原文留给排查接口 */
 @Data
 public class OltSyncRecordView {
 

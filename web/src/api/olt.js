@@ -9,7 +9,9 @@ export function fetchOltList(keyword) {
   return request({
     url: '/olt/list',
     method: 'get',
-    params: keyword ? { keyword } : {}
+    params: keyword ? { keyword } : {},
+    // 详情/列表带整机板卡+端口+ONT 数据，跨公网访问时 5s 默认超时不够
+    timeout: 30000
   })
 }
 
@@ -17,7 +19,8 @@ export function fetchOltList(keyword) {
 export function fetchOltDetail(id) {
   return request({
     url: '/olt/' + id,
-    method: 'get'
+    method: 'get',
+    timeout: 30000
   })
 }
 
@@ -26,7 +29,8 @@ export function saveOlt(data) {
   return request({
     url: '/olt/save',
     method: 'post',
-    data
+    data,
+    timeout: 30000
   })
 }
 
@@ -34,7 +38,8 @@ export function deleteOlt(id) {
   return request({
     url: '/olt/delete',
     method: 'post',
-    data: { id }
+    data: { id },
+    timeout: 30000
   })
 }
 
@@ -67,14 +72,29 @@ export function syncOlt(id) {
 }
 
 /**
- * 快速同步：只采板卡（display board 0）秒回，机框和型号先出来；
- * 端口状态 / ONT / VLAN / 模板由后端后台补采，页面轮询即可看到补齐的数据。
+ * 快速同步：只采板卡（display board 0）秒回，机框和型号先出来。
+ * scope 传 'boards' 时后端不再排后台深度补采——页面已改成按页签同步，
+ * 各页签点击时自己采自己那一段。
  */
-export function quickSyncOlt(id) {
+export function quickSyncOlt(id, scope) {
   return request({
     url: '/olt/' + id + '/quick-sync',
     method: 'post',
+    params: scope ? { scope } : {},
     timeout: 60000
+  })
+}
+
+/**
+ * 按页签同步：scope = boards / ont / vlan / template，
+ * 后端只采目标页签需要的数据段（温度 / 端口+ONT / VLAN / 模板），返回最新详情。
+ */
+export function syncOltSection(id, scope, force) {
+  return request({
+    url: '/olt/' + id + '/sync-section',
+    method: 'post',
+    params: force ? { scope, force: true } : { scope },
+    timeout: 180000
   })
 }
 
@@ -82,7 +102,8 @@ export function quickSyncOlt(id) {
 export function fetchOltSessionPool() {
   return request({
     url: '/olt/session-pool',
-    method: 'get'
+    method: 'get',
+    timeout: 30000
   })
 }
 
@@ -230,7 +251,7 @@ export function previewLineProfile(id, data) {
  * 返回 [{ code, chapter, label, view, commands, params, query, danger, note }]
  */
 export function fetchOltActions(id) {
-  return request({ url: '/olt/' + id + '/actions', method: 'get' })
+  return request({ url: '/olt/' + id + '/actions', method: 'get', timeout: 30000 })
 }
 
 /**
@@ -574,6 +595,20 @@ export function previewOltAction(id, data) {
   })
 }
 
+/**
+ * 批量命令预演：整页表单一次送上去，拿回 { 动作编号: 命令文本 }。
+ * 命令文本按执行侧同一套规则渲染（可选段、缺参占位），页面不做任何字符串替换。
+ * items: [{ code, params }]
+ */
+export function previewOltActions(id, items) {
+  return request({
+    url: '/olt/' + id + '/actions/previews',
+    method: 'post',
+    data: items,
+    timeout: 30000
+  })
+}
+
 /** 「新建 VLAN」表单的元数据：VLAN ID 范围、一次最多几个、哪些端口能做成员 */
 export function fetchVlanForm(id) {
   return request({
@@ -622,7 +657,8 @@ export function fetchOltOptions() {
   }
   return request({
     url: '/olt/options',
-    method: 'get'
+    method: 'get',
+    timeout: 30000
   }).then(res => {
     optionsCache = res
     return res
@@ -634,7 +670,8 @@ export function fetchOltRecords(id, limit) {
   return request({
     url: '/olt/' + id + '/records',
     method: 'get',
-    params: { limit: limit || 10 }
+    params: { limit: limit || 10 },
+    timeout: 30000
   })
 }
 

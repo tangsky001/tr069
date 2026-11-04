@@ -15,6 +15,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -22,26 +23,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
-/**
- * OLT Telnet 会话池：每台设备固定 2 个会话轮换，行为由管理页的「保活开关」决定，
- * 开关是运行时状态（{@link #setKeepalive}），不落在配置文件里。
- *
- * <p>保活开：第一次用到某台 OLT 时登录建立会话，之后所有命令沿用池中的会话；
- * 两个会话轮换借出（先归还的先借出），都在忙时后来的请求排队等归还（不报「会话忙」）。
- * 后台线程每隔保活周期（默认 2 分钟，管理页可调）对空闲会话发 {@code display client}
- * 探活：活着继续用，死了下次借出时重新登录建立。</p>
- *
- * <p>保活关（默认）：会话 1 分钟没人用就 {@code quit} 优雅退出登录，把设备的会话
- * 名额当场还回去；之后的全局轮询采集要用时自己再登录。1 分钟内又来了请求，
- * 池里的会话还是热的，照样复用，不白付登录。</p>
- *
- * <p>复用前 {@link OltCliSession#reviveForPool} 体检：发 {@code display client}
- * 探活、停在子视图里退回基础视图、清上一轮回显——即使保活线程没跑到，借到死会话
- * 也会当场重开，不会把死会话交给业务命令。</p>
- *
- * <p>注意：池化会话是用「借出那一刻」的账号/字符集登录的，台账里改了密码后旧会话
- * 仍按旧密码存活到自然失效；改字符集/厂商的会话会在下次借出时因不匹配被丢弃重开。</p>
- */
+/** OLT Telnet 会话池：每台设备固定 2 个会话轮换，行为由管理页的「保活开关」决定 */
 @Slf4j
 @Component
 public class OltSessionPool {
@@ -55,8 +37,14 @@ public class OltSessionPool {
     /** 保活探活的默认周期：2 分钟 */
     private static final long DEFAULT_KEEPALIVE_INTERVAL_MS = 120_000L;
 
+    /** 借会话的最长排队时间：超过就报「设备忙」，不让 HTTP 请求无限挂着 */
+    private static final long SESSION_WAIT_MS = 20_000L;
+
     /** 后台巡检节拍：探活到期与否、不保活模式的 1 分钟退出都按这个粒度检查 */
     private static final long SWEEP_TICK_MS = 15_000L;
+
+    /** 管理页可选的探活周期（分钟）：现场只按整档调，页面下拉照这份清单渲染 */
+    private static final List<Integer> KEEPALIVE_MINUTE_OPTIONS = List.of(1, 2, 5, 10);
 
     @Value("${acs.olt.connect-timeout-ms:8000}")
     private int connectTimeoutMs;
@@ -67,8 +55,8 @@ public class OltSessionPool {
     @Value("${acs.olt.command-timeout-ms:20000}")
     private int commandTimeoutMs;
 
-    /** 管理页的保活开关（运行时，不进配置文件），默认关：不保活 */
-    private volatile boolean keepaliveEnabled = false;
+    /** 管理页的保活开关（运行时，不进配置文件），默认开：会话常驻登录态，采集不再反复登录 */
+    private volatile boolean keepaliveEnabled = true;
 
     /** 保活探活周期(毫秒)，管理页可调 */
     private volatile long keepaliveIntervalMs = DEFAULT_KEEPALIVE_INTERVAL_MS;
@@ -110,25 +98,22 @@ public class OltSessionPool {
         pools.clear();
     }
 
-    /**
-     * 借一个会话执行任务：优先复用空闲会话（省掉登录 + 厂商识别 + 字符集探测），
-     * 没有可复用的就新开一条；用完退回基础视图后归还池中。
-     *
-     * @param device        OLT 连接参数（密码已还原为明文）
-     * @param charset       本次操作要求的回显字符集
-     * @param charsetStrict true：池中会话字符集必须一致才复用（指定了编码、GBK 重试）；
-     *                      false：台账是「自动」编码，池中会话用哪种都行，解错了上层会重试
-     */
+    /** 借一个会话执行任务：优先复用空闲会话（省掉登录 + 厂商识别 + 字符集探测） */
     public <T> T execute(OltDevice device, Charset charset, boolean charsetStrict,
                          SessionTask<T> task) throws IOException {
         DevicePool pool = pools.computeIfAbsent(poolKey(device), key -> new DevicePool(SESSIONS_PER_DEVICE));
+        boolean acquired;
         try {
-            // 两个会话都在忙时排队等，不报「会话忙」：单条命令有超时兜底，
-            // 持有会话的任务总会结束，等到归还为止
-            pool.permits.acquire();
+            // 两个会话都在忙时排队等：限时等待而不是无限等——后台补采一轮可能跑一两分钟，
+            // 无限等会让页面上的按需查询挂到前端超时还不知道原因，排队太久就直接告诉调用方设备忙
+            acquired = pool.permits.tryAcquire(SESSION_WAIT_MS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new OltTelnetException("等待 OLT " + device.getHost() + " 会话被中断");
+        }
+        if (!acquired) {
+            throw new OltTelnetException("OLT " + device.getHost()
+                    + " 的会话都在忙（后台采集进行中），请稍后再试");
         }
         try {
             Pooled pooled = takeIdle(pool, device, charset, charsetStrict);
@@ -136,7 +121,14 @@ public class OltSessionPool {
                     ? OltCliSession.open(device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs)
                     : pooled.session;
             try {
-                return task.run(session);
+                // 会话锁内执行任务：同一条 TCP 连接同一时刻只跑一段「发命令 + 收回显」，
+                // 两个线程哪怕拿到同一条会话（绕过信号量等意外情况），命令也不会交错串台
+                session.ioLock().lock();
+                try {
+                    return task.run(session);
+                } finally {
+                    session.ioLock().unlock();
+                }
             } finally {
                 // 归还前退回基础视图并清上一轮回显；操作抛异常（如进不了 config 视图）
                 // 不代表连接坏了，只要体检通过照样复用
@@ -151,11 +143,7 @@ public class OltSessionPool {
         }
     }
 
-    /**
-     * 取一个可复用的空闲会话：账号/字符集/厂商对得上、体检通过；取不到返回 null。
-     * 从队头取（先归还的先借出），两个会话轮换使用，不会出现一个一直热着、
-     * 另一个一直闲到被设备踢掉。
-     */
+    /** 取一个可复用的空闲会话：账号/字符集/厂商对得上、体检通过；取不到返回 null */
     private Pooled takeIdle(DevicePool pool, OltDevice device, Charset charset, boolean charsetStrict) {
         synchronized (pool) {
             while (!pool.idle.isEmpty()) {
@@ -181,26 +169,22 @@ public class OltSessionPool {
                 return;
             }
             pool.idle.addLast(new Pooled(session, charset,
-                    OltCliSession.usernameOf(device), OltVendor.of(device.getVendor())));
+                    OltCliSession.usernameOf(device), OltCliSession.passwordOf(device),
+                    OltVendor.of(device.getVendor())));
         }
     }
 
+    /** 复用前核对身份：账号、密码、厂商、字符集都对得上才复用，对不上就丢弃重连 */
     private static boolean matches(Pooled pooled, OltDevice device, Charset charset, boolean charsetStrict) {
         if (charsetStrict && !pooled.charset.equals(charset)) {
             return false;
         }
         return pooled.username.equals(OltCliSession.usernameOf(device))
+                && pooled.password.equals(OltCliSession.passwordOf(device))
                 && pooled.vendor == OltVendor.of(device.getVendor());
     }
 
-    /**
-     * 后台巡检（15 秒一拍，按开关分两种行为）：
-     * 保活开 —— 到了探活周期的空闲会话发 {@code display client} 探活，
-     *           活着放回去继续用，死了关掉（下次借出时重新登录建立）；
-     * 保活关 —— 空闲超过 1 分钟没人用的会话 {@code quit} 优雅退出登录，
-     *           把设备的会话名额当场还回去，之后轮询采集要用时自己再登录。
-     * 在设备池的锁内做：借出/归还/巡检不会同时对同一条会话动手。
-     */
+    /** 后台巡检（15 秒一拍，按开关分两种行为） */
     private void sweep() {
         boolean keepalive = keepaliveEnabled;
         for (Map.Entry<String, DevicePool> entry : pools.entrySet()) {
@@ -241,6 +225,12 @@ public class OltSessionPool {
         status.put("keepaliveIntervalMs", keepaliveIntervalMs);
         status.put("sessionsPerDevice", SESSIONS_PER_DEVICE);
         status.put("idleQuitMs", IDLE_QUIT_MS);
+        // 管理页下拉只认固定几档：周期若不是整档（比如后端配了 3 分钟），就近落一档显示，
+        // 免得下拉框空着；换算与落档都在这里做，页面不再自己算分钟
+        status.put("keepaliveMinutes", keepaliveMinutes());
+        status.put("keepaliveMinuteOptions", KEEPALIVE_MINUTE_OPTIONS);
+        // 「没开保活时会话闲多久退出」的文案：秒数换成分钟，页面提示语直接用
+        status.put("idleQuitText", (IDLE_QUIT_MS / 60000) + " 分钟");
         Map<String, Integer> idleSessions = new LinkedHashMap<>();
         pools.forEach((key, pool) -> {
             int idle = idleCount(pool);
@@ -252,14 +242,7 @@ public class OltSessionPool {
         return status;
     }
 
-    /**
-     * 管理页的保活开关。
-     *
-     * @param enabled    开：2 会话轮换 + 定期 display client 探活；
-     *                   关：会话 1 分钟没人用就 quit 退出登录
-     * @param intervalMs 探活周期(毫秒)，null 保持不变；范围 10 秒 ~ 1 小时
-     * @return 最新状态
-     */
+    /** 管理页的保活开关 */
     public Map<String, Object> setKeepalive(boolean enabled, Long intervalMs) {
         if (intervalMs != null) {
             if (intervalMs < 10_000L || intervalMs > 3_600_000L) {
@@ -272,6 +255,18 @@ public class OltSessionPool {
         return status();
     }
 
+    /** 当前探活周期落到哪个整档（分钟）：取的分钟数离哪档近就是哪档，一样近取小档 */
+    private int keepaliveMinutes() {
+        int minutes = Math.max(1, Math.round(keepaliveIntervalMs / 60000.0f));
+        int best = KEEPALIVE_MINUTE_OPTIONS.get(0);
+        for (int option : KEEPALIVE_MINUTE_OPTIONS) {
+            if (Math.abs(option - minutes) < Math.abs(best - minutes)) {
+                best = option;
+            }
+        }
+        return best;
+    }
+
     private static int idleCount(DevicePool pool) {
         synchronized (pool) {
             return pool.idle.size();
@@ -280,7 +275,9 @@ public class OltSessionPool {
 
     private static String poolKey(OltDevice device) {
         int port = device.getPort() == null || device.getPort() <= 0 ? 23 : device.getPort();
-        return device.getHost() + ":" + port;
+        String localIp = device.getBindLocalIp();
+        return device.getHost() + ":" + port
+                + (localIp == null || localIp.isBlank() ? "" : "@" + localIp.trim());
     }
 
     private static void closeQuietly(OltCliSession session) {
@@ -291,7 +288,7 @@ public class OltSessionPool {
         }
     }
 
-    /** 一台设备的池：并发名额 + 空闲会话队列 */
+    /** 一台设备独享的池：并发名额（会话借出互斥）+ 空闲会话队列，设备之间不共用 */
     private static final class DevicePool {
         final Semaphore permits;
         final Deque<Pooled> idle = new ArrayDeque<>();
@@ -306,14 +303,16 @@ public class OltSessionPool {
         final OltCliSession session;
         final Charset charset;
         final String username;
+        final String password;
         final OltVendor vendor;
         volatile long lastUsedAt;
         volatile long lastKeepaliveAt;
 
-        Pooled(OltCliSession session, Charset charset, String username, OltVendor vendor) {
+        Pooled(OltCliSession session, Charset charset, String username, String password, OltVendor vendor) {
             this.session = session;
             this.charset = charset;
             this.username = username;
+            this.password = password;
             this.vendor = vendor;
             long now = System.currentTimeMillis();
             this.lastUsedAt = now;

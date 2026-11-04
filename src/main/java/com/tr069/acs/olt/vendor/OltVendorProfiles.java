@@ -1,24 +1,18 @@
 package com.tr069.acs.olt.vendor;
 
 import com.tr069.acs.olt.telnet.OltVendor;
+import com.tr069.acs.olt.vendor.Fiberhome.FiberhomeOltProfile;
+import com.tr069.acs.olt.vendor.Hsgq.HsgqGponOltProfile;
+import com.tr069.acs.olt.vendor.Hsgq.HsgqOltProfile;
+import com.tr069.acs.olt.vendor.hw.HuaweiOltProfile;
+import com.tr069.acs.olt.vendor.zte.ZteOltProfile;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 厂商 profile 注册表：会话要「这家设备该怎么问」就来这里取。
- *
- * <p><b>新增一个品牌的完整步骤：</b></p>
- * <ol>
- *   <li>写一个类继承 {@link AbstractOltVendorProfile}（照 {@code HsgqOltProfile} 抄），
- *       覆写 {@code vendor()} / {@code matches()} 和与众不同的那几条命令；</li>
- *   <li>在 {@link OltVendor} 枚举里加一个取值（页面下拉和库里存的是这个 code）；</li>
- *   <li>在下面 {@link #register()} 里加一行。</li>
- * </ol>
- * 会话主流程、 {@code OltInfoParser} 都不用动。
- */
+/** 厂商 profile 注册表：会话要「这家设备该怎么问」就来这里取 */
 public final class OltVendorProfiles {
 
     /** 识别优先级：排前面的先认，跟 {@code OltVendor.detect} 原先的顺序一致 */
@@ -52,10 +46,7 @@ public final class OltVendorProfiles {
         return profile == null ? GENERIC : profile;
     }
 
-    /**
-     * 按回显认厂商：依次给到每份 profile 的 {@link OltVendorProfile#matches}，
-     * 没人认得就给兜底那份。文本可以是版本回显、板卡回显、登录横幅或提示符。
-     */
+    /** 按回显认厂商：依次给到每份 profile 的 {@link OltVendorProfile#matches} */
     public static OltVendorProfile detect(String... texts) {
         if (texts != null) {
             for (String text : texts) {

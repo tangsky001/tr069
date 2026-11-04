@@ -167,8 +167,6 @@
 </template>
 
 <script>
-import { compressVlans } from '../utils'
-
 /**
  * VLAN 面板：三层接口、上行透传、二层互通、静态路由四张表。
  *
@@ -262,12 +260,9 @@ export default {
     }
   },
   methods: {
-    compressVlans,
+    /** 端口放通的 VLAN 串由后端压好（1、41、45-46），页面只显示 */
     portVlanText(row) {
-      if (row.vlanText != null) {
-        return row.vlanText
-      }
-      return row.vlans && row.vlans.length ? compressVlans(row.vlans) : ''
+      return (row && row.vlanText) || ''
     },
     /** 三层接口的暂存底稿：第一次改的时候从采集快照拷出来 */
     ensureSaved() {

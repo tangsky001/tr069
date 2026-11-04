@@ -12,18 +12,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * 收尾「永远在下发」的僵尸任务。
- *
- * <p>下发是异步线程跑完才回写终态的，线程只活在进程里：服务一重启、或者执行
- * 到一半抛了未捕获的异常，库里的任务就永远停在 {@code RUNNING}。前端按状态
- * 显示进度，于是那台设备一年后还是「正在下发 WiFi 参数」——看着像设备卡住了，
- * 其实早就没人推进它。</p>
- *
- * <p>判定：{@code updated_at} 超过 {@link #STALE_MINUTES} 分钟还停在 RUNNING 的，
- * 一律按中断收尾。真正在跑的任务每写一批参数都会刷新 {@code updated_at}，
- * 不会被误伤；留 10 分钟也是给多实例部署留余地——别的节点可能正在跑。</p>
- */
+/** 收尾「永远在下发」的僵尸任务 */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -31,7 +20,7 @@ public class StaleTaskRecovery implements ApplicationRunner {
 
     private final DeviceTaskMapper taskMapper;
 
-    /** 超过这个时长没动静，就认定没有线程在推进它了。 */
+    /** 超过这个时长没动静，就认定没有线程在推进它了 */
     private static final long STALE_MINUTES = 10;
 
     @Override

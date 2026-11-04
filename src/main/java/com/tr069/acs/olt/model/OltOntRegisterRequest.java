@@ -5,16 +5,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 注册待注册 ONT 的请求。
- *
- * <p>两种用法：</p>
- * <ul>
- *   <li>页面手动：勾选几行 + 指定一条模板（{@link #templateId}），点「一键注册」；</li>
- *   <li>后台自动：{@link #templateId} 留空、{@link #rows} 留空，
- *       后端把自己扫到的待注册 ONT 按优先级匹配模板注册掉。</li>
- * </ul>
- */
+/** 注册待注册 ONT 的请求 */
 @Data
 public class OltOntRegisterRequest {
 
@@ -27,11 +18,7 @@ public class OltOntRegisterRequest {
     /** true 时只编命令不下发，给页面预览用 */
     private boolean preview;
 
-    /**
-     * 一行待注册 ONT。字段跟「ONT 自动发现」那张表一致——页面把它看到的那一整行
-     * 原样回传，后端不用再去设备上查一遍（查一遍要多等一个登录来回，
-     * 而且查到的可能已经不是页面上那一批）。
-     */
+    /** 一行待注册 ONT。字段跟「ONT 自动发现」那张表一致——页面把它看到的那一整行 */
     @Data
     public static class Row {
 

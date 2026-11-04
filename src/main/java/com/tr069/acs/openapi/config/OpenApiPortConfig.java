@@ -11,13 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 
-/**
- * 北向接口独立端口。
- *
- * <p>北向是运营商/计费侧的系统对接，与管理端得分开：防火墙只放行这一个端口给合作方，
- * 不必让它们摸到管理接口。端口由 {@code acs.openapi.port} 指定，配置 0 或不配则
- * 北向接口挂在管理端口上（此时仍走 {@code /openapi/v1/**} 前缀，只是不隔离端口）。</p>
- */
+/** 北向接口独立端口 */
 @Slf4j
 @Configuration
 public class OpenApiPortConfig {
@@ -34,9 +28,7 @@ public class OpenApiPortConfig {
     @Value("${server.tomcat.uri-encoding:UTF-8}")
     private String uriEncoding;
 
-    /**
-     * 北向端口的连接器；与管理端口同号时不重复绑定。
-     */
+    /** 北向端口的连接器；与管理端口同号时不重复绑定 */
     @Bean
     public WebServerFactoryCustomizer<TomcatServletWebServerFactory> openApiConnector() {
         int port = normalizePort(openApiPort);
@@ -57,9 +49,7 @@ public class OpenApiPortConfig {
         };
     }
 
-    /**
-     * 端口隔离过滤器，顺序排在设备上报路径分发之前，避免北向端口上的请求被当成 CPE 上报处理。
-     */
+    /** 端口隔离过滤器，顺序排在设备上报路径分发之前，避免北向端口上的请求被当成 CPE 上报处理 */
     @Bean
     public FilterRegistrationBean<OpenApiIsolationFilter> openApiIsolationFilter() {
         int port = normalizePort(openApiPort);

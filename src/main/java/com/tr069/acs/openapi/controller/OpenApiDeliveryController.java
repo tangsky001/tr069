@@ -18,13 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 北向下发接口：查意图模板、提交开通任务、查执行结果。
- *
- * <p>任务是异步的：ACS 只能在设备主动上报后的空 POST 里捎带指令，什么时候能发出去
- * 取决于设备的心跳周期。接口返回 {@code PENDING/RUNNING} 属于正常，最终结果靠
- * 轮询 {@code GET /deliveries/{id}} 或订阅 Webhook 获取。</p>
- */
+/** 北向下发接口：查意图模板、提交开通任务、查执行结果 */
 @Slf4j
 @RestController
 @RequestMapping("${acs.openapi.path-prefix:/openapi/v1}/deliveries")
@@ -35,9 +29,7 @@ public class OpenApiDeliveryController {
 
     private final IntentDeliveryService intentDeliveryService;
 
-    /**
-     * 可用业务类型与对应的业务对象，便于调用方核对 category 取值。
-     */
+    /** 可用业务类型与对应的业务对象，便于调用方核对 category 取值 */
     @GetMapping("/meta")
     public Result<Map<String, Object>> meta() {
         Map<String, Object> data = new java.util.LinkedHashMap<>();
@@ -46,12 +38,7 @@ public class OpenApiDeliveryController {
         return Result.success(data);
     }
 
-    /**
-     * 提交下发任务。
-     *
-     * <p>{@code taskNo} 由调用方生成并带过来，同一 {@code taskNo} 重复提交只会受理一次，
-     * 网络重试不会导到设备上重复开业务。</p>
-     */
+    /** 提交下发任务 */
     @PostMapping
     public Result<Map<String, Object>> create(@RequestBody Map<String, Object> body) {
         DeliveryRequest request = deliveryService.parse(body);
@@ -59,9 +46,7 @@ public class OpenApiDeliveryController {
         return Result.success(intentDeliveryService.view(task));
     }
 
-    /**
-     * 按任务 id 查执行结果。
-     */
+    /** 按任务 id 查执行结果 */
     @GetMapping("/{id}")
     public Result<Map<String, Object>> get(@PathVariable Long id) {
         DeviceTask task = intentDeliveryService.get(id);
@@ -71,9 +56,7 @@ public class OpenApiDeliveryController {
         return Result.success(intentDeliveryService.view(task));
     }
 
-    /**
-     * 按外部单号查执行结果，调用方拿不到内部 id 时用这个。
-     */
+    /** 按外部单号查执行结果，调用方拿不到内部 id 时用这个 */
     @GetMapping(params = "taskNo")
     public Result<Map<String, Object>> getByTaskNo(@RequestParam String taskNo) {
         DeviceTask task = intentDeliveryService.findByTaskNo(
@@ -84,9 +67,7 @@ public class OpenApiDeliveryController {
         return Result.success(intentDeliveryService.view(task));
     }
 
-    /**
-     * 最近的下发任务，支持按状态与设备过滤。
-     */
+    /** 最近的下发任务，支持按状态与设备过滤 */
     @GetMapping
     public Result<List<Map<String, Object>>> list(
             @RequestParam(required = false) String sn,

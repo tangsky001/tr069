@@ -20,12 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 北向事件订阅管理。
- *
- * <p>订阅一旦生效，设备上下线、下发任务结束都会 POST 到回调地址，
- * 带 {@code X-ACS-Event-Id}（接收方据此去重）与 {@code X-ACS-Signature}（校验来源）。</p>
- */
+/** 北向事件订阅管理 */
 @Slf4j
 @RestController
 @RequestMapping("${acs.openapi.path-prefix:/openapi/v1}/events")
@@ -34,9 +29,7 @@ public class OpenApiEventController {
 
     private final WebhookService webhookService;
 
-    /**
-     * 支持的事件类型清单，新增订阅时按需挑选。
-     */
+    /** 支持的事件类型清单，新增订阅时按需挑选 */
     @GetMapping("/types")
     public Result<List<String>> types() {
         return Result.success(List.of(
@@ -45,51 +38,39 @@ public class OpenApiEventController {
                 NorthboundEvent.DELIVERY_FINISHED));
     }
 
-    /**
-     * 订阅列表。
-     */
+    /** 订阅列表 */
     @GetMapping("/subscriptions")
     public Result<List<WebhookSubscription>> subscriptions() {
         return Result.success(webhookService.subscriptions());
     }
 
-    /**
-     * 新增或修改订阅。
-     */
+    /** 新增或修改订阅 */
     @PostMapping("/subscriptions")
     public Result<WebhookSubscription> save(@RequestBody WebhookSubscription subscription) {
         return Result.success(webhookService.save(subscription));
     }
 
-    /**
-     * 删除订阅。
-     */
+    /** 删除订阅 */
     @DeleteMapping("/subscriptions/{id}")
     public Result<Boolean> delete(@PathVariable Long id) {
         webhookService.delete(id);
         return Result.success(true);
     }
 
-    /**
-     * 投递记录：查某个订阅最近推过什么、对方回了什么状态码。
-     */
+    /** 投递记录：查某个订阅最近推过什么、对方回了什么状态码 */
     @GetMapping("/subscriptions/{id}/deliveries")
     public Result<List<WebhookDelivery>> deliveries(@PathVariable Long id,
                                                     @RequestParam(defaultValue = "20") int limit) {
         return Result.success(webhookService.deliveries(id, limit));
     }
 
-    /**
-     * 全部投递记录，排障时全局看一眼。
-     */
+    /** 全部投递记录，排障时全局看一眼 */
     @GetMapping("/deliveries")
     public Result<List<WebhookDelivery>> recent(@RequestParam(defaultValue = "20") int limit) {
         return Result.success(webhookService.deliveries(null, limit));
     }
 
-    /**
-     * 发一条测试事件，方便对接方验证回调地址与签名。
-     */
+    /** 发一条测试事件，方便对接方验证回调地址与签名 */
     @PostMapping("/test")
     public Result<Map<String, Object>> test() {
         Map<String, Object> data = new LinkedHashMap<>();

@@ -14,22 +14,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * ONT 自动注册：后台按每台 OLT 自己的扫描间隔去设备上扫待注册光猫，命中模板就注册掉。
- *
- * <p>为什么要有这个：光猫是装机师傅现场接的，接上就报 SN 上来，等人在页面上点已经晚了，
- * 更别说晚上装机、节假日装机。开了自动注册，光猫接上不用管，扫到就按模板授权。</p>
- *
- * <p>几个刻意的取舍：</p>
- * <ul>
- *   <li><strong>每台设备自己的间隔</strong>：这里只是个「到点了没有」的检查器（每 10 秒一次），
- *       真去登设备是按 {@code scan_seconds} 来的，页面改完下次就按新的来。</li>
- *   <li><strong>串行</strong>：OLT 的 Telnet 会话数就那么几个，一台一台来；
- *       {@code running} 还保证上一轮没跑完时本轮跳过。</li>
- *   <li><strong>失败不抛</strong>：单台连不上只是跳过，记日志，不影响其它 OLT，
- *       更不能影响 ACS 本身。</li>
- * </ul>
- */
+/** ONT 自动注册：后台按每台 OLT 自己的扫描间隔去设备上扫待注册光猫，命中模板就注册掉 */
 @Slf4j
 @Service
 @RequiredArgsConstructor

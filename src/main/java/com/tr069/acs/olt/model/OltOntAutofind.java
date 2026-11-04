@@ -2,19 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * {@code display ont autofind all} 采到的一条待注册 ONT。
- *
- * <p>这些 ONT 已经被 OLT 发现（光纤到了、SN 报上来了），但还没被授权到某个端口上，
- * 所以还没有 ONT ID、也没有业务。要在页面上完成注册，就是给它们挑一条模板、
- * 下发 {@code ont confirm} 变成正式 ONT。</p>
- *
- * <p>字段跟设备回显那张表一一对应，同时也就是页面上「ONT 自动发现」那张表要显示的列：
- * ID / 端口 / SN / 逻辑ID密码 / 认证码 / 厂商型号 / 软硬件版本 / 发现时间。</p>
- *
- * <p>这台 ONT 最终会落到哪个 ONT ID 由 {@code ont confirm} 时的 {@code ontid} 决定，
- * 这里拿不到，所以 {@link #id} 只是回显里的行号。</p>
- */
+/** {@code display ont autofind all} 采到的一条待注册 ONT */
 @Data
 public class OltOntAutofind {
 
