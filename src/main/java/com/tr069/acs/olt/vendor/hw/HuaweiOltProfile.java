@@ -323,6 +323,19 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
         return "ont delete " + port + " " + ontId;
     }
 
+    /** {@code display service-port port 0/<槽>/<口> ont <id>}；ontId 传 null 查整个端口 */
+    @Override
+    public String servicePortListCommand(int frame, int slot, int port, Integer ontId) {
+        String base = "display service-port port " + frame + "/" + slot + "/" + port;
+        return ontId == null ? base : base + " ont " + ontId;
+    }
+
+    /** {@code undo service-port <index>}（config 视图） */
+    @Override
+    public String servicePortDeleteCommand(int index) {
+        return "undo service-port " + index;
+    }
+
     /** 单块板详情：{@code display board 0/2}，回显里就有每口挂了几个 ONT */
     @Override
     public String boardDetailCommand(int frame, int slot) {

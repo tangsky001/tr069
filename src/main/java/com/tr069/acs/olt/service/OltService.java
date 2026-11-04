@@ -1027,13 +1027,13 @@ public class OltService {
                     result.setOntInfo(OltInfoParser.parseOntInfoDetail(raw));
                 }
             }
-            saveRecord(id, OltSyncRecord.ACTION_TEST, true,
+            saveRecord(id, OltSyncRecord.ACTION_QUERY, true,
                     "ONT查询：" + result.getCommand(), result.getRaw(),
                     System.currentTimeMillis() - start, operator);
             return result;
         } catch (Exception e) {
             String message = rootMessage(e);
-            saveRecord(id, OltSyncRecord.ACTION_TEST, false,
+            saveRecord(id, OltSyncRecord.ACTION_QUERY, false,
                     "ONT查询失败：" + action + "：" + message, null,
                     System.currentTimeMillis() - start, operator);
             throw new IllegalStateException("ONT 查询失败：" + message, e);
@@ -1550,14 +1550,15 @@ public class OltService {
                                          List<String> commands, String operator, String label) {
         OltDevice device = requireDevice(id);
         long start = System.currentTimeMillis();
+        String actionType = recordTypeOf(label);
         try {
             List<String> outputs = telnetService.sendConfig(device, commands, false);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+            saveRecord(id, actionType, true,
                     label + "：" + String.join("；", commands), String.join("\n", outputs),
                     System.currentTimeMillis() - start, operator);
         } catch (Exception e) {
             String message = rootMessage(e);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+            saveRecord(id, actionType, false,
                     label + "失败：" + String.join("；", commands) + "：" + message, null,
                     System.currentTimeMillis() - start, operator);
             throw new IllegalStateException(message, e);
@@ -1916,7 +1917,7 @@ public class OltService {
             results = telnetService.deleteBoardOnts(device, wanted);
         } catch (Exception e) {
             String message = rootMessage(e);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+            saveRecord(id, OltSyncRecord.ACTION_DELETE, false,
                     "删除业务板 ONT 失败：" + message, null, System.currentTimeMillis() - start, operator);
             throw new IllegalStateException(message, e);
         }
@@ -1939,7 +1940,7 @@ public class OltService {
         if (!failures.isEmpty()) {
             label += "；设备拒绝了 " + String.join("、", failures);
         }
-        saveRecord(id, OltSyncRecord.ACTION_CONFIG, failures.isEmpty(), label,
+        saveRecord(id, OltSyncRecord.ACTION_DELETE, failures.isEmpty(), label,
                 results.stream().flatMap(result -> result.getOutputs().stream())
                         .collect(Collectors.joining("\n")),
                 System.currentTimeMillis() - start, operator);
@@ -2753,14 +2754,15 @@ public class OltService {
     private OltDetail dispatchPortVlan(Long id, List<String> commands, String operator, String label) {
         OltDevice device = requireDevice(id);
         long start = System.currentTimeMillis();
+        String actionType = recordTypeOf(label);
         try {
             List<String> outputs = telnetService.sendConfig(device, commands, true);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+            saveRecord(id, actionType, true,
                     label + "：" + String.join("；", commands), String.join("\n", outputs),
                     System.currentTimeMillis() - start, operator);
         } catch (Exception e) {
             String message = rootMessage(e);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+            saveRecord(id, actionType, false,
                     label + "失败：" + String.join("；", commands) + "：" + message, null,
                     System.currentTimeMillis() - start, operator);
             throw new IllegalStateException(message, e);
@@ -2894,15 +2896,17 @@ public class OltService {
         result.setQuery(action.query());
         result.setCommands(plan);
         long start = System.currentTimeMillis();
+        // 记录按动作性质分类：只读查询记「查询」，删除类记「删除」，其余记「配置」
+        String actionType = recordTypeOf(action);
         try {
             List<String> outputs = telnetService.sendConfig(device, plan);
             result.setOutputs(outputs);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+            saveRecord(id, actionType, true,
                     action.label() + "：" + String.join("；", plan),
                     String.join("\n", outputs), System.currentTimeMillis() - start, operator);
         } catch (Exception e) {
             String message = rootMessage(e);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+            saveRecord(id, actionType, false,
                     action.label() + "失败：" + String.join("；", plan) + "：" + message, null,
                     System.currentTimeMillis() - start, operator);
             throw new IllegalStateException(message, e);
@@ -2912,6 +2916,24 @@ public class OltService {
             result.setDetail(collectAndPersist(id, operator, action.label() + "后重采"));
         }
         return result;
+    }
+
+    /** 按操作文案判断记录类型：删除 / 擦除 / 移除 都算「删除」，其余算「配置」 */
+    private static String recordTypeOf(String label) {
+        return label != null && (label.contains("删除") || label.contains("擦除") || label.contains("移除"))
+                ? OltSyncRecord.ACTION_DELETE : OltSyncRecord.ACTION_CONFIG;
+    }
+
+    /** 一条命令动作该记成哪种记录：只读查询 → 查询，删除类 → 删除，其余 → 配置 */
+    private static String recordTypeOf(OltAction action) {
+        if (action.query()) {
+            return OltSyncRecord.ACTION_QUERY;
+        }
+        String code = action.code() == null ? "" : action.code().toLowerCase(Locale.ROOT);
+        String label = action.label() == null ? "" : action.label();
+        boolean delete = code.contains("delete") || code.endsWith(".del") || code.contains(".del.")
+                || label.contains("删除") || label.contains("擦除");
+        return delete ? OltSyncRecord.ACTION_DELETE : OltSyncRecord.ACTION_CONFIG;
     }
 
     /** 端口 / VLAN 列表的写法：1,3,4-8 */
@@ -3109,17 +3131,19 @@ public class OltService {
                                      boolean tolerateExisting) {
         OltDevice device = requireDevice(id);
         long start = System.currentTimeMillis();
+        // 删除类的下发别记成「配置」：记录表上要一眼分清是改配置还是在删东西
+        String actionType = recordTypeOf(label);
         try {
             List<String> outputs = telnetService.sendConfig(device, commands, tolerateExisting);
             String transcript = String.join("\n", outputs);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+            saveRecord(id, actionType, true,
                     label + "：" + String.join("；", commands), transcript,
                     System.currentTimeMillis() - start, operator);
             // 采集到的最新数据既写库又直接返回，页面不用再拉一次
             return collectAndPersist(id, operator, label + "后重采");
         } catch (Exception e) {
             String message = rootMessage(e);
-            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+            saveRecord(id, actionType, false,
                     label + "失败：" + String.join("；", commands) + "：" + message, null,
                     System.currentTimeMillis() - start, operator);
             throw new IllegalStateException(message, e);

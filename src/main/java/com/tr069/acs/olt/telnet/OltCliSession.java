@@ -730,7 +730,7 @@ public class OltCliSession implements Closeable {
         return service;
     }
 
-    /** 一块板的完整删除流程：看 ONT → 进 PON 板视图 → 逐口 ont delete all（答 y）→ quit */
+    /** 一块板的完整删除流程：拆业务虚口 → 进 PON 板视图 → 逐口 ont delete all（答 y）→ quit */
     private OltOntDeleteResult deleteBoardOnts(OltBoard board, OltVendorProfile profile, int timeout) {
         int slot = board.getSlotNo();
         String ponType = "EPON".equalsIgnoreCase(board.getPortMode()) ? "epon" : "gpon";
@@ -740,6 +740,26 @@ public class OltCliSession implements Closeable {
         List<Integer> ports = portsWithOnts(runCommand(profile.boardDetailCommand(0, slot), timeout));
         if (ports.isEmpty()) {
             return result;
+        }
+        // 先在 config 视图把这块板上所有业务虚口拆干净：带着 service-port 引用的
+        // ont delete 会被设备顶回来，就算删掉也会留下一堆指向空 ONT 的死流
+        List<String> undoCommands = new ArrayList<>();
+        for (int port : ports) {
+            if (profile.servicePortListCommand(0, slot, port, null) == null) {
+                continue;
+            }
+            String table = runCommand(profile.servicePortListCommand(0, slot, port, null), timeout);
+            for (OltServicePort sp : OltInfoParser.parseServicePorts(table)) {
+                if (sp.getIndex() != null) {
+                    undoCommands.add(profile.servicePortDeleteCommand(sp.getIndex()));
+                }
+            }
+        }
+        for (String undo : undoCommands) {
+            result.getOutputs().add(runCommand(undo, timeout));
+        }
+        if (!undoCommands.isEmpty()) {
+            log.info("清板 {} 前先拆掉 {} 条业务虚口", slot, undoCommands.size());
         }
         runCommand(profile.ponViewCommand(0, slot, ponType), timeout);
         for (int port : ports) {

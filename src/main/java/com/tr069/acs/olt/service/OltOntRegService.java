@@ -751,6 +751,33 @@ public class OltOntRegService {
         }
     }
 
+    /**
+     * 删 ONT 前先查它名下的业务虚口，编出逐条 undo service-port（config 视图执行）。
+     * 带着 service-port 引用的 ont delete 会被设备顶回来；就算删掉了也会留下指向
+     * 空 ONT 的死流。返回的命令要排在 ont delete 之前下发。
+     */
+    private List<String> servicePortDeleteCommands(OltDevice device, OltVendorProfile profile,
+                                                   int[] fsp, int ontId) {
+        if (!profile.supportsServicePorts()) {
+            return List.of();
+        }
+        String table;
+        try {
+            table = telnetService.queryOntServicePorts(device, fsp[1], fsp[2], ontId);
+        } catch (Exception e) {
+            log.info("查 ONT 业务虚口失败 id={} ont={}: {}", device.getId(), ontId, e.getMessage());
+            return List.of();
+        }
+        List<String> commands = new ArrayList<>();
+        for (OltServicePort sp : OltInfoParser.parseServicePorts(table)) {
+            // 查询兜底会退回整口表格：只删这条 ONT 自己的流，别误伤同口其它光猫
+            if (sp.getIndex() != null && Objects.equals(sp.getOntId(), ontId)) {
+                commands.add(profile.servicePortDeleteCommand(sp.getIndex()));
+            }
+        }
+        return commands;
+    }
+
     /** 删掉别处的旧注册后重试一次 */
     private boolean deleteAndRetry(OltDevice device, OltVendorProfile profile,
                                    RegisteredOnt old, List<String> confirmCommands) {
@@ -761,6 +788,8 @@ public class OltOntRegService {
                 if (fsp == null) {
                     return false;
                 }
+                // 先拆业务虚口再删 ONT，顺序不能反
+                commands.addAll(servicePortDeleteCommands(device, profile, fsp, old.ontId));
                 commands.add(profile.ponViewCommand(fsp[0], fsp[1]));
                 commands.add(profile.ontDeleteCommand(fsp[2], old.ontId));
                 commands.add("quit");
@@ -790,6 +819,10 @@ public class OltOntRegService {
             return 0;
         }
         List<String> commands = new ArrayList<>();
+        // undo service-port 在 config 视图发，ont delete 要进 PON 板视图：先拆流再删记录
+        for (Integer ontId : offline) {
+            commands.addAll(servicePortDeleteCommands(device, profile, fsp, ontId));
+        }
         commands.add(profile.ponViewCommand(fsp[0], fsp[1]));
         offline.forEach(ontId -> commands.add(profile.ontDeleteCommand(fsp[2], ontId)));
         commands.add("quit");

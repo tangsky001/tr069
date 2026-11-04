@@ -250,6 +250,19 @@ public interface OltVendorProfile {
         return null;
     }
 
+    /**
+     * 查一个 ONT（或整个端口，ontId 传 null）名下业务虚口的命令（config 视图执行）。
+     * 删 ONT 前必须先把它的业务虚口拆干净，否则 ont delete 会被引用顶回来。
+     */
+    default String servicePortListCommand(int frame, int slot, int port, Integer ontId) {
+        return null;
+    }
+
+    /** 删一条业务虚口的命令（config 视图执行）：华为例 {@code undo service-port 100} */
+    default String servicePortDeleteCommand(int index) {
+        return null;
+    }
+
     /** 单块板的详情命令（华为例：{@code display board 0/2}）：板卡型号、每个 PON 口 */
     default String boardDetailCommand(int frame, int slot) {
         return null;

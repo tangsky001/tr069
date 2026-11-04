@@ -21,13 +21,19 @@ public class OltSyncRecord {
     /** 配置下发（DBA 模板增删这类写操作，带回显留档） */
     public static final String ACTION_CONFIG = "CONFIG";
 
+    /** 只读查询（display / show 类命令，不改设备） */
+    public static final String ACTION_QUERY = "QUERY";
+
+    /** 删除类操作（删 ONT、清业务虚口这类会把设备上的数据去掉的动作） */
+    public static final String ACTION_DELETE = "DELETE";
+
     @TableId(type = IdType.AUTO)
     private Long id;
 
     /** olt_device.id，未保存的设备为 null */
     private Long oltId;
 
-    /** TEST / SYNC */
+    /** 动作类型：TEST 诊断 / SYNC 同步 / CONFIG 配置 / QUERY 查询 / DELETE 删除 */
     private String action;
 
     private Boolean success;
