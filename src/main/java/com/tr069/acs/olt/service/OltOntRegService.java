@@ -432,6 +432,7 @@ public class OltOntRegService {
             result.setSuccess(true);
             // 注册上只是通了管理通道，用户流量还要业务虚口（service-port）才放得出去
             result.setMessage("已按模板「" + template.getName() + "」注册"
+                    + applyOntModelRemark(device, profile, fsp, row)
                     + deliverServicePorts(device, profile, fsp, template, row));
             return result;
         } catch (Exception first) {
@@ -445,6 +446,7 @@ public class OltOntRegService {
                     if (deleteAndRetry(device, profile, old, commands)) {
                         result.setSuccess(true);
                         result.setMessage("已自动移机到 " + row.getFsp() + " 并注册（原 " + old.fsp + " 已删除）"
+                                + applyOntModelRemark(device, profile, fsp, row)
                                 + deliverServicePorts(device, profile, fsp, template, row));
                         return result;
                     }
@@ -455,6 +457,7 @@ public class OltOntRegService {
                 if (cleared > 0 && deleteAndRetry(device, profile, null, commands)) {
                     result.setSuccess(true);
                     result.setMessage("注册表已满，清掉 " + cleared + " 台离线 ONT 后注册成功"
+                            + applyOntModelRemark(device, profile, fsp, row)
                             + deliverServicePorts(device, profile, fsp, template, row));
                     return result;
                 }
@@ -484,6 +487,35 @@ public class OltOntRegService {
 
     /** GEM Port 兜底号：线路模板读不出来时才用它（一键开局建的是 gem add 1） */
     private static final int DEFAULT_GEM_PORT = 1;
+
+    /**
+     * 注册成功后把光猫型号写进 ONT 描述（页面上看到的「备注 / 型号」就是设备侧的 desc），
+     * 例如 P22g-Clac。写失败只记在结果说明里，不能把已经注册成功的 ONT 报成失败——
+     * 描述只是备注，跟能不能上网无关。
+     */
+    private String applyOntModelRemark(OltDevice device, OltVendorProfile profile, int[] fsp,
+                                       OltOntRegisterRequest.Row row) {
+        String model = blankToNull(row.getModel());
+        if (model == null || !profile.supportsOntDescription()) {
+            return "";
+        }
+        Integer ontId = findOntIdOnPort(device, profile, fsp, row.getSn());
+        if (ontId == null) {
+            return "；没查到设备分配的 ONT ID，备注未写型号";
+        }
+        String command = profile.ontDescriptionCommand(fsp[2], ontId, model);
+        if (command == null) {
+            return "";
+        }
+        try {
+            telnetService.sendConfig(device, List.of(
+                    profile.ponViewCommand(fsp[0], fsp[1]), command, "quit"));
+            return "；备注已写型号 " + model;
+        } catch (Exception e) {
+            log.info("ONT 备注写型号失败 id={}: {}", device.getId(), e.getMessage());
+            return "；备注写型号失败：" + rootMessage(e);
+        }
+    }
 
     /** 一轮最多补几台老 ONT 的业务虚口：补太多会一直占着设备的 Telnet 会话 */
     private static final int MAX_REPAIR_PER_ROUND = 10;

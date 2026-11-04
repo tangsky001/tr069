@@ -187,9 +187,24 @@
         <finalName>pilotacs-server</finalName>
 
         <resources>
+            <!--
+                banner.txt 单独开过滤：用 @project.version@ 把 pom 版本打进启动横幅。
+                只对这一个文件开，其余资源一律不过滤（yml 里的 ${} 占位符要保持原样）。
+                定界符沿用 spring-boot-starter-parent 配的 @...@，不会碰 ${}。
+            -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>banner.txt</include>
+                </includes>
+            </resource>
             <resource>
                 <directory>src/main/resources</directory>
                 <filtering>false</filtering>
+                <excludes>
+                    <exclude>banner.txt</exclude>
+                </excludes>
             </resource>
             <!--
                 全库只有一份建表脚本：根目录 sql/schema.sql。

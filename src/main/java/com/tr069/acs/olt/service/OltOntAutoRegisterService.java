@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** ONT 自动注册：后台按每台 OLT 自己的扫描间隔去设备上扫待注册光猫，命中模板就注册掉 */
@@ -35,6 +37,9 @@ public class OltOntAutoRegisterService {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
+    /** 已经提示过「没开自动注册」的设备：只在状态变化时打一条日志，不刷屏 */
+    private final Set<Long> reportedOff = ConcurrentHashMap.newKeySet();
+
     @Scheduled(fixedDelay = TICK_MILLIS, initialDelay = INITIAL_DELAY_MILLIS)
     public void scanAndRegister() {
         if (!running.compareAndSet(false, true)) {
@@ -54,8 +59,15 @@ public class OltOntAutoRegisterService {
                 }
                 OltOntRegConfig config = ontRegService.config(device.getId());
                 if (config.getEnabled() == null || config.getEnabled() != 1) {
+                    // 静默跳过最难排查：「自动注册不生效」和「根本没开」在日志里长得一样。
+                    // 只在状态变化时提示一次，不会每 10 秒刷屏
+                    if (reportedOff.add(device.getId())) {
+                        log.info("ONT 自动注册未开启，跳过 id={}（页面上打开开关并点「保存设置」后才会跑）",
+                                device.getId());
+                    }
                     continue; // 这台没开自动注册
                 }
+                reportedOff.remove(device.getId());
                 if (!due(config)) {
                     continue;
                 }

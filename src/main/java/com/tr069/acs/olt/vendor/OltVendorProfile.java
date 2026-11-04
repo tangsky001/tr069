@@ -203,6 +203,16 @@ public interface OltVendorProfile {
         return null;
     }
 
+    /** 能不能改 ONT 描述（页面上的「备注 / 型号」就是设备侧的 desc） */
+    default boolean supportsOntDescription() {
+        return false;
+    }
+
+    /** 改一台已注册 ONT 描述的命令（在 {@link #ponViewCommand} 进的 PON 板视图里执行） */
+    default String ontDescriptionCommand(int port, int ontId, String description) {
+        return null;
+    }
+
     /** 查一条 ONT 线路模板详情的命令（config 视图下执行），用来读它 GEM 映射了哪些 VLAN */
     default String lineProfileDetailCommand(String ponType, int profileId) {
         return null;

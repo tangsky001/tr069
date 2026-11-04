@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -96,6 +95,12 @@ public class OltCliSession implements Closeable {
     /** 快速采集（只要板卡）时单条命令的超时上限：首屏等不起 20 秒 */
     private static final int BOARD_PROBE_TIMEOUT_MS = 8000;
 
+    /** 存盘写 flash 的等待上限：大配置的 save 也要几十秒，超了说明设备真卡住了 */
+    private static final int SAVE_TIMEOUT_MS = 90_000;
+
+    /** save 回到提示符后的缓冲期：个别固件提示符回来后还在收尾，期间不再接新任务 */
+    private static final long SAVE_GRACE_MS = 5_000L;
+
     private static final List<Pattern> COMMAND_STOPS = List.of(SHELL_PROMPT, PARAM_PROMPT);
 
     /** 登录过程中设备停下来要回车时，最多补几次 */
@@ -109,14 +114,6 @@ public class OltCliSession implements Closeable {
 
     private final int commandTimeoutMs;
 
-    /** 会话级互斥锁：一条 TCP 连接同一时刻只允许一个线程收发命令 */
-    private final ReentrantLock ioLock = new ReentrantLock();
-
-    /** 会话互斥锁。在会话上执行任何一段「发命令 + 收回显」都必须持有 */
-    public ReentrantLock ioLock() {
-        return ioLock;
-    }
-
     /** 台账里已经认出来的厂商（上次采集写进去的） */
     private final OltVendor vendorHint;
 
@@ -126,6 +123,29 @@ public class OltCliSession implements Closeable {
     private final StringBuilder banner = new StringBuilder();
 
     private String prompt;
+
+    /**
+     * 会话当前停留的视图。长连接不退出登录，所以必须自己记住停在哪一层：
+     * 下次要用 config 就直接发命令，已经在 config 里就连 enable/config 都不发。
+     */
+    private CliView view = CliView.ROOT;
+
+    /** 视图层级：根视图（用户/特权）、配置视图、接口/模板等子视图、位置不明 */
+    public enum CliView {
+        ROOT, CONFIG, SUB, UNKNOWN
+    }
+
+    /** 已经为本连接关过分页的厂商：同一厂商不再重发关分页命令 */
+    private OltVendor pagingPrepared;
+
+    /** 正在执行 save（写 flash）：期间这台设备不能接任何其它命令 */
+    private volatile boolean saving;
+
+    /** 上一次 save 回到提示符的时间；之后 SAVE_GRACE_MS 内算缓冲期 */
+    private volatile long saveFinishedAt;
+
+    /** 连接掉回登录界面（quit 退过头）：这条连接对业务失效，交给会话池重建 */
+    private volatile boolean sessionLost;
 
     private IOException lastError;
 
@@ -190,6 +210,9 @@ public class OltCliSession implements Closeable {
         OltSnapshot snapshot = new OltSnapshot();
         List<String> notes = new ArrayList<>();
 
+        // 长连接可能停在上一次任务留下的 config/接口视图：版本/板卡命令要在根视图发，
+        // 已经在根视图时这里不发任何命令
+        ensureRootView(Math.min(commandTimeoutMs, 5000));
         // 先关分页，否则版本/板卡回显都可能停在第一页
         prepareTerminal(vendorHint);
 
@@ -294,6 +317,8 @@ public class OltCliSession implements Closeable {
         List<String> notes = new ArrayList<>();
         OltVendor vendor = vendorHint != OltVendor.GENERIC ? vendorHint : detectVendor(banner.toString());
         int timeout = Math.min(commandTimeoutMs, BOARD_PROBE_TIMEOUT_MS);
+        // 板卡命令是根视图的命令：上一次任务可能停在 config 里，按需退回（已在根视图不发命令）
+        ensureRootView(Math.min(commandTimeoutMs, 5000));
         prepareTerminal(vendor, true);
 
         String boardText = "";
@@ -398,30 +423,25 @@ public class OltCliSession implements Closeable {
             notes.add("进不了配置视图（enable → config），温度/ONT/VLAN 未采到");
             return;
         }
-        boolean ontOk;
-        try {
-            // 按页签同步时只跑命中的段，没命中的直接跳过（互不依赖，顺序保持原样）
-            if (sections.contains(Section.TEMPERATURES)) {
-                applyTemperatures(boards, timeout);
-            }
-            // 先把每块板的端口（含光模块不在位、链路离线的空口）建出来，ONT 再往上面挂
-            if (sections.contains(Section.PORT_STATES)) {
-                collectBoardPortStates(boards, timeout);
-            }
-            ontOk = !sections.contains(Section.ONTS) || collectOnts(boards, timeout, notes, enrichOntDetails);
-            // 光模块数值（发光/收光/温度/偏置/电压）：端口建好之后再逐口问
-            if (sections.contains(Section.OPTICS)) {
-                collectPortOptics(boards, timeout);
-            }
-            if (sections.contains(Section.VLANS)) {
-                collectVlans(boards, snapshot, timeout);
-            }
-            if (sections.contains(Section.TEMPLATES)) {
-                collectTemplates(snapshot, timeout);
-            }
-        } finally {
-            // 只退到特权视图：再 quit 一次就是 logout，设备会停下来问 y/n
-            runQuietly("quit", timeout);
+        // 任务结束就停在 config 里，不再多退一层：下个任务照样在 config 里干活，
+        // enterConfigView 会直接短路；真要回根视图（版本/板卡命令）由 ensureRootView 按需退
+        if (sections.contains(Section.TEMPERATURES)) {
+            applyTemperatures(boards, timeout);
+        }
+        // 先把每块板的端口（含光模块不在位、链路离线的空口）建出来，ONT 再往上面挂
+        if (sections.contains(Section.PORT_STATES)) {
+            collectBoardPortStates(boards, timeout);
+        }
+        boolean ontOk = !sections.contains(Section.ONTS) || collectOnts(boards, timeout, notes, enrichOntDetails);
+        // 光模块数值（发光/收光/温度/偏置/电压）：端口建好之后再逐口问
+        if (sections.contains(Section.OPTICS)) {
+            collectPortOptics(boards, timeout);
+        }
+        if (sections.contains(Section.VLANS)) {
+            collectVlans(boards, snapshot, timeout);
+        }
+        if (sections.contains(Section.TEMPLATES)) {
+            collectTemplates(snapshot, timeout);
         }
         if (!ontOk) {
             notes.add("ONT 数量未采到：display ont info 0 <槽位> all 无有效回显");
@@ -457,22 +477,18 @@ public class OltCliSession implements Closeable {
         if (!enterConfigView(timeout)) {
             notes.add("进不了配置视图（enable → config），ONT 详情未补采");
         } else {
-            try {
-                for (OltBoard board : workBoards) {
-                    if (board.getSlotNo() == null || board.getPorts() == null
-                            || !OltInfoParser.BoardKind.SERVICE.name().equals(board.getBoardKind())) {
+            // 补完就停在 config 里：下次任务直接接着用，不额外退视图
+            for (OltBoard board : workBoards) {
+                if (board.getSlotNo() == null || board.getPorts() == null
+                        || !OltInfoParser.BoardKind.SERVICE.name().equals(board.getBoardKind())) {
+                    continue;
+                }
+                for (OltPort port : board.getPorts()) {
+                    if (port.getPortNo() == null || port.getOnts() == null || port.getOnts().isEmpty()) {
                         continue;
                     }
-                    for (OltPort port : board.getPorts()) {
-                        if (port.getPortNo() == null || port.getOnts() == null || port.getOnts().isEmpty()) {
-                            continue;
-                        }
-                        enrichOntProfiles(board.getSlotNo(), port.getPortNo(), port.getOnts(), timeout, notes);
-                    }
+                    enrichOntProfiles(board.getSlotNo(), port.getPortNo(), port.getOnts(), timeout, notes);
                 }
-            } finally {
-                // 只退到特权视图，别把登录也退了
-                runQuietly("quit", timeout);
             }
         }
         snapshot.setBoards(workBoards);
@@ -668,6 +684,8 @@ public class OltCliSession implements Closeable {
 
     /** 清空业务板上的全部 ONT：现场怎么敲这里就怎么发，不跑全量采集、不探版本/温度 */
     public List<OltOntDeleteResult> deleteBoardOnts(List<Integer> wantedSlots) throws OltTelnetException {
+        // display board 0 要在根视图发：上一次任务留下的 config/接口视图先按需退回
+        ensureRootView(Math.min(commandTimeoutMs, 5000));
         prepareTerminal(vendorHint, true);
         int timeout = commandTimeoutMs;
         List<OltBoard> boards = serviceBoards(wantedSlots, Math.min(timeout, BOARD_PROBE_TIMEOUT_MS));
@@ -1021,8 +1039,31 @@ public class OltCliSession implements Closeable {
     }
 
     /** 进配置视图，写法由厂商 profile 决定（华为 {@code enable}→{@code config} 后还要补一条 */
+    /**
+     * 进配置视图：会话已经停在 config 里就直接返回，连 enable / config 都不发；
+     * 停在接口/模板等子视图就先按层级退回根视图再进。长连接下这是省命令的关键。
+     */
     private boolean enterConfigView(int timeout) {
-        return profile().enterConfigView(this::runQuietly, timeout);
+        if (view == CliView.CONFIG) {
+            return true;
+        }
+        if (view == CliView.SUB && !ensureRootView(timeout)) {
+            return false;
+        }
+        if (view == CliView.UNKNOWN && !probeView(timeout)) {
+            return false;
+        }
+        if (view == CliView.CONFIG) {
+            return true;
+        }
+        if (view != CliView.ROOT) {
+            return false;
+        }
+        boolean ok = profile().enterConfigView(this::runQuietly, timeout);
+        if (ok) {
+            view = CliView.CONFIG;
+        }
+        return ok;
     }
 
     /** 台账里认出来的这家设备对应的 profile（写操作、单条查询这些按设备走缓存里的厂商） */
@@ -1122,7 +1163,9 @@ public class OltCliSession implements Closeable {
         for (List<String> group : groupWithAnswers(commands)) {
             String command = group.get(0);
             List<String> answers = group.subList(1, group.size());
-            String out = answers.isEmpty() ? runCommand(command, commandTimeoutMs) : runInteractive(command, answers);
+            // save 是特殊命令：先停在 y/n 确认，答完写 flash 好几十秒，期间设备不接任何活
+            String out = isSaveCommand(command) ? runSave()
+                    : answers.isEmpty() ? runCommand(command, commandTimeoutMs) : runInteractive(command, answers);
             outputs.add(out);
             String reason = commandRejected(out);
             if (reason == null) {
@@ -1135,6 +1178,76 @@ public class OltCliSession implements Closeable {
             throw new IllegalStateException("OLT 拒绝命令「" + command + "」：" + reason);
         }
         return outputs;
+    }
+
+    /**
+     * 存盘专用：华为的 {@code save} 先停在「Are you sure ... (y/n)[n]:」上，
+     * 答完写 flash 好几十秒（期间设备不接任何命令），直到提示符回来才算完。
+     * 不专门等完就返回的话，下一条任务会在设备还在写 flash 时发进去，必然被拒。
+     */
+    private String runSave() {
+        long start = System.currentTimeMillis();
+        saving = true;
+        StringBuilder whole = new StringBuilder();
+        try {
+            client.resetBuffer();
+            client.sendLine("save");
+            String out = client.readUntilAny(INTERACTIVE_STOPS, Math.min(commandTimeoutMs, 8000));
+            whole.append(out);
+            if (isAsking(out)) {
+                // 停在「Are you sure ... (y/n)[n]:」：答 y 才真的会存
+                transcript.append("[应答] y\n");
+                client.resetBuffer();
+                client.sendLine("y");
+                out = client.readUntilAny(List.of(SHELL_PROMPT), SAVE_TIMEOUT_MS);
+                whole.append(out);
+            } else if (!SHELL_PROMPT.matcher(tailOf(out)).find()) {
+                // 没问确认也没回提示符：设备已经在写 flash，继续等到提示符回来
+                out = client.readUntilAny(List.of(SHELL_PROMPT), SAVE_TIMEOUT_MS);
+                whole.append(out);
+            }
+            view = viewOf(out, view);
+            if (USERNAME_PROMPT.matcher(out).find() || PASSWORD_PROMPT.matcher(out).find()) {
+                sessionLost = true;
+                view = CliView.UNKNOWN;
+            }
+            transcript.append("\n$ save ").append(cost(start)).append('\n').append(whole).append('\n');
+            return whole.toString();
+        } catch (IOException e) {
+            String partial = client.getText();
+            lastError = e;
+            log.info("OLT 存盘执行失败: {}", e.getMessage());
+            transcript.append("\n$ save ").append(cost(start))
+                    .append("\n[失败] ").append(e.getMessage()).append('\n').append(partial).append('\n');
+            drain();
+            return whole.length() > 0 ? whole.toString() : partial;
+        } finally {
+            saving = false;
+            saveFinishedAt = System.currentTimeMillis();
+        }
+    }
+
+    /** 回显末尾一小段（提示符判断只看尾部） */
+    private static String tailOf(String text) {
+        if (text == null || text.length() <= 200) {
+            return text == null ? "" : text;
+        }
+        return text.substring(text.length() - 200);
+    }
+
+    /** 是否是存盘命令（各厂商都是 save） */
+    private static boolean isSaveCommand(String command) {
+        return command != null && command.trim().equalsIgnoreCase("save");
+    }
+
+    /** 这台设备此刻是否正在写 flash（保存配置） */
+    public boolean isSaving() {
+        return saving;
+    }
+
+    /** 刚保存完配置还在缓冲期内：个别固件提示符回来后仍在收尾，不宜马上发命令 */
+    public boolean inSaveGrace() {
+        return saveFinishedAt > 0 && System.currentTimeMillis() - saveFinishedAt < SAVE_GRACE_MS;
     }
 
     /** 下发一条会逐步追问参数的命令，并按顺序把每个应答发过去 */
@@ -1154,6 +1267,11 @@ public class OltCliSession implements Closeable {
                 client.sendLine(answer);
                 out = client.readUntilAny(INTERACTIVE_STOPS, commandTimeoutMs);
                 whole.append(out);
+            }
+            view = viewOf(out, view);
+            if (USERNAME_PROMPT.matcher(out).find() || PASSWORD_PROMPT.matcher(out).find()) {
+                sessionLost = true;
+                view = CliView.UNKNOWN;
             }
             transcript.append("\n$ ").append(command).append('\n').append(whole).append('\n');
             return whole.toString();
@@ -1558,38 +1676,95 @@ public class OltCliSession implements Closeable {
         client.close();
     }
 
-    /** 会话池复用前的体检与复位 */
-    public boolean reviveForPool(int timeoutMs) {
+    /** 连接是否还活着：只看通道状态，不发任何探测命令（长连接不能为「体检」去占设备一次往返） */
+    public boolean isAlive() {
+        return !sessionLost && client.isAlive();
+    }
+
+    /** 一条新任务开始：清上一轮的记录，登录态与当前视图原样保留，不做任何复位 */
+    public void beginTask() {
+        transcript.setLength(0);
+        lastError = null;
+    }
+
+    /** 当前停留的视图（页面/日志排障用） */
+    public CliView currentView() {
+        return view;
+    }
+
+    /**
+     * 探活：只发一个回车看提示符回不回得来，不改视图、不发业务命令。
+     * 保活巡检用它，比 {@code display client} 轻，而且任何视图下都成立。
+     */
+    public boolean ping(int timeoutMs) {
+        return probeView(timeoutMs);
+    }
+
+    /** 敲一个回车拿提示符，顺便校准当前视图；位置不明时用它，绝不盲发 quit */
+    private boolean probeView(int timeoutMs) {
         try {
-            String out = ping(timeoutMs);
-            // 最多退三层（接口视图 → config → 特权），再退就是 logout，会停在 y/n 确认上
-            for (int round = 0; isSubView(out) && round < 3; round++) {
-                client.resetBuffer();
-                client.sendLine("quit");
-                out = client.readUntilAny(List.of(SHELL_PROMPT), Math.min(2000, timeoutMs));
-            }
-            if (!SHELL_PROMPT.matcher(out).find() || isSubView(out)) {
+            client.resetBuffer();
+            client.sendLine("");
+            String out = client.readUntilAny(List.of(SHELL_PROMPT), Math.min(5000, Math.max(1000, timeoutMs)));
+            if (USERNAME_PROMPT.matcher(out).find() || PASSWORD_PROMPT.matcher(out).find()) {
+                // 已经回到登录界面：这条连接不能再复用，池里下次会重新登录
+                sessionLost = true;
+                view = CliView.UNKNOWN;
                 return false;
             }
-            // 上一轮的记录不能带进下一轮：transcript 会整段落库，lastError 也是上一轮的
-            transcript.setLength(0);
-            lastError = null;
-            return true;
+            view = viewOf(out, view);
+            return view != CliView.UNKNOWN;
         } catch (IOException e) {
             return false;
         }
     }
 
-    /** 发一条 {@code display client} 探活：活着就回在线用户表 + 提示符，死了等满超时 */
-    private String ping(int timeoutMs) throws IOException {
-        client.resetBuffer();
-        client.sendLine("display client");
-        return client.readUntilAny(List.of(SHELL_PROMPT), Math.min(5000, Math.max(1000, timeoutMs)));
+    /**
+     * 退回根视图（特权/用户视图）。已经在根视图时一条命令都不发——
+     * 多发的那个 quit 会直接退出登录，白丢一次 OLT 的登录名额。
+     */
+    private boolean ensureRootView(int timeoutMs) {
+        for (int round = 0; round < 4 && view != CliView.ROOT; round++) {
+            if (view == CliView.UNKNOWN && !probeView(timeoutMs)) {
+                return false;
+            }
+            if (view == CliView.ROOT) {
+                break;
+            }
+            String out = runQuietly("quit", timeoutMs);
+            // 某些设备 quit 会停下来问 y/n（视图层级与预期不同）：答 n 留在设备里，不退出登录
+            if (isAsking(out)) {
+                runQuietly("n", timeoutMs);
+            }
+            if (out == null || out.isBlank() || USERNAME_PROMPT.matcher(out).find()) {
+                // 已经退到登录界面：这条连接对业务来说不能再用了，交给会话池重建
+                sessionLost = true;
+                view = CliView.UNKNOWN;
+                return false;
+            }
+        }
+        return view == CliView.ROOT;
     }
 
-    /** 是否停在 config / 接口视图里：华为 {@code (config)#}、{@code (config-if-gpon-0/1)#}，第三方同类写法 */
-    private static boolean isSubView(String out) {
-        return out != null && (out.contains("(config") || out.contains("-if-"));
+    /** 从回显末尾的提示符判断停在哪一层视图（包内可见，便于单测） */
+    static CliView viewOf(String out, CliView current) {
+        String line = lastLine(out);
+        if (line.isEmpty()) {
+            return current;
+        }
+        String prompt = line.toLowerCase(Locale.ROOT);
+        // 接口/模板/aaa 这类子视图：config 后面带短横线的一律算子视图，不能当成 config
+        if (prompt.contains("(config-") || prompt.contains("-if-")
+                || prompt.contains("-ont-") || prompt.contains("-gem-") || prompt.contains("-aaa")) {
+            return CliView.SUB;
+        }
+        if (prompt.contains("(config") || prompt.contains("config)#")) {
+            return CliView.CONFIG;
+        }
+        if (line.endsWith(">") || line.endsWith("#") || line.endsWith("]")) {
+            return CliView.ROOT;
+        }
+        return current;
     }
 
     /** 退出登录过程中的停点：y/n 确认、回到提示符（quit 不被认时）、重新出登录提示 */
@@ -1645,6 +1820,8 @@ public class OltCliSession implements Closeable {
             throw new OltTelnetException("登录后未发现命令行提示符，实际回显：" + lastLine(out));
         }
         prompt = lastLine(out);
+        // 登录成功必然停在根视图：后续任务从这里开始沿用，不再重新登录
+        view = CliView.ROOT;
     }
 
     /** 把这一屏登录回显记进 transcript 与登录横幅（横幅用于版本命令没回显时兜底认型号） */
@@ -1731,10 +1908,16 @@ public class OltCliSession implements Closeable {
 
     /** {@code display board 0} 顶多二十来行，一条 scroll 关掉分页就够了 */
     private void prepareTerminal(OltVendor vendor, boolean firstOnly) {
+        // 长连接下关分页的效果是持续的：同一厂商已关过就不再重发，省掉每条任务的开场命令
+        if (vendor != null && vendor != OltVendor.GENERIC && pagingPrepared == vendor) {
+            return;
+        }
         int timeout = Math.min(commandTimeoutMs, 4000);
         if (vendor != null && vendor != OltVendor.GENERIC) {
             List<String> commands = OltVendorProfiles.of(vendor).pagingCommands();
-            runPaging(firstOnly && !commands.isEmpty() ? commands.subList(0, 1) : commands, timeout);
+            if (runPaging(firstOnly && !commands.isEmpty() ? commands.subList(0, 1) : commands, timeout)) {
+                pagingPrepared = vendor;
+            }
             return;
         }
         List<String> huawei = OltVendorProfiles.of(OltVendor.HUAWEI).pagingCommands();
@@ -1751,17 +1934,18 @@ public class OltCliSession implements Closeable {
         runPaging(all, timeout);
     }
 
-    /** 逐条关分页，设备认下第一条就收手 */
-    private void runPaging(List<String> commands, int timeout) {
+    /** 逐条关分页，设备认下第一条就收手；返回是否有关分页命令被设备接受 */
+    private boolean runPaging(List<String> commands, int timeout) {
         for (String command : commands) {
             if (command == null || command.isBlank()) {
                 continue;
             }
             String out = runQuietly(command, timeout);
             if (out != null && !out.isBlank() && commandRejected(out) == null) {
-                return;
+                return true;
             }
         }
+        return false;
     }
 
     private static String first(List<String> commands) {
@@ -1841,6 +2025,14 @@ public class OltCliSession implements Closeable {
             client.resetBuffer();
             client.sendLine("");
             out = client.readUntilAny(COMMAND_STOPS, timeoutMs, true);
+        }
+        // 每条命令的提示符都在回显末尾：顺手更新视图，下一次就知道自己停在哪一层
+        view = viewOf(out, view);
+        // 设备把空闲连接踢回登录界面时 TCP 不一定断：识别出来标记失效，让会话池重建，
+        // 否则后续命令永远发在登录提示符上，自动注册这类后台任务会一直失败且不恢复
+        if (USERNAME_PROMPT.matcher(out).find() || PASSWORD_PROMPT.matcher(out).find()) {
+            sessionLost = true;
+            view = CliView.UNKNOWN;
         }
         return out;
     }

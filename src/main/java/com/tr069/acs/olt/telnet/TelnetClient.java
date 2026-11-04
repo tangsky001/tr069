@@ -15,6 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import lombok.extern.slf4j.Slf4j;
+
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -32,6 +34,7 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.util.concurrent.DefaultThreadFactory;
 
 /** 极简 Telnet 客户端（Netty NIO 版） */
+@Slf4j
 public class TelnetClient implements Closeable {
 
     /** 全部 Telnet 连接共享的事件循环组：连接数上百也只占这几条线程 */
@@ -116,6 +119,10 @@ public class TelnetClient implements Closeable {
     private ByteBuffer pending = ByteBuffer.allocate(64 * 1024);
     private final StringBuilder text = new StringBuilder();
 
+    /** 回显尾窗的零拷贝视图（复用实例）：正则只看末尾几百字符，不再每轮 substring 复制 */
+    private final TailView matchWindow = new TailView();
+    private final TailView pageWindow = new TailView();
+
     /** 本会话的等待/唤醒锁；事件循环线程填充缓冲，业务线程在这里等匹配 */
     private final Object monitor = new Object();
 
@@ -166,6 +173,15 @@ public class TelnetClient implements Closeable {
                                     @Override
                                     protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) {
                                         client.onData(msg);
+                                    }
+
+                                    @Override
+                                    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+                                        // 收数据途中出错不能再往管道尾丢：那样数据静静丢掉，
+                                        // 业务侧只看到「回显超时」，排查时完全没有线索
+                                        log.warn("Telnet 收数据异常，关闭连接：{}", cause.toString());
+                                        client.onInactive();
+                                        ctx.close();
                                     }
                                 });
                     }
@@ -283,6 +299,12 @@ public class TelnetClient implements Closeable {
         return charset;
     }
 
+    /** 连接是否还活着：不发任何探测命令，只看通道与 EOF 标记（省下 OLT 的一次往返） */
+    public boolean isAlive() {
+        Channel ch = channel;
+        return !closed && !eof && ch != null && ch.isActive();
+    }
+
     /** 清空回显缓冲，进入下一条命令的读取 */
     public void resetBuffer() {
         synchronized (monitor) {
@@ -340,11 +362,9 @@ public class TelnetClient implements Closeable {
         }
     }
 
-    /** 解码出的正文数据：批量进字符集解码器，追加进回显缓冲 */
+    /** 解码出的正文数据：直接把网络字节读进 ByteBuffer 缓冲，不落中间 byte[]，批量进字符集解码器 */
     void onData(ByteBuf buf) {
         int n = buf.readableBytes();
-        byte[] bytes = new byte[n];
-        buf.readBytes(bytes);
         synchronized (monitor) {
             if (pending.remaining() < n) {
                 ByteBuffer bigger = ByteBuffer.allocate(
@@ -353,7 +373,13 @@ public class TelnetClient implements Closeable {
                 bigger.put(pending);
                 pending = bigger;
             }
-            pending.put(bytes);
+            // ByteBuf 直读进 ByteBuffer 的写入区，不再为每包 new 一个 byte[]。
+            // 注意：Netty 的 readBytes(ByteBuffer) 按 dst.remaining() 整段读、不做截断，
+            // 这里必须先把 limit 收到「刚好本包 n 字节」，否则小包会因读不够而抛异常丢数据
+            int writePos = pending.position();
+            pending.limit(writePos + n);
+            buf.readBytes(pending);
+            pending.limit(pending.capacity());
             decodePending();
             lastByteAt = System.currentTimeMillis();
             // 有回显了：上一轮「按了没反应」的计数清零（分页器一按就会吐下一页）
@@ -449,8 +475,9 @@ public class TelnetClient implements Closeable {
 
     private void handlePagination() throws IOException {
         for (int guard = 0; guard < 200; guard++) {
+            // 尾窗用零拷贝 CharSequence 视图匹配：不再每轮 substring 复制几百字符
             int from = Math.max(0, text.length() - 400);
-            String window = text.substring(from);
+            CharSequence window = pageWindow.of(400);
             Matcher matcher = MORE_PROMPT.matcher(window);
             int start = -1;
             int end = -1;
@@ -466,7 +493,7 @@ public class TelnetClient implements Closeable {
                 }
                 return;
             }
-            boolean atTail = window.substring(end).trim().isEmpty();
+            boolean atTail = isBlankAfter(window, end);
             // 分页提示不是正文，先删掉；华为 OLT 的提示常和下一页内容挤在同一行，
             // 那种情况设备已经在继续输出，只清提示不送空格
             text.delete(from + start, from + end);
@@ -475,6 +502,16 @@ public class TelnetClient implements Closeable {
             }
             pressPageOnce();
         }
+    }
+
+    /** 视图 end 之后是否全是空白（零分配：逐字符看，不 substring） */
+    private static boolean isBlankAfter(CharSequence view, int end) {
+        for (int i = end; i < view.length(); i++) {
+            if (!Character.isWhitespace(view.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** 分页看门狗：不依赖「---- More ----」被完整识别 */
@@ -507,9 +544,10 @@ public class TelnetClient implements Closeable {
 
     // ---------------------------------------------------------------- 匹配
 
-    /** 只在末尾 512 字符里匹配：提示符一定在尾部，全量扫会让长回显变成 O(n²) */
+    /** 只在末尾 512 字符里匹配：提示符一定在尾部，全量扫会让长回显变成 O(n²)。
+     *  尾窗走零拷贝视图，等待循环每 200ms 轮询一次也不再复制字符串 */
     private boolean matchesAny(List<Pattern> patterns) {
-        String window = text.substring(Math.max(0, text.length() - 512));
+        CharSequence window = matchWindow.of(512);
         for (Pattern pattern : patterns) {
             if (pattern.matcher(window).find()) {
                 return true;
@@ -534,6 +572,36 @@ public class TelnetClient implements Closeable {
         }
         synchronized (monitor) {
             monitor.notifyAll();
+        }
+    }
+
+    /** 回显尾窗的零拷贝 CharSequence 视图：指向 text 的末尾 max 个字符，读时零复制 */
+    private final class TailView implements CharSequence {
+        private int from;
+
+        TailView of(int max) {
+            this.from = Math.max(0, text.length() - max);
+            return this;
+        }
+
+        @Override
+        public int length() {
+            return text.length() - from;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return text.charAt(from + index);
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return text.subSequence(from + start, from + end);
+        }
+
+        @Override
+        public String toString() {
+            return text.substring(from);
         }
     }
 

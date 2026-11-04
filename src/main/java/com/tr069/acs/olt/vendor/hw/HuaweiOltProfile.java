@@ -219,6 +219,22 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
         return command.toString();
     }
 
+    @Override
+    public boolean supportsOntDescription() {
+        return true;
+    }
+
+    /** {@code ont modify <port> <ontid> desc "<描述>"}，描述带空格也能用（整体加引号） */
+    @Override
+    public String ontDescriptionCommand(int port, int ontId, String description) {
+        if (description == null || description.isBlank()) {
+            return null;
+        }
+        // 描述里不能有引号：会把后面的参数一起吞掉，命令被拒
+        String text = description.trim().replace("\"", "");
+        return "ont modify " + port + ' ' + ontId + " desc \"" + text + "\"";
+    }
+
     /** SN / MAC / LOID / PASSWORD → 设备认的认证关键字 */
     private static String ontAuthKeyword(String authMode) {
         String mode = authMode == null ? "SN" : authMode.trim().toUpperCase(Locale.ROOT);
