@@ -60,6 +60,10 @@ public class OltSessionPool {
     @Value("${acs.olt.command-timeout-ms:20000}")
     private int commandTimeoutMs;
 
+    /** 命令回显是否打进日志（排障时开，平时关） */
+    @Value("${acs.olt.log-echo:false}")
+    private boolean logEcho;
+
     /** 保活开关，管理页可切换 */
     private volatile boolean keepaliveEnabled = true;
 
@@ -180,7 +184,8 @@ public class OltSessionPool {
         }
         if (session == null) {
             try {
-                session = OltCliSession.open(device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs);
+                session = OltCliSession.open(device, charset, connectTimeoutMs, loginTimeoutMs,
+                        commandTimeoutMs, logEcho);
             } catch (IOException e) {
                 // 会话登录被设备拒绝时回退到已有会话排队
                 SessionSlot fallback = channel == null ? null : channel.fallbackSlot(slot);
@@ -407,14 +412,18 @@ public class OltSessionPool {
             this.slots = list;
         }
 
-        /** 挑一条会话：活着的优先，队列最短的优先 */
+        /** 挑一条会话：没在跑任务的优先，其次活会话，队列最短的优先 */
         SessionSlot pick() {
             SessionSlot best = null;
             int bestScore = Integer.MAX_VALUE;
             for (SessionSlot slot : slots) {
                 OltCliSession session = slot.session;
                 boolean alive = session != null && session.isAlive();
-                int score = (alive ? 0 : 1000) + slot.executor.getQueue().size();
+                // 正在跑任务的槽位必须排最后：并发分段采集时几个任务要落到不同槽位，
+                // 不然全挤在一条会话上串行，后排的任务还会排队超时被取消
+                int score = (slot.executor.getActiveCount() > 0 ? 1_000_000 : 0)
+                        + (alive ? 0 : 1_000)
+                        + slot.executor.getQueue().size();
                 if (score < bestScore) {
                     bestScore = score;
                     best = slot;

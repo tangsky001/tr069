@@ -1834,9 +1834,9 @@ public final class OltInfoParser {
         return info;
     }
 
-    /** {@code ONT MAC地址 : 8487-FF20-13A5} 的 ASCII 锚定版 */
+    /** {@code ONT MAC : 8487-FF20-13A5}，标签与冒号之间是对齐空格，长度不限 */
     private static final Pattern ONT_IPCONFIG_MAC = Pattern.compile(
-            "(?im)^\\s*ONT\\s+MAC.{0,10}?[:：]\\s*(\\S+)");
+            "(?im)^\\s*ONT\\s+MAC[^:：\\r\\n]*[:：]\\s*(\\S+)");
 
     /** {@code ONT IP : -}，IP 后必须紧跟空白，避免吃进第一行的「ONT IP索引」 */
     private static final Pattern ONT_IPCONFIG_IP = Pattern.compile(
@@ -1849,6 +1849,10 @@ public final class OltInfoParser {
         }
         String hex = raw.trim().replaceAll("[-:.\\s]", "");
         if (!hex.matches("[0-9A-Fa-f]{12}")) {
+            return null;
+        }
+        // 设备没学到 MAC 时回 0000-0000-0000：当「没采到」处理，别把它当成有效地址显示
+        if (hex.matches("0{12}")) {
             return null;
         }
         return hex.toUpperCase().replaceAll("(..)(?!$)", "$1:");
@@ -1955,7 +1959,10 @@ public final class OltInfoParser {
         }
         String lower = text.toLowerCase(Locale.ROOT);
         return lower.contains("command is not found") || lower.contains("unrecognized")
-                || lower.contains("unknown command") || lower.contains("failure:");
+                || lower.contains("unknown command") || lower.contains("failure:")
+                // MA5683T 对多余的参数就回 "% Too many parameters, the error locates at '^'"
+                || lower.contains("too many parameters") || lower.contains("incomplete command")
+                || lower.contains("error:");
     }
 
     // --------------------------------------------------- 待注册 ONT（display ont autofind）

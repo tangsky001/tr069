@@ -69,6 +69,9 @@ public class OltOnt {
     /** MAC 地址：优先取单台详情回显里的 MAC 字段；MAC 认证（EPON）的认证码本身就是 MAC */
     private String mac;
 
+    /** 设备明确回了 0000-0000-0000（ONT 没学到 MAC）：标记一次，之后不再重复补采 */
+    private Boolean macUnavailable;
+
     /** 线路模板编号（单台详情里的 Line profile ID） */
     private Integer lineProfileId;
 
@@ -80,4 +83,7 @@ public class OltOnt {
 
     /** 业务模板名称 */
     private String srvProfileName;
+
+    /** 拉过一次配置脚本仍拿不到模板号（设备配置里就没有）：标记后不再重复拉 */
+    private Boolean profileUnavailable;
 }

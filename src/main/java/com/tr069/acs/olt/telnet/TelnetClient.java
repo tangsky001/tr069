@@ -138,6 +138,8 @@ public class TelnetClient implements Closeable {
 
     /** 最近一次收到字节的时间：分页看门狗靠它判断「回显卡住了」 */
     private volatile long lastByteAt = System.currentTimeMillis();
+    /** 本次命令收到第一个回显字节的时间（resetBuffer 清零）：区分「设备算得慢」和「回显收得慢」 */
+    private long firstByteAt;
     /** 最近一次主动翻页按键的时间 */
     private long lastPagePressAt;
     /** 本次命令已经主动按了几次（resetBuffer 时清零） */
@@ -314,6 +316,14 @@ public class TelnetClient implements Closeable {
             fruitlessPresses = 0;
             lastPagePressAt = 0;
             lastByteAt = System.currentTimeMillis();
+            firstByteAt = 0;
+        }
+    }
+
+    /** 本次命令收到第一个回显字节的时间戳，0 表示还没收到任何字节 */
+    public long firstByteAt() {
+        synchronized (monitor) {
+            return firstByteAt;
         }
     }
 
@@ -381,7 +391,11 @@ public class TelnetClient implements Closeable {
             buf.readBytes(pending);
             pending.limit(pending.capacity());
             decodePending();
-            lastByteAt = System.currentTimeMillis();
+            long now = System.currentTimeMillis();
+            if (firstByteAt == 0) {
+                firstByteAt = now;
+            }
+            lastByteAt = now;
             // 有回显了：上一轮「按了没反应」的计数清零（分页器一按就会吐下一页）
             fruitlessPresses = 0;
             monitor.notifyAll();

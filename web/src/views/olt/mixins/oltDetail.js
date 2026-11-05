@@ -481,10 +481,16 @@ export const oltDetailMixin = {
       return addLineGemMapping(this.detailId, payload)
         .then(res => this.applyAfterConfig(res, '新增GEM映射'))
     },
-    /** 新增 VLAN（鸿升光下发 vlan standard），VLAN 面板的弹窗调用 */
+    /** 新增 VLAN（下发 vlan standard）：后端不等重采，返回即显示 */
     createVlan(payload) {
       return createOltVlan(this.detailId, payload)
-        .then(res => this.applyAfterConfig(res, '新增VLAN'))
+        .then(res => {
+          this.applyDetail(res.data)
+          this.liveAt = new Date()
+          this.liveError = ''
+          this.$message.success('新增 VLAN 成功，已立即显示（设备数据后台采集中）')
+          return res
+        })
     },
     /** 删除勾选的 VLAN（下发 no vlan） */
     deleteVlan(vlanIds) {

@@ -51,8 +51,8 @@ public class OltCliSession implements Closeable {
     private static final Pattern PASSWORD_PROMPT = Pattern.compile(
             "(?i)(?:password|passwd)\\s*[:：]\\s*$");
 
-    /** 命令行提示符： / ZXAN# / AN5516-01# / [~HUAWEI] */
-    private static final Pattern SHELL_PROMPT = Pattern.compile("(?m)[^\\r\\n]{0,80}[>#\\]]\\s*$");
+    /** 命令行提示符： / ZXAN# / AN5516-01# / [~HUAWEI]；必须在回显末尾，配置回显里的 # 分隔行不算 */
+    private static final Pattern SHELL_PROMPT = Pattern.compile("[^\\r\\n]{0,80}[>#\\]]\\s*\\z");
 
     /** 命令还要参数时的提示，例如 MA5683T 的 display version */
     static final Pattern PARAM_PROMPT = Pattern.compile(
@@ -114,6 +114,9 @@ public class OltCliSession implements Closeable {
 
     private final int commandTimeoutMs;
 
+    /** 每条命令的完整回显是否打进日志（acs.olt.log-echo，排障用，量大时关掉） */
+    private final boolean logEcho;
+
     /** 台账里已经认出来的厂商（上次采集写进去的） */
     private final OltVendor vendorHint;
 
@@ -149,15 +152,22 @@ public class OltCliSession implements Closeable {
 
     private IOException lastError;
 
-    private OltCliSession(TelnetClient client, int commandTimeoutMs, OltVendor vendorHint) {
+    private OltCliSession(TelnetClient client, int commandTimeoutMs, OltVendor vendorHint, boolean logEcho) {
         this.client = client;
         this.commandTimeoutMs = commandTimeoutMs;
         this.vendorHint = vendorHint == null ? OltVendor.GENERIC : vendorHint;
+        this.logEcho = logEcho;
     }
 
     /** 建立连接并完成登录 */
     public static OltCliSession open(OltDevice device, Charset charset, int connectTimeoutMs,
                                      int loginTimeoutMs, int commandTimeoutMs) throws IOException {
+        return open(device, charset, connectTimeoutMs, loginTimeoutMs, commandTimeoutMs, false);
+    }
+
+    /** 建立连接并完成登录；logEcho 为 true 时每条命令的完整回显打进日志（排障用） */
+    public static OltCliSession open(OltDevice device, Charset charset, int connectTimeoutMs,
+                                     int loginTimeoutMs, int commandTimeoutMs, boolean logEcho) throws IOException {
         String protocol = device.getProtocol() == null ? "TELNET" : device.getProtocol().trim().toUpperCase(Locale.ROOT);
         if (!"TELNET".equals(protocol)) {
             throw new OltTelnetException("当前仅实现 Telnet 登录，SSH 请先选 Telnet 或等待后续支持");
@@ -165,7 +175,7 @@ public class OltCliSession implements Closeable {
         int port = device.getPort() == null || device.getPort() <= 0 ? 23 : device.getPort();
         TelnetClient client = TelnetClient.connect(device.getHost(), port, device.getBindLocalIp(),
                 charset, connectTimeoutMs, Math.min(commandTimeoutMs, 3000));
-        OltCliSession session = new OltCliSession(client, commandTimeoutMs, OltVendor.of(device.getVendor()));
+        OltCliSession session = new OltCliSession(client, commandTimeoutMs, OltVendor.of(device.getVendor()), logEcho);
         try {
             session.login(usernameOf(device), passwordOf(device), loginTimeoutMs);
             return session;
@@ -581,9 +591,30 @@ public class OltCliSession implements Closeable {
         }
     }
 
+    /** 单端口光模块查询：进接口视图发一条 display port state，返回原始回显 */
+    public String queryPortState(int slot, int portNo) {
+        prepareTerminal(vendorHint);
+        int timeout = Math.min(commandTimeoutMs, 8000);
+        if (!enterConfigView(timeout)) {
+            runQuietly("interface gpon 0/" + slot, timeout);
+            String out = runCommand("display port state " + portNo, timeout);
+            runQuietly("quit", timeout);
+            return out;
+        }
+        String enter = runQuietly("interface gpon 0/" + slot, timeout);
+        if (enter == null || !enter.contains("-if-")) {
+            // EPON 板卡的接口视图是 interface epon
+            runQuietly("interface epon 0/" + slot, timeout);
+        }
+        try {
+            return runCommand("display port state " + portNo, timeout);
+        } finally {
+            runQuietly("quit", timeout);
+        }
+    }
+
     /** 光模块数值挂到端口上：补空字段，不覆盖 display board 采到的在位状态和链路状态 */
-    private static void applyPortOptics(OltBoard board, int portNo, OltPort optics) {
-        List<OltPort> ports = board.getPorts();
+    private static void applyPortOptics(OltBoard board, int portNo, OltPort optics) {        List<OltPort> ports = board.getPorts();
         if (ports == null) {
             ports = new ArrayList<>();
             board.setPorts(ports);
@@ -1446,44 +1477,15 @@ public class OltCliSession implements Closeable {
         return any;
     }
 
-    /** 逐条 ONT 补单台详情：管理 IP、MAC、线路/业务模板号只有 */
+    /** 给还缺 MAC 的在线 ONT 发 display ont ipconfig，补到就跳过 */
     private void enrichOntProfiles(Integer slotNo, int portNo, List<OltOnt> onts, int timeout,
                                    List<String> notes) {
         if (slotNo == null || onts == null || onts.isEmpty()) {
             return;
         }
-        for (OltOnt ont : onts) {
-            if (ont.getOntId() == null) {
-                continue;
-            }
-            // 详情齐了就不重复问：重复同步、后台补采重跑时能省掉大半命令
-            if (ont.getMgmtIp() != null && ont.getLineProfileId() != null) {
-                continue;
-            }
-            String text = runCommand("display ont info 0 " + slotNo + " " + portNo + " " + ont.getOntId(), timeout);
-            if (text != null && !text.isBlank()) {
-                OltOntInfo info = OltInfoParser.parseOntInfoDetail(text);
-                String ip = validIp(info.getIp());
-                if (ip != null) {
-                    ont.setMgmtIp(ip);
-                }
-                String mac = resolveMac(info.getMac(), ont.getSn());
-                if (mac != null) {
-                    ont.setMac(mac);
-                }
-                if (info.getLineProfileId() != null) {
-                    ont.setLineProfileId(info.getLineProfileId());
-                    ont.setLineProfileName(info.getLineProfileName());
-                }
-                if (info.getSrvProfileId() != null) {
-                    ont.setSrvProfileId(info.getSrvProfileId());
-                    ont.setSrvProfileName(info.getSrvProfileName());
-                }
-            }
-        }
-        // MAC 地址部分版本的单台详情不给（现场这台 MA5683T 就没有），只有
-        // display ont ipconfig 里有——只对还缺 MAC/IP 的 ONT 补这一条
-        if (onts.stream().anyMatch(ont -> ont.getMac() == null || ont.getMgmtIp() == null)) {
+        // 部分版本的单台详情不给 MAC（现场这台 MA5683T 就没有），只有 ipconfig 里有
+        if (onts.stream().anyMatch(ont -> ont.getMac() == null && !Boolean.FALSE.equals(ont.getOnline())
+                && !Boolean.TRUE.equals(ont.getMacUnavailable()))) {
             enrichOntIpconfig(slotNo, portNo, onts, timeout, notes);
         }
     }
@@ -1495,7 +1497,9 @@ public class OltCliSession implements Closeable {
         try {
             boolean noted = false;
             for (OltOnt ont : onts) {
-                if (ont.getOntId() == null || (ont.getMac() != null && ont.getMgmtIp() != null)) {
+                if (ont.getOntId() == null || ont.getMac() != null
+                        || Boolean.FALSE.equals(ont.getOnline())
+                        || Boolean.TRUE.equals(ont.getMacUnavailable())) {
                     continue;
                 }
                 String text = runCommand("display ont ipconfig " + portNo + " " + ont.getOntId(), timeout);
@@ -1510,14 +1514,13 @@ public class OltCliSession implements Closeable {
                     continue;
                 }
                 OltOntInfo info = OltInfoParser.parseOntIpconfig(text);
+                // 只落 MAC：管理 IP 属于「点开详情」才采的数据，这条命令顺带给的也不入库
                 if (ont.getMac() == null && info.getMac() != null) {
                     ont.setMac(info.getMac());
                 }
-                if (ont.getMgmtIp() == null) {
-                    String ip = validIp(info.getIp());
-                    if (ip != null) {
-                        ont.setMgmtIp(ip);
-                    }
+                // 设备明确回了 0000-0000-0000：这台没学到 MAC，标记一下，下一轮别再问它
+                if (ont.getMac() == null && ZERO_MAC.matcher(text).find()) {
+                    ont.setMacUnavailable(Boolean.TRUE);
                 }
                 // 采完还是没 MAC：把回显片段记下来（每端口只记第一条，摘要别刷屏）
                 if (ont.getMac() == null && !noted) {
@@ -1537,6 +1540,131 @@ public class OltCliSession implements Closeable {
             runQuietly("quit", timeout);
         }
     }
+
+    /** {@code interface gpon 0/<槽位>} 段头，用来定位后面 ont add 行属于哪个槽位 */
+    private static final Pattern PON_INTERFACE = Pattern.compile(
+            "(?i)^\\s*interface\\s+(gpon|epon)\\s+0/(\\d+)");
+
+    /** {@code ont add <端口> <ONT编号> sn-auth ...}：接口视图下的授权行 */
+    private static final Pattern ONT_ADD_ROW = Pattern.compile(
+            "(?i)^\\s*ont\\s+add\\s+(\\d+)\\s+(\\d+)\\s+\\S+");
+
+    private static final Pattern LINE_PROFILE_ID = Pattern.compile(
+            "(?i)ont-lineprofile-id\\s+(\\d{1,6})");
+
+    private static final Pattern SRV_PROFILE_ID = Pattern.compile(
+            "(?i)ont-srvprofile-id\\s+(\\d{1,6})");
+
+    /** 批量补 ONT 模板号：拉一次配置脚本，按槽位/端口/ONT 号对回去，返回补上台数 */
+    public int fillOntProfilesFromConfig(List<OltBoard> boards, List<String> notes) {
+        if (boards == null || boards.isEmpty()) {
+            return 0;
+        }
+        int timeout = Math.min(commandTimeoutMs, 60000);
+        if (!enterConfigView(timeout)) {
+            notes.add("进不了配置视图（enable → config），ONT 模板号未补采");
+            return 0;
+        }
+        // 先试只取 ont 段的分段写法，设备不认再退回全量配置
+        String config = runCommand("display current-configuration configuration ont", timeout);
+        if (config == null || OltInfoParser.looksUnsupported(config) || !config.contains("ont add")) {
+            config = runCommand("display current-configuration section ont", timeout);
+        }
+        if (config == null || OltInfoParser.looksUnsupported(config) || !config.contains("ont add")) {
+            config = runCommand("display current-configuration", timeout);
+        }
+        if (config == null || config.isBlank()) {
+            notes.add("display current-configuration 没回显，ONT 模板号未补采");
+            return 0;
+        }
+        return applyOntBindings(boards, config);
+    }
+
+    /** 把 ont add 行里的模板号按位置填回 ONT */
+    private int applyOntBindings(List<OltBoard> boards, String config) {
+        Map<String, OltOnt> bySeat = new java.util.HashMap<>();
+        for (OltBoard board : boards) {
+            if (board.getSlotNo() == null || board.getPorts() == null) {
+                continue;
+            }
+            for (OltPort port : board.getPorts()) {
+                if (port.getPortNo() == null || port.getOnts() == null) {
+                    continue;
+                }
+                for (OltOnt ont : port.getOnts()) {
+                    if (ont.getOntId() != null) {
+                        bySeat.put(board.getSlotNo() + "/" + port.getPortNo() + "/" + ont.getOntId(), ont);
+                    }
+                }
+            }
+        }
+        if (bySeat.isEmpty()) {
+            return 0;
+        }
+        int filled = 0;
+        Integer slot = null;
+        Set<OltOnt> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        String[] lines = config.split("\\R");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher iface = PON_INTERFACE.matcher(lines[i]);
+            if (iface.find()) {
+                slot = Integer.parseInt(iface.group(2));
+                continue;
+            }
+            Matcher add = ONT_ADD_ROW.matcher(lines[i]);
+            if (!add.find() || slot == null) {
+                continue;
+            }
+            int portNo = Integer.parseInt(add.group(1));
+            int ontId = Integer.parseInt(add.group(2));
+            OltOnt ont = bySeat.get(slot + "/" + portNo + "/" + ontId);
+            if (ont == null) {
+                continue;
+            }
+            seen.add(ont);
+            // 模板号可能和 ont add 同行，也可能被设备折到下一两行
+            StringBuilder block = new StringBuilder(lines[i]);
+            for (int j = 1; j <= 2 && i + j < lines.length; j++) {
+                block.append(' ').append(lines[i + j].trim());
+            }
+            Integer lineId = firstInt(LINE_PROFILE_ID, block);
+            Integer srvId = firstInt(SRV_PROFILE_ID, block);
+            boolean changed = false;
+            if (lineId != null && !lineId.equals(ont.getLineProfileId())) {
+                ont.setLineProfileId(lineId);
+                changed = true;
+            }
+            if (srvId != null && !srvId.equals(ont.getSrvProfileId())) {
+                ont.setSrvProfileId(srvId);
+                changed = true;
+            }
+            // 配置行找到了但模板号缺一个：设备配置本身就没写，再拉一遍也一样，标记跳过
+            if (lineId == null || srvId == null) {
+                ont.setProfileUnavailable(Boolean.TRUE);
+            }
+            if (changed) {
+                filled++;
+            }
+        }
+        // 配置里压根找不到这个 ONT（比如 EPON 段 / 未授权）：同样标记，避免每轮白拉一次全量配置
+        if (!seen.isEmpty()) {
+            for (OltOnt ont : bySeat.values()) {
+                if (!seen.contains(ont) && (ont.getLineProfileId() == null || ont.getSrvProfileId() == null)) {
+                    ont.setProfileUnavailable(Boolean.TRUE);
+                }
+            }
+        }
+        return filled;
+    }
+
+    private static Integer firstInt(Pattern pattern, CharSequence text) {
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
+    }
+
+    /** {@code ONT MAC : 0000-0000-0000}：ONT 桥接 / 没学到 MAC 时设备就这么回 */
+    private static final java.util.regex.Pattern ZERO_MAC = java.util.regex.Pattern.compile(
+            "(?im)^\\s*ONT\\s+MAC[^:：\\r\\n]*[:：]\\s*0{4}[-:]?0{4}[-:]?0{4}\\s*$");
 
     /** 回显里的 IP 字段是「-」说明没拿到地址（DHCP 未获取），不算采到 */
     private static String validIp(String ip) {
@@ -1986,13 +2114,14 @@ public class OltCliSession implements Closeable {
             client.resetBuffer();
             client.sendLine(command);
             String out = readToPrompt(timeoutMs);
+            logCommand(command, start, out, null);
             transcript.append("\n$ ").append(command).append(' ').append(cost(start))
                     .append('\n').append(out).append('\n');
             return out;
         } catch (IOException e) {
             String partial = client.getText();
             lastError = e;
-            log.debug("OLT 命令执行失败: {} - {}", command, e.getMessage());
+            logCommand(command, start, partial, e.getMessage());
             transcript.append("\n$ ").append(command).append(' ').append(cost(start))
                     .append("\n[失败] ").append(e.getMessage()).append('\n')
                     .append(partial).append('\n');
@@ -2000,6 +2129,33 @@ public class OltCliSession implements Closeable {
             drain();
             return partial;
         }
+    }
+
+    /** 命令耗时打点：发送 → 首字节（设备处理）→ 完成（收完回显），用来定位慢在哪一环；logEcho 时连回显一起打 */
+    private void logCommand(String command, long start, String echo, String error) {
+        long firstByte = client.firstByteAt();
+        String firstByteText = firstByte > 0 ? (firstByte - start) + "ms" : "无回显";
+        int echoChars = echo == null ? 0 : echo.length();
+        if (error == null) {
+            log.info("OLT 命令耗时 [{}] 首字节 {} / 完成 {}ms / 回显 {} 字符",
+                    command, firstByteText, System.currentTimeMillis() - start, echoChars);
+        } else {
+            log.info("OLT 命令耗时 [{}] 首字节 {} / 失败于 {}ms / 已收 {} 字符: {}",
+                    command, firstByteText, System.currentTimeMillis() - start, echoChars, error);
+        }
+        if (logEcho && echoChars > 0) {
+            log.info("OLT 回显 [{}] {} 字符:\n{}", command, echoChars, capEcho(echo));
+        }
+    }
+
+    /** 日志里的回显超长截断，完整内容仍在采集记录里 */
+    private static String capEcho(String echo) {
+        int limit = 20000;
+        if (echo.length() <= limit) {
+            return echo;
+        }
+        return echo.substring(0, limit) + "\n...[日志截断，共 " + echo.length()
+                + " 字符，完整回显见采集记录]";
     }
 
     /** 把设备残留的回显读干净再丢掉。命令超时后必做，不然下一条命令会立刻匹配到旧提示符 */

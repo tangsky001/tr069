@@ -16,6 +16,7 @@ import com.tr069.acs.olt.model.OltTcontRequest;
 import com.tr069.acs.olt.model.OltGemportRequest;
 import com.tr069.acs.olt.model.OltGemMappingRequest;
 import com.tr069.acs.olt.model.OltOntQueryResult;
+import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltQuickSetupRequest;
 import com.tr069.acs.olt.model.OltDeviceOptions;
 import com.tr069.acs.olt.model.OltDeviceView;
@@ -272,6 +273,24 @@ public class OltController {
         } catch (Exception e) {
             log.error("ONT 按需查询异常 id={}", id, e);
             return Result.failure("ONT 查询失败：" + e.getMessage());
+        }
+    }
+
+    /** 端口光模块按需查询：点开某个 PON 口的光模块弹窗才发一条 display port state */
+    @PostMapping("/{id}/port-optics")
+    public Result<OltPort> queryPortOptics(@PathVariable Long id,
+                                           @RequestParam Integer slotNo,
+                                           @RequestParam Integer portNo,
+                                           HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.queryPortOptics(id, slotNo, portNo, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("端口光模块查询异常 id={} slot={} port={}", id, slotNo, portNo, e);
+            return Result.failure("端口光模块查询失败：" + e.getMessage());
         }
     }
 

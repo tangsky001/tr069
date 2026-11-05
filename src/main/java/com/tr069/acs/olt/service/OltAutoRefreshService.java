@@ -38,8 +38,8 @@ public class OltAutoRefreshService {
     /** 连续失败后间隔的最大倍数 */
     private static final int MAX_BACKOFF = 6;
 
-    /** 自动采集间隔(毫秒) */
-    private static final long INTERVAL_MILLIS = 5 * 60 * 1000L;
+    /** 全量采集间隔：30 小时（板卡状态另有 2 分钟调度） */
+    private static final long INTERVAL_MILLIS = 30 * 60 * 60 * 1000L;
 
     /** 启动后多久跑第一轮(毫秒) */
     private static final long INITIAL_DELAY_MILLIS = 5 * 1000L;
@@ -149,11 +149,11 @@ public class OltAutoRefreshService {
         }
     }
 
-    /** 采一台，失败退避，成功清退避记录 */
+    /** 采一台，失败退避，成功清退避记录；定时采集不针对端口光模块发命令 */
     private boolean syncOne(OltDevice device) {
         long start = System.currentTimeMillis();
         try {
-            oltService.sync(device.getId(), OPERATOR);
+            oltService.autoSync(device.getId(), OPERATOR);
             failures.remove(device.getId());
             retryAt.remove(device.getId());
             log.info("OLT 自动刷新成功 id={} host={} 耗时={}s", device.getId(), device.getHost(),

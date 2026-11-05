@@ -345,6 +345,8 @@ acs:
     login-timeout-ms: 15000
     # 单条命令等待提示符的超时(毫秒)
     command-timeout-ms: 20000
+    # 每条命令的完整回显是否打进日志true=开启，false=关闭。默认关闭，开启后会把所有命令的回显打印到日志中。
+    log-echo: false
     # 单次采集留档的回显上限(字符)，超出截断
     max-raw-output-chars: 60000
 
