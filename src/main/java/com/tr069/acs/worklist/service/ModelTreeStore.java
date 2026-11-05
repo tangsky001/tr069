@@ -41,44 +41,16 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 型号能力树文件：把设备上报的参数树导出成 XML 文件，按光猫型号命名落盘。
- *
- * <p>库里的 {@code cpe_parameter} 只是设备自己的快照，型号维度要能被复用必须落成文件：
- * 同型号设备上线时，按「运营商 + 型号 + 固件」查 {@code cpe_model.config_path} 拿到文件位置，
- * 读这份 XML 就能知道该型号真实支持哪些节点、路径怎么写、类型与读写权限是什么，
- * 下发（如 wan_sip_vlan）时据此拼 {@code SetParameterValues}，不必再猜路径。</p>
- *
- * <p>落盘位置：{@code {配置根目录}/models/{运营商}/{型号标识}.xml}，
- * 与 {@link ModelMappingService#defaultConfigPath(String, String)} 的命名规则一致，
- * 相对路径回写 {@code cpe_model.config_path}，因此库里存的就是文件的查找入口。</p>
- *
- * <p>文件结构为嵌套形式，对象节点与参数节点按真实层级展开，参数节点带上
- * {@code writable / type / value}，既是能力档案也是下发取值格式参考：</p>
- * <pre>{@code
- * <ModelTree modelKey="HG6145F1_V3.0" ...>
- *   <Object name="InternetGatewayDevice" path="InternetGatewayDevice.">
- *     <Object name="WANDevice" path="InternetGatewayDevice.WANDevice.1.">
- *       <Param name="Enable" path="InternetGatewayDevice.WANDevice.1.Enable"
- *              writable="true" type="boolean" value="True"/>
- *     </Object>
- *   </Object>
- * </ModelTree>
- * }</pre>
- */
+/** 型号能力树文件：把设备上报的参数树导出成 XML 文件，按光猫型号命名落盘 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ModelTreeStore {
 
-    /**
-     * 型号能力树在配置根目录下的子目录名。
-     */
+    /** 型号能力树在配置根目录下的子目录名 */
     public static final String MODEL_DIR = "models";
 
-    /**
-     * 单次业务查询最多返回的参数条数。
-     */
+    /** 单次业务查询最多返回的参数条数 */
     private static final int LOOKUP_LIMIT = 200;
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -96,41 +68,17 @@ public class ModelTreeStore {
 
     // ==================== 导出 ====================
 
-    /**
-     * 把某台设备的参数树导出为该型号的 XML 文件，并把相对路径写回 {@code cpe_model.config_path}。
-     *
-     * <p>同一型号已由其它样机导出过时，默认不覆盖，避免拿一台异常设备把好的档案冲掉；
-     * 确认要用当前设备刷新时传 {@code force = true}。</p>
-     *
-     * @param sn    设备序列号，能力树须已采集
-     * @param force 是否覆盖已存在的型号文件
-     * @return 导出结果，含文件相对路径与绝对路径
-     */
+    /** 把某台设备的参数树导出为该型号的 XML 文件，并把相对路径写回 {@code cpe_model.config_path} */
     public ExportResult export(String sn, boolean force) {
         return export(sn, force, null);
     }
 
-    /**
-     * 采集完成后的归档：不管哪家运营商的猫，先把能力树截到 standard 目录
-     * （{@code models/standard/standard/{型号}.xml}，与移动那台当初进来时一样），
-     * 型号行同时入库；按运营商分目录建档案留到人工适配申报时——
-     * {@code ModelAdaptationService#save} 会用申报的运营商重新导一次并写适配档。
-     *
-     * <p>型号已在某家运营商下适配过的继续归档到那一档：同一型号散出两份档案，
-     * 下发取路径时按台账运营商查到另一份，会报「该型号未适配」。</p>
-     *
-     * @param sn 设备序列号，能力树须已采集
-     */
+    /** 采集完成后的归档：不管哪家运营商的猫，先把能力树截到 standard 目录 */
     public ExportResult exportCollected(String sn) {
         return export(sn, false, archiveIsp(findDevice(sn)));
     }
 
-    /**
-     * 归档运营商：未适配的型号一律 {@code standard}，已适配的维持已适配那一家。
-     *
-     * <p>设备台账上的运营商不能拿来归档：那可能是采集时按私有前缀猜的，也可能是同型号
-     * 卖给多家时的其中一家。档案目录只认「这一家是不是真的适配过」。</p>
-     */
+    /** 归档运营商：未适配的型号一律 {@code standard}，已适配的维持已适配那一家 */
     String archiveIsp(CpeDevice device) {
         return archiveIspOf(ModelMappingService.buildModelKey(
                 device == null ? null : device.getProductClass(),
@@ -142,10 +90,7 @@ public class ModelTreeStore {
         return notBlank(adapted) ? adapted.trim() : "standard";
     }
 
-    /**
-     * @param ispOverride 归档到指定运营商目录：适配时以人工申报的运营商为准，
-     *                    可能与设备上报的 isp 不同（同型号卖给多家运营商）。
-     */
+    /** 可能与设备上报的 isp 不同（同型号卖给多家运营商） */
     public ExportResult export(String sn, boolean force, String ispOverride) {
         List<CpeParameter> nodes = parameterMapper.selectList(new LambdaQueryWrapper<CpeParameter>()
                 .eq(CpeParameter::getSn, sn)
@@ -200,20 +145,7 @@ public class ModelTreeStore {
 
     // ==================== 能力申报同步 ====================
 
-    /**
-     * 把适配申报落到 SQLite 模板库，并按申报重新生成模板。
-     *
-     * <p>申报是模板生成的唯一输入——几个网口、几路语音、什么 WiFi 规格。
-     * 它必须写进模板库（{@code device.cap_*}），不能只停在 MySQL 的型号档案上：
-     * 采集导出发生在申报<b>之前</b>，那一刻库里还没有能力字段，一条模板都生成不出来；
-     * 申报之后若不再回写一次，模板库就永远是空的，下发只能报「该型号未适配」。</p>
-     *
-     * <p>型号行不存在时顺带创建（申报也可能先于采集发生）。</p>
-     *
-     * @param isp      归档运营商
-     * @param modelKey 型号 key
-     * @param model    已写入申报值的型号档案
-     */
+    /** 把适配申报落到 SQLite 模板库，并按申报重新生成模板 */
     public void applyCapability(String isp, String modelKey, CpeModel model) {
         Device row = deviceDao.findByIspModelKey(isp, modelKey).orElseGet(() -> {
             Device d = new Device();
@@ -252,11 +184,7 @@ public class ModelTreeStore {
 
     // ==================== 定位 ====================
 
-    /**
-     * 按设备定位它的型号能力树文件，即「下发前去库里查路径」这一步。
-     *
-     * @return 型号、相对路径、绝对路径与文件是否已落盘；未登记型号时为 null
-     */
+    /** 按设备定位它的型号能力树文件，即「下发前去库里查路径」这一步 */
     public Map<String, Object> locate(String sn) {
         CpeDevice device = findDevice(sn);
         String modelKey = ModelMappingService.buildModelKey(
@@ -302,18 +230,7 @@ public class ModelTreeStore {
 
     // ==================== 按业务项查参数 ====================
 
-    /**
-     * 从型号 XML 里找出某个业务项对应的参数节点，供下发取路径与格式。
-     *
-     * <p>业务项按「_ / 空格 / 点 / 横杠」拆成关键字，如 {@code wan_sip_vlan} 拆为
-     * {@code [wan, sip, vlan]}；路径命中全部关键字的排在前面，只读节点也会返回，
-     * 由调用方按 {@code writable} 决定是否可写。</p>
-     *
-     * @param sn     设备序列号，用于定位型号
-     * @param item   业务项编码或关键字，如 wan_sip_vlan
-     * @param parent 可选，限定在该对象路径下查找
-     * @param limit  返回条数上限
-     */
+    /** 从型号 XML 里找出某个业务项对应的参数节点，供下发取路径与格式 */
     public List<Map<String, Object>> lookup(String sn, String item, String parent, int limit) {
         Map<String, Object> loc = locate(sn);
         Object relative = loc.get("configPath");
@@ -366,23 +283,15 @@ public class ModelTreeStore {
 
     // ==================== 下发路径校正 ====================
 
-    /**
-     * 型号能力树按文件缓存：下发前每次解析上千节点的 XML 太贵，按文件修改时间失效。
-     */
+    /** 型号能力树按文件缓存：下发前每次解析上千节点的 XML 太贵，按文件修改时间失效 */
     private final ConcurrentHashMap<String, CachedTree> treeCache = new ConcurrentHashMap<>();
 
-    /**
-     * 设备自身参数树缓存，短时有效：一次工单连续几步下发，不必每步都扫一遍参数表。
-     */
+    /** 设备自身参数树缓存，短时有效：一次工单连续几步下发，不必每步都扫一遍参数表 */
     private static final long DEVICE_CACHE_TTL_MILLIS = 60_000L;
 
     private final ConcurrentHashMap<String, DeviceCache> deviceCache = new ConcurrentHashMap<>();
 
-    /**
-     * 读出该设备型号的能力树参数，供下发前校正路径。
-     *
-     * <p>型号尚未登记或文件缺失时返回空列表，表示「无法校正」，调用方保持模板原路径。</p>
-     */
+    /** 读出该设备型号的能力树参数，供下发前校正路径 */
     public List<ParamNode> modelParams(String sn) {
         Map<String, Object> loc = locate(sn);
         Object relative = loc.get("configPath");
@@ -396,15 +305,7 @@ public class ModelTreeStore {
         return cached(file).params;
     }
 
-    /**
-     * 读出这台设备自身已采集的参数树。
-     *
-     * <p>校正的第一手依据：这里是这台设备真实存在的节点，实例号、类型、当前值都是准的，
-     * 比型号档案更贴近实际——型号档案是同型号样机的快照，而同一型号不同设备开了几个
-     * WLANConfiguration、哪个是 5G，只有它自己知道。</p>
-     *
-     * <p>带短时缓存：一次工单的多个步骤会连续查，没必要每步都扫一遍表。</p>
-     */
+    /** 读出这台设备自身已采集的参数树 */
     public List<ParamNode> deviceParams(String sn) {
         if (sn == null || sn.isEmpty()) {
             return List.of();
@@ -442,12 +343,7 @@ public class ModelTreeStore {
         return params;
     }
 
-    /**
-     * 校正依据：这台设备的参数树优先，型号档案补齐它没有的部分。
-     *
-     * <p>设备自身参数优先，因为它就是这台设备的实况；型号档案兜底，因为 AddObject 刚建出来的
-     * 实例还没采集回来，只有同型号的骨架能对上。</p>
-     */
+    /** 校正依据：这台设备的参数树优先，型号档案补齐它没有的部分 */
     private List<ParamNode> resolveCandidates(String sn) {
         List<ParamNode> merged = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
@@ -464,18 +360,7 @@ public class ModelTreeStore {
         return merged;
     }
 
-    /**
-     * 把模板里写的参数路径校正为该型号真实存在的路径。
-     *
-     * <p>模板是跨厂商通用的（写 {@code VLANIDMark}），移动定制机上真实节点是
-     * {@code X_CMCC_VLANIDMark}，电信是 {@code X_CT-COM_VLANIDMark}。直接按模板下发会被设备
-     * 判为参数不存在；这里拿型号 XML 把末段名对上，父对象沿用模板里的实例号
-     * （AddObject 新建的实例在档案里还没有），于是新实例也能写到正确的节点上。</p>
-     *
-     * @param sn            设备序列号，用于定位型号
-     * @param templatePaths 模板解析后的参数路径
-     * @return 改写映射与型号上找不到的参数；型号档案缺失时两者都为空，表示「无从判断」
-     */
+    /** 把模板里写的参数路径校正为该型号真实存在的路径 */
     public PathResolution resolvePaths(String sn, List<String> templatePaths) {
         PathResolution result = new PathResolution();
         if (templatePaths == null || templatePaths.isEmpty()) {
@@ -518,11 +403,7 @@ public class ModelTreeStore {
         return result;
     }
 
-    /**
-     * 两条不同的模板参数落到同一个节点时，说明匹配不可信，一并剔除。
-     *
-     * <p>写错值比不写更糟：名字对不上就先不下发，日志里留痕由人补映射。</p>
-     */
+    /** 两条不同的模板参数落到同一个节点时，说明匹配不可信，一并剔除 */
     static void dropCollisions(PathResolution result) {
         Map<String, List<String>> byReal = new LinkedHashMap<>();
         for (Map.Entry<String, String> e : result.getRewritten().entrySet()) {
@@ -557,24 +438,13 @@ public class ModelTreeStore {
         return fresh;
     }
 
-    /**
-     * 在型号档案里找出与模板路径对应的真实节点。
-     *
-     * <p>先精确命中；再在「忽略实例号之后同父对象」的范围内比对末段名——厂商私有前缀
-     * （{@code X_CMCC_} / {@code X_CT-COM_}）剥掉后再比，这是跨厂商模板能落到具体型号的关键。</p>
-     *
-     * @return 真实路径，找不到返回 null
-     */
+    /** 在型号档案里找出与模板路径对应的真实节点 */
     static String matchPath(List<ParamNode> params, String templatePath) {
         ParamNode node = matchNode(params, templatePath);
         return node == null ? null : realPath(node, templatePath);
     }
 
-    /**
-     * 命中的节点本身，调用方还要用它身上的类型定下发格式。
-     *
-     * <p>通用写法在这台设备上叫别的名字时（见 {@link #LEAF_ALIASES}），按别名再找一轮。</p>
-     */
+    /** 命中的节点本身，调用方还要用它身上的类型定下发格式 */
     static ParamNode matchNode(List<ParamNode> params, String templatePath) {
         ParamNode hit = matchKnown(params, templatePath);
         if (hit != null || templatePath == null || templatePath.isEmpty()) {
@@ -590,17 +460,7 @@ public class ModelTreeStore {
         return null;
     }
 
-    /**
-     * 同一语义的参数，各厂商写法差到「剥前缀 + 比后缀」都对不上的那几个。
-     *
-     * <p>只登记能确定就是同一个语义的写法：地址获取方式，有的厂商写成
-     * {@code IPAddressingType}，TR-098 标准名是 {@code AddressingType}；VLAN 号模板写
-     * {@code X_CMCC_VLANID}，移动定制机真实存在于 {@code WANIPConnection} 下的却是
-     * {@code X_CMCC_VLANIDMark}（同父对象里没有第二个 VLANID 节点，不存在选错的风险）。</p>
-     *
-     * <p>这里只是<b>可以试的顺序</b>，采不采用要看树：逐一拿去比对，这台设备的能力树上真有
-     * 才认。一个都认不出来就返回 null——由设备明确报「参数不存在」比凭猜测写错节点好。</p>
-     */
+    /** 同一语义的参数，各厂商写法差到「剥前缀 + 比后缀」都对不上的那几个 */
     private static final Map<String, List<String>> LEAF_ALIASES = aliases();
 
     private static Map<String, List<String>> aliases() {
@@ -617,9 +477,7 @@ public class ModelTreeStore {
         return Map.copyOf(map);
     }
 
-    /**
-     * 按 {@link #leafScore(String, String)} 逐级放宽的匹配本体。
-     */
+    /** 按 {@link #leafScore(String, String)} 逐级放宽的匹配本体 */
     static ParamNode matchKnown(List<ParamNode> params, String templatePath) {
         if (templatePath == null || templatePath.isEmpty()) {
             return null;
@@ -664,19 +522,12 @@ public class ModelTreeStore {
         return best;
     }
 
-    /**
-     * 把命中的节点按模板里的实例号还原成完整路径。
-     *
-     * <p>必须走这一步而不是「模板父对象 + 末段名」：模板写的 {@code PreSharedKey} 在不少设备上是
-     * 对象，真实参数在 {@code PreSharedKey.1.PreSharedKey}，直接拼父对象会写到对象上去。</p>
-     */
+    /** 把命中的节点按模板里的实例号还原成完整路径 */
     static String realPath(ParamNode node, String templatePath) {
         return alignInstances(parentOf(templatePath), parentOf(node.getPath())) + leafOf(node.getPath());
     }
 
-    /**
-     * 末段名相似度：精确 100，剥掉厂商前缀后相同 90，一方是另一方的后缀 80，包含 40。
-     */
+    /** 末段名相似度：精确 100，剥掉厂商前缀后相同 90，一方是另一方的后缀 80，包含 40 */
     static int leafScore(String candidate, String wanted) {
         if (candidate == null || wanted == null || candidate.isEmpty() || wanted.isEmpty()) {
             return 0;
@@ -703,18 +554,14 @@ public class ModelTreeStore {
         return 0;
     }
 
-    /**
-     * 去掉厂商私有前缀与分隔符：X_CMCC_VLANIDMark -> vlanidmark。
-     */
+    /** 去掉厂商私有前缀与分隔符：X_CMCC_VLANIDMark -> vlanidmark */
     static String stripVendor(String leaf) {
         // 厂商前缀形如 X_CMCC_ / X_CT-COM_，中间可能带连字符
         String s = leaf.replaceAll("(?i)^x_[a-z0-9-]+_", "");
         return s.replace("_", "").replace("-", "").toLowerCase();
     }
 
-    /**
-     * 把路径里的纯数字段换成占位符，使新建实例号能与档案里的已有实例号对齐比较。
-     */
+    /** 把路径里的纯数字段换成占位符，使新建实例号能与档案里的已有实例号对齐比较 */
     static String normalizeInstances(String path) {
         StringBuilder sb = new StringBuilder(path.length());
         for (String seg : path.split("\\.")) {
@@ -726,13 +573,7 @@ public class ModelTreeStore {
         return sb.toString();
     }
 
-    /**
-     * 路径骨架：去掉全部实例号后的样子，用于判断两个父对象是不是同一类对象。
-     *
-     * <p>{@code ...WANConnectionDevice.1.4.WANIPConnection.} 与
-     * {@code ...WANConnectionDevice.1.WANIPConnection.2.} 骨架相同，都是
-     * {@code ...WANConnectionDevice.WANIPConnection.}——模板把实例号写在中间也能认出来。</p>
-     */
+    /** 路径骨架：去掉全部实例号后的样子，用于判断两个父对象是不是同一类对象 */
     static String skeleton(String path) {
         StringBuilder sb = new StringBuilder(path.length());
         for (String seg : path.split("\\.")) {
@@ -744,13 +585,7 @@ public class ModelTreeStore {
         return sb.toString();
     }
 
-    /**
-     * 按型号档案的真实结构重写实例号。
-     *
-     * <p>模板常把 AddObject 得到的实例号直接接在连接设备后面（{@code WANConnectionDevice.1.4.
-     * WANIPConnection.}），而设备上实例号在末尾（{@code WANConnectionDevice.1.WANIPConnection.4.}）。
-     * 这里取模板里的实例号，从左到右填进档案骨架的实例号槽位，写出来的路径才真的存在。</p>
-     */
+    /** 按型号档案的真实结构重写实例号 */
     static String alignInstances(String templateParent, String modelParent) {
         List<String> numbers = new ArrayList<>();
         for (String seg : templateParent.split("\\.")) {
@@ -798,9 +633,7 @@ public class ModelTreeStore {
 
     // ==================== XML 构建 ====================
 
-    /**
-     * 按 parentPath 归组后递归输出嵌套 XML。包级可见，便于单元测试直接校验层级与转义。
-     */
+    /** 按 parentPath 归组后递归输出嵌套 XML。包级可见，便于单元测试直接校验层级与转义 */
     static String buildXml(String sn, String isp, String modelKey, CpeDevice device,
                            List<CpeParameter> nodes) {
         Map<String, List<CpeParameter>> children = new LinkedHashMap<>();
@@ -860,9 +693,7 @@ public class ModelTreeStore {
 
     // ==================== XML 读取 ====================
 
-    /**
-     * 读出文件里全部 Param 节点的路径与格式。
-     */
+    /** 读出文件里全部 Param 节点的路径与格式 */
     public List<ParamNode> readParams(Path file) {
         List<ParamNode> result = new ArrayList<>();
         try {
@@ -893,15 +724,8 @@ public class ModelTreeStore {
 
     // ==================== 文件与型号 ====================
 
-    /**
-     * 型号文件相对配置根目录的路径：已有登记就沿用，否则按默认规则生成。
-     */
-    /**
-     * 型号能力树文件的相对路径（相对配置根目录）。
-     *
-     * <p>SQLite 化后不再把路径存进字段：路径完全由「运营商 + 型号标识」按约定推导，
-     * 库里少一份要与实际文件保持一致的状态。</p>
-     */
+    /** 型号文件相对配置根目录的路径：已有登记就沿用，否则按默认规则生成 */
+    /** 型号能力树文件的相对路径（相对配置根目录） */
     private static String relativePath(String isp, String modelKey) {
         return MODEL_DIR + "/" + ModelMappingService.defaultConfigPath(isp, modelKey);
     }
@@ -911,9 +735,7 @@ public class ModelTreeStore {
         return rootResolver.root().resolve(relative).normalize();
     }
 
-    /**
-     * 先写临时文件再替换，避免导出中途失败留下半个文件。
-     */
+    /** 先写临时文件再替换，避免导出中途失败留下半个文件 */
     private void writeAtomic(Path file, String content) {
         try {
             Path parent = file.getParent();
@@ -934,16 +756,8 @@ public class ModelTreeStore {
         }
     }
 
-    /**
-     * 按「运营商 + 型号标识」定位型号档案，没有就登记一条待适配。
-     */
-    /**
-     * 按「运营商 + 型号标识」定位型号档案，没有就登记一条待适配。
-     *
-     * <p>读写走 SQLite 模板库的 {@code device} 表，不再是 MySQL {@code cpe_model}：
-     * 型号适配数据属于「光猫适配数据」，按边界约定只进 SQLite。MySQL 那张表
-     * 留到阶段 5 连同实体与 Mapper 一起删。</p>
-     */
+    /** 按「运营商 + 型号标识」定位型号档案，没有就登记一条待适配 */
+    /** 按「运营商 + 型号标识」定位型号档案，没有就登记一条待适配 */
     private Device resolveModelRow(String isp, String modelKey, CpeDevice device, String sn) {
         Optional<Device> exist = deviceDao.findByIspModelKey(isp, modelKey);
         if (exist.isPresent()) {
@@ -977,9 +791,7 @@ public class ModelTreeStore {
 
     // ==================== 工具 ====================
 
-    /**
-     * 业务项拆关键字：忽略长度小于 2 的片段，避免实例序号之类噪音。
-     */
+    /** 业务项拆关键字：忽略长度小于 2 的片段，避免实例序号之类噪音 */
     static List<String> keywords(String item) {
         Set<String> words = new LinkedHashSet<>();
         if (item == null) {
@@ -994,13 +806,7 @@ public class ModelTreeStore {
         return new ArrayList<>(words);
     }
 
-    /**
-     * 路径命中程度：按命中的关键字个数计分，全命中额外加成，全不命中 0 分。
-     *
-     * <p>不能把「部分命中」统一压成同一个分值：像 wan_sip_vlan 这种业务项往往没有路径能同时命中
-     * 三个词，若都算 1 分就退化成按路径字典序排，真正落在 WANConnection 下的节点会被
-     * LANDevice、DeviceInfo 里的同名片段挤到后面。按命中个数排，命中越多越靠前。</p>
-     */
+    /** 路径命中程度：按命中的关键字个数计分，全命中额外加成，全不命中 0 分 */
     static int score(String path, List<String> words) {
         if (path == null || words.isEmpty()) {
             return 0;
@@ -1060,9 +866,7 @@ public class ModelTreeStore {
 
     // ==================== 内部模型 ====================
 
-    /**
-     * XML 里的一个参数节点：下发需要的全部信息都在这几个字段上。
-     */
+    /** XML 里的一个参数节点：下发需要的全部信息都在这几个字段上 */
     public static class ParamNode {
 
         private final String path;
@@ -1104,49 +908,31 @@ public class ModelTreeStore {
         }
     }
 
-    /**
-     * 路径校正结果：要改写的，以及型号上压根没有的。
-     */
+    /** 路径校正结果：要改写的，以及型号上压根没有的 */
     @Getter
     public static class PathResolution {
 
-        /**
-         * 需要改写的「原路径 -> 真实路径」。
-         */
+        /** 需要改写的「原路径 -> 真实路径」 */
         private final Map<String, String> rewritten = new LinkedHashMap<>();
 
-        /**
-         * 型号能力树上找不到的参数，留在下发列表里会让整条 SetParameterValues 被设备判 9003。
-         */
+        /** 型号能力树上找不到的参数，留在下发列表里会让整条 SetParameterValues 被设备判 9003 */
         private final List<String> unsupported = new ArrayList<>();
 
-        /**
-         * 设备声明为只读的参数。写了设备必然拒绝，且回的是 9007 这种笼统错误，
-         * 会把同批其它参数一起拖下水——SPV 按批生效，一条被拒整批都废。
-         */
+        /** 设备声明为只读的参数。写了设备必然拒绝，且回的是 9007 这种笼统错误 */
         private final List<String> readOnly = new ArrayList<>();
 
-        /**
-         * 真实路径 -> 型号档案声明的值类型，下发时用它定 xsi:type。
-         */
+        /** 真实路径 -> 型号档案声明的值类型，下发时用它定 xsi:type */
         private final Map<String, String> types = new LinkedHashMap<>();
 
-        /**
-         * 真实路径 -> 采集时这台设备上的当前值。不是取值范围，只作对照用：
-         * 设备拒了某个值，先看它原本用的是什么，比翻 XML 快。
-         */
+        /** 真实路径 -> 采集时这台设备上的当前值。不是取值范围，只作对照用 */
         private final Map<String, String> currentValues = new LinkedHashMap<>();
     }
 
-    /**
-     * 缓存的一份设备参数树，带加载时刻，短时内复用。
-     */
+    /** 缓存的一份设备参数树，带加载时刻，短时内复用 */
     private record DeviceCache(long loadedAt, List<ParamNode> params) {
     }
 
-    /**
-     * 缓存的一份型号档案，按文件修改时间判失效。
-     */
+    /** 缓存的一份型号档案，按文件修改时间判失效 */
     private static class CachedTree {
 
         private final long modified;
@@ -1159,9 +945,7 @@ public class ModelTreeStore {
         }
     }
 
-    /**
-     * 一次导出的结果，回带给调用方文件位置与规模。
-     */
+    /** 一次导出的结果，回带给调用方文件位置与规模 */
     public static class ExportResult {
 
         private final String sn;

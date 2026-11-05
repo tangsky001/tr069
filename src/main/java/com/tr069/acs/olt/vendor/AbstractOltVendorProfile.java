@@ -9,12 +9,7 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 厂商 profile 的默认实现：第三方 OLT 的常见样子。
- *
- * <p>继承它只需要覆写跟这家不一样的方法（多数情况就是命令清单、
- * {@link #matches}、{@link #extractModel}）。</p>
- */
+/** 厂商 profile 的默认实现：第三方 OLT 的常见样子 */
 public abstract class AbstractOltVendorProfile implements OltVendorProfile {
 
     /** 型号常见写法：Model: xxx / Product name : xxx / 设备型号 / 产品名称 */

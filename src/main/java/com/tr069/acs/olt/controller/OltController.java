@@ -16,6 +16,7 @@ import com.tr069.acs.olt.model.OltTcontRequest;
 import com.tr069.acs.olt.model.OltGemportRequest;
 import com.tr069.acs.olt.model.OltGemMappingRequest;
 import com.tr069.acs.olt.model.OltOntQueryResult;
+import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltQuickSetupRequest;
 import com.tr069.acs.olt.model.OltDeviceOptions;
 import com.tr069.acs.olt.model.OltDeviceView;
@@ -62,12 +63,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/**
- * OLT 管理接口。
- *
- * <p>OLT 不走 TR-069，纳管方式是 Telnet 登录设备采集，因此这里的接口分成两类：
- * 台账增删改查，以及「连一下」——诊断测试与同步。</p>
- */
+/** OLT 管理接口 */
 @Slf4j
 @RestController
 @RequestMapping("/api/olt")
@@ -82,9 +78,7 @@ public class OltController {
 
     private final OltSessionPool sessionPool;
 
-    /**
-     * OLT 列表，keyword 匹配名称 / 地址 / 型号。
-     */
+    /** OLT 列表，keyword 匹配名称 / 地址 / 型号 */
     @GetMapping("/list")
     public Result<List<OltDeviceView>> list(@RequestParam(required = false) String keyword) {
         try {
@@ -95,33 +89,19 @@ public class OltController {
         }
     }
 
-    /**
-     * 可勾选的 Web 登录账号。
-     *
-     * <p>必须排在 {@code /{id}} 之前声明，否则 web-accounts 会被当成 id 解析。</p>
-     */
+    /** 可勾选的 Web 登录账号 */
     @GetMapping("/web-accounts")
     public Result<List<Map<String, Object>>> webAccounts() {
         return Result.success(oltService.webAccounts());
     }
 
-    /**
-     * 会话池状态：保活开关、探活周期、每台设备的空闲会话数。
-     *
-     * <p>同样必须排在 {@code /{id}} 之前声明。</p>
-     */
+    /** 会话池状态：保活开关、探活周期、每台设备的空闲会话数 */
     @GetMapping("/session-pool")
     public Result<Map<String, Object>> sessionPool() {
         return Result.success(sessionPool.status());
     }
 
-    /**
-     * 保活开关（管理页）。
-     *
-     * <p>开：每台 OLT 池中最多 2 个会话轮换，定期 {@code display client} 探活，
-     * 死了重新登录建立；关（默认）：会话 1 分钟没人用就 {@code quit} 退出登录，
-     * 之后的全局轮询采集要用时自己再登录。</p>
-     */
+    /** 保活开关（管理页） */
     @PostMapping("/session-pool/keepalive")
     public Result<Map<String, Object>> setSessionKeepalive(@RequestBody OltKeepaliveRequest request) {
         if (request.getEnabled() == null) {
@@ -134,9 +114,7 @@ public class OltController {
         }
     }
 
-    /**
-     * OLT 详情：台账 + 板卡 + 最近采集记录。
-     */
+    /** OLT 详情：台账 + 板卡 + 最近采集记录 */
     @GetMapping("/{id}")
     public Result<OltDetail> detail(@PathVariable Long id) {
         try {
@@ -149,9 +127,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 新增或修改 OLT。
-     */
+    /** 新增或修改 OLT */
     @PostMapping("/save")
     public Result<OltDeviceView> save(@RequestBody OltSaveRequest request) {
         try {
@@ -164,9 +140,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 删除 OLT（连同板卡数据）。
-     */
+    /** 删除 OLT（连同板卡数据） */
     @PostMapping("/delete")
     public Result<Void> delete(@RequestBody IdRequest request) {
         if (request == null || request.getId() == null) {
@@ -183,9 +157,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 诊断测试（未保存的表单也能测）。
-     */
+    /** 诊断测试（未保存的表单也能测） */
     @PostMapping("/test")
     public Result<OltTestResult> test(@RequestBody OltSaveRequest request, HttpServletRequest httpRequest) {
         try {
@@ -198,9 +170,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 对已保存的 OLT 做诊断测试。
-     */
+    /** 对已保存的 OLT 做诊断测试 */
     @PostMapping("/{id}/test")
     public Result<OltTestResult> testSaved(@PathVariable Long id, HttpServletRequest httpRequest) {
         OltSaveRequest request = new OltSaveRequest();
@@ -208,9 +178,7 @@ public class OltController {
         return test(request, httpRequest);
     }
 
-    /**
-     * 同步：登录采集版本与板卡并入库。
-     */
+    /** 同步：登录采集版本与板卡并入库 */
     @PostMapping("/{id}/sync")
     public Result<OltDetail> sync(@PathVariable Long id, HttpServletRequest httpRequest) {
         try {
@@ -225,14 +193,13 @@ public class OltController {
         }
     }
 
-    /**
-     * 快速同步：只采板卡（display board 0 / show card），秒级返回机框与型号；
-     * 端口、ONT、VLAN、模板由后台异步补采，页面轮询即可看到补齐的数据。
-     */
+    /** 快速同步：只采板卡（display board 0 / show card），秒级返回机框与型号 */
     @PostMapping("/{id}/quick-sync")
-    public Result<OltDetail> quickSync(@PathVariable Long id, HttpServletRequest httpRequest) {
+    public Result<OltDetail> quickSync(@PathVariable Long id,
+                                       @RequestParam(value = "scope", required = false) String scope,
+                                       HttpServletRequest httpRequest) {
         try {
-            return Result.success(oltService.quickSync(id, operator(httpRequest)));
+            return Result.success(oltService.quickSync(id, operator(httpRequest), scope));
         } catch (IllegalArgumentException e) {
             return Result.failure(e.getMessage());
         } catch (IllegalStateException e) {
@@ -243,10 +210,26 @@ public class OltController {
         }
     }
 
-    /**
-     * 实时刷新：直连 OLT 采最新数据并入库，页面打开或对 OLT 做过操作后调用。
-     * 数据以设备为准，库里那份快照只是连不上设备时的兜底。
-     */
+    /** 按页签同步：scope = boards / ont / vlan / template，只采目标页签需要的数据段 */
+    @PostMapping("/{id}/sync-section")
+    public Result<OltDetail> syncSection(@PathVariable Long id,
+                                         @RequestParam("scope") String scope,
+                                         @RequestParam(value = "force", required = false,
+                                                 defaultValue = "false") boolean force,
+                                         HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.syncSection(id, scope, operator(httpRequest), force));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("OLT 按页签同步异常 id={} scope={}", id, scope, e);
+            return Result.failure("同步失败：" + e.getMessage());
+        }
+    }
+
+    /** 实时刷新：直连 OLT 采最新数据并入库，页面打开或对 OLT 做过操作后调用 */
     @PostMapping("/{id}/refresh")
     public Result<OltDetail> refresh(@PathVariable Long id, HttpServletRequest httpRequest) {
         try {
@@ -261,12 +244,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 确认所有待确认板卡（华为 {@code board confirm 0}）。
-     *
-     * <p>新插的板卡上电后停在 auto-find，不确认不加载业务。返回确认后重采的最新详情，
-     * 页面据此判断按钮还要不要显示。</p>
-     */
+    /** 确认所有待确认板卡（华为 {@code board confirm 0}） */
     @PostMapping("/{id}/boards/confirm")
     public Result<OltDetail> confirmBoards(@PathVariable Long id, HttpServletRequest httpRequest) {
         try {
@@ -281,9 +259,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 单条 ONT 按需查询：光信息 / 版本 / 注册历史，点列表里某条的图标时触发。
-     */
+    /** 单条 ONT 按需查询：光信息 / 版本 / 注册历史，点列表里某条的图标时触发 */
     @PostMapping("/{id}/ont-query")
     public Result<OltOntQueryResult> queryOnt(@PathVariable Long id,
                                               @RequestBody OltOntQueryRequest request,
@@ -300,9 +276,25 @@ public class OltController {
         }
     }
 
-    /**
-     * 「新增 DBA 模板」表单的元数据：五类模板各要填什么、取值上下限。
-     */
+    /** 端口光模块按需查询：点开某个 PON 口的光模块弹窗才发一条 display port state */
+    @PostMapping("/{id}/port-optics")
+    public Result<OltPort> queryPortOptics(@PathVariable Long id,
+                                           @RequestParam Integer slotNo,
+                                           @RequestParam Integer portNo,
+                                           HttpServletRequest httpRequest) {
+        try {
+            return Result.success(oltService.queryPortOptics(id, slotNo, portNo, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("端口光模块查询异常 id={} slot={} port={}", id, slotNo, portNo, e);
+            return Result.failure("端口光模块查询失败：" + e.getMessage());
+        }
+    }
+
+    /** 「新增 DBA 模板」表单的元数据：五类模板各要填什么、取值上下限 */
     @GetMapping("/{id}/dba-profile/form")
     public Result<OltDbaForm> dbaForm(@PathVariable Long id) {
         try {
@@ -313,9 +305,7 @@ public class OltController {
         }
     }
 
-    /**
-     * DBA 模板预演：不下发，返回这次会执行的命令。
-     */
+    /** DBA 模板预演：不下发，返回这次会执行的命令 */
     @PostMapping("/{id}/dba-profile/preview")
     public Result<OltQuickSetupPreview> previewDbaProfile(@PathVariable Long id,
                                                           @RequestBody OltDbaProfileRequest request) {
@@ -329,9 +319,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 新增 DBA 模板：下发 dba-profile add，成功后自动重采返回最新数据。
-     */
+    /** 新增 DBA 模板：下发 dba-profile add，成功后自动重采返回最新数据 */
     @PostMapping("/{id}/dba-profile")
     public Result<OltDetail> createDbaProfile(@PathVariable Long id,
                                               @RequestBody OltDbaProfileRequest request,
@@ -348,10 +336,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 线路模板三个弹窗的表单元数据：默认值、已占用的索引、可用区间、提示文字
-     * 全由后端按库里的快照算好，页面只管渲染。
-     */
+    /** 线路模板三个弹窗的表单元数据：默认值、已占用的索引、可用区间、提示文字 */
     @GetMapping("/{id}/line-profile/form")
     public Result<OltLineProfileForm> lineProfileForm(@PathVariable Long id,
                                                       @RequestParam Integer profileId,
@@ -366,9 +351,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 线路模板三个弹窗的命令预演：不下发，返回这次会执行的命令与提醒。
-     */
+    /** 线路模板三个弹窗的命令预演：不下发，返回这次会执行的命令与提醒 */
     @PostMapping("/{id}/line-profile/preview")
     public Result<OltQuickSetupPreview> previewLineProfile(@PathVariable Long id,
                                                            @RequestBody OltLineProfilePreviewRequest request) {
@@ -382,10 +365,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 线路模板里加一条 T-CONT：{@code tcont <索引> dba-profile-id <DBA 模板>}，
-     * 下发成功后只重读这条模板。
-     */
+    /** 线路模板里加一条 T-CONT：{@code tcont <索引> dba-profile-id } */
     @PostMapping("/{id}/line-profile/tcont")
     public Result<OltDetail> addLineTcont(@PathVariable Long id,
                                           @RequestBody OltTcontRequest request,
@@ -400,9 +380,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 线路模板里加一个 GEM Port：{@code gem add <GEM 索引> eth tcont <T-CONT> encrypt on}。
-     */
+    /** 线路模板里加一个 GEM Port：{@code gem add  eth tcont  encrypt on} */
     @PostMapping("/{id}/line-profile/gemport")
     public Result<OltDetail> addLineGemport(@PathVariable Long id,
                                             @RequestBody OltGemportRequest request,
@@ -417,9 +395,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 给 GEM Port 加映射：{@code gem mapping <GEM> <映射序号> vlan <VLAN>}（可一次多条）。
-     */
+    /** 给 GEM Port 加映射：{@code gem mapping  <映射序号> vlan }（可一次多条） */
     @PostMapping("/{id}/line-profile/gem-mapping")
     public Result<OltDetail> addLineGemMapping(@PathVariable Long id,
                                                @RequestBody OltGemMappingRequest request,
@@ -434,9 +410,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 删除勾选的 DBA 模板：逐条下发 dba-profile delete，成功后自动重采。
-     */
+    /** 删除勾选的 DBA 模板：逐条下发 dba-profile delete，成功后自动重采 */
     @DeleteMapping("/{id}/dba-profile")
     public Result<OltDetail> deleteDbaProfiles(@PathVariable Long id,
                                                @RequestBody List<Integer> profileIds,
@@ -453,9 +427,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 「新建 VLAN」表单的元数据：VLAN ID 范围、一次最多几个、哪些端口能做成员。
-     */
+    /** 「新建 VLAN」表单的元数据：VLAN ID 范围、一次最多几个、哪些端口能做成员 */
     @GetMapping("/{id}/vlan/form")
     public Result<OltVlanForm> vlanForm(@PathVariable Long id) {
         try {
@@ -466,9 +438,7 @@ public class OltController {
         }
     }
 
-    /**
-     * VLAN 预演：不下发，返回这次会执行的命令。
-     */
+    /** VLAN 预演：不下发，返回这次会执行的命令 */
     @PostMapping("/{id}/vlan/preview")
     public Result<OltQuickSetupPreview> previewVlan(@PathVariable Long id,
                                                     @RequestBody OltVlanRequest request) {
@@ -482,9 +452,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 这台设备支持的命令动作目录（鸿升光对应手册 13 章里的一个个功能格）。
-     */
+    /** 这台设备支持的命令动作目录（鸿升光对应手册 13 章里的一个个功能格） */
     @GetMapping("/{id}/actions")
     public Result<List<OltAction>> actions(@PathVariable Long id) {
         try {
@@ -497,9 +465,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 执行一条命令动作：查询类返回回显，配置类返回重采后的详情。
-     */
+    /** 执行一条命令动作：查询类返回回显，配置类返回重采后的详情 */
     @PostMapping("/{id}/exec")
     public Result<OltExecResult> exec(@PathVariable Long id,
                                       @RequestBody OltExecRequest request,
@@ -516,9 +482,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 新建 VLAN：下发 {@code vlan standard ...}，成功后自动重采返回最新数据。
-     */
+    /** 新建 VLAN：下发 {@code vlan standard ...}，成功后自动重采返回最新数据 */
     @PostMapping("/{id}/vlan")
     public Result<OltDetail> createVlan(@PathVariable Long id,
                                         @RequestBody OltVlanRequest request,
@@ -535,10 +499,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 上行口放通 VLAN：下发 {@code port vlan 41,45-46 0/7 0}（Native 时带 native 关键字），
-     * 成功后立刻只重读 VLAN（不跑全量采集），返回的详情里就是最新的 VLAN 数据。
-     */
+    /** 上行口放通 VLAN：下发 {@code port vlan 41,45-46 0/7 0}（Native 时带 native 关键字） */
     @PostMapping("/{id}/vlan/port-vlan")
     public Result<OltDetail> addPortVlan(@PathVariable Long id,
                                          @RequestBody OltPortVlanRequest request,
@@ -555,9 +516,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 上行口解除 VLAN 绑定：下发 {@code no port vlan ...}，成功后同样立刻只重读 VLAN。
-     */
+    /** 上行口解除 VLAN 绑定：下发 {@code no port vlan ...}，成功后同样立刻只重读 VLAN */
     @DeleteMapping("/{id}/vlan/port-vlan")
     public Result<OltDetail> removePortVlan(@PathVariable Long id,
                                             @RequestBody OltPortVlanRequest request,
@@ -574,9 +533,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 删除勾选的 VLAN：下发 {@code no vlan ...}，成功后自动重采。
-     */
+    /** 删除勾选的 VLAN：下发 {@code no vlan ...}，成功后自动重采 */
     @DeleteMapping("/{id}/vlan")
     public Result<OltDetail> deleteVlans(@PathVariable Long id,
                                          @RequestBody List<Integer> vlanIds,
@@ -593,9 +550,7 @@ public class OltController {
         }
     }
 
-    /**
-     * TR-069（ACS）模板列表：不读库，实时登设备执行 {@code show onu-tr069-profile all}。
-     */
+    /** TR-069（ACS）模板列表：不读库，实时登设备执行 {@code show onu-tr069-profile all} */
     @GetMapping("/{id}/tr069-profiles")
     public Result<List<OltTr069Profile>> tr069Profiles(@PathVariable Long id) {
         try {
@@ -610,11 +565,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 待注册 ONT：不读库，实时登设备执行 {@code display ont autofind all}。
-     *
-     * <p>返回的是这一瞬间设备上等着授权的光猫，注册完就不在这个表里，所以每次点都重查。</p>
-     */
+    /** 待注册 ONT：不读库，实时登设备执行 {@code display ont autofind all} */
     @GetMapping("/{id}/ont-autofind")
     public Result<List<OltOntAutofind>> ontAutofind(@PathVariable Long id) {
         try {
@@ -629,12 +580,7 @@ public class OltController {
         }
     }
 
-    /**
-     * PON 口自动发现开关状态：逐口问设备 {@code display ont-auto-find}。
-     *
-     * <p>查不出来也返回 200 + message，不抛 500——这块状态查不到属于正常情况
-     * （有的版本没这条命令），不该让页面显示成故障。</p>
-     */
+    /** PON 口自动发现开关状态：逐口问设备 {@code display ont-auto-find} */
     @GetMapping("/{id}/ont-auto-find")
     public Result<OltOntAutoFindStatus> ontAutoFindStatus(@PathVariable Long id) {
         try {
@@ -647,9 +593,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 一键开启所有 GPON 业务板 PON 口的自动发现，下发后自动重采一次。
-     */
+    /** 一键开启所有 GPON 业务板 PON 口的自动发现，下发后自动重采一次 */
     @PostMapping("/{id}/ont-auto-find/enable")
     public Result<OltDetail> enableOntAutoFind(@PathVariable Long id, HttpServletRequest httpRequest) {
         try {
@@ -664,13 +608,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 删除业务板上的全部 ONT：进该项业务的 PON 板视图逐口下发
-     * {@code ont delete <端口> all}（设备每条都问 y/n，应答随命令带过去），成功后整机重采。
-     *
-     * <p>槽位和端口都按库里采到的实际板卡来（这台是 2 号槽位就发
-     * {@code interface gpon 0/2}），body 里的 slots 留空表示所有业务板。</p>
-     */
+    /** 删除业务板上的全部 ONT：进该项业务的 PON 板视图逐口下发 */
     @PostMapping("/{id}/ont/delete-all")
     public Result<OltDetail> deleteAllOnts(@PathVariable Long id,
                                            @RequestBody(required = false) OltOntDeleteAllRequest request,
@@ -687,16 +625,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 建一个 OLT 本地用户（登这台设备用的账号）。
-     *
-     * <p>华为这边走 {@code terminal user name} 那条交互式命令：登上去之后设备会
-     * 依次问用户名、密码、确认密码、用户模板、级别、可重入次数、备注，
-     * 后端按顺序应答，建完自动重采一次整机。</p>
-     *
-     * <p>级别只有 1（Common User）和 2（Operator）两档——华为不允许建比当前
-     * 登录账号更高级别的账号，用 Operator 级的账号连设备时，设备就只给这两个选项。</p>
-     */
+    /** 建一个 OLT 本地用户（登这台设备用的账号） */
     @PostMapping("/{id}/terminal-user")
     public Result<OltDetail> createTerminalUser(@PathVariable Long id,
                                                 @RequestBody(required = false) OltTerminalUserRequest request,
@@ -716,9 +645,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 新增 TR-069 模板：下发 {@code onu-tr069-profile add ...}，返回下发后的最新列表。
-     */
+    /** 新增 TR-069 模板：下发 {@code onu-tr069-profile add ...}，返回下发后的最新列表 */
     @PostMapping("/{id}/tr069-profiles")
     public Result<List<OltTr069Profile>> createTr069Profile(@PathVariable Long id,
                                                            @RequestBody OltTr069ProfileRequest request,
@@ -735,9 +662,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 一键开局：一次下发端口 VLAN 模式、业务 VLAN、TR-069 模板，成功后自动重采。
-     */
+    /** 一键开局：一次下发端口 VLAN 模式、业务 VLAN、TR-069 模板，成功后自动重采 */
     @PostMapping("/{id}/quick-setup")
     public Result<OltDetail> quickSetup(@PathVariable Long id,
                                         @RequestBody OltQuickSetupRequest request,
@@ -754,11 +679,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 一键开局预演：不下发，返回这次会执行的命令和提醒。
-     *
-     * <p>命令由后端现算，和实际下发同源，页面照着显示即可——前端不再自己拼命令。</p>
-     */
+    /** 一键开局预演：不下发，返回这次会执行的命令和提醒 */
     @PostMapping("/{id}/quick-setup/preview")
     public Result<OltQuickSetupPreview> previewQuickSetup(@PathVariable Long id,
                                                           @RequestBody OltQuickSetupRequest request) {
@@ -772,9 +693,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 一键开局表单的取值约束与默认值（可选模式、VLAN 范围、一次最多几个端口）。
-     */
+    /** 一键开局表单的取值约束与默认值（可选模式、VLAN 范围、一次最多几个端口） */
     @GetMapping("/{id}/quick-setup/form")
     public Result<OltQuickSetupForm> quickSetupForm(@PathVariable Long id) {
         try {
@@ -785,11 +704,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 一键开局参数：页面打开时问后端要，默认值也只有后端这一份。
-     *
-     * @param defaults true 时忽略存过的，直接给默认值（「默认设置」按钮）
-     */
+    /** 一键开局参数：页面打开时问后端要，默认值也只有后端这一份 */
     @GetMapping("/{id}/quick-setup/config")
     public Result<OltHuaweiSetupForm> quickSetupConfig(@PathVariable Long id,
                                                        @RequestParam(required = false) Boolean defaults) {
@@ -816,9 +731,7 @@ public class OltController {
         }
     }
 
-    /**
-     * TR-069 模板表单的默认值与取值约束，两个入口共用同一份。
-     */
+    /** TR-069 模板表单的默认值与取值约束，两个入口共用同一份 */
     @GetMapping("/{id}/tr069/form")
     public Result<OltTr069Form> tr069Form(@PathVariable Long id) {
         try {
@@ -829,9 +742,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 命令动作预演：把进视图、命令、退出算出来返回，不下发。
-     */
+    /** 命令动作预演：把进视图、命令、退出算出来返回，不下发 */
     @PostMapping("/{id}/actions/preview")
     public Result<OltExecResult> previewAction(@PathVariable Long id,
                                                @RequestBody OltExecRequest request) {
@@ -845,17 +756,28 @@ public class OltController {
         }
     }
 
-    /**
-     * 设备台账表单的备选项：厂商码表、字符集、默认端口与默认账号。
-     */
+    /** 批量命令预演：页面把整页参数一次送上来，拿回 {动作编号: 命令文本} */
+    @PostMapping("/{id}/actions/previews")
+    public Result<Map<String, String>> previewActions(
+            @PathVariable Long id,
+            @RequestBody(required = false) List<OltExecRequest> requests) {
+        try {
+            return Result.success(oltService.previewActions(id, requests));
+        } catch (IllegalArgumentException e) {
+            return Result.failure(e.getMessage());
+        } catch (Exception e) {
+            log.error("批量命令预演异常 id={}", id, e);
+            return Result.failure("命令预演失败：" + e.getMessage());
+        }
+    }
+
+    /** 设备台账表单的备选项：厂商码表、字符集、默认端口与默认账号 */
     @GetMapping("/options")
     public Result<OltDeviceOptions> deviceOptions() {
         return Result.success(OltService.deviceOptions());
     }
 
-    /**
-     * 采集记录，页面展示最近若干次诊断/同步结果。
-     */
+    /** 采集记录，页面展示最近若干次诊断/同步结果 */
     @GetMapping("/{id}/records")
     public Result<List<OltSyncRecordView>> records(@PathVariable Long id,
                                                    @RequestParam(defaultValue = "10") int limit) {
@@ -868,11 +790,7 @@ public class OltController {
 
     // ------------------------------------------------------------ ONT 注册模板与自动注册
 
-    /**
-     * 注册模板列表。
-     *
-     * @param onlyCurrent true 时只返回「不限设备」和绑在这台 OLT 上的模板
-     */
+    /** 注册模板列表 */
     @GetMapping("/{id}/ont-reg/templates")
     public Result<List<OltOntRegTemplate>> ontRegTemplates(@PathVariable Long id,
                                                            @RequestParam(required = false) Boolean onlyCurrent) {
@@ -947,12 +865,7 @@ public class OltController {
         }
     }
 
-    /**
-     * 立刻跑一轮自动注册（扫描 → 按模板注册），返回本轮注册成功的台数。
-     *
-     * <p>和后台定时任务走的是同一个 {@code autoRegister}，用来验证参数和模板
-     * 配得对不对，不用干等下一轮扫描。</p>
-     */
+    /** 立刻跑一轮自动注册（扫描 → 按模板注册），返回本轮注册成功的台数 */
     @PostMapping("/{id}/ont-reg/scan")
     public Result<Integer> runOntRegScan(@PathVariable Long id) {
         try {
@@ -1012,9 +925,7 @@ public class OltController {
         return username == null ? null : String.valueOf(username);
     }
 
-    /**
-     * 仅含 id 的请求体。
-     */
+    /** 仅含 id 的请求体 */
     @Data
     public static class IdRequest {
         private Long id;

@@ -27,9 +27,14 @@ export function removeRole(code) {
   return request({ url: `/system/roles/${encodeURIComponent(code)}`, method: 'delete' })
 }
 
-// 用户列表，带最近登录来源
+// 用户列表：每行带 canDelete / canToggleStatus / canChangeRole 与登录来源、时间文案
 export function fetchUsers() {
   return request({ url: '/system/users', method: 'get' })
+}
+
+// 账号与密码策略：最小长度、登录名规则、输入提示都由后端给，页面不写死
+export function fetchPasswordPolicy() {
+  return request({ url: '/system/password-policy', method: 'get' })
 }
 
 export function createUser(data) {

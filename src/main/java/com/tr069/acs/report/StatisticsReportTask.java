@@ -23,11 +23,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Properties;
 
-/**
- * 定时把本实例的信息上报到 服务端统计有多少ACS。
- *
- * <p>只发不收，失败仅记日志。</p>
- */
+/** 定时把本实例的信息上报到 服务端统计有多少ACS */
 @Slf4j
 @Component
 public class StatisticsReportTask {

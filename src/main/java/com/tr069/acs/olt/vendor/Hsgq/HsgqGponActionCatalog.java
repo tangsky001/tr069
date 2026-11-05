@@ -1,4 +1,4 @@
-package com.tr069.acs.olt.vendor;
+package com.tr069.acs.olt.vendor.Hsgq;
 
 import com.tr069.acs.olt.model.OltAction;
 import com.tr069.acs.olt.model.OltActionParam;
@@ -12,22 +12,7 @@ import static com.tr069.acs.olt.model.OltAction.query;
 import static com.tr069.acs.olt.model.OltAction.queryIn;
 import static com.tr069.acs.olt.model.OltAction.queryWith;
 
-/**
- * 鸿升光 GPON 一体化 OLT（4/8/16 口）的命令动作目录，对应《GPON 光纤接入局端设备
- * 命令行操作手册 V1.0.0》（157 页，15 章）。
- *
- * <p>与 EPON 手册（{@code HsgqActionCatalog}）的关系：同厂商同 CLI 家族，第 2/3/4/7/10/11/12/13/14 章
- * 命令写法一致，差别在</p>
- * <ul>
- *   <li>PON 口关键字是 {@code gpon} 而不是 {@code epon}，且 PON 口不做二层成员端口——
- *       业务靠 {@code service-port} 虚端口绑定 {@code gemport}；</li>
- *   <li>多了第 5 章模板（DBA / 线路模板 / 业务模板）和第 6 章虚端口；</li>
- *   <li>第 8 章用 SN/LOID 注册 ONT，第 9 章 ONT 命令全在 GPON 口视图下（没有单独的 ONT 视图）；</li>
- *   <li>第 3 章多一节风扇管理，用户权限多一级 {@code operator}。</li>
- * </ul>
- *
- * <p>页码对照：图片 {@code GPON-OL..V1_NN.png} = 书页 NN-10。</p>
- */
+/** 鸿升光 GPON 一体化 OLT（4/8/16 口）的命令动作目录，对应《GPON 光纤接入局端设备 */
 public final class HsgqGponActionCatalog {
 
     // ---------------------------------------------------------------- 章节

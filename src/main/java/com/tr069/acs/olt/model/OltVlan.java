@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 一个 VLAN 的概况，来自 {@code display vlan all}。
- *
- * <p>现场回显把标准口数和业务流数写在同一个表里，页面上直接列出来，
- * 一眼能看出这个 VLAN 挂在几个口、下挂几条业务流。</p>
- */
+/** 一个 VLAN 的概况，来自 {@code display vlan all} */
 @Data
 public class OltVlan {
 
@@ -29,12 +24,7 @@ public class OltVlan {
     /** VLAN-Con 个数，回显为「-」时为 null */
     private Integer vlanConNum;
 
-    /**
-     * 这个 VLAN 的成员端口（鸿升光 {@code show vlan} 才有这栏，华为的 display vlan all 没有）。
-     *
-     * <p>设备回显里就是 {@code GE03} / {@code EPON01,EPON02} 这种写法，原样保留，
-     * 页面直接列出来，不在后端压成区间——现场要按这串字去核端口。</p>
-     */
+    /** 这个 VLAN 的成员端口（鸿升光 {@code show vlan} 才有这栏，华为的 display vlan all 没有） */
     private String taggedPorts;
 
     /** 不带标签的成员端口 */

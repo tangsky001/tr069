@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 一条流量限速模板（{@code display traffic table ip all} 的一行）。
- *
- * <p>业务流引用它限速：CIR 是承诺速率（保证带宽），PIR 是峰值速率（允许冲到的上限），
- * 单位 kbps。</p>
- */
+/** 一条流量限速模板（{@code display traffic table ip all} 的一行） */
 @Data
 public class OltTrafficTable {
 

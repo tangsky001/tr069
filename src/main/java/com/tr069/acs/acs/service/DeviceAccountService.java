@@ -26,35 +26,31 @@ import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 设备本地账号（超管 telecomadmin 等）查询。
- */
+/** 设备本地账号（超管 telecomadmin 等）查询 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeviceAccountService {
 
-    /** 叶子名：TR-069 标准写 Username，华为私有节点里写 UserName。 */
+    /** 叶子名：TR-069 标准写 Username，华为私有节点里写 UserName */
     private static final String LEAF_USERNAME = "Username";
     private static final String LEAF_USERNAME_HW = "UserName";
     private static final String LEAF_PASSWORD = "Password";
 
-    /** 展示字段名：两种叶子写法归一到这里，后面就不用区分了。 */
+    /** 展示字段名：两种叶子写法归一到这里，后面就不用区分了 */
     private static final String FIELD_USER = "username";
     private static final String FIELD_PASSWORD = "password";
 
-    /** User 实例探测上限：超管一般就在前两路，多试几路成本可控。 */
+    /** User 实例探测上限：超管一般就在前两路，多试几路成本可控 */
     private static final int MAX_USER_INSTANCE = 4;
 
-    /** 整批被拒后逐条重试的单条等待时间（秒）。 */
+    /** 整批被拒后逐条重试的单条等待时间（秒） */
     private static final long RETRY_TIMEOUT_SECONDS = 8;
 
-    /** 会话还在但可能已断链时，反向唤醒后最多等设备重新建链的时间（秒）。 */
+    /** 会话还在但可能已断链时，反向唤醒后最多等设备重新建链的时间（秒） */
     private static final long WAKEUP_WAIT_SECONDS = 15;
 
-    /**
-     * 本地账号所在的父路径形态。
-     */
+    /** 本地账号所在的父路径形态 */
     private static final Pattern LOCAL_ACCOUNT_PARENT =
             Pattern.compile("[._](User|WebUserInfo|TeleComAccount)\\.(\\d+\\.)?$");
 
@@ -63,30 +59,19 @@ public class DeviceAccountService {
     private final DeviceCapabilityService capabilityService;
     private final SessionManager sessionManager;
 
-    /** 等设备回参数的最长时间（秒）。 */
+    /** 等设备回参数的最长时间（秒） */
     @Value("${acs.device.account.read-timeout-seconds:30}")
     private long readTimeoutSeconds;
 
-    /**
-     * 整次查询的总预算（秒）。唤醒、两轮读取、逐条重试共用它，
-     * 免得每一段各自按满额算，加起来超过前端的 90s 请求超时，请求被 axios 掐断
-     * 时页面只剩一个「查询中」。
-     */
+    /** 整次查询的总预算（秒）。唤醒、两轮读取、逐条重试共用它 */
     @Value("${acs.device.account.total-timeout-seconds:70}")
     private long totalTimeoutSeconds;
 
-    /**
-     * 设备离线时，发连接请求后最多等它上来的时间（秒）。
-     *
-     * <p>离线通常意味着链路断了或设备在休眠，叫醒比会话还在的场景慢，给的时间要长一些；
-     * 这一段用完，剩下的总预算还够读一轮参数。</p>
-     */
+    /** 设备离线时，发连接请求后最多等它上来的时间（秒） */
     @Value("${acs.device.account.offline-wakeup-wait-seconds:30}")
     private long offlineWakeupWaitSeconds;
 
-    /**
-     * 查询某台设备的本地账号（含超管）。
-     */
+    /** 查询某台设备的本地账号（含超管） */
     public Map<String, Object> queryAdminAccount(String sn) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("sn", sn);
@@ -206,25 +191,16 @@ public class DeviceAccountService {
         return data;
     }
 
-    /**
-     * 运营商定制固件的超管节点：叶子名与标准 User 实例一致。
-     */
+    /** 运营商定制固件的超管节点：叶子名与标准 User 实例一致 */
     private static final Map<String, String> ADMIN_NODE_BY_ISP = Map.of(
             "CT", "DeviceInfo.X_CT-COM_TeleComAccount.",    // 电信定制
             "CMCC", "DeviceInfo.X_CMCC_TeleComAccount.",    // 移动定制
             "CU", "DeviceInfo.X_CU_TeleComAccount.");       // 联通定制
 
-    /**
-     * 华为公开版（未做运营商定制）固件的 Web 管理账号节点。
-     */
+    /** 华为公开版（未做运营商定制）固件的 Web 管理账号节点 */
     private static final String HUAWEI_WEB_USER_NODE = "UserInterface.X_HW_WebUserInfo.";
 
-    /**
-     * 第一轮候选：运营商定制节点 + 能力树快照里真实采到过的账号路径。
-     *
-     * <p>这两类都短：定制节点就两条叶子，快照命中的路径按实例补齐 Username / Password。
-     * 一条都拼不出来（运营商登记为空且快照没采到账号）才直接上通用形态，免得白跑一轮。</p>
-     */
+    /** 第一轮候选：运营商定制节点 + 能力树快照里真实采到过的账号路径 */
     private List<String> primaryPaths(String sn, String root, String isp) {
         LinkedHashSet<String> paths = new LinkedHashSet<>(ispPaths(root, isp));
         paths.addAll(snapshotPaths(sn));
@@ -234,12 +210,7 @@ public class DeviceAccountService {
         return new ArrayList<>(paths);
     }
 
-    /**
-     * 第二轮候选：定制节点读不到时才展开。
-     *
-     * <p>先在同一根下换节点形态——运营商标错、或定制固件其实用华为 Web 账号 / 标准
-     * {@code User.{i}} 的设备，只换根节点是永远读不到的；再换另外两种根节点。</p>
-     */
+    /** 第二轮候选：定制节点读不到时才展开 */
     private List<String> fallbackPaths(String root, String isp) {
         LinkedHashSet<String> paths = new LinkedHashSet<>(genericPaths(root));
         // 台账上的运营商可能是别的：这台实际节点是 X_CMCC_TeleComAccount，
@@ -253,7 +224,7 @@ public class DeviceAccountService {
         return new ArrayList<>(paths);
     }
 
-    /** 运营商定制固件的超管节点；未登记运营商返回空。 */
+    /** 运营商定制固件的超管节点；未登记运营商返回空 */
     private static List<String> ispPaths(String root, String isp) {
         String adminNode = ADMIN_NODE_BY_ISP.get(isp == null ? "" : isp.toUpperCase(Locale.ROOT));
         if (adminNode == null) {
@@ -262,7 +233,7 @@ public class DeviceAccountService {
         return List.of(root + adminNode + LEAF_USERNAME, root + adminNode + LEAF_PASSWORD);
     }
 
-    /** 除已登记运营商以外的定制超管节点。 */
+    /** 除已登记运营商以外的定制超管节点 */
     private static List<String> otherIspPaths(String root, String isp) {
         String registered = isp == null ? "" : isp.toUpperCase(Locale.ROOT);
         LinkedHashSet<String> paths = new LinkedHashSet<>();
@@ -276,17 +247,17 @@ public class DeviceAccountService {
         return new ArrayList<>(paths);
     }
 
-    /** 总预算还剩下的秒数，至少 1 秒——0 会让 future.get 立刻超时，白跑一趟。 */
+    /** 总预算还剩下的秒数，至少 1 秒——0 会让 future.get 立刻超时，白跑一趟 */
     private static long remaining(long deadline) {
         return Math.max(1L, TimeUnit.NANOSECONDS.toSeconds(deadline - System.nanoTime()));
     }
 
-    /** 总预算是否用完。 */
+    /** 总预算是否用完 */
     private static boolean expired(long deadline) {
         return System.nanoTime() >= deadline;
     }
 
-    /** 通用形态：华为公开版 Web 账号节点 + TR-098 / TR-181 标准 User 实例。 */
+    /** 通用形态：华为公开版 Web 账号节点 + TR-098 / TR-181 标准 User 实例 */
     private static List<String> genericPaths(String root) {
         LinkedHashSet<String> paths = new LinkedHashSet<>();
         // 华为公开版固件，两种叶子写法都试，各固件不一致
@@ -303,12 +274,7 @@ public class DeviceAccountService {
         return new ArrayList<>(paths);
     }
 
-    /**
-     * 能力树快照里真实存在、且父节点是本地账号对象的那几条路径。
-     *
-     * <p>快照常只采到 Username 没有 Password（设备不把口令报给 GetParameterNames），
-     * 这里按实例把两个叶子都补齐，只查账号查不出密码没意义。</p>
-     */
+    /** 能力树快照里真实存在、且父节点是本地账号对象的那几条路径 */
     private List<String> snapshotPaths(String sn) {
         LinkedHashSet<String> paths = new LinkedHashSet<>();
         for (CpeParameter row : snapshotUserParams(sn)) {
@@ -328,13 +294,7 @@ public class DeviceAccountService {
         return new ArrayList<>(paths);
     }
 
-    /**
-     * 能力树快照里账号对象的参数行：{@code User.{i}} / {@code X_HW_WebUserInfo.{i}} /
-     * 运营商定制 {@code X_CT-COM_TeleComAccount} 都算。
-     *
-     * <p>之前只按 {@code .User.} 模糊匹配，定制节点的账号行一条都查不出来，
-     * 快照兜底等于没生效。</p>
-     */
+    /** 能力树快照里账号对象的参数行：{@code User.{i}} / {@code X_HW_WebUserInfo.{i}} / */
     private List<CpeParameter> snapshotUserParams(String sn) {
         try {
             return parameterMapper.selectList(new LambdaQueryWrapper<CpeParameter>()
@@ -350,10 +310,7 @@ public class DeviceAccountService {
         }
     }
 
-    /**
-     * 把读到的路径按 User 实例配对成账号。
-
-     */
+    /** 把读到的路径按 User 实例配对成账号 */
     static List<Map<String, Object>> assemble(Map<String, String> values) {
         Map<String, Map<String, String>> grouped = new TreeMap<>();
         for (Map.Entry<String, String> entry : values.entrySet()) {
@@ -390,7 +347,7 @@ public class DeviceAccountService {
         return accounts;
     }
 
-    /** 除指定根节点以外的标准根节点，用于第二轮兜底。 */
+    /** 除指定根节点以外的标准根节点，用于第二轮兜底 */
     private static List<String> otherRoots(String root) {
         List<String> others = new ArrayList<>();
         for (String r : List.of(DataModel.TR098.getRoot(), DataModel.TR181.getRoot())) {
@@ -401,9 +358,7 @@ public class DeviceAccountService {
         return others;
     }
 
-    /**
-     * 设备台账登记的运营商。
-     */
+    /** 设备台账登记的运营商 */
     private String resolveIsp(String sn) {
         try {
             CpeDevice device = deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
@@ -419,14 +374,14 @@ public class DeviceAccountService {
         return "";
     }
 
-    /** 从 {@code ...User.2.} 里取实例号，取不到返回空串。 */
+    /** 从 {@code ...User.2.} 里取实例号，取不到返回空串 */
     private static String instanceOf(String parent) {
         Matcher m = LOCAL_ACCOUNT_PARENT.matcher(parent);
         // TeleComAccount 这类节点没有实例号，返回空即可
         return m.find() && m.group(2) != null ? m.group(2).replace(".", "") : "";
     }
 
-    /** 账号叶子名 -> 展示字段；认不出来（比如 SSID 之类的同名叶子）返回 null。 */
+    /** 账号叶子名 -> 展示字段；认不出来（比如 SSID 之类的同名叶子）返回 null */
     private static String fieldOf(String leaf) {
         if (LEAF_USERNAME.equals(leaf) || LEAF_USERNAME_HW.equals(leaf)) {
             return FIELD_USER;
@@ -437,7 +392,7 @@ public class DeviceAccountService {
         return null;
     }
 
-    /** 设备台账里登记的根节点，没登记按 TR-098 处理。 */
+    /** 设备台账里登记的根节点，没登记按 TR-098 处理 */
     private String resolveRoot(String sn) {
         try {
             CpeDevice device = deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()

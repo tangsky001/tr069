@@ -2,22 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 华为 MA56XXT 一键开局的参数。
- *
- * <p>华为开局不是「改端口 VLAN 模式」那套，而是先备齐模板再注册 ONT，
- * 所以字段跟 {@link OltQuickSetupRequest} 里给鸿升光用的那几个对不上，单独一个模型。</p>
- *
- * <p><b>模板的 ID 和名字不用单独填，全部由 {@link #dbaBandwidthMbps} 推出来：</b>
- * 带宽 1000 就得到 DBA 模板 {@code 1000 / 1000M}、线路与业务模板
- * {@code 1000 / FTTH-GPON-1000}、TR-069 模板 {@code 1000 / TR069_ACS}。
- * 四套模板共用一个 ID，现场对着设备看配置时一眼能对上是哪一套。</p>
- *
- * <p><b>模板之间有依赖，创建顺序是固定的：</b>DBA 模板 → ONT 线路模板（引用 DBA，
- * 内含 T-CONT / GEM / GEM 映射）→ ONT 业务模板 → TR-069 管理模板。
- * 反过来先建线路模板会因为找不到 DBA 被设备拒绝，见
- * {@code HuaweiQuickSetupPlanner}。</p>
- */
+/** 华为 MA56XXT 一键开局的参数 */
 @Data
 public class HuaweiQuickSetupRequest {
 
@@ -51,10 +36,7 @@ public class HuaweiQuickSetupRequest {
     /** TR-069 管理模板里带的密码，默认 acs */
     private String acsPassword;
 
-    /**
-     * DBA 模板带宽（Mbps）：只决定限速值和模板名字（{@code 1000M}），
-     * 不再当模板 ID 用——设备上的 ID 只认 10~512，带宽当 ID 会被顶回来。
-     */
+    /** DBA 模板带宽（Mbps）：只决定限速值和模板名字（{@code 1000M}） */
     private Integer dbaBandwidthMbps;
 
     /** DBA 模板的 profile-id，设备认 10~512，没填用后端默认值 */

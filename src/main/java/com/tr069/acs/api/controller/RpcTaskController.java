@@ -10,12 +10,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * 下发指令的结果查询。
- *
- * <p>指令提交后不再同步等待设备回应，调用方凭任务号查询结果，
- * 状态包括 queued / running / success / fail。</p>
- */
+/** 下发指令的结果查询 */
 @Slf4j
 @RestController
 @RequestMapping("/api/rpc")
@@ -25,9 +20,7 @@ public class RpcTaskController {
     private final RpcDispatchService rpcDispatchService;
     private final RpcTaskQueue rpcTaskQueue;
 
-    /**
-     * 按任务号查询执行结果。
-     */
+    /** 按任务号查询执行结果 */
     @GetMapping("/{taskId}")
     public Result<RpcTaskQueue.RpcTaskResult> result(@PathVariable long taskId) {
         RpcTaskQueue.RpcTaskResult result = rpcDispatchService.queryResult(taskId);
@@ -37,9 +30,7 @@ public class RpcTaskController {
         return Result.success(result);
     }
 
-    /**
-     * 某台设备当前排队待下发的指令数量。
-     */
+    /** 某台设备当前排队待下发的指令数量 */
     @GetMapping("/device/{sn}/pending")
     public Result<Long> pending(@PathVariable String sn) {
         return Result.success(rpcTaskQueue.pendingCount(sn));

@@ -9,9 +9,7 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * CPE 上报的 Inform 请求。
- */
+/** CPE 上报的 Inform 请求 */
 @Data
 @Builder
 @NoArgsConstructor
@@ -25,18 +23,14 @@ public class InformRequest implements Serializable {
     @Builder.Default
     private List<EventStruct> eventList = new ArrayList<>();
 
-    /**
-     * 最大信元数
-     */
+    /** 最大信元数 */
     private String maxEnvelopes;
 
     private String currentTime;
 
     private String retryCount;
 
-    /**
-     * Inform 消息体携带的参数列表
-     */
+    /** Inform 消息体携带的参数列表 */
     @Builder.Default
     private List<ParameterValueStruct> parameterList = new ArrayList<>();
 }

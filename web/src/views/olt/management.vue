@@ -62,10 +62,7 @@
             <el-switch v-model="keepalive" :disabled="!keepaliveReady" @change="handleKeepaliveChange" />
             <span class="olt-auto-label">会话保活</span>
             <el-select v-model="keepaliveMinutes" size="small" style="width:86px;margin-left:4px" :disabled="!keepalive || !keepaliveReady" @change="handleKeepaliveChange">
-              <el-option :value="1" label="1 分钟" />
-              <el-option :value="2" label="2 分钟" />
-              <el-option :value="5" label="5 分钟" />
-              <el-option :value="10" label="10 分钟" />
+              <el-option v-for="m in keepaliveMinuteOptions" :key="m" :value="m" :label="m + ' 分钟'" />
             </el-select>
           </span>
         </div>
@@ -142,10 +139,12 @@ export default {
       autoRefresh: false,
       pollSeconds: 30,
       pollTimer: null,
-      // Telnet 会话保活开关（后端会话池）：开 = 2 会话轮换 + 定期 display client 探活；
-      // 关 = 会话 1 分钟没人用就 quit 退出登录。状态从后端取，取到前不允许切换
+      // Telnet 会话保活开关（后端长连接管理）：开 = 每台 OLT 一条长连接 + 定期 display client 探活；
+      // 关 = 连接 1 分钟没人用就 quit 退出登录。状态从后端取，取到前不允许切换
       keepalive: false,
       keepaliveMinutes: 2,
+      // 可选的探活档位由后端给（后端只认这几档，页面不写死）
+      keepaliveMinuteOptions: [],
       keepaliveReady: false
     }
   },
@@ -158,18 +157,15 @@ export default {
     vendorView() {
       return componentOfVendor(this.selected.vendor)
     },
+    /** 固件版本串与状态中文/配色都由后端随台账视图给，台账页与详情页共用同一份口径 */
     firmwareText() {
-      const parts = [this.selected.softwareVersion, this.selected.patchVersion].filter(item => !!item)
-      return parts.length ? parts.join(' / ') : '-'
+      return this.selected.firmwareText || '-'
     },
     statusText() {
-      const map = { ONLINE: '在线', OFFLINE: '离线', UNKNOWN: '未探测' }
-      return map[this.selected.status] || '未探测'
+      return this.selected.statusText || '未探测'
     },
     statusTag() {
-      if (this.selected.status === 'ONLINE') return 'success'
-      if (this.selected.status === 'OFFLINE') return 'danger'
-      return 'info'
+      return this.selected.statusLevel || 'info'
     }
   },
   watch: {
@@ -227,11 +223,9 @@ export default {
         .then(res => {
           const data = res.data || {}
           this.keepalive = !!data.keepaliveEnabled
-          const minutes = Math.round((data.keepaliveIntervalMs || 120000) / 60000)
-          // 没有对应档位（比如后端配了 3 分钟）就就近落一档，别显示成空
-          const options = [1, 2, 5, 10]
-          this.keepaliveMinutes = options.reduce((prev, cur) =>
-            Math.abs(cur - minutes) < Math.abs(prev - minutes) ? cur : prev, 2)
+          // 分钟档位与可选清单都由后端算好（后端会把非整档就近落档），页面不再换算
+          this.keepaliveMinutes = data.keepaliveMinutes || 2
+          this.keepaliveMinuteOptions = data.keepaliveMinuteOptions || []
           this.keepaliveReady = true
         })
         .catch(() => {})
@@ -244,9 +238,11 @@ export default {
         .then(res => {
           const data = res.data || {}
           this.keepalive = !!data.keepaliveEnabled
+          // 长连接模式与空闲退出时长都是后端常量，文案按返回的数字说，不写死「1 分钟」
           this.$message.success(target
-            ? '会话保活已开启：每台 OLT 最多 2 个会话轮换，' + this.keepaliveMinutes + ' 分钟探活一次'
-            : '会话保活已关闭：会话 1 分钟没人用将退出登录')
+            ? '会话保活已开启：每台 OLT 保持 1 条长连接常驻登录，' +
+              this.keepaliveMinutes + ' 分钟探活一次'
+            : '会话保活已关闭：会话 ' + (data.idleQuitText || '1 分钟') + '没人用将退出登录')
         })
         .catch(() => {
           this.keepalive = !target

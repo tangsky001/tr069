@@ -150,15 +150,7 @@
 </template>
 
 <script>
-import { previewQuickSetup, fetchQuickSetupForm, fetchTr069Form } from '@/api/olt'
-
-/** 各类端口在页面上叫什么（只是中文名，端口清单本身由后端/采集给） */
-const PORT_TITLES = {
-  epon: 'PON 口',
-  gpon: 'PON 口',
-  ge: 'GE 以太网口',
-  xge: '10GE 以太网口'
-}
+import { previewQuickSetup, fetchQuickSetupForm, fetchTr069Form, fetchOltOptions } from '@/api/olt'
 
 /** 表单改动后隔多久重新算命令：输入 VLAN 时别每敲一个字符就打一次接口 */
 const PREVIEW_DELAY_MS = 300
@@ -210,6 +202,8 @@ export default {
       tr069Meta: null,
       /** 后端算出来的命令和提醒 */
       preview: { commands: [], warnings: [] },
+      /** 端口类型中文名等码表，来自后端 /olt/options */
+      optionTables: null,
       previewError: '',
       form: {
         portModeEnabled: true,
@@ -238,10 +232,13 @@ export default {
       const groups = []
       const index = {}
       const ports = this.ports || []
+      // 端口类型的中文名由后端码表给
+      const titles = (this.optionTables && this.optionTables.codeTables &&
+        this.optionTables.codeTables.portTitles) || {}
       ports.forEach(port => {
         const type = port.type || ''
         if (!index[type]) {
-          index[type] = { type, title: PORT_TITLES[type] || type, ports: [] }
+          index[type] = { type, title: titles[type] || type, ports: [] }
           groups.push(index[type])
         }
         index[type].ports.push({
@@ -301,8 +298,22 @@ export default {
   },
   methods: {
     async onOpen() {
+      this.loadTables()
       await this.loadMeta()
       this.reset()
+    },
+    /** 端口类型中文名等码表：后端一次给全，失败也不影响开局（标题退化成类型码） */
+    loadTables() {
+      if (this.optionTables) {
+        return Promise.resolve()
+      }
+      return fetchOltOptions()
+        .then(res => {
+          this.optionTables = res.data || null
+        })
+        .catch(() => {
+          this.optionTables = null
+        })
     },
     async loadMeta() {
       if (!this.oltId) {

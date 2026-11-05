@@ -2,9 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 单条 ONT 按需查询的请求：在 GPON 端口视图下查一条 ONT 的光信息 / 版本 / 注册历史。
- */
+/** 单条 ONT 按需查询的请求：在 GPON 端口视图下查一条 ONT 的光信息 / 版本 / 注册历史 */
 @Data
 public class OltOntQueryRequest {
 

@@ -2,12 +2,10 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 诊断测试结果。
- *
- * <p>失败也是一次有效返回（HTTP 200 + success=false），页面据此在弹窗里直接提示原因，
- * 不用走统一的错误提示条。</p>
- */
+import java.util.ArrayList;
+import java.util.List;
+
+/** 诊断测试结果 */
 @Data
 public class OltTestResult {
 
@@ -34,6 +32,21 @@ public class OltTestResult {
     private String rawOutput;
 
     private long costMs;
+
+    /** 结果一行话：「登录成功；提示符：&lt;Huawei&gt;；耗时 1200 ms」 */
+    public String getSummary() {
+        List<String> parts = new ArrayList<>();
+        if (message != null && !message.isBlank()) {
+            parts.add(message);
+        }
+        if (prompt != null && !prompt.isBlank()) {
+            parts.add("提示符：" + prompt);
+        }
+        if (costMs > 0) {
+            parts.add("耗时 " + costMs + " ms");
+        }
+        return String.join("；", parts);
+    }
 
     public static OltTestResult ok(String message) {
         OltTestResult result = new OltTestResult();

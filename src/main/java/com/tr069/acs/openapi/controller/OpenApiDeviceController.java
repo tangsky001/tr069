@@ -14,12 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 北向只读接口：设备台账、在线状态、能力树、业务快照、下发结果、工单结果。
- *
- * <p>返回结构与管理端刻意分开：这里字段名是给外部系统用的，一旦发布就不能随页面改，
- * 所以不能把管理端适配 Vue 组件的那套 Map 直接透出去。</p>
- */
+/** 北向只读接口：设备台账、在线状态、能力树、业务快照、下发结果、工单结果 */
 @Slf4j
 @RestController
 @RequestMapping("${acs.openapi.path-prefix:/openapi/v1}/devices")
@@ -28,9 +23,7 @@ public class OpenApiDeviceController {
 
     private final OpenApiQueryService queryService;
 
-    /**
-     * 设备台账分页列表。
-     */
+    /** 设备台账分页列表 */
     @GetMapping
     public Result<Map<String, Object>> list(
             @RequestParam(required = false) String keyword,
@@ -40,9 +33,7 @@ public class OpenApiDeviceController {
         return Result.success(queryService.devices(keyword, isp, page, size));
     }
 
-    /**
-     * 设备详情：台账 + 能力汇总 + 数据模型。
-     */
+    /** 设备详情：台账 + 能力汇总 + 数据模型 */
     @GetMapping("/{sn}")
     public Result<Map<String, Object>> detail(@PathVariable String sn) {
         Map<String, Object> data = queryService.device(sn);
@@ -52,17 +43,13 @@ public class OpenApiDeviceController {
         return Result.success(data);
     }
 
-    /**
-     * 在线状态。
-     */
+    /** 在线状态 */
     @GetMapping("/{sn}/online")
     public Result<Map<String, Object>> online(@PathVariable String sn) {
         return Result.success(queryService.online(sn));
     }
 
-    /**
-     * 能力树某一层，传 parent 为空返回根节点层。
-     */
+    /** 能力树某一层，传 parent 为空返回根节点层 */
     @GetMapping("/{sn}/capability/tree")
     public Result<List<Map<String, Object>>> tree(
             @PathVariable String sn,
@@ -70,9 +57,7 @@ public class OpenApiDeviceController {
         return Result.success(queryService.capabilityTree(sn, parent));
     }
 
-    /**
-     * 参数值清单，可按路径前缀过滤。
-     */
+    /** 参数值清单，可按路径前缀过滤 */
     @GetMapping("/{sn}/capability/params")
     public Result<List<Map<String, Object>>> params(
             @PathVariable String sn,
@@ -80,9 +65,7 @@ public class OpenApiDeviceController {
         return Result.success(queryService.params(sn, prefix));
     }
 
-    /**
-     * 业务快照：WAN / WiFi / SIP 分区取值，读的是能力树快照，不打搅设备。
-     */
+    /** 业务快照：WAN / WiFi / SIP 分区取值，读的是能力树快照，不打搅设备 */
     @GetMapping("/{sn}/business")
     public Result<Map<String, Object>> business(@PathVariable String sn) {
         CpeDevice device = queryService.findDevice(sn);
@@ -92,9 +75,7 @@ public class OpenApiDeviceController {
         return Result.success(queryService.business(sn));
     }
 
-    /**
-     * 该设备的下发任务历史。
-     */
+    /** 该设备的下发任务历史 */
     @GetMapping("/{sn}/deliveries")
     public Result<List<Map<String, Object>>> deliveries(
             @PathVariable String sn,
@@ -102,9 +83,7 @@ public class OpenApiDeviceController {
         return Result.success(queryService.tasks(sn, limit));
     }
 
-    /**
-     * 工单执行结果。
-     */
+    /** 工单执行结果 */
     @GetMapping("/{sn}/work-orders")
     public Result<List<Map<String, Object>>> workOrders(
             @PathVariable String sn,

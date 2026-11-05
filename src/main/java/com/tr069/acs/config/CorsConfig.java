@@ -6,12 +6,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
 
-/**
- * 跨域配置，供本地管理端开发联调使用。
- *
- * <p>只对管理端路径生效：北向接口是服务端到服务端调用，不需要跨域放开；
- * 放在 {@code /**} 上等于给全站开了任意来源的凭证请求。</p>
- */
+/** 跨域配置，供本地管理端开发联调使用 */
 @Configuration
 public class CorsConfig {
 

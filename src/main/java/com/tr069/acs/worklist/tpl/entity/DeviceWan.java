@@ -2,11 +2,7 @@ package com.tr069.acs.worklist.tpl.entity;
 
 import lombok.Data;
 
-/**
- * WAN 连接配置。一行 = 一个 WANIPConnection 实例（实际实例号由设备采集决定，
- * P22g-CIac 是 9-12，别的型号可能 1-4、可能完全不同的数字）。
- * <p>{@code connType} 标记该连接是 IPoE / PPPoE / Bridge，下发时按此选择模板。</p>
- */
+/** WAN 连接配置。一行 = 一个 WANIPConnection 实例（实际实例号由设备采集决定 */
 @Data
 public class DeviceWan {
 
@@ -23,11 +19,7 @@ public class DeviceWan {
     /** VERIFIED 已验证 / UNSUPPORTED 该型号不支持 / UNVERIFIED 未验证 */
     private String verified;
 
-    /**
-     * action=ADD 时 AddObject 的父路径，末尾不带实例号（实例号由设备分配，
-     * 事先不知道），形如 {@code ...WANConnectionDevice.2.WANIPConnection.}。
-     * action=SET 时为空。
-     */
+    /** action=ADD 时 AddObject 的父路径，末尾不带实例号（实例号由设备分配 */
     private String objectPath;
 
     private String pathEnable;
@@ -66,16 +58,11 @@ public class DeviceWan {
     private String pathDns;
     private String valDns;
 
-    /**
-     * MaxMTUSize。值留空表示不修改该参数（各家现网 MTU 取值不同，不替现场做决定）。
-     */
+    /** MaxMTUSize。值留空表示不修改该参数（各家现网 MTU 取值不同，不替现场做决定） */
     private String pathMtu;
     private String valMtu;
 
-    /**
-     * IP 协议版本，设备上多叫 {@code X_CMCC_IPMode}（int：1=IPv4 / 2=IPv6 / 3=IPv4+IPv6）。
-     * 值留空表示不修改——老型号没有这个节点时路径也留空。
-     */
+    /** IP 协议版本，设备上多叫 {@code X_CMCC_IPMode}（int：1=IPv4 / 2=IPv6 / 3=IPv4+IPv6） */
     private String pathIpMode;
     private String valIpMode;
 }

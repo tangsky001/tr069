@@ -18,9 +18,16 @@ import {
   fetchOltActions,
   quickSetupOlt,
   execOltAction,
-  fetchOltOptions
+  fetchOltOptions,
+  syncOltSection
 } from '@/api/olt'
-import { compressVlans as compressVlanRange } from '../utils'
+
+/**
+ * 页签名 → 后端采集段（/olt/{id}/sync-section 的 scope）。
+ *
+ * <p>映射表由后端 /olt/options 的 codeTables.tabSections 下发：哪些页签采哪一段
+ * 是设备采集知识，不该写死在页面里。页面只按表查，查不到说明这个页签不触发采集。</p>
+ */
 
 /**
  * OLT 详情页公共逻辑：取台账、板卡、VLAN、采集记录，翻成页面上要显示的样子。
@@ -98,44 +105,53 @@ export const oltDetailMixin = {
           // 整机（鸿升光）才有：前面板有几个 PON / 上联口 / NMS，由型号决定
           frontPanel: board.frontPanel || null,
           ports,
-          onuSummary: this.buildOnuSummary(board)
+          // 板卡灯态与 ONT 汇总文本由后端算好下发
+          lampState: board.lampState || '',
+          onuSummary: board.onuSummary || ''
         }
       })
     },
-    /**
-     * 机框要画多少个槽位：优先用 display board 0 槽位表里的最大 SlotID + 1
-     * （空槽位也在表里，所以 0..12 就是 13 个槽位），没采到就按板卡最大槽位兜底。
-     */
+    /** 机框画几个槽位：后端按 display board 0 的槽位表算好（设备没回时按板卡最大槽位兜底） */
     chassisSlotCount() {
-      const count = this.device.slotCount
-      if (count && count > 0) {
-        return count
-      }
-      const max = this.boards.reduce((value, board) => {
-        return board.slotNo == null ? value : Math.max(value, board.slotNo)
-      }, -1)
-      // 兜底的槽位数由后端给（设备没回槽位数时按这个画）
-      const fallback = this.options ? this.options.defaultSlotCount : 0
-      return Math.max(fallback, max + 1)
+      return this.detail.chassisSlotCount || 0
     },
     /** 「ONT 配置/状态」页只列有端口的板卡（业务板），主控、上联板没有 ONT */
     ontBoards() {
       return this.slots.filter(slot => slot.ports.length)
     },
+    /** ONT 页汇总句里的端口数：后端数好 */
     ontPortTotal() {
-      return this.ontBoards.reduce((sum, slot) => sum + slot.ports.length, 0)
+      return this.detail.ontPortTotal || 0
     },
-    /** 全局 ONT 汇总：各板各口加起来，和每行「23 ONT / 22 在线」能对上 */
+    /** ONT 页汇总句里的业务板块数：后端数好 */
+    ontBoardCount() {
+      return this.detail.ontBoardCount || 0
+    },
+    /**
+     * ONT 摊平行（板卡 × 端口 × ONT 一条一行）：后端 detail.ontRows 已摊好，
+     * 页面不再自己遍历板卡树、也不再按 {@code ont.id / ont.stateText} 取错字段。
+     */
+    ontRows() {
+      return this.detail.ontRows || []
+    },
+    /** ONT 列表的「板卡端口」筛选下拉，后端一起给 */
+    ontPortOptions() {
+      return this.detail.ontPortOptions || []
+    },
+    /** ONT 按板卡分表的视图（板卡 → 端口 → ONT），后端把端口补齐与光功率都算好了 */
+    ontCards() {
+      return this.detail.ontCards || []
+    },
+    /** 全局 ONT 汇总：total / online / offline 由后端算好 */
     ontSummary() {
-      let total = 0
-      let online = 0
-      this.ontBoards.forEach(slot => {
-        slot.ports.forEach(port => {
-          total += port.onuTotal || 0
-          online += port.onuOnline || 0
-        })
-      })
-      return { total, online, offline: Math.max(0, total - online) }
+      return this.detail.ontSummary || { total: 0, online: 0, offline: 0 }
+    },
+    /** 「删除业务板 ONU」用：哪几块板有 ONT、各多少条，后端按槽位排好 */
+    deletableBoards() {
+      return this.detail.deletableBoards || []
+    },
+    deletableOntTotal() {
+      return this.detail.deletableOntTotal || 0
     },
     vlanInfo() {
       return this.detail.vlan || null
@@ -149,34 +165,11 @@ export const oltDetailMixin = {
     /**
      * 能做 VLAN 成员的端口（「创建 VLAN」弹窗的复选框）。
      *
-     * <p>采集回来的清单里本该已含 PON 口，但早期快照只有上联电口（show port state all 不列 PON），
-     * 这里用板卡的 PON 口补一次，免得没重新同步时弹窗里少一排 PON。GPON 的 PON 口不做二层成员，不补。</p>
+     * <p>早期快照只有上联电口时按 EPON 板卡补 PON 口的规则在后端 detail 组装时完成
+     * （GPON 的 PON 口不做二层成员，不补），这里直接透传后端结果。</p>
      */
     memberPorts() {
-      const collected = (this.vlanInfo && this.vlanInfo.memberPorts) || []
-      if (collected.some(port => /^(epon|gpon)$/i.test(port.type || ''))) {
-        return collected
-      }
-      const ponType = this.boards.some(board => (board.portMode || '').toUpperCase() === 'EPON')
-        ? 'epon'
-        : null
-      if (!ponType) {
-        return collected
-      }
-      const ponPorts = []
-      this.boards
-        .filter(board => (board.portMode || '').toUpperCase() === 'EPON')
-        .forEach(board => {
-          (board.ports || []).forEach(port => {
-            const no = port.portNo
-            ponPorts.push({
-              type: ponType,
-              no,
-              label: port.portName || 'PON' + String(no).padStart(2, '0')
-            })
-          })
-        })
-      return ponPorts.length ? [...ponPorts, ...collected] : collected
+      return (this.vlanInfo && this.vlanInfo.memberPorts) || []
     },
     vlanIpInterfaces() {
       return (this.vlanInfo && this.vlanInfo.ipInterfaces) || []
@@ -206,92 +199,32 @@ export const oltDetailMixin = {
     trafficTables() {
       return (this.templateInfo && this.templateInfo.trafficTables) || []
     },
-    /**
-     * DBA 模板 ID → 这一档带宽的说明，线路模板的 T-CONT 顺着 ID 查过来就能显示带宽档位。
-     * 查不到（模板没采到或 ID 对不上）显示「DBA N（未采到）」，不猜。
-     */
-    dbaMap() {
-      const map = {}
-      this.dbaProfiles.forEach(profile => {
-        map[profile.profileId] = profile
-      })
-      return map
-    },
-    /** 按 VLAN 类型分组，和网管上「单层智能 VLAN：41、45-46」的写法一致 */
-    vlanTypeGroups() {
-      const labels = this.options ? this.options.vlanTypeLabels : {}
-      const groups = {}
-      this.vlanList.forEach(vlan => {
-        const type = (vlan.type || 'other').toLowerCase()
-        if (!groups[type]) {
-          groups[type] = { ids: [], std: 0, serv: 0 }
-        }
-        groups[type].ids.push(vlan.vlanId)
-        groups[type].std += vlan.stdPortNum || 0
-        groups[type].serv += vlan.servPortNum || 0
-      })
-      return Object.keys(groups).map(type => ({
-        type,
-        label: labels[type] || type,
-        text: this.compressVlans(groups[type].ids),
-        std: groups[type].std,
-        serv: groups[type].serv
-      }))
-    },
-    /** VLAN 类型分组，再加最后一排「二层互通 VLAN」（VLAN-Con 不为空的那些） */
+    /** VLAN 类型分组（含二层互通那排）：分组、压缩文本、标准/业务口数都在后端算好 */
     vlanGroupRows() {
-      const rows = this.vlanTypeGroups.slice()
-      const connectIds = this.vlanList
-        .filter(vlan => vlan.vlanConNum != null)
-        .map(vlan => vlan.vlanId)
-      const labels = this.options ? this.options.vlanTypeLabels : {}
-      rows.push({
-        type: 'connect',
-        label: labels.connect || '',
-        text: connectIds.length ? this.compressVlans(connectIds) : '无',
-        std: null,
-        serv: null
-      })
-      return rows
+      return this.detail.vlanGroups || []
     },
-    /** 固件版本按「版本 / 补丁」拼，和现场 OLT 的写法一致 */
+    /** 固件版本「版本 / 补丁」串：后端随台账视图给 */
     firmwareText() {
-      const parts = [this.device.softwareVersion, this.device.patchVersion].filter(item => !!item)
-      return parts.length ? parts.join(' / ') : '-'
+      return this.device.firmwareText || '-'
     },
-    /** 板卡类别统计，形如：共 7 块板卡（业务板 2 / 主控板 2 / 上联板 2 / 电源板 1） */
+    /** 板卡类别统计文本：后端按型号档案与板卡类别算好（整机设备报型号规格） */
     boardSummary() {
-      if (this.boards.length === 0) return ''
-      // 整机（鸿升光）没有板卡可言，直接报型号规格：8 × GPON + 4 × GE + 4 × XGE
-      const whole = this.boards.find(board => board.frontPanel)
-      if (whole) {
-        return whole.frontPanel.summary || whole.description || ''
-      }
-      const labels = this.options ? this.options.boardCategoryLabels : {}
-      const counts = {}
-      this.boards.forEach(board => {
-        const kind = board.boardKind || 'UNKNOWN'
-        counts[kind] = (counts[kind] || 0) + 1
-      })
-      const detail = Object.keys(counts).map(kind => (labels[kind] || kind) + ' ' + counts[kind]).join(' / ')
-      return '共 ' + this.boards.length + ' 块板卡（' + detail + '）'
+      return this.detail.boardSummary || ''
     },
-    /** 有板卡停在 auto-find（插上了没确认）才显示「确认所有业务板」按钮 */
+    /** 有板卡停在 auto-find（插上了没确认）时才显示「确认所有业务板」 */
     boardsNeedConfirm() {
-      return this.boards.some(board => /auto[_ ]?find/i.test(board.status || ''))
+      return !!this.detail.boardsNeedConfirm
     },
+    /** 状态中文与标签色：后端随台账视图给（在线 / 离线 / 未探测） */
     statusText() {
-      const map = { ONLINE: '在线', OFFLINE: '离线', UNKNOWN: '未探测' }
-      return map[this.device.status] || '未探测'
+      return this.device.statusText || '未探测'
     },
     statusTag() {
-      if (this.device.status === 'ONLINE') return 'success'
-      if (this.device.status === 'OFFLINE') return 'danger'
-      return 'info'
+      return this.device.statusLevel || 'info'
     },
+    /** Web 登录账号串：后端拼好「a、b」，没限制时是「不限制」 */
     webAccountText() {
-      const accounts = this.device.webAccounts || []
-      return accounts.length === 0 ? '不限制' : accounts.join('、')
+      return this.device.webAccountText || '不限制'
     },
     /**
      * 页面上这行「数据是哪来的」：OLT 的数据以设备为准，能连上就显示实时采到的，
@@ -395,7 +328,8 @@ export const oltDetailMixin = {
       this.loading = true
       return fetchOltDetail(id)
         .then(res => {
-          // 先用库里的快照把页面撑起来（秒开），紧接着直连 OLT 采最新的覆盖上来
+          // 先用库里的快照把页面撑起来（秒开），紧接着自动板卡刷新。
+          // 要不要真的上设备由后端决策：板卡数据 5 分钟内同步过，后端直接回库里的详情
           this.applyDetail(res.data)
         })
         .catch(() => {})
@@ -405,19 +339,17 @@ export const oltDetailMixin = {
         })
     },
     /**
-     * 实时刷新：直连 OLT 采最新并写库，成功就把页面换成最新那份。
+     * 实时刷新（scope=boards）：后端统一决策——板卡数据 5 分钟内同步过就直接回库里
+     * 的详情（不占设备会话），否则连一次设备采板卡。前端只管调 API。
      * 失败不抹掉已经显示的快照，只在页面上说明「现在是旧的、为什么没取到新的」。
-     *
-     * 分两段：先只采板卡（display board 0，一两秒）把机框和型号画出来，
-     * 端口状态 / ONT 明细 / VLAN / 模板由后端后台接着采，页面轮询把补齐的数据拉过来。
-     * 这样第一次打开 OLT 不用干等十几秒才看到东西。
      */
     refreshLive(id) {
       const target = id || this.detailId
       if (!target || this.refreshing) return Promise.resolve()
       this.refreshing = true
       this.liveError = ''
-      return quickSyncOlt(target)
+      // scope=boards：首屏只要机框，后台深度补采不再触发——其余数据段由各页签点击时自己采
+      return quickSyncOlt(target, 'boards')
         .then(res => {
           this.applyDetail(res.data)
           this.liveAt = new Date()
@@ -428,6 +360,36 @@ export const oltDetailMixin = {
         })
         .finally(() => {
           this.refreshing = false
+        })
+    },
+    /**
+     * 页签点击：按后端下发的 codeTables.tabSections 映射同步该页签的数据段
+     * （boards/ont/vlan/template）。表里没有的页签不触发采集。
+     */
+    handleTabClick(tab) {
+      const tables = this.options && this.options.codeTables ? this.options.codeTables : {}
+      const scope = (tables.tabSections || {})[tab && tab.name]
+      if (scope) {
+        this.syncSection(scope)
+      }
+    },
+    /**
+     * 按页签同步：后端只采对应数据段并返回最新详情，页面直接换上。
+     * 60 秒节流在后端做（同一设备同一采集段重复请求直接回库里的详情）；
+     * force=true 由后端跳过节流，「同步ONT状态」这类明确要最新数据的按钮走它。
+     */
+    syncSection(scope, force) {
+      const target = this.detailId
+      if (!target) return Promise.resolve()
+      return syncOltSection(target, scope, force)
+        .then(res => {
+          this.applyDetail(res.data)
+          this.liveAt = new Date()
+          this.liveError = ''
+        })
+        .catch(err => {
+          const data = (err && err.response && err.response.data) || {}
+          this.liveError = data.message || (err && err.message) || '同步失败'
         })
     },
     /**
@@ -519,10 +481,16 @@ export const oltDetailMixin = {
       return addLineGemMapping(this.detailId, payload)
         .then(res => this.applyAfterConfig(res, '新增GEM映射'))
     },
-    /** 新增 VLAN（鸿升光下发 vlan standard），VLAN 面板的弹窗调用 */
+    /** 新增 VLAN（下发 vlan standard）：后端不等重采，返回即显示 */
     createVlan(payload) {
       return createOltVlan(this.detailId, payload)
-        .then(res => this.applyAfterConfig(res, '新增VLAN'))
+        .then(res => {
+          this.applyDetail(res.data)
+          this.liveAt = new Date()
+          this.liveError = ''
+          this.$message.success('新增 VLAN 成功，已立即显示（设备数据后台采集中）')
+          return res
+        })
     },
     /** 删除勾选的 VLAN（下发 no vlan） */
     deleteVlan(vlanIds) {
@@ -638,15 +606,20 @@ export const oltDetailMixin = {
           this.syncing = false
         })
     },
-    /** 详情接口与同步接口返回的结构一致，统一在这里落到 this.detail */
+    /**
+     * 详情接口与同步接口返回的结构一致，统一在这里落到 this.detail。
+     *
+     * <p>原来这里手工挑字段重建 detail（白名单），后端每加一个聚合字段都要记得
+     * 来这里补一行——ontRows / ontPortOptions / ontCards 就是漏掉的：
+     * 接口响应里明明有数据，落到页面却永远是 undefined，「总数 102、列表 0 条」。
+     * 现在后端给什么就保留什么，页面只对缺失的结构兜底，不再需要同步维护。</p>
+     */
     applyDetail(data) {
       const body = data || {}
       this.detail = {
-        device: body.device || null,
-        boards: body.boards || [],
-        records: body.records || [],
-        vlan: body.vlan || null,
-        template: body.template || null
+        boards: [],
+        records: [],
+        ...body
       }
       // 后端后台还在补采慢数据时保持提示与 3 秒轮询，结束（false）后自动恢复
       this.deepSyncing = !!body.deepSyncing
@@ -662,39 +635,23 @@ export const oltDetailMixin = {
       const ports = this.completePorts(board, board.ports || [])
       return ports
         .map(port => {
-          const status = (port.opticStatus || '').toLowerCase()
-          // opticalPresent 为 null 说明这台设备没有端口光模块命令，不画灯
-          const hasOptic = port.opticalPresent != null
-          let lamp = 'unknown'
-          let lampText = '光模块状态未采集'
-          if (port.opticalPresent === true) {
-            lamp = 'on'
-            lampText = '光模块在位'
-          } else if (port.opticalPresent === false) {
-            lamp = 'off'
-            lampText = '光模块不在位'
-          }
-          if (/abnormal|mismatch|fault/.test(status)) {
-            lamp = 'warn'
-            lampText = '光模块异常（' + port.opticStatus + '）'
-          }
-          // 链路状态来自 display board 0/<槽位> 的 Link 列，离线的口同步时也一起记进来
-          const link = (port.linkStatus || '').toLowerCase()
-          // 接口标识和 OLT 命令行一致：框、槽、口，例如 0/1/0
+          // 光模块灯（on / off / warn 三态与文案）、链路中文、接口号、放通 VLAN 都在后端
+          // enrichPort 里算好了；页面只取值，不再按 opticStatus 正则现推一遍灯色
           const frameNo = port.frameNo == null ? 0 : port.frameNo
           const slotNo = port.slotNo == null ? board.slotNo : port.slotNo
-          const iface = slotNo == null ? '' : frameNo + '/' + slotNo + '/' + port.portNo
-          // 上行口放通了哪些 VLAN（display port vlan 的快照），PON 口一般没有
-          const vlanText = this.portVlanTextOf(iface)
+          const iface = port.iface || (slotNo == null ? '' : frameNo + '/' + slotNo + '/' + port.portNo)
+          // 没采过端口光模块命令的设备不画灯
+          const hasOptic = port.opticalPresent != null
+          const vlanText = port.vlanText || ''
           // 每个 ONT 一条：页面点开端口后逐个显示，在线和不在线都列
           const onts = (port.onts || []).map(ont => ({
             id: ont.ontId,
             sn: ont.sn || '-',
             desc: ont.description || '',
             online: ont.online === true,
-            stateText: ont.online === true ? '在线' : '离线',
-            // 配置状态（normal / initial / failed），display ont info 的 Config 列
-            configText: ont.configState || '',
+            // 状态与配置状态的中文由后端给（stateText / configText）
+            stateText: ont.stateText || '',
+            configText: ont.configText || '',
             matchText: ont.matchState || '',
             // 下面这些只有部分厂商回显里带，采不到就是空，页面统一显示「-」
             name: ont.name || '',
@@ -705,19 +662,20 @@ export const oltDetailMixin = {
             deviceType: ont.deviceType || '',
             onuType: ont.onuType || '',
             distance: ont.distance,
-            rxPower: ont.rxPower || ''
+            rxPower: ont.rxPower || '',
+            // 同步采集时随单台详情（display ont info 0 <槽> <口> <id>）一起采回的字段，
+            // 后端没给就是空，页面显示「-」；老快照缺字段时点一次「同步ONT状态」补齐
+            mgmtIp: ont.mgmtIp || '',
+            mac: ont.mac || '',
+            lineProfileId: ont.lineProfileId == null ? null : ont.lineProfileId,
+            lineProfileName: ont.lineProfileName || '',
+            srvProfileId: ont.srvProfileId == null ? null : ont.srvProfileId,
+            srvProfileName: ont.srvProfileName || ''
           }))
-          // 口的 ONT 汇总：设备汇总行缺失（老快照 / 回显没打汇总行）时按明细数兜底，
-          // 否则明明有 ONT 在线的口会显示「0 ONT / 0 在线」并被画成离线
-          let onuTotal = port.onuTotal == null ? 0 : port.onuTotal
-          let onuOnline = port.onuOnline == null ? 0 : port.onuOnline
-          if (!onuTotal && onts.length) {
-            onuTotal = onts.length
-            onuOnline = onts.filter(ont => ont.online).length
-          }
-          const onuText = port.onuTotal != null || onuTotal > 0
-            ? onuTotal + ' ONT / ' + onuOnline + ' 在线'
-            : ''
+          // 口的 ONT 汇总（总数 / 在线数 / 汇总文本）后端已算好，页面不再按明细兜底
+          const onuTotal = port.onuTotal == null ? 0 : port.onuTotal
+          const onuOnline = port.onuOnline == null ? 0 : port.onuOnline
+          const onuText = port.onuText || ''
           return {
             no: port.portNo,
             name: port.portName || ('P' + port.portNo),
@@ -735,11 +693,14 @@ export const oltDetailMixin = {
             moduleStatus: port.moduleStatus,
             hasOptic,
             onuText,
-            link,
-            linkText: link === 'online' ? '在线' : link === 'offline' ? '离线' : '',
+            // 链路码（online / offline）只用于 class，中文由后端给
+            link: (port.linkStatus || '').toLowerCase(),
+            linkText: port.linkText || '',
             vlanText,
-            lamp,
-            lampText
+            // 端口灯三态与光模块灯都由后端判定（lampState / opticLamp / opticLampText）
+            lampState: port.lampState,
+            lamp: port.opticLamp || 'unknown',
+            lampText: port.opticLampText || ''
           }
         })
         .sort((a, b) => (a.no || 0) - (b.no || 0))
@@ -769,20 +730,14 @@ export const oltDetailMixin = {
       }
       return ports.concat(missing)
     },
-    /** 把 1,41,45,46 压成 1、41、45-46：连续段合成区间，和网管上的写法一致 */
-    compressVlans(vlans) {
-      return compressVlanRange(vlans)
-    },
     /**
-     * 某个接口放通的 VLAN（上行口才有）：按接口号去 display port vlan 的快照里找，
-     * 面板上每一口的「VLAN …」就是从这里来的，没采集到就返回空串。
+     * 某个接口放通的 VLAN（上行口才有）：按接口号去 display port vlan 的快照里找。
+     * 压缩好的串（{@code 1、41、45-46}）由后端随快照给，页面不再自己压。
      */
     portVlanTextOf(iface) {
       if (!iface) return ''
       const row = (this.portVlans || []).find(item => item && item.iface === iface)
-      if (!row) return ''
-      if (row.vlanText) return row.vlanText
-      return row.vlans && row.vlans.length ? compressVlanRange(row.vlans) : ''
+      return (row && row.vlanText) || ''
     },
     /** 「槽位:端口」作为展开 ONT 明细的 key */
     ontKey(slotNo, portNo) {
@@ -811,21 +766,6 @@ export const oltDetailMixin = {
     },
     hoverOff() {
       this.hoverPort = ''
-    },
-    /** 板卡下所有端口的 ONT 合计，放在「端口 / ONT」这一行的右侧 */
-    buildOnuSummary(board) {
-      const ports = board.ports || []
-      let total = 0
-      let online = 0
-      let known = 0
-      ports.forEach(port => {
-        if (port.onuTotal != null) {
-          total += port.onuTotal
-          online += port.onuOnline || 0
-          known++
-        }
-      })
-      return known ? (total + ' ONT / ' + online + ' 在线') : ''
     },
     /**
      * 状态等级 → 图标：等级的判定在服务端（型号档案 + 状态翻译规则），

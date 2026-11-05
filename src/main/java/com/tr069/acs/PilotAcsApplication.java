@@ -6,8 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-/**
- * TR069 ACS 服务端入口。 */
+/** TR069 ACS 服务端入口 */
 @EnableScheduling
 @MapperScan({"com.tr069.acs.mapper", "com.tr069.acs.biz.mapper", "com.tr069.acs.template.mapper",
         "com.tr069.acs.exec.mapper", "com.tr069.acs.openapi.mapper", "com.tr069.acs.olt.mapper"})

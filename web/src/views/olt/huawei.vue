@@ -21,7 +21,7 @@
     />
 
     <el-card v-if="hasDevice" shadow="never" class="olt-main-card">
-      <el-tabs v-model="activeTab">
+      <el-tabs v-model="activeTab" @tab-click="handleTabClick">
         <el-tab-pane label="OLT 状态" name="spec">
           <!-- 连接概要：先看设备概况，再看下面每块板卡 -->
           <div class="olt-summary">
@@ -175,12 +175,15 @@
         <el-tab-pane label="ONT 配置/状态" name="ont">
           <!-- 汇总窗（总数 / 在线 / 离线）由面板渲染，和操作按钮排在同一行 -->
           <olt-ont-status-panel
-            :ont-boards="ontBoards"
+            :ont-rows="ontRows"
+            :ont-port-options="ontPortOptions"
             :ont-summary="ontSummary"
+            :deletable-boards="deletableBoards"
+            :deletable-ont-total="deletableOntTotal"
             :olt-id="detailId"
             :delete-all-handler="deleteAllOnts"
             :empty-text="'尚未采集到端口/ONT 数据。点右上角「同步ONT状态」立即采集。'"
-            @sync="refreshFull"
+            @sync="syncSection('ont', true)"
           />
         </el-tab-pane>
 

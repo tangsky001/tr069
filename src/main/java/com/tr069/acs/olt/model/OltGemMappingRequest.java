@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 给 GEM Port 加映射：{@code gem mapping <GEM Port> <映射序号> vlan <VLAN>}。
- *
- * <p>「映射序号」是 GEM 内部的编号（0-7），和业务 VLAN 一一对应；页面上两个框都支持
- * 逗号分隔（{@code 1,2} 配 {@code 46,41}），按顺序配对下发。</p>
- */
+/** 给 GEM Port 加映射：{@code gem mapping  <映射序号> vlan } */
 @Data
 public class OltGemMappingRequest {
 

@@ -124,11 +124,6 @@
 <script>
 import { saveOlt, testOlt, fetchOltWebAccounts, fetchOltOptions } from '@/api/olt'
 
-/** 字符集里 AUTO 页面上叫「自动」，其余照原样显示 */
-const CHARSET_LABELS = {
-  AUTO: '自动'
-}
-
 /**
  * 添加 / 编辑 OLT 弹窗。
  *
@@ -193,7 +188,8 @@ export default {
     },
     charsetOptions() {
       const charsets = this.options ? this.options.charsets : []
-      return charsets.map(item => ({ label: CHARSET_LABELS[item] || item, value: item }))
+      const labels = (this.options && this.options.codeTables && this.options.codeTables.charsetLabels) || {}
+      return charsets.map(item => ({ label: labels[item] || item, value: item }))
     },
     defaultPort() {
       if (!this.options) {
@@ -328,11 +324,8 @@ export default {
     },
     buildTestDescription(data) {
       if (!data.success) return data.message || '未知原因'
-      const parts = []
-      if (data.message) parts.push(data.message)
-      if (data.prompt) parts.push('提示符：' + data.prompt)
-      if (data.costMs) parts.push('耗时 ' + data.costMs + ' ms')
-      return parts.join('；')
+      // 摘要由后端拼（message + 提示符 + 耗时），页面不再自己组句子
+      return data.summary || data.message || ''
     },
     handleSave() {
       this.$refs.form.validate(valid => {

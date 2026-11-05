@@ -2,13 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 单条 ONT 的详情：{@code display ont info <端口> <ONT ID>} 里那些块状字段。
- *
- * <p>整块板的 {@code display ont info 0 <槽位> all} 只给 ID / SN / 在线状态，
- * 线路模板、业务模板、IP、最后一次掉线原因这些只有单条详情里才有，
- * 所以不进轮询采集，页面上点某条 ONT 的 SN 时才查一次。</p>
- */
+/** 单条 ONT 的详情：{@code display ont info <端口> } 里那些块状字段 */
 @Data
 public class OltOntInfo {
 
@@ -22,6 +16,9 @@ public class OltOntInfo {
 
     /** ONT IP 0 地址/掩码，如 10.172.10.17/24 */
     private String ip;
+
+    /** MAC 地址：部分版本的单台详情回显里有，没有时采集侧按认证码还原 */
+    private String mac;
 
     /** 线路模板：编号与名称，页面显示成 100 / FTTH-GPON-100 */
     private Integer lineProfileId;

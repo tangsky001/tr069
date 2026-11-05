@@ -68,7 +68,7 @@
         <el-table-column label="模板名" min-width="140">
           <template slot-scope="{ row }">
             <div>{{ row.name || '-' }}</div>
-            <el-tag v-if="isTr069Profile(row)" size="mini" type="info" class="dba-tag">tr069</el-tag>
+            <el-tag v-if="row.tr069Bound" size="mini" type="info" class="dba-tag">tr069</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="PON 类型" width="100" align="center">
@@ -76,7 +76,7 @@
         </el-table-column>
         <el-table-column label="映射关系" min-width="460">
           <template slot-scope="{ row: line }">
-            <el-table :data="mappingRows(line)" size="mini" border class="dba-mapping">
+            <el-table :data="line.mappingRows || []" size="mini" border class="dba-mapping">
               <el-table-column label="T-CONT索引" width="120">
                 <template slot-scope="{ row: m }">
                   <span>{{ m.tcontId == null ? '-' : m.tcontId }}</span>
@@ -92,7 +92,7 @@
               <el-table-column label="DBA模板" width="110">
                 <template slot-scope="{ row: m }">
                   <div>{{ m.dbaProfileId == null ? '-' : m.dbaProfileId }}</div>
-                  <div class="dba-sub">{{ dbaName(m.dbaProfileId) }}</div>
+                  <div class="dba-sub">{{ m.dbaName || '' }}</div>
                 </template>
               </el-table-column>
               <el-table-column label="GEM Port索引" width="120" align="center">
@@ -386,13 +386,6 @@ export default {
     }
   },
   computed: {
-    dbaMap() {
-      const map = {}
-      this.dbaProfiles.forEach(profile => {
-        map[profile.profileId] = profile
-      })
-      return map
-    },
     /** 当前类型要填哪几个带宽字段：矩阵由后端给，页面不认识 type1~type5 */
     currentFields() {
       const hit = this.meta && this.meta.types
@@ -650,50 +643,6 @@ export default {
     /** kbps 原样数字，跟网管上的写法一致（列头已写明单位） */
     rawKbps(kbps) {
       return kbps == null ? '-' : kbps
-    },
-    dbaName(profileId) {
-      const profile = this.dbaMap[profileId]
-      return profile && profile.name ? profile.name : ''
-    },
-    isTr069Profile(row) {
-      return /tr069/i.test(row.name || '')
-    },
-    /**
-     * 映射关系一行一个 GEM port，T-CONT 的 DBA 模板顺带对上；
-     * 模板还没配 GEM 时退回只列 T-CONT（DBA 模板列照常显示）。
-     */
-    mappingRows(row) {
-      const tcontMap = {}
-      ;(row.tconts || []).forEach(t => {
-        tcontMap[t.tcontId] = t
-      })
-      const gemports = row.gemports || []
-      if (!gemports.length) {
-        return (row.tconts || []).map(t => ({
-          tcontId: t.tcontId,
-          dbaProfileId: t.dbaProfileId
-        }))
-      }
-      // 一个 GEM port 可挂多条映射：跟网管一致，同 GEM 的映射ID / VLAN 用逗号合并到一行
-      const rows = []
-      gemports.forEach(g => {
-        const dbaProfileId = tcontMap[g.tcontId] ? tcontMap[g.tcontId].dbaProfileId : null
-        const mappings = (g.mappings && g.mappings.length)
-          ? g.mappings
-          : (g.mappingId != null || g.vlan ? [{ index: g.mappingId, vlan: g.vlan }] : [])
-        const ids = mappings.map(m => m.index).filter(id => id != null)
-        const vlans = mappings.map(m => m.vlan).filter(v => v != null && v !== '')
-        rows.push({
-          tcontId: g.tcontId,
-          dbaProfileId,
-          gemportId: g.gemportId,
-          // GEM 内映射序号：gem mapping <gemport> <序号> vlan <vlan>
-          mappingId: ids.length ? ids.join(',') : null,
-          vlan: vlans.length ? vlans.join(',') : null,
-          mappingMode: g.mappingMode
-        })
-      })
-      return rows
     },
     toggleAllDba(all) {
       const table = this.$refs.dbaTable

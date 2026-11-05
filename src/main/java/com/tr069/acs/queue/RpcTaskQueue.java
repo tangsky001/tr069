@@ -16,10 +16,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * 下发指令队列。ACS 不主动连接设备，指令先在 Redis 里排队，
- * CPE 每次空 POST 时按设备取一条捎带，设备慢或离线都不占线程。
- */
+/** 下发指令队列。ACS 不主动连接设备，指令先在 Redis 里排队 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -29,31 +26,24 @@ public class RpcTaskQueue {
     private final ObjectMapper objectMapper;
     private final QueueProperties properties;
 
-    /** Redis 失败日志节流时间戳。 */
+    /** Redis 失败日志节流时间戳 */
     private final AtomicLong lastFailureLog = new AtomicLong(0);
 
-    /**
-     * 入队唤醒器：把等着取指令的那一跳 HTTP 请求叫起来。缺席时指令等设备下次上报取走，
-     * 不影响下发正确性。
-     */
+    /** 入队唤醒器：把等着取指令的那一跳 HTTP 请求叫起来。缺席时指令等设备下次上报取走 */
     @Autowired(required = false)
     private RpcDeliveryWaiter waiter;
 
-    /** 内存兜底的结果缓存上限，超出即清理，防止 Redis 长时间不可用把内存吃满。 */
+    /** 内存兜底的结果缓存上限，超出即清理，防止 Redis 长时间不可用把内存吃满 */
     private static final int MEMORY_RESULT_LIMIT = 10_000;
 
-    /** Redis 不可用时的内存队列兜底，按设备分流。 */
+    /** Redis 不可用时的内存队列兜底，按设备分流 */
     private final ConcurrentHashMap<String, ConcurrentLinkedQueue<RpcTask>> memoryQueues =
             new ConcurrentHashMap<>();
 
-    /** 内存兜底的结果缓存。 */
+    /** 内存兜底的结果缓存 */
     private final ConcurrentHashMap<Long, MemoryResult> memoryResults = new ConcurrentHashMap<>();
 
-    /**
-     * 提交一条指令到设备队列。
-     *
-     * @return 是否入队成功；设备队列已满或 Redis 不可用时返回 false
-     */
+    /** 提交一条指令到设备队列 */
     public boolean enqueue(RpcTask task) {
         try {
             String key = deviceKey(task.getSn());
@@ -78,10 +68,7 @@ public class RpcTaskQueue {
         }
     }
 
-    /**
-     * 通知等着取指令的那一跳：本实例直接叫醒，同时广播给其他实例——多实例部署时
-     * 入队可能发生在别的节点上。
-     */
+    /** 通知等着取指令的那一跳：本实例直接叫醒，同时广播给其他实例——多实例部署时 */
     private void signal(String sn) {
         if (waiter == null) {
             return;
@@ -94,9 +81,7 @@ public class RpcTaskQueue {
         }
     }
 
-    /**
-     * 取出该设备下一条待下发指令，供空 POST 捎带。
-     */
+    /** 取出该设备下一条待下发指令，供空 POST 捎带 */
     public RpcTask poll(String sn) {
         try {
             String json = redis.opsForList().leftPop(deviceKey(sn));
@@ -111,9 +96,7 @@ public class RpcTaskQueue {
         return queue == null ? null : queue.poll();
     }
 
-    /**
-     * 把指令放回队首，用于下发失败需要重试的场景。
-     */
+    /** 把指令放回队首，用于下发失败需要重试的场景 */
     public void pushBack(RpcTask task) {
         try {
             redis.opsForList().leftPush(deviceKey(task.getSn()), toJson(task));
@@ -126,14 +109,7 @@ public class RpcTaskQueue {
         signal(task.getSn());
     }
 
-    /**
-     * 丢弃上一轮采集压在队列里的旧指令：只丢带批次号且不是当前批次的。
-     * 工单指令没有批次号，一律保留。
-     *
-     * @param sn           设备序列号
-     * @param currentBatch 本次采集批次号，为空表示不做清理
-     * @return 丢弃的指令条数
-     */
+    /** 丢弃上一轮采集压在队列里的旧指令：只丢带批次号且不是当前批次的 */
     public int dropStale(String sn, String currentBatch) {
         if (currentBatch == null || currentBatch.isBlank()) {
             return 0;
@@ -199,9 +175,7 @@ public class RpcTaskQueue {
 
     // ==================== 结果 ====================
 
-    /**
-     * 写入指令执行结果，供调用方按 taskId 查询。
-     */
+    /** 写入指令执行结果，供调用方按 taskId 查询 */
     public void saveResult(RpcTaskResult result) {
         try {
             redis.opsForValue().set(resultKey(result.getTaskId()),
@@ -239,9 +213,7 @@ public class RpcTaskQueue {
         return cached.result;
     }
 
-    /**
-     * 提交后立即写入排队状态，避免调用方查询时查不到任务。
-     */
+    /** 提交后立即写入排队状态，避免调用方查询时查不到任务 */
     public void saveQueued(RpcTask task) {
         RpcTaskResult result = new RpcTaskResult();
         result.setTaskId(task.getTaskId());
@@ -260,10 +232,7 @@ public class RpcTaskQueue {
         return properties.getKeyPrefix() + ":rpc:result:" + taskId;
     }
 
-    /**
-     * 还原指令参数。JSON 往返后容器类型会退化为 LinkedHashMap/ArrayList，
-     * 与 SOAP 构建时的遍历方式兼容。
-     */
+    /** 还原指令参数。JSON 往返后容器类型会退化为 LinkedHashMap/ArrayList */
     public Map<String, Object> parseArgs(String argsJson) {
         if (argsJson == null || argsJson.isBlank()) {
             return Map.of();
@@ -294,12 +263,7 @@ public class RpcTaskQueue {
         }
     }
 
-    /**
-     * Redis 异常日志节流。
-     *
-     * <p>空 POST 每次都会查队列，Redis 不可用时会高频出错，
-     * 这里限制成最多 30 秒一条，避免把日志打满。</p>
-     */
+    /** Redis 异常日志节流 */
     private void logFailure(String scene, Exception e) {
         long now = System.currentTimeMillis();
         long last = lastFailureLog.get();
@@ -308,9 +272,7 @@ public class RpcTaskQueue {
         }
     }
 
-    /**
-     * 内存兜底入队，容量与 Redis 侧一致，避免无限堆积把内存吃满。
-     */
+    /** 内存兜底入队，容量与 Redis 侧一致，避免无限堆积把内存吃满 */
     private boolean enqueueMemory(RpcTask task) {
         ConcurrentLinkedQueue<RpcTask> queue =
                 memoryQueues.computeIfAbsent(task.getSn(), k -> new ConcurrentLinkedQueue<>());
@@ -323,9 +285,7 @@ public class RpcTaskQueue {
         return true;
     }
 
-    /**
-     * 内存结果缓存的清理：先丢过期的，仍超限就再丢一批最早的。
-     */
+    /** 内存结果缓存的清理：先丢过期的，仍超限就再丢一批最早的 */
     private void evictMemoryResults() {
         if (memoryResults.size() <= MEMORY_RESULT_LIMIT) {
             return;
@@ -339,42 +299,35 @@ public class RpcTaskQueue {
         memoryResults.keySet().stream().limit(excess).forEach(memoryResults::remove);
     }
 
-    /**
-     * 队列中的一条下发指令。
-     */
+    /** 队列中的一条下发指令 */
     @Data
     public static class RpcTask {
 
-        /** 任务号，同时是 rpc_record 主键，便于审计与查询。 */
+        /** 任务号，同时是 rpc_record 主键，便于审计与查询 */
         private long taskId;
 
         private String sn;
 
         private String rpcName;
 
-        /** 方法参数的 JSON 形式。 */
+        /** 方法参数的 JSON 形式 */
         private String argsJson;
 
         private String worklistId;
 
-        /**
-         * 所属采集批次，只有能力采集产生的指令才有，用于识别上一轮采集没发完的残留指令：
-         * 不清掉它们会被下一轮采集反复消费，还会占满设备队列。
-         */
+        /** 所属采集批次，只有能力采集产生的指令才有，用于识别上一轮采集没发完的残留指令 */
         private String batch;
 
-        /** 已尝试下发的次数。只在没收到回应时累加；设备回了 fault 不再重试。 */
+        /** 已尝试下发的次数。只在没收到回应时累加；设备回了 fault 不再重试 */
         private int attempts;
 
-        /** 到期才可以再下发的时间戳（毫秒），0 表示随到随发。重试按 delay * 2^n 递增。 */
+        /** 到期才可以再下发的时间戳（毫秒），0 表示随到随发。重试按 delay * 2^n 递增 */
         private long notBefore;
 
         private long createdAt = System.currentTimeMillis();
     }
 
-    /**
-     * 指令执行结果，提供调用方轮询。
-     */
+    /** 指令执行结果，提供调用方轮询 */
     @Data
     public static class RpcTaskResult {
 
@@ -384,7 +337,7 @@ public class RpcTaskQueue {
 
         private String rpcName;
 
-        /** queued / running / success / fail。 */
+        /** queued / running / success / fail */
         private String status;
 
         private String faultCode;
@@ -396,11 +349,36 @@ public class RpcTaskQueue {
         private long submitTime;
 
         private long finishTime;
+
+        /** 状态中文：排队中 / 执行中 / 成功 / 失败 */
+        public String getStatusText() {
+            if (status == null) {
+                return "未知";
+            }
+            return switch (status) {
+                case "queued" -> "排队中";
+                case "running" -> "执行中";
+                case "success" -> "成功";
+                case "fail" -> "失败";
+                default -> status;
+            };
+        }
+
+        /** 状态标签配色（Element UI 的 type）：语义在后端判，页面只上色 */
+        public String getStatusLevel() {
+            if (status == null) {
+                return "info";
+            }
+            return switch (status) {
+                case "running" -> "warning";
+                case "success" -> "success";
+                case "fail" -> "danger";
+                default -> "info";
+            };
+        }
     }
 
-    /**
-     * 内存兜底的结果项，带过期时间，Redis 恢复后不再依赖它。
-     */
+    /** 内存兜底的结果项，带过期时间，Redis 恢复后不再依赖它 */
     private static class MemoryResult {
 
         private final RpcTaskResult result;

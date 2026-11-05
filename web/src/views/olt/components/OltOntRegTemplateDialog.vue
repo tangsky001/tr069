@@ -37,10 +37,7 @@
           tip="光猫上送什么就按什么认：GPON 多用 SN，EPON 多用 MAC；LOID / Password 是运营商给光猫配的逻辑标识。"
         />
         <el-radio-group v-model="form.authMode">
-          <el-radio label="SN">SN（设备序列号）</el-radio>
-          <el-radio label="MAC">MAC</el-radio>
-          <el-radio label="LOID">LOID（逻辑ID）</el-radio>
-          <el-radio label="PASSWORD">Password（密码）</el-radio>
+          <el-radio v-for="item in authModes" :key="item.code" :label="item.code">{{ item.label }}</el-radio>
         </el-radio-group>
       </el-form-item>
 
@@ -51,8 +48,7 @@
           tip="按板卡选。GPON/XGPON 与 EPON/10G EPON 的注册命令、模板 ID 空间都不通用，选错模板套不上。"
         />
         <el-radio-group v-model="form.ponType">
-          <el-radio label="GPON">GPON/XGPON</el-radio>
-          <el-radio label="EPON">EPON/10G EPON</el-radio>
+          <el-radio v-for="item in ponTypes" :key="item.code" :label="item.code">{{ item.label }}</el-radio>
         </el-radio-group>
       </el-form-item>
 
@@ -117,10 +113,7 @@
           tip="HGU 网关型由光猫自己拨号、发 Wi-Fi；SFU 桥接型只做二层透传，由后面的路由或 BRAS 认；混合型两种都支持；MDU 是楼道外置型。选错光猫起来也没网。"
         />
         <el-select v-model="form.workMode" size="small" class="reg-select">
-          <el-option label="HGU/网关型（默认）" value="HGU" />
-          <el-option label="SFU/桥接型（不带路由功能）" value="SFU" />
-          <el-option label="HGU + SFU 兼容/混合型" value="MIX" />
-          <el-option label="ONU/外置型光猫（MDU）" value="MDU" />
+          <el-option v-for="item in workModes" :key="item.code" :label="item.label" :value="item.code" />
         </el-select>
       </el-form-item>
 
@@ -179,7 +172,7 @@
 
 <script>
 import OltHelpLabel from './OltHelpLabel'
-import { fetchOntRegTemplateDefault } from '@/api/olt'
+import { fetchOntRegTemplateDefault, fetchOltOptions } from '@/api/olt'
 
 /**
  * 自动注册模板的编辑弹窗。
@@ -240,7 +233,9 @@ export default {
   data() {
     return {
       // 打开时才由后端填默认值；这里是空壳，不放任何业务默认值
-      form: toForm({ oltIp: this.oltIp })
+      form: toForm({ oltIp: this.oltIp }),
+      /** 注册方式 / PON 类型 / 工作模式的可选项，来自后端 /olt/options */
+      optionTables: null
     }
   },
   computed: {
@@ -254,7 +249,28 @@ export default {
     },
     isEdit() {
       return !!(this.template && this.template.id)
+    },
+    codeTables() {
+      return (this.optionTables && this.optionTables.codeTables) || {}
+    },
+    authModes() {
+      return this.codeTables.authModes || []
+    },
+    ponTypes() {
+      return this.codeTables.ponTypes || []
+    },
+    workModes() {
+      return this.codeTables.workModes || []
     }
+  },
+  created() {
+    fetchOltOptions()
+      .then(res => {
+        this.optionTables = res.data || null
+      })
+      .catch(() => {
+        this.optionTables = null
+      })
   },
   methods: {
     async onOpen() {

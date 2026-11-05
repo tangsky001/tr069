@@ -13,20 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 下发任务进度查询：给列表页每行显示「正在下发 xxx」。
- *
- * <p>设备在下发过程中是「哑」的：SPV 一条条写，写完才重启，中间没有任何
- * 会上报的中间状态。ACS 侧能看到的就是这张 {@code device_task} 的状态，
- * 所以进度只能按 task 的状态机来表达 —— 排队（PENDING）→ 下发中（RUNNING）
- * → 成功 / 失败。这里把它翻成人看得懂的中文短语。</p>
- *
- * <p><b>只报下发任务，不报指令队列。</b>设备指令队列里常态压着 ACS 自己的参数采集、
- * 下发后回读这些内部指令，按队列长度显示的话每台设备永远挂着「1 条指令排队中」，
- * 使用者会以为有活干不完。这里只看 {@code device_task}：有业务在真正下发才有行。</p>
- *
- * <p>重启 / 恢复出厂这类单条 RPC 同样不建任务，进度由提交它的页面自己记。</p>
- */
+/** 下发任务进度查询：给列表页每行显示「正在下发 xxx」 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -34,16 +21,11 @@ public class DeviceTaskProgressService {
 
     private final DeviceTaskMapper taskMapper;
 
-    /** 算「正在进行」的两个状态：已受理还没排到 / 指令已在队列里跑。 */
+    /** 算「正在进行」的两个状态：已受理还没排到 / 指令已在队列里跑 */
     private static final List<String> ACTIVE_STATUS =
             List.of(DeviceTask.STATUS_PENDING, DeviceTask.STATUS_RUNNING);
 
-    /**
-     * 批量查一批设备的进行中任务。
-     *
-     * @param sns 要查的序列号，空 list 返回空 map
-     * @return {@code sn -> { tasks: [...] }}
-     */
+    /** 批量查一批设备的进行中任务 */
     public Map<String, Map<String, Object>> activeBatch(List<String> sns) {
         Map<String, Map<String, Object>> result = new LinkedHashMap<>();
         if (sns == null || sns.isEmpty()) {
@@ -74,8 +56,12 @@ public class DeviceTaskProgressService {
             taskView.put("status", head.getStatus());
             taskView.put("label", labelOf(head.getCategory(), head.getStatus()));
             taskView.put("phase", phaseOf(head.getStatus()));
+            // 行内小标签要的是「排队 / 执行」两态，页面原来拿 PENDING 字符串自己判
+            taskView.put("phaseKey", DeviceTask.STATUS_PENDING.equals(head.getStatus()) ? "queued" : "running");
             taskView.put("createdAt", head.getCreatedAt() == null ? null : head.getCreatedAt().toString());
             taskView.put("queuedOthers", rows.size() - 1);
+            // 折叠文案也在这里拼：条数是后端数的，文案不该在页面上拼一次
+            taskView.put("queuedText", rows.size() > 1 ? "还有 " + (rows.size() - 1) + " 条任务排队" : "");
             result.computeIfAbsent(entry.getKey(), DeviceTaskProgressService::empty)
                     .put("tasks", List.of(taskView));
         }
@@ -89,12 +75,7 @@ public class DeviceTaskProgressService {
         return row;
     }
 
-    /**
-     * 任务正在做什么，直接给页面上「正在下发 xxx」用。
-     *
-     * <p>业务类型到短语的映射只有这一份：模板类型（{@code WAN_DHCP} 这类）
-     * 是下发引擎的内部口径，页面不该自己去翻译。</p>
-     */
+    /** 任务正在做什么，直接给页面上「正在下发 xxx」用 */
     private static String labelOf(String category, String status) {
         String name = wordOf(category);
         if (DeviceTask.STATUS_PENDING.equals(status)) {
@@ -120,7 +101,7 @@ public class DeviceTaskProgressService {
         };
     }
 
-    /** 人看得懂的阶段名：排队 / 下发中。 */
+    /** 人看得懂的阶段名：排队 / 下发中 */
     private static String phaseOf(String status) {
         return DeviceTask.STATUS_PENDING.equals(status) ? "排队中" : "下发中";
     }

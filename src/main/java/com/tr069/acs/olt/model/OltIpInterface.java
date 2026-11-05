@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 三层 VLAN 接口（Vlanif），来自 {@code display ip interface brief}。
- *
- * <p>回显里只有 {@code vlanif46  10.172.10.254/24  up  up} 这样一行，
- * 页面按「VLAN ID / VLAN IP / 子网掩码」展示，所以这里把 /24 换算成 255.255.255.0。</p>
- */
+/** 三层 VLAN 接口（Vlanif），来自 {@code display ip interface brief} */
 @Data
 public class OltIpInterface {
 

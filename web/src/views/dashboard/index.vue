@@ -136,13 +136,12 @@ export default {
     }
   },
   computed: {
+    // 品牌分布与条形宽度比例都由后端算好（percent 字段），页面只渲染
     brands() {
-      const list = this.overview.brands || []
-      const max = list.reduce((m, b) => Math.max(m, b.count || 0), 0)
-      return list.map(b => ({
+      return (this.overview.brands || []).map(b => ({
         name: b.name,
         count: b.count || 0,
-        percent: max === 0 ? 0 : Math.round((b.count / max) * 100)
+        percent: b.percent || 0
       }))
     },
     worklist() {

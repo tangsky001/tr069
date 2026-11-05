@@ -5,41 +5,37 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 运营商：移动 / 电信 / 联通 / 广电，以及未归类时的通用档。
- */
+/** 运营商：移动 / 电信 / 联通 / 广电，以及未归类时的通用档 */
 public enum Isp {
 
-    /** 中国移动。 */
+    /** 中国移动 */
     CMCC("CMCC", "中国移动", "CM", "X_CMCC_", ""),
 
-    /**
-     * 中国电信。
-     */
+    /** 中国电信 */
     CT("CT", "中国电信", "CT", "X_CT-COM_", "X_CTC_"),
 
-    /** 中国联通。 */
+    /** 中国联通 */
     CU("CU", "中国联通", "CU", "X_CU_", ""),
 
-    /** 中国广电。 */
+    /** 中国广电 */
     CBN("CBN", "中国广电", "CBN", "X_CBN_", ""),
 
-    /** 通用 / 未归类：台账还没登记运营商的设备都走这一档。 */
+    /** 通用 / 未归类：台账还没登记运营商的设备都走这一档 */
     STANDARD("standard", "通用", "standard", "", "");
 
-    /** 台账与配置里写的运营商代码。 */
+    /** 台账与配置里写的运营商代码 */
     private final String code;
 
-    /** 展示用中文名。 */
+    /** 展示用中文名 */
     private final String label;
 
-    /** 型号档案目录名：移动 CM / 电信 CT / 联通 CU / 广电 CBN。 */
+    /** 型号档案目录名：移动 CM / 电信 CT / 联通 CU / 广电 CBN */
     private final String dir;
 
-    /** 该运营商定制机的 CWMP 私有参数前缀，用于从能力树反查运营商。 */
+    /** 该运营商定制机的 CWMP 私有参数前缀，用于从能力树反查运营商 */
     private final String prefix;
 
-    /** 同一家运营商的第二套私有前缀（电信 {@code X_CTC_}），没有则为空。 */
+    /** 同一家运营商的第二套私有前缀（电信 {@code X_CTC_}），没有则为空 */
     private final String altPrefix;
 
     Isp(String code, String label, String dir, String prefix, String altPrefix) {
@@ -66,11 +62,7 @@ public enum Isp {
         return prefix;
     }
 
-    /**
-     * 归一化：台账里可能有 CM / CTCC / CHINA-UNICOM 之类写法，统一收敛到枚举。
-     *
-     * @param value 台账或配置里的运营商，空值与认不出的写法都归到 {@link #STANDARD}
-     */
+    /** 归一化：台账里可能有 CM / CTCC / CHINA-UNICOM 之类写法，统一收敛到枚举 */
     public static Isp of(String value) {
         if (value == null || value.isBlank()) {
             return STANDARD;
@@ -85,9 +77,7 @@ public enum Isp {
         };
     }
 
-    /**
-     * 按存储目录反查（型号档案目录名与代码不是一回事：CMCC 的目录是 CM）。
-     */
+    /** 按存储目录反查（型号档案目录名与代码不是一回事：CMCC 的目录是 CM） */
     public static Isp ofDir(String dir) {
         if (dir == null || dir.isBlank()) {
             return STANDARD;
@@ -101,9 +91,7 @@ public enum Isp {
         return STANDARD;
     }
 
-    /**
-     * 从能力树（或 Inform 参数）里按私有前缀判定运营商。
-     */
+    /** 从能力树（或 Inform 参数）里按私有前缀判定运营商 */
     public static Isp detect(List<String> paths) {
         if (paths == null || paths.isEmpty()) {
             return null;

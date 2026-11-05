@@ -4,13 +4,7 @@ import lombok.Data;
 
 import java.util.List;
 
-/**
- * PON 端口状态，随板卡一起返回给页面，用来点亮「光模块在位」指示灯。
- *
- * <p>华为 display port state 回显里的 Optic Status 取值：
- * {@code normal} 在位、{@code absence} 不在位、{@code abnormal} 故障、{@code mismatch} 类型不匹配。
- * 解析不出时 {@code opticalPresent} 为 null，页面显示灰灯（未采集），而不是误报「不在位」。</p>
- */
+/** PON 端口状态，随板卡一起返回给页面，用来点亮「光模块在位」指示灯 */
 @Data
 public class OltPort {
 
@@ -67,4 +61,42 @@ public class OltPort {
 
     /** 该端口下每个 ONT 的状态（在线和不在线都在），页面展开后逐条显示 */
     private List<OltOnt> onts;
+
+    /** 端口指示灯三态（alarm / online / offline），detail 组装时按采集值现算 */
+    private String lampState;
+
+    // ---------------- 以下字段 detail 组装时算好下发，页面只渲染 ----------------
+
+    /** 接口标识，命令行口径：框/槽/口，如 {@code 0/1/0} */
+    private String iface;
+
+    /** 上行口放通的 VLAN（压缩成「1、41、45-46」），来自 display port vlan 快照 */
+    private String vlanText;
+
+    /** ONT 汇总文本：「23 ONT / 22 在线」；汇总行缺失时按明细数兜底，没采到为空 */
+    private String onuText;
+
+    /** 链路状态中文：在线 / 离线 / 空（未采到） */
+    private String linkText;
+
+    /** 光模块指示灯：on 在位 / off 不在位 / warn 异常 / unknown 未采集 */
+    private String opticLamp;
+
+    /** 光模块指示灯的提示文案（页面 tooltip 直接显示） */
+    private String opticLampText;
+
+    /** 面板上的口名：PON 口是「PON 2」，上行口按速率前缀是「10GE 1」 */
+    private String labelText;
+
+    /** 面板标注第三行：接口号 + 放通 VLAN，如「0/1/0 · VLAN 41、45-46」，都没有是「—」 */
+    private String subText;
+
+    /** 光模块数值一行：「发光 4.23 dBm · 收光 -8.12 dBm · 温度 35 ℃…」，没采到写「光模块未采集」 */
+    private String opticText;
+
+    /** 面板标注第二行：PON 口写「22 / 23 ONT 在线」，上行口写「链路 在线」 */
+    private String panelText;
+
+    /** 悬停提示：口名 · 接口号 · 灯态 · ONT 汇总 · VLAN · 光模块，页面直接放进 title */
+    private String tooltipText;
 }

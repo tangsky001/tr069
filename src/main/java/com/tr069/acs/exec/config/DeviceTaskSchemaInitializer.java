@@ -10,12 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * 下发任务表的自动建表，与业务模板表同一套路：启动阶段幂等补建，失败不阻断启动。
- *
- * <p>跑在 Bean 初始化阶段（InitializingBean）而不是 ApplicationRunner：后者要等容器刷新
- * 结束才轮到，届时定时任务已经在并发跑了，表晚于任务建出来会直接报「表不存在」。</p>
- */
+/** 下发任务表的自动建表，与业务模板表同一套路：启动阶段幂等补建，失败不阻断启动 */
 @Slf4j
 @Component
 @RequiredArgsConstructor

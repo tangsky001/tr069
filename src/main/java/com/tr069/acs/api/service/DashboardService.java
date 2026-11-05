@@ -13,27 +13,23 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 首页概览统计：设备总量、在线离线、品牌分布、已下发未下发。
- */
+/** 首页概览统计：设备总量、在线离线、品牌分布、已下发未下发 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DashboardService {
 
-    /** cpe_device 逻辑删除字段值，MyBatis-Plus 的 @TableLogic 默认 0 表示未删除。 */
+    /** cpe_device 逻辑删除字段值，MyBatis-Plus 的 @TableLogic 默认 0 表示未删除 */
     private static final int NOT_DELETED = 0;
 
     private final JdbcTemplate jdbcTemplate;
     private final ConfigTemplateService configTemplateService;
 
-    /** 判定在线的「最近上报」时间窗口(秒)。 */
+    /** 判定在线的「最近上报」时间窗口(秒) */
     @Value("${acs.dashboard.online-window-seconds:900}")
     private long onlineWindowSeconds;
 
-    /**
-     * 首页概览。
-     */
+    /** 首页概览 */
     public Map<String, Object> overview() {
         Map<String, Object> data = new LinkedHashMap<>();
 
@@ -58,9 +54,7 @@ public class DashboardService {
         return data;
     }
 
-    /**
-     * 品牌（厂商）分布，空厂商用 OUI 兜底。
-     */
+    /** 品牌（厂商）分布，空厂商用 OUI 兜底 */
     private List<Map<String, Object>> brands() {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT COALESCE(NULLIF(TRIM(manufacturer), ''), NULLIF(TRIM(oui), ''), '未识别') AS brand, "
@@ -74,6 +68,7 @@ public class DashboardService {
             merged.merge(name, toInt(row.get("total")), Integer::sum);
         }
         List<Map<String, Object>> brands = new ArrayList<>(merged.size());
+        int max = merged.values().stream().mapToInt(Integer::intValue).max().orElse(0);
         merged.entrySet().stream()
                 .sorted((a, b) -> b.getValue().equals(a.getValue())
                         ? a.getKey().compareTo(b.getKey())
@@ -82,17 +77,14 @@ public class DashboardService {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("name", e.getKey());
                     item.put("count", e.getValue());
+                    // 条形图展示比例：页面原来自己拿 count 除最大值算宽度
+                    item.put("percent", max == 0 ? 0 : Math.round(e.getValue() * 100f / max));
                     brands.add(item);
                 });
         return brands;
     }
 
-    /**
-     * 厂商品牌映射：上报的厂商名（大小写不敏感，取子串）-> 现场用的中文品牌。
-     *
-     * <p>表里放各家固件实际会写的字样。英文那列是固件上报的写法，中文那列是
-     * 部分国产厂商直接回中文的情况，两种都要能认。</p>
-     */
+    /** 厂商品牌映射：上报的厂商名（大小写不敏感，取子串）-> 现场用的中文品牌 */
     private static final Map<String, String> BRAND_NAMES = brandNames();
 
     private static Map<String, String> brandNames() {
@@ -121,7 +113,7 @@ public class DashboardService {
         return map;
     }
 
-    /** 厂商名归一：认得的换成中文品牌，认不得的保留原样。 */
+    /** 厂商名归一：认得的换成中文品牌，认不得的保留原样 */
     private static String brandName(String raw) {
         String name = raw == null ? "" : raw.trim();
         if (name.isEmpty() || "未识别".equals(name)) {
@@ -141,9 +133,7 @@ public class DashboardService {
         return name;
     }
 
-    /**
-     * 工单执行结果统计。
-     */
+    /** 工单执行结果统计 */
     private Map<String, Object> worklistStats() {
         Map<String, Object> stats = new LinkedHashMap<>();
         int total = count("SELECT COUNT(*) FROM worklist");
@@ -155,9 +145,7 @@ public class DashboardService {
         return stats;
     }
 
-    /**
-     * 配置模板统计：意图模板总数与启用数。
-     */
+    /** 配置模板统计：意图模板总数与启用数 */
     private Map<String, Object> templateStats() {
         int enabled = 0;
         for (Map<String, Object> template : configTemplateService.list(null, null)) {

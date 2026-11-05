@@ -27,7 +27,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -39,21 +41,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * ONT 注册：模板维护 + 手动一键注册 + 后台自动注册。
- *
- * <p>注册动作本身只有一条 {@code ont confirm}：拿自动发现表里那个 Number 直接确认，
- * ONT ID 由设备分配。真正要做的事在这之前——这台光猫该套哪条模板、它是不是已经在
- * 别的口上注册过、设备的注册表是不是满了。</p>
- *
- * <p>两个刻意的取舍：</p>
- * <ul>
- *   <li><strong>每次都留记录</strong>：自动注册是后台跑的，页面上看不见过程，
- *       成了的能看出套了哪个模板，没成的把设备回的原因带上。</li>
- *   <li><strong>失败不中断</strong>：一台注册失败（SN 重复、模板没匹配上）不影响其它台，
- *       结果逐条返回，页面逐条显示。</li>
- * </ul>
- */
+/** ONT 注册：模板维护 + 手动一键注册 + 后台自动注册 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -83,11 +71,7 @@ public class OltOntRegService {
 
     // ---------------------------------------------------------------- 注册模板
 
-    /**
-     * 模板列表。
-     *
-     * @param onlyCurrent true 时只取「不限设备」和绑在这台 OLT 上的，页面「只显示当前 OLT 模板」用
-     */
+    /** 模板列表 */
     public List<OltOntRegTemplate> templates(Long oltId, boolean onlyCurrent) {
         LambdaQueryWrapper<OltOntRegTemplate> wrapper = new LambdaQueryWrapper<>();
         if (onlyCurrent && oltId != null) {
@@ -99,12 +83,7 @@ public class OltOntRegService {
         return templateMapper.selectList(wrapper);
     }
 
-    /**
-     * 新建模板的初始表单：默认值由后端给，页面不自己准备一份。
-     *
-     * <p>以前弹窗里写死 {@code 认证方式=SN / PON类型=GPON / 优先级=0 / 工作模式=HGU}，
-     * 后端保存时还要再兜一次底——两处默认值，改一处就对不上。现在只有这里一份。</p>
-     */
+    /** 新建模板的初始表单：默认值由后端给，页面不自己准备一份 */
     public OltOntRegTemplate blankTemplate(Long oltId, String oltIp) {
         OltOntRegTemplate template = new OltOntRegTemplate();
         template.setOltId(oltId);
@@ -122,6 +101,22 @@ public class OltOntRegService {
     public OltOntRegTemplate saveTemplate(Long oltId, OltOntRegTemplate form) {
         if (form == null || form.getName() == null || form.getName().isBlank()) {
             throw new IllegalArgumentException("模板名称不能为空");
+        }
+        // 优先级是匹配顺序也是设备侧理解的值域，越界直接拒，不让一条脏数据进库
+        if (form.getPriority() != null && (form.getPriority() < 0 || form.getPriority() > 999)) {
+            throw new IllegalArgumentException("优先级要填 0-999 之间的数字");
+        }
+        if (form.getAuthMode() != null && !form.getAuthMode().isBlank()
+                && !Set.of("SN", "MAC", "LOID", "PASSWORD").contains(form.getAuthMode().trim().toUpperCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("注册方式只能是 SN / MAC / LOID / PASSWORD");
+        }
+        if (form.getPonType() != null && !form.getPonType().isBlank()
+                && !Set.of("GPON", "EPON").contains(form.getPonType().trim().toUpperCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("PON 类型只能是 GPON / EPON");
+        }
+        if (form.getWorkMode() != null && !form.getWorkMode().isBlank()
+                && !Set.of("HGU", "SFU", "MIX", "MDU").contains(form.getWorkMode().trim().toUpperCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("光猫工作模式只能是 HGU / SFU / MIX / MDU");
         }
         OltOntRegTemplate template = new OltOntRegTemplate();
         template.setId(form.getId());
@@ -179,6 +174,8 @@ public class OltOntRegService {
     public OltOntRegConfig config(Long oltId) {
         OltOntRegConfig config = selectConfig(oltId);
         if (config != null) {
+            // 时间文本随参数一起给：当天只写时分秒、跨天带月日，页面原来自己判「是不是今天」
+            decorateTimes(config);
             return config;
         }
         OltOntRegConfig fresh = new OltOntRegConfig();
@@ -189,7 +186,31 @@ public class OltOntRegService {
         fresh.setConcurrency(1);
         fresh.setAutoMove(0);
         fresh.setAutoDeleteOffline(0);
+        decorateTimes(fresh);
         return fresh;
+    }
+
+    /** 当天的时间只写时分秒，看得清「刚扫过」 */
+    private static final DateTimeFormatter TIME_ONLY = DateTimeFormatter.ofPattern("HH:mm:ss");
+
+    /** 跨天的时间带上月-日，避免把昨天的记录看成今天的 */
+    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss");
+
+    /** 三个「最近…」时间的显示文本：当天只写时分秒，跨天写月-日 时分秒，空着写「—」 */
+    private static void decorateTimes(OltOntRegConfig config) {
+        LocalDate today = LocalDate.now();
+        config.setLastScanText(timeTextOf(config.getLastScanAt(), today));
+        config.setLastRegisterText(timeTextOf(config.getLastRegisterAt(), today));
+        config.setLastSaveText(timeTextOf(config.getLastSaveAt(), today));
+    }
+
+    private static String timeTextOf(LocalDateTime time, LocalDate today) {
+        if (time == null) {
+            return "—";
+        }
+        return time.toLocalDate().isEqual(today)
+                ? time.format(TIME_ONLY)
+                : time.format(DATE_TIME);
     }
 
     public OltOntRegConfig saveConfig(Long oltId, OltOntRegConfig form) {
@@ -240,11 +261,7 @@ public class OltOntRegService {
 
     // ---------------------------------------------------------------- 注册
 
-    /**
-     * 注册一批待注册 ONT。
-     *
-     * @param source AUTO / MANUAL：自动注册受并发上限约束，且重复的失败不重复记记录
-     */
+    /** 注册一批待注册 ONT */
     public List<OltOntRegisterResult> register(Long oltId, OltOntRegisterRequest request,
                                                String operator, String source) {
         OltDevice device = requireDevice(oltId);
@@ -317,19 +334,12 @@ public class OltOntRegService {
         return commands;
     }
 
-    /**
-     * 后台自动跑一轮：扫设备上的待注册 ONT → 按优先级匹配模板 → 注册 → 到点存盘。
-     *
-     * @return 本轮成功注册的数量
-     */
+    /** 后台自动跑一轮：扫设备上的待注册 ONT → 按优先级匹配模板 → 注册 → 到点存盘 */
     public int autoRegister(Long oltId) {
         return runCycle(oltId, true);
     }
 
-    /**
-     * 手动触发的一轮：不看开关（开关管的是后台定时任务跑不跑），
-     * 其余和定时任务完全同一条路径，用来验证参数和模板配得对不对。
-     */
+    /** 手动触发的一轮：不看开关（开关管的是后台定时任务跑不跑） */
     public int scanNow(Long oltId) {
         return runCycle(oltId, false);
     }
@@ -422,6 +432,7 @@ public class OltOntRegService {
             result.setSuccess(true);
             // 注册上只是通了管理通道，用户流量还要业务虚口（service-port）才放得出去
             result.setMessage("已按模板「" + template.getName() + "」注册"
+                    + applyOntModelRemark(device, profile, fsp, row)
                     + deliverServicePorts(device, profile, fsp, template, row));
             return result;
         } catch (Exception first) {
@@ -435,6 +446,7 @@ public class OltOntRegService {
                     if (deleteAndRetry(device, profile, old, commands)) {
                         result.setSuccess(true);
                         result.setMessage("已自动移机到 " + row.getFsp() + " 并注册（原 " + old.fsp + " 已删除）"
+                                + applyOntModelRemark(device, profile, fsp, row)
                                 + deliverServicePorts(device, profile, fsp, template, row));
                         return result;
                     }
@@ -445,6 +457,7 @@ public class OltOntRegService {
                 if (cleared > 0 && deleteAndRetry(device, profile, null, commands)) {
                     result.setSuccess(true);
                     result.setMessage("注册表已满，清掉 " + cleared + " 台离线 ONT 后注册成功"
+                            + applyOntModelRemark(device, profile, fsp, row)
                             + deliverServicePorts(device, profile, fsp, template, row));
                     return result;
                 }
@@ -457,13 +470,7 @@ public class OltOntRegService {
         }
     }
 
-    /**
-     * 命令块：进板视图 → ont confirm → 退出视图。
-     *
-     * <p>认证串跟模板的认证方式走（SN 模板带 SN、LOID 模板带 LOID），
-     * 上面 {@link #authProblem} 已经确认过这台光猫报了这个值，这里拿到的一定非空；
-     * 万一还是空的（命令编不出来），下面按失败上报，别把一条残缺命令打到设备上。</p>
-     */
+    /** 命令块：进板视图 → ont confirm → 退出视图 */
     private List<String> commandsFor(OltVendorProfile profile, int[] fsp,
                                      OltOntRegTemplate template, OltOntRegisterRequest.Row row) {
         List<String> commands = new ArrayList<>();
@@ -481,17 +488,39 @@ public class OltOntRegService {
     /** GEM Port 兜底号：线路模板读不出来时才用它（一键开局建的是 gem add 1） */
     private static final int DEFAULT_GEM_PORT = 1;
 
+    /**
+     * 注册成功后把光猫型号写进 ONT 描述（页面上看到的「备注 / 型号」就是设备侧的 desc），
+     * 例如 P22g-Clac。写失败只记在结果说明里，不能把已经注册成功的 ONT 报成失败——
+     * 描述只是备注，跟能不能上网无关。
+     */
+    private String applyOntModelRemark(OltDevice device, OltVendorProfile profile, int[] fsp,
+                                       OltOntRegisterRequest.Row row) {
+        String model = blankToNull(row.getModel());
+        if (model == null || !profile.supportsOntDescription()) {
+            return "";
+        }
+        Integer ontId = findOntIdOnPort(device, profile, fsp, row.getSn());
+        if (ontId == null) {
+            return "；没查到设备分配的 ONT ID，备注未写型号";
+        }
+        String command = profile.ontDescriptionCommand(fsp[2], ontId, model);
+        if (command == null) {
+            return "";
+        }
+        try {
+            telnetService.sendConfig(device, List.of(
+                    profile.ponViewCommand(fsp[0], fsp[1]), command, "quit"));
+            return "；备注已写型号 " + model;
+        } catch (Exception e) {
+            log.info("ONT 备注写型号失败 id={}: {}", device.getId(), e.getMessage());
+            return "；备注写型号失败：" + rootMessage(e);
+        }
+    }
+
     /** 一轮最多补几台老 ONT 的业务虚口：补太多会一直占着设备的 Telnet 会话 */
     private static final int MAX_REPAIR_PER_ROUND = 10;
 
-    /**
-     * 注册成功后按模板建业务虚口（service-port），返回追加到结果里的说明。
-     *
-     * <p>没有这层虚口，光猫在线了也不通流量——页面上「业务流」列就是空的。</p>
-     *
-     * <p>ONT ID 是 confirm 时设备现分配的，只能注册完再查一遍 SN 拿到；
-     * 虚口索引要避开设备上已有的（第二台现场已经用到 470），取现有最大值往后排。</p>
-     */
+    /** 注册成功后按模板建业务虚口（service-port），返回追加到结果里的说明 */
     private String deliverServicePorts(OltDevice device, OltVendorProfile profile, int[] fsp,
                                        OltOntRegTemplate template, OltOntRegisterRequest.Row row) {
         if (!profile.supportsServicePorts()) {
@@ -525,12 +554,7 @@ public class OltOntRegService {
         }
     }
 
-    /**
-     * 给「早就注册过、但一条业务虚口都没有」的 ONT 补下发。
-     *
-     * <p>自动注册只处理自动发现表里的待注册光猫——已经在线的那些台永远轮不到，
-     * 页面上看就是「在线但没业务流」。扫完待注册的后顺一遍这些台补上。</p>
-     */
+    /** 给「早就注册过、但一条业务虚口都没有」的 ONT 补下发 */
     private int repairServicePorts(OltDevice device, OltVendorProfile profile,
                                    List<OltOntRegTemplate> templates) {
         if (!profile.supportsServicePorts() || templates.isEmpty()) {
@@ -626,11 +650,7 @@ public class OltOntRegService {
         return row;
     }
 
-    /**
-     * 要放通的业务 VLAN：模板上填了的（TR069 VLAN + 业务 VLAN + IPTV VLAN）优先；
-     * 「业务 VLAN 映射」留空时按线路模板里 GEM 实际映射的 VLAN 走——
-     * 页面提示写的就是「留空表示沿用线路模板里的 GEM 映射」。
-     */
+    /** 要放通的业务 VLAN：模板上填了的（TR069 VLAN + 业务 VLAN + IPTV VLAN）优先 */
     private List<Integer> serviceVlansOf(OltDevice device, OltVendorProfile profile,
                                          OltOntRegTemplate template) {
         LinkedHashSet<Integer> vlans = new LinkedHashSet<>();
@@ -651,12 +671,7 @@ public class OltOntRegService {
         return new ArrayList<>(vlans);
     }
 
-    /**
-     * 读线路模板详情，得到「VLAN → 承载它的 GEM Port」；读不到返回空表。
-     *
-     * <p>一次查询两个用途：业务 VLAN 留空时取这里的 VLAN 列表，下发业务虚口时
-     * 取每条 VLAN 自己的 GEM 号——现场结构是一个 VLAN 一个 GEM，写错号设备直接拒。</p>
-     */
+    /** 读线路模板详情，得到「VLAN → 承载它的 GEM Port」；读不到返回空表 */
     private Map<Integer, Integer> gemVlanMapOf(OltDevice device, OltVendorProfile profile,
                                                OltOntRegTemplate template) {
         if (template.getLineProfileId() == null) {
@@ -716,12 +731,7 @@ public class OltOntRegService {
         return null;
     }
 
-    /**
-     * 挑下一个没被占用的业务虚口索引：全表现有里最大的往后排。
-     *
-     * <p>索引是整机一张表（0~32767），按口查会漏掉别的口用过的号，所以查全表。
-     * 注册是串行的（一轮一台一台下发），串着分配不会撞号。</p>
-     */
+    /** 挑下一个没被占用的业务虚口索引：全表现有里最大的往后排 */
     private int nextServicePortIndex(OltDevice device) {
         try {
             List<String> outputs = telnetService.queryCommands(device, List.of("display service-port all"));
@@ -741,6 +751,33 @@ public class OltOntRegService {
         }
     }
 
+    /**
+     * 删 ONT 前先查它名下的业务虚口，编出逐条 undo service-port（config 视图执行）。
+     * 带着 service-port 引用的 ont delete 会被设备顶回来；就算删掉了也会留下指向
+     * 空 ONT 的死流。返回的命令要排在 ont delete 之前下发。
+     */
+    private List<String> servicePortDeleteCommands(OltDevice device, OltVendorProfile profile,
+                                                   int[] fsp, int ontId) {
+        if (!profile.supportsServicePorts()) {
+            return List.of();
+        }
+        String table;
+        try {
+            table = telnetService.queryOntServicePorts(device, fsp[1], fsp[2], ontId);
+        } catch (Exception e) {
+            log.info("查 ONT 业务虚口失败 id={} ont={}: {}", device.getId(), ontId, e.getMessage());
+            return List.of();
+        }
+        List<String> commands = new ArrayList<>();
+        for (OltServicePort sp : OltInfoParser.parseServicePorts(table)) {
+            // 查询兜底会退回整口表格：只删这条 ONT 自己的流，别误伤同口其它光猫
+            if (sp.getIndex() != null && Objects.equals(sp.getOntId(), ontId)) {
+                commands.add(profile.servicePortDeleteCommand(sp.getIndex()));
+            }
+        }
+        return commands;
+    }
+
     /** 删掉别处的旧注册后重试一次 */
     private boolean deleteAndRetry(OltDevice device, OltVendorProfile profile,
                                    RegisteredOnt old, List<String> confirmCommands) {
@@ -751,6 +788,8 @@ public class OltOntRegService {
                 if (fsp == null) {
                     return false;
                 }
+                // 先拆业务虚口再删 ONT，顺序不能反
+                commands.addAll(servicePortDeleteCommands(device, profile, fsp, old.ontId));
                 commands.add(profile.ponViewCommand(fsp[0], fsp[1]));
                 commands.add(profile.ontDeleteCommand(fsp[2], old.ontId));
                 commands.add("quit");
@@ -764,11 +803,7 @@ public class OltOntRegService {
         }
     }
 
-    /**
-     * 清掉某个 PON 口下离线的 ONT，给新光猫腾位置。
-     *
-     * <p>只删离线的：在线的一删就是当场断用户的网，宁可注册失败也不能那么干。</p>
-     */
+    /** 清掉某个 PON 口下离线的 ONT，给新光猫腾位置 */
     private int deleteOffline(OltDevice device, OltVendorProfile profile, int[] fsp) {
         Map<Integer, List<OltOnt>> byPort = ontListOfBoard(device, profile, fsp[0], fsp[1]);
         List<OltOnt> onts = byPort.get(fsp[2]);
@@ -784,6 +819,10 @@ public class OltOntRegService {
             return 0;
         }
         List<String> commands = new ArrayList<>();
+        // undo service-port 在 config 视图发，ont delete 要进 PON 板视图：先拆流再删记录
+        for (Integer ontId : offline) {
+            commands.addAll(servicePortDeleteCommands(device, profile, fsp, ontId));
+        }
         commands.add(profile.ponViewCommand(fsp[0], fsp[1]));
         offline.forEach(ontId -> commands.add(profile.ontDeleteCommand(fsp[2], ontId)));
         commands.add("quit");
@@ -868,9 +907,7 @@ public class OltOntRegService {
 
     // ---------------------------------------------------------------- 模板匹配
 
-    /**
-     * 按优先级挑第一条命中的模板：PON 类型 → 端口 → 型号，三项都对上才算命中。
-     */
+    /** 按优先级挑第一条命中的模板：PON 类型 → 端口 → 型号，三项都对上才算命中 */
     private OltOntRegTemplate match(List<OltOntRegTemplate> templates, OltOntRegisterRequest.Row row) {
         for (OltOntRegTemplate template : templates) {
             if (!isEnabled(template.getEnabled())) {

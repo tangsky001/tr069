@@ -9,26 +9,7 @@ import com.tr069.acs.olt.telnet.OltVendor;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 一家 OLT 厂商（或一条产品线）的全部差异。
- *
- * <p>同一件事各家命令不一样：华为是 {@code display}、第三方是 {@code show}；
- * 华为 MA5600 关分页是 {@code scroll}，其它家是 {@code terminal length 0}；
- * 中兴要认 {@code show card}，而鸿升光一体化根本没有板卡概念。
- * 这些差别以前散落在会话和解析器里，每加一个品牌就要在好几处加 {@code if (vendor == X)}，
- * 现在集中到这里。</p>
- *
- * <p><b>新增一个品牌/型号只需要两步：</b></p>
- * <ol>
- *   <li>写一个类继承 {@link AbstractOltVendorProfile}，只覆写跟别人不一样的那几个方法
- *       （多数情况就是命令清单、{@link #matches}、{@link #extractModel}）；</li>
- *   <li>在 {@link OltVendorProfiles} 的注册表里加一行，枚举里加一个取值。</li>
- * </ol>
- * 会话主流程（登录、探测风格、采板卡、深度采集的编排）不用改。
- *
- * <p>同一个品牌的不同型号也在这里消化：型号带来的差异（PON 口数、命令写法）
- * 属于 {@code XxxOltProfile} 内部的事，见 {@code HsgqOltProfile} 里的型号表。</p>
- */
+/** 一家 OLT 厂商（或一条产品线）的全部差异 */
 public interface OltVendorProfile {
 
     /** 这个 profile 对应哪个厂商枚举值 */
@@ -37,12 +18,7 @@ public interface OltVendorProfile {
     /** 命令风格：华为 {@code display}，第三方 {@code show} */
     OltVendor.CliStyle cliStyle();
 
-    /**
-     * 回显里能不能认出这家厂商——只看厂商关键字，命令风格不参与判断。
-     *
-     * <p>早先用 {@code display} 有回显就记作华为，结果第三方 OLT（也用 display 那一套）
-     * 全被存成 HUAWEI，页面一律出华为界面，华为专属命令在它们上面全是报错。</p>
-     */
+    /** 回显里能不能认出这家厂商——只看厂商关键字，命令风格不参与判断 */
     boolean matches(String output);
 
     /** 关分页命令；空表表示这家设备不用关（回显都很短，或奔不出来分页提示符） */
@@ -57,31 +33,17 @@ public interface OltVendorProfile {
     /** 从版本 / 版本或板卡回显里抠型号，抠不出返回 null */
     String extractModel(String text);
 
-    /**
-     * 一体化整机：没有板卡插框的概念，整台设备按型号生成一张卡片。
-     *
-     * <p>鸿升光 HSGQ 这类就是这样——{@code show pon-info} 在部分固件上只回一声命令回显，
-     * 采不到实际的板卡表，硬按有板卡的方式走会画出一台空的机框。</p>
-     */
+    /** 一体化整机：没有板卡插框的概念，整台设备按型号生成一张卡片 */
     default boolean wholeDevice() {
         return false;
     }
 
-    /**
-     * 整机设备按型号生成整机卡片（{@link #wholeDevice()} 为真时必须实现）。
-     *
-     * @param model 已经取到的型号，取不到时为 null（各家给个兜底型号）
-     */
+    /** 整机设备按型号生成整机卡片（{@link #wholeDevice()} 为真时必须实现） */
     default OltBoard buildWholeDevice(String model) {
         return null;
     }
 
-    /**
-     * 进配置视图（DBA 模板增删、临时查询这类写操作要在里面做）。
-     *
-     * <p>默认是 {@code enable} → {@code config}，判据是提示符变成 {@code (config)#}；
-     * 进法不一样的厂商覆写这个方法。</p>
-     */
+    /** 进配置视图（DBA 模板增删、临时查询这类写操作要在里面做） */
     default boolean enterConfigView(OltCli cli, int timeoutMs) {
         if (cli == null) {
             return false;
@@ -91,110 +53,54 @@ public interface OltVendorProfile {
         return out != null && out.contains("(config)#");
     }
 
-    /**
-     * 厂商专属的深度采集：配置视图里要问的那一堆数据。
-     *
-     * <p>华为那套（温度、逐板端口与光模块、ONT 明细、VLAN、模板）目前还在
-     * {@code OltCliSession} 里逐条编排，没搬到这里；新厂商从这里接管：
-     * 会话进配置视图前调一次，把采到的 VLAN 快照之类直接塞进 {@code snapshot}。</p>
-     *
-     * @param snapshot 本次采集结果，采到什么写什么（没采到就留 null，库里保留上一次的）
-     */
+    /** 厂商专属的深度采集：配置视图里要问的那一堆数据 */
     default void collectDetails(OltCli cli, OltSnapshot snapshot, List<OltBoard> boards,
                                 List<String> notes, int timeoutMs) {
         // 默认没有厂商专属采集
     }
 
-    /**
-     * 页面能不能对这台设备新建 / 删除 VLAN。
-     *
-     * <p>各家 VLAN 命令差异很大（华为 {@code vlan 100} + {@code port default vlan}，
-     * 鸿升光 {@code vlan standard 100} + {@code no vlan 100}），没接入下发能力的厂商
-     * 返回 false，页面就不显示「新增 VLAN」这类按钮，免得上线一个按了报错的入口。</p>
-     */
+    /** 页面能不能对这台设备新建 / 删除 VLAN */
     default boolean supportsVlanConfig() {
         return false;
     }
 
-    /**
-     * 这台设备的哪些端口能做 VLAN 成员（页面「创建 VLAN」弹窗按这个类型给勾选项）。
-     *
-     * <p>鸿升光 EPON 是 {@code epon / ge / xge}；GPON 只有 {@code ge / xge}——
-     * 它的 PON 口不是二层口，业务靠 service-port 绑 GEM Port。</p>
-     */
+    /** 这台设备的哪些端口能做 VLAN 成员（页面「创建 VLAN」弹窗按这个类型给勾选项） */
     default java.util.Set<String> vlanMemberPortTypes() {
         return java.util.Set.of();
     }
 
-    /**
-     * 新建 VLAN 的命令：单个 ID 或一段连续 ID（{@code start == end} 表示单个）。
-     *
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 新建 VLAN 的命令：单个 ID 或一段连续 ID（{@code start == end} 表示单个） */
     default List<String> createVlanCommands(int startVlanId, int endVlanId) {
         return List.of();
     }
 
-    /**
-     * 新建 VLAN 并顺手把端口加进去。
-     *
-     * <p>{@code tagged} / {@code untagged} 是 {@code epon1}、{@code ge3} 这种写法，
-     * 由实现自己按类型分组拼命令（{@code port epon 1,2 tagged}）。
-     * 默认实现忽略端口，只有支持 VLAN 下发的厂商会覆写。</p>
-     *
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 新建 VLAN 并顺手把端口加进去 */
     default List<String> createVlanCommands(int startVlanId, int endVlanId,
                                             List<String> tagged, List<String> untagged) {
         return createVlanCommands(startVlanId, endVlanId);
     }
 
-    /**
-     * 删除 VLAN 的命令：勾选的 ID 可能不连续，实现自己决定合并成一段还是逐条删。
-     *
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 删除 VLAN 的命令：勾选的 ID 可能不连续，实现自己决定合并成一段还是逐条删 */
     default List<String> deleteVlanCommands(List<Integer> vlanIds) {
         return List.of();
     }
 
-    /**
-     * 上行口放通 VLAN 的命令（华为例：{@code port vlan 41,45-46 0/7 0}）。
-     *
-     * @param iface      页面上的口，写法 {@code 0/7/0}
-     * @param vlanIds    要放通的 VLAN，升序去重
-     * @param nativeVlan true 表示按 Native（不打标签）下发
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 上行口放通 VLAN 的命令（华为例：{@code port vlan 41,45-46 0/7 0}） */
     default List<String> addPortVlanCommands(String iface, List<Integer> vlanIds, boolean nativeVlan) {
         return List.of();
     }
 
-    /**
-     * 上行口解除 VLAN 绑定的命令（华为例：{@code no port vlan 41,45-46 0/7 0}）。
-     *
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 上行口解除 VLAN 绑定的命令（华为例：{@code no port vlan 41,45-46 0/7 0}） */
     default List<String> removePortVlanCommands(String iface, List<Integer> vlanIds) {
         return List.of();
     }
 
-    /**
-     * 这台设备支持在页面上直接下发的命令动作（对应手册里一个个「功能 / 命令」格子）。
-     *
-     * <p>默认空表：没接入动作目录的厂商，页面不显示「设备配置」入口。
-     * 鸿升光的是 {@link HsgqActionCatalog}，加功能就是往目录里加一行。</p>
-     */
+    /** 这台设备支持在页面上直接下发的命令动作（对应手册里一个个「功能 / 命令」格子） */
     default List<OltAction> actions() {
         return List.of();
     }
 
-    /**
-     * 这台设备能不能在页面上读写下发 TR-069（ACS）模板。
-     *
-     * <p>模板不落库，页面「刷新」就是登设备查一次，「增加」就是当场下发。
-     * 只有接入过命令的厂商会覆写。</p>
-     */
+    /** 这台设备能不能在页面上读写下发 TR-069（ACS）模板 */
     default boolean supportsTr069Profile() {
         return false;
     }
@@ -204,11 +110,7 @@ public interface OltVendorProfile {
         return List.of();
     }
 
-    /**
-     * 新增 TR-069 模板的命令。
-     *
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 新增 TR-069 模板的命令 */
     default List<String> createTr069ProfileCommands(com.tr069.acs.olt.model.OltTr069ProfileRequest request) {
         return List.of();
     }
@@ -218,12 +120,7 @@ public interface OltVendorProfile {
         return List.of();
     }
 
-    /**
-     * 这台设备能不能采集「待注册 ONT」（还没被授权的那批，光猫报上 SN 但没正式上线）。
-     *
-     * <p>和 {@link #supportsTr069Profile()} 一样是道开关：没接过 {@code display ont autofind}
-     * 回显格式的设备不去瞎猜，页面上也就不会给出「查找新的 ONT 设备」这种点了没反应的按钮。</p>
-     */
+    /** 这台设备能不能采集「待注册 ONT」（还没被授权的那批，光猫报上 SN 但没正式上线） */
     default boolean supportsOntAutofind() {
         return false;
     }
@@ -240,11 +137,7 @@ public interface OltVendorProfile {
 
     // ------------------------------------------------------------ PON 口自动发现开关
 
-    /**
-     * 能不能查/开 PON 口的自动发现（{@code ont-auto-find}）。
-     *
-     * <p>这个开关不开，光猫接上去设备根本不会去发现，待注册列表就永远是空的。</p>
-     */
+    /** 能不能查/开 PON 口的自动发现（{@code ont-auto-find}） */
     default boolean supportsOntAutoFind() {
         return false;
     }
@@ -254,12 +147,7 @@ public interface OltVendorProfile {
         return null;
     }
 
-    /**
-     * 进某块 PON 板视图的命令，端口类型不同写法不同（{@code interface epon 0/1}）。
-     * 默认不管类型，按 {@link #ponViewCommand(int, int)} 给。
-     *
-     * @param ponType {@code gpon} / {@code epon}
-     */
+    /** 进某块 PON 板视图的命令，端口类型不同写法不同（{@code interface epon 0/1}） */
     default String ponViewCommand(int frame, int slot, String ponType) {
         return ponViewCommand(frame, slot);
     }
@@ -279,28 +167,17 @@ public interface OltVendorProfile {
         return List.of();
     }
 
-    /**
-     * 这台设备能不能用「一键开局」一次性下发端口模式、业务 VLAN 和 TR-069 模板。
-     *
-     * <p>开局这几步的写法各厂商不一样，没接过命令的设备不允许下发——
-     * 发出去只会得到一串语法错误，不如当面说不支持。</p>
-     */
+    /** 这台设备能不能用「一键开局」一次性下发端口模式、业务 VLAN 和 TR-069 模板 */
     default boolean supportsQuickSetup() {
         return false;
     }
 
-    /**
-     * 一键开局的命令序列。
-     *
-     * @return 要逐条下发的命令；不支持或没勾选任何开局项时返回空表
-     */
+    /** 一键开局的命令序列 */
     default List<String> quickSetupCommands(com.tr069.acs.olt.model.OltQuickSetupRequest request) {
         return List.of();
     }
 
-    /**
-     * 机框槽位数。默认解析板卡命令回显里的槽位表；整机设备没有槽位表，按卡片数给。
-     */
+    /** 机框槽位数。默认解析板卡命令回显里的槽位表；整机设备没有槽位表，按卡片数给 */
     default Integer slotCount(String boardText, List<OltBoard> boards) {
         if (boardText == null || boardText.isBlank()) {
             return null;
@@ -310,133 +187,83 @@ public interface OltVendorProfile {
 
     // ------------------------------------------------------------ ONT 注册（ont confirm）
 
-    /**
-     * 这台设备能不能把「自动发现到的 ONT」确认成正式 ONT（{@code ont confirm}）。
-     *
-     * <p>没接过回显与命令的厂商不猜：命令发出去只会得到一串语法错误，
-     * 不如当面说不支持，页面也就不会给出点了没反应的按钮。</p>
-     */
+    /** 这台设备能不能把「自动发现到的 ONT」确认成正式 ONT（{@code ont confirm}） */
     default boolean supportsOntConfirm() {
         return false;
     }
 
-    /**
-     * 确认一台待注册 ONT 的命令（在 {@link #ponViewCommand} 进的 PON 板视图里执行）。
-     *
-     * <p>ONT ID 由设备自己分配：不用先查一遍该口用了哪些 ID，少一个来回，
-     * 也避免了自己挑的 ID 正好被占。</p>
-     *
-     * @param port          PON 口号
-     * @param authMode      注册方式：SN / MAC / LOID / PASSWORD
-     * @param authValue     认证串（SN / MAC / LOID / 密码）。设备语法里 sn-auth 后面
-     *                      必须跟值，只给关键字会被回 {@code % Unknown command}
-     * @param lineProfileId 线路模板 ID，为空就不带这个参数
-     * @param srvProfileId  业务模板 ID，为空就不带这个参数
-     * @return 命令；不支持时返回 null
-     */
+    /** 确认一台待注册 ONT 的命令（在 {@link #ponViewCommand} 进的 PON 板视图里执行） */
     default String ontConfirmCommand(int port, String authMode, String authValue,
                                      Integer lineProfileId, Integer srvProfileId) {
         return null;
     }
 
-    /**
-     * 确认所有待确认板卡的命令（config 视图下执行）。
-     *
-     * <p>新插的板卡上电后停在 auto-find 状态，不确认就不加载业务——
-     * 华为的确认命令是 {@code board confirm 0}（0 是机框号）。
-     * 没有这套机制的厂商返回 null。</p>
-     */
+    /** 确认所有待确认板卡的命令（config 视图下执行） */
     default String boardConfirmCommand() {
         return null;
     }
 
-    /**
-     * 查一条 ONT 线路模板详情的命令（config 视图下执行），用来读它 GEM 映射了哪些 VLAN。
-     *
-     * @param ponType    GPON / EPON
-     * @param profileId  线路模板 ID
-     * @return 命令；不支持时返回 null
-     */
+    /** 能不能改 ONT 描述（页面上的「备注 / 型号」就是设备侧的 desc） */
+    default boolean supportsOntDescription() {
+        return false;
+    }
+
+    /** 改一台已注册 ONT 描述的命令（在 {@link #ponViewCommand} 进的 PON 板视图里执行） */
+    default String ontDescriptionCommand(int port, int ontId, String description) {
+        return null;
+    }
+
+    /** 查一条 ONT 线路模板详情的命令（config 视图下执行），用来读它 GEM 映射了哪些 VLAN */
     default String lineProfileDetailCommand(String ponType, int profileId) {
         return null;
     }
 
-    /**
-     * 线路模板里加一条 T-CONT（华为例：{@code tcont 1 dba-profile-id 1000}）。
-     *
-     * <p>返回值是「整段命令」：进模板视图 → 配 T-CONT → commit → quit。模板必须 commit
-     * 才生效，留在模板视图里下一条命令就发错地方了，所以这里一次给全。</p>
-     *
-     * @param ponType      gpon / epon
-     * @param profileId    线路模板 ID
-     * @param tcontId      T-CONT 索引
-     * @param dbaProfileId 这条 T-CONT 引用的 DBA 模板 ID
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 线路模板里加一条 T-CONT（华为例：{@code tcont 1 dba-profile-id 1000}） */
     default List<String> lineTcontAddCommands(String ponType, int profileId, int tcontId, int dbaProfileId) {
         return List.of();
     }
 
-    /**
-     * 线路模板里加一个 GEM Port（华为例：{@code gem add 1 eth tcont 1 encrypt on}）。
-     *
-     * @param tcontId GEM Port 挂在哪条 T-CONT 上
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 线路模板里加一个 GEM Port（华为例：{@code gem add 1 eth tcont 1 encrypt on}） */
     default List<String> lineGemportAddCommands(String ponType, int profileId, int gemportId, int tcontId) {
         return List.of();
     }
 
-    /**
-     * 给线路模板里的一个 GEM Port 加映射（华为例：{@code gem mapping 1 0 vlan 46}）。
-     *
-     * @param mappings 每项是 {@code {映射序号, VLAN ID}}
-     * @return 要逐条下发的命令；不支持时返回空表
-     */
+    /** 给线路模板里的一个 GEM Port 加映射（华为例：{@code gem mapping 1 0 vlan 46}） */
     default List<String> lineGemMappingAddCommands(String ponType, int profileId, int gemportId,
                                                    List<int[]> mappings) {
         return List.of();
     }
 
-    /**
-     * 这台设备支不支持给已注册的 ONT 建业务虚口。
-     *
-     * <p>光猫注册上（{@code ont confirm}）只是通了 OMCI 管理通道，用户流量要走
-     * 业务虚口（service-port）绑 GEM Port 才放得出去——没这层虚口，页面「业务流」
-     * 就是空的，用户也没网。</p>
-     */
+    /** 这台设备支不支持给已注册的 ONT 建业务虚口 */
     default boolean supportsServicePorts() {
         return false;
     }
 
-    /**
-     * 给一台已注册的 ONT 建一条业务虚口的命令（config 视图下执行）。
-     *
-     * @param index   业务虚口索引，调用方保证不与现有冲突
-     * @param vlan    业务 VLAN（OLT 侧 = 用户侧，translate 透传）
-     * @param frame   框号
-     * @param slot    槽位号
-     * @param port    端口号
-     * @param ontId   注册后设备分配的 ONT ID
-     * @param gemPort 线路模板里的 GEM Port 号
-     * @return 命令；不支持时返回 null
-     */
+    /** 给一台已注册的 ONT 建一条业务虚口的命令（config 视图下执行） */
     default String servicePortCommand(int index, int vlan, int frame, int slot, int port,
                                       int ontId, int gemPort) {
         return null;
     }
 
-    /** 删掉一个已注册 ONT 的命令（PON 板视图里执行）：{@code ont delete <port> <ontId>} */
+    /** 删掉一个已注册 ONT 的命令（PON 板视图里执行）：{@code ont delete  } */
     default String ontDeleteCommand(int port, int ontId) {
         return null;
     }
 
     /**
-     * 单块板的详情命令（华为例：{@code display board 0/2}）：板卡型号、每个 PON 口
-     * 的光模块状态，以及每口挂了几个 ONT。清空 ONT 前用它看清楚哪些口上有东西。
-     *
-     * @return 命令；不支持时返回 null
+     * 查一个 ONT（或整个端口，ontId 传 null）名下业务虚口的命令（config 视图执行）。
+     * 删 ONT 前必须先把它的业务虚口拆干净，否则 ont delete 会被引用顶回来。
      */
+    default String servicePortListCommand(int frame, int slot, int port, Integer ontId) {
+        return null;
+    }
+
+    /** 删一条业务虚口的命令（config 视图执行）：华为例 {@code undo service-port 100} */
+    default String servicePortDeleteCommand(int index) {
+        return null;
+    }
+
+    /** 单块板的详情命令（华为例：{@code display board 0/2}）：板卡型号、每个 PON 口 */
     default String boardDetailCommand(int frame, int slot) {
         return null;
     }
@@ -468,15 +295,7 @@ public interface OltVendorProfile {
         return false;
     }
 
-    /**
-     * 建本地用户的命令序列，{@code >>} 开头的行是对设备追问的应答。
-     *
-     * <p>华为的 {@code terminal user name} 是交互式命令：回车后设备一问一答地把用户名、
-     * 密码、级别这些信息逐个要过去。普通命令发完就回提示符，这条不回——所以这里给的
-     * 不只是命令，还得带上按提问顺序排好的应答，会话那边照着问一条回一条。</p>
-     *
-     * @return 命令序列；不支持或参数不合规时返回空表
-     */
+    /** 建本地用户的命令序列，{@code >>} 开头的行是对设备追问的应答 */
     default List<String> terminalUserAddCommands(OltTerminalUserRequest request) {
         return List.of();
     }

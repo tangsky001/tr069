@@ -6,20 +6,14 @@ import com.tr069.acs.olt.entity.OltQuickSetupConfig;
 import com.tr069.acs.olt.mapper.OltQuickSetupConfigMapper;
 import com.tr069.acs.olt.model.HuaweiQuickSetupRequest;
 import com.tr069.acs.olt.model.OltHuaweiSetupForm;
-import com.tr069.acs.olt.vendor.HuaweiQuickSetupPlanner;
+import com.tr069.acs.olt.vendor.hw.HuaweiQuickSetupPlanner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 
-/**
- * 一键开局参数的存储与默认值。
- *
- * <p>以前这套参数躺在浏览器的 localStorage 里，默认值还抄了一份在前端，
- * 于是「改现场默认值」要改两处，改了一处就漂移。现在默认值只有这里一份，
- * 页面打开时问后端要，改完存库，谁打开都是同一套。</p>
- */
+/** 一键开局参数的存储与默认值 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -52,11 +46,7 @@ public class OltQuickSetupConfigService {
 
     private final ObjectMapper objectMapper;
 
-    /**
-     * 开局表单：当前参数 + 带宽上限。
-     *
-     * @param forceDefaults true 时忽略已存的、直接给默认值（页面「默认设置」按钮）
-     */
+    /** 开局表单：当前参数 + 带宽上限 */
     public OltHuaweiSetupForm form(Long oltId, boolean forceDefaults) {
         HuaweiQuickSetupRequest request = forceDefaults ? defaults() : config(oltId);
         return OltHuaweiSetupForm.of(request);

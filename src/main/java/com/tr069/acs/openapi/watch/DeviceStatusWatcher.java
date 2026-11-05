@@ -14,14 +14,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 设备上下线侦测。
- *
- * <p>会话上下线由 Inform 与超时清扫共同决定，散落在会话层各处，逐点埋事件会把核心逻辑搅乱。
- * 这里退一步：定期比对会话快照，把变化的部分转成事件。</p>
- *
- * <p>首次运行只建立基线不推事件——否则每次重启都会给上层系统推一遍全量在线设备。</p>
- */
+/** 设备上下线侦测 */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -31,7 +24,7 @@ public class DeviceStatusWatcher {
 
     private final WebhookService webhookService;
 
-    /** 上一轮快照：sn -> 是否在线。 */
+    /** 上一轮快照：sn -> 是否在线 */
     private final Map<String, Boolean> previous = new HashMap<>();
 
     private volatile boolean baselineReady = false;
@@ -39,9 +32,7 @@ public class DeviceStatusWatcher {
     @Value("${acs.openapi.watch.enabled:true}")
     private boolean enabled;
 
-    /**
-     * 扫描会话并推送状态变化。
-     */
+    /** 扫描会话并推送状态变化 */
     @Scheduled(fixedDelayString = "${acs.openapi.watch.interval-millis:15000}")
     public void watch() {
         if (!enabled) {
