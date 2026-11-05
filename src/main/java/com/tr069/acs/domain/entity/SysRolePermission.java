@@ -5,12 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
-/**
- * 角色拥有的权限点。
- *
- * <p>存的是 code 而不是 id：权限点本身不落库（见 {@code PermissionCodes}），
- * 这里只记「这个角色勾了哪些」。</p>
- */
+/** 角色拥有的权限点 */
 @Data
 @TableName("sys_role_permission")
 public class SysRolePermission {

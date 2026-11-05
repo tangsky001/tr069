@@ -22,21 +22,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * CWMP 报文解析器。
- *
- * <p>遍历 DOM 取各 RPC 响应的字段，统一整形为 {@code dict_data} 结构，
- * 字段名与各 RPC 的 SOAP 定义一致，供上层按一套取值方式处理。</p>
- */
+/** CWMP 报文解析器 */
 @Slf4j
 public final class SoapParser {
 
     private SoapParser() {
     }
 
-    /**
-     * 解析 CPE 上报或响应的 SOAP 报文。
-     */
+    /** 解析 CPE 上报或响应的 SOAP 报文 */
     public static SoapMessage parse(String xml) {
         if (xml == null || xml.isBlank()) {
             throw new SoapException("SOAP 报文为空");
@@ -88,9 +81,7 @@ public final class SoapParser {
         return builder.build();
     }
 
-    /**
-     * 解析 CPE 主动上报的 Inform。
-     */
+    /** 解析 CPE 主动上报的 Inform */
     public static InformRequest parseInform(String xml) {
         Document doc = toDocument(xml);
         Element body = firstChildElement(doc.getDocumentElement(), "Body");
@@ -104,9 +95,7 @@ public final class SoapParser {
         return toInformRequest(root);
     }
 
-    /**
-     * 判断报文是否为空 POST（CPE 无内容上报）。
-     */
+    /** 判断报文是否为空 POST（CPE 无内容上报） */
     public static boolean isEmptyPost(String xml) {
         return xml == null || xml.isBlank();
     }
@@ -169,10 +158,7 @@ public final class SoapParser {
         return builder.build();
     }
 
-    /**
-     * 对应 get_parameter_values response 的 ParameterList 解析：
-     * Value 的 xsi:type 去掉 xsd: 前缀后存入 Value_type。
-     */
+    /** 对应 get_parameter_values response 的 ParameterList 解析 */
     private static List<ParameterValueStruct> parseParameterValueList(Element parent) {
         List<ParameterValueStruct> result = new ArrayList<>();
         Element listEl = firstChildElement(parent, "ParameterList");
@@ -199,9 +185,7 @@ public final class SoapParser {
         return result;
     }
 
-    /**
-     * 对应 convert_result：把响应转换为 dict_data 结构。
-     */
+    /** 对应 convert_result：把响应转换为 dict_data 结构 */
     private static Map<String, Object> convertResult(Element root, String methodName) {
         Map<String, Object> dict = new LinkedHashMap<>();
 
@@ -341,9 +325,7 @@ public final class SoapParser {
         return builder.build();
     }
 
-    /**
-     * 生成可读的结果描述，用于日志与结果展示。
-     */
+    /** 生成可读的结果描述，用于日志与结果展示 */
     private static String buildStrResult(Element root, String methodName) {
         StringBuilder sb = new StringBuilder();
         sb.append("\n*****").append(methodName).append(" Succeed!******\n");

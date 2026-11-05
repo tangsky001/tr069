@@ -10,11 +10,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
-/**
- * OLT 台账视图。
- *
- * <p>密码一律不回显，只给一个 {@code hasPassword} 标记；编辑时密码留空表示沿用原值。</p>
- */
+/** OLT 台账视图 */
 @Data
 public class OltDeviceView {
 
@@ -57,6 +53,18 @@ public class OltDeviceView {
 
     private String status;
 
+    /** 状态中文：在线 / 离线 / 未探测。页面不再维护 {@code {ONLINE:'在线',...}} 码表 */
+    private String statusText;
+
+    /** 状态标签色（Element UI 的 type）：success / danger / info */
+    private String statusLevel;
+
+    /** 固件版本：「软件版本 / 补丁」拼好；两个都没有是「-」 */
+    private String firmwareText;
+
+    /** Web 登录账号串：「a、b」；没有账号限制时是「不限制」 */
+    private String webAccountText;
+
     private LocalDateTime lastConnectAt;
 
     private LocalDateTime lastSyncAt;
@@ -98,6 +106,11 @@ public class OltDeviceView {
         view.setMacAddress(device.getMacAddress());
         view.setUptime(device.getUptime());
         view.setStatus(device.getStatus());
+        // 状态文案与配色、固件版本串、账号串都在这里拼：账页、详情页头、设备信息卡用的是同一份
+        view.setStatusText(statusTextOf(device.getStatus()));
+        view.setStatusLevel(statusLevelOf(device.getStatus()));
+        view.setFirmwareText(firmwareTextOf(device.getSoftwareVersion(), device.getPatchVersion()));
+        view.setWebAccountText(webAccountTextOf(view.getWebAccounts()));
         view.setLastConnectAt(device.getLastConnectAt());
         view.setLastSyncAt(device.getLastSyncAt());
         view.setLastError(device.getLastError());
@@ -109,9 +122,49 @@ public class OltDeviceView {
         return view;
     }
 
-    /**
-     * 逗号分隔的账号串转列表。
-     */
+    /** 状态中文：库里的状态码只有三种口径，其余一律按「未探测」说 */
+    public static String statusTextOf(String status) {
+        if ("ONLINE".equals(status)) {
+            return "在线";
+        }
+        if ("OFFLINE".equals(status)) {
+            return "离线";
+        }
+        return "未探测";
+    }
+
+    /** 状态标签色：在线绿、离线红、其余灰 */
+    public static String statusLevelOf(String status) {
+        if ("ONLINE".equals(status)) {
+            return "success";
+        }
+        if ("OFFLINE".equals(status)) {
+            return "danger";
+        }
+        return "info";
+    }
+
+    /** 固件版本按「版本 / 补丁」拼，和现场 OLT 的写法一致；一个都没有就是「-」 */
+    public static String firmwareTextOf(String softwareVersion, String patchVersion) {
+        List<String> parts = new ArrayList<>();
+        if (softwareVersion != null && !softwareVersion.isBlank()) {
+            parts.add(softwareVersion.trim());
+        }
+        if (patchVersion != null && !patchVersion.isBlank()) {
+            parts.add(patchVersion.trim());
+        }
+        return parts.isEmpty() ? "-" : String.join(" / ", parts);
+    }
+
+    /** Web 账号串：空列表表示不限制登录账号，不是「没配」 */
+    public static String webAccountTextOf(List<String> accounts) {
+        if (accounts == null || accounts.isEmpty()) {
+            return "不限制";
+        }
+        return String.join("、", accounts);
+    }
+
+    /** 逗号分隔的账号串转列表 */
     public static List<String> split(String value) {
         if (value == null || value.isBlank()) {
             return new ArrayList<>();

@@ -2,9 +2,7 @@ package com.tr069.acs.worklist.tpl.entity;
 
 import lombok.Data;
 
-/**
- * LAN 网口配置。一行 = 一个 LANEthernetInterfaceConfig 实例。
- */
+/** LAN 网口配置。一行 = 一个 LANEthernetInterfaceConfig 实例 */
 @Data
 public class DeviceLan {
 

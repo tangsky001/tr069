@@ -15,34 +15,20 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 建表脚本加载。
- *
- * <p>全库只有一份脚本：{@code sql/schema.sql}（构建时被复制到 classpath，见 pom.xml 的
- * resources 配置）。各模块的补建组件在这里按表名挑出自己那几张表的 CREATE 语句，
- * 不再各自维护一份「同一张表的另一个副本」——副本一定会漂移，最终线上结构取决于运气。</p>
- *
- * <p>之所以按表名挑而不是整份执行：每个模块有自己的 {@code acs.<module>.auto-create-table}
- * 开关，整份执行会让关掉的模块也被别人顺手建出来。</p>
- */
+/** 建表脚本加载 */
 public final class SchemaScript {
 
-    /** classpath 中的脚本位置，对应仓库根目录的 sql/schema.sql。 */
+    /** classpath 中的脚本位置，对应仓库根目录的 sql/schema.sql */
     public static final String RESOURCE = "db/schema.sql";
 
-    /** 从 CREATE TABLE [IF NOT EXISTS] `xxx` 里取表名。 */
+    /** 从 CREATE TABLE [IF NOT EXISTS] `xxx` 里取表名 */
     private static final Pattern CREATE_TABLE = Pattern.compile(
             "(?i)\\bcreate\\s+table\\s+(?:if\\s+not\\s+exists\\s+)?[`\"']?([A-Za-z0-9_]+)[`\"']?");
 
     private SchemaScript() {
     }
 
-    /**
-     * 取这几张表的 CREATE 语句。
-     *
-     * @param tables 模块负责的表名
-     * @throws IllegalStateException 脚本里缺了某张表的定义（脚本与代码不同步，必须响亮地失败）
-     */
+    /** 取这几张表的 CREATE 语句 */
     public static List<String> createStatements(Collection<String> tables) {
         Map<String, String> byTable = new LinkedHashMap<>();
         for (String statement : loadStatements()) {
@@ -68,9 +54,7 @@ public final class SchemaScript {
         return statements;
     }
 
-    /**
-     * 读脚本并按分号拆成单条语句，跳过注释行。
-     */
+    /** 读脚本并按分号拆成单条语句，跳过注释行 */
     private static List<String> loadStatements() {
         String script;
         try (InputStream in = new ClassPathResource(RESOURCE).getInputStream()) {

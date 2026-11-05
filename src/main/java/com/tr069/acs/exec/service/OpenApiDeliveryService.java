@@ -14,13 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 北向下发请求的受理封装：把外部 JSON 收敛成 {@link DeliveryRequest}，
- * 并记录调用者，保证任务表里的 {@code createdBy} 能追到具体账号。
- *
- * <p>鉴权已在拦截器里做过，这里从 {@code USERNAME_ATTR} 取账号。
- * 缺少必填字段时抛出的消息会原样回到调用方，所以文案写清楚。</p>
- */
+/** 北向下发请求的受理封装：把外部 JSON 收敛成 {@link DeliveryRequest} */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -30,9 +24,7 @@ public class OpenApiDeliveryService {
 
     private final ConfigTemplateService templateService;
 
-    /**
-     * 解析下发请求。
-     */
+    /** 解析下发请求 */
     public DeliveryRequest parse(Map<String, Object> body) {
         if (body == null || body.isEmpty()) {
             throw new IllegalArgumentException("请求体不能为空");
@@ -65,16 +57,12 @@ public class OpenApiDeliveryService {
                 values, createInstance, DeviceTask.SOURCE_OPENAPI, currentUser());
     }
 
-    /**
-     * 可选的业务清单，供调用方挑选模板。
-     */
+    /** 可选的业务清单，供调用方挑选模板 */
     public List<Map<String, Object>> templates() {
         return templateService.list(null, null);
     }
 
-    /**
-     * 任务列表：按设备或状态过滤，最新的在前。
-     */
+    /** 任务列表：按设备或状态过滤，最新的在前 */
     public List<Map<String, Object>> list(String sn, String status, int limit) {
         LambdaQueryWrapper<DeviceTask> query = new LambdaQueryWrapper<DeviceTask>()
                 .orderByDesc(DeviceTask::getId)

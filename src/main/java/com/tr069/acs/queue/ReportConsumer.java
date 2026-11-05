@@ -17,12 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * 上报消费者。
- *
- * <p>每个分片队列固定一个线程，保证同一台设备的上报按先后顺序处理，
- * 不会出现旧报文覆盖新状态的情况；不同分片之间并行，起到削峰作用。</p>
- */
+/** 上报消费者 */
 @Slf4j
 @Service
 @RequiredArgsConstructor

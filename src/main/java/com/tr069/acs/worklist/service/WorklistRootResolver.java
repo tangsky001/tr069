@@ -11,23 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * 光猫配置根目录的统一解析。
- *
- * <p>所有落盘/读取型号文件的地方（能力树 XML、适配档 YML、光猫档案 profiles）
- * 必须经这里拿根目录，不能各自拿 {@code rootPath} 相对进程工作目录去拼——
- * 同一份配置从不同目录起 jar 会落到不同位置：从 target 目录起就写进
- * {@code target/configuration}，换个工作目录启动又去 {@code configuration} 找，
- * 结果就是「库里登记了 adapt_path，文件却不在那个位置」，适配状态永远判定失败。</p>
- *
- * <p>解析规则：配置值优先；若它指向的目录不存在或为空，依次回退到 jar 同级的
- * {@code configuration/} 与 {@code target/configuration/}。结果缓存，进程内只解析一次。</p>
- *
- * <p>同目录里的其它落盘文件（模板库 SQLite 等）必须走 {@link #resolve(String)}，
- * 而不是自己拿相对路径去拼进程工作目录——否则又是一次「库连的是 A 处，档案写在
- * B 处」的分叉。SQLite 尤其致命：父目录不存在时它不会自己建目录，而是直接抛
- * {@code path to '...' does not exist}。</p>
- */
+/** 光猫配置根目录的统一解析 */
 @Slf4j
 @Component
 public class WorklistRootResolver {
@@ -46,10 +30,7 @@ public class WorklistRootResolver {
         this.properties = properties;
     }
 
-    /**
-     * 相对路径的统一基准目录：jar 所在目录，落在 target/build/out 里时取它的上一级
-     * （项目根）。拿不到 jar 位置时退化为进程工作目录。结果缓存，进程内只解析一次。
-     */
+    /** 相对路径的统一基准目录：jar 所在目录，落在 target/build/out 里时取它的上一级 */
     public Path base() {
         Path result = cachedBase.get();
         if (result == null) {
@@ -60,7 +41,7 @@ public class WorklistRootResolver {
         return result;
     }
 
-    /** 配置根目录（绝对路径、已规范化），进程内只解析一次。 */
+    /** 配置根目录（绝对路径、已规范化），进程内只解析一次 */
     public Path root() {
         Path result = cachedRoot.get();
         if (result == null) {
@@ -71,11 +52,7 @@ public class WorklistRootResolver {
         return result;
     }
 
-    /**
-     * 把配置里的相对路径解析到与 {@link #root()} 同源的位置（绝对路径已规范化）。
-     *
-     * <p>绝对路径视为显式指定（现场部署 / 单元测试注入临时目录），原样尊重。</p>
-     */
+    /** 把配置里的相对路径解析到与 {@link #root()} 同源的位置（绝对路径已规范化） */
     public Path resolve(String path) {
         Path configured = Path.of(path);
         if (configured.isAbsolute()) {
@@ -110,7 +87,7 @@ public class WorklistRootResolver {
         return isBuildOutputDir(jarDir) && jarDir.getParent() != null ? jarDir.getParent() : jarDir;
     }
 
-    /** jar 落在构建产物目录里时，配置根目录应取它的上一级（项目根）。 */
+    /** jar 落在构建产物目录里时，配置根目录应取它的上一级（项目根） */
     private static boolean isBuildOutputDir(Path dir) {
         Path name = dir.getFileName();
         if (name == null) {
@@ -153,7 +130,7 @@ public class WorklistRootResolver {
         }
     }
 
-    /** 定位到 jar 所在目录：入参可能是 jar 文件，也可能是 classes 目录。 */
+    /** 定位到 jar 所在目录：入参可能是 jar 文件，也可能是 classes 目录 */
     private static Path asDirectory(java.net.URI uri) {
         return asDirectory(Path.of(uri));
     }

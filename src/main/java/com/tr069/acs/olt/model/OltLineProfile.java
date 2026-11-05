@@ -5,12 +5,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 一条 GPON 线路模板（{@code display ont-lineprofile gpon all}）。
- *
- * <p>线路模板是 ONT 的上行通道模型：底下挂若干 T-CONT（各自引用一条 DBA 模板），
- * 每个 T-CONT 上再挂若干 GEM port 承载业务流。</p>
- */
+/** 一条 GPON 线路模板（{@code display ont-lineprofile gpon all}） */
 @Data
 public class OltLineProfile {
 
@@ -34,4 +29,10 @@ public class OltLineProfile {
 
     /** 每个 GEM port 挂在哪个 T-CONT 上、怎么映射 */
     private List<OltGemport> gemports = new ArrayList<>();
+
+    /** 是不是 TR-069 用的线路模板：设备侧没有专门标记位，按模板名判断 */
+    private Boolean tr069Bound;
+
+    /** 映射关系表：一行一个 GEM port，T-CONT 的 DBA 模板顺带对上 */
+    private List<OltLineMappingRow> mappingRows = new ArrayList<>();
 }

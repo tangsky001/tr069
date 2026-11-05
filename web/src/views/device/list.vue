@@ -829,8 +829,9 @@ import {
   fetchDevicePage, fetchOnlineDevices, dispatchRpc, fetchDeviceBusinessBatch,
   fetchAdaptStatus, testAdaptation, saveAdaptation, updateDeviceRemark,
   fetchAdminAccounts, fetchDeviceStat, fetchCapabilityOptions, setDeviceParams,
-  fetchDeviceActiveTasks,
-  RPC_METHODS
+  fetchDeviceActiveTasks, fetchRpcMethods, fetchQuickCommands,
+  fetchSipLines, submitSipEdit, exportDevices as exportDevicesApi,
+  fetchPollConfig, fetchRpcProgressLabels
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
@@ -840,15 +841,8 @@ import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
 import DeviceRuntimeCell from '@/components/DeviceRuntimeCell.vue'
 
-// 业务概要自动回读间隔：与后端 LAN 网口状态自动刷新（5 分钟）同频
-const BIZ_AUTO_REFRESH_MS = 300000
-
-// 设备列表自动刷新间隔：在线状态、顶栏统计都靠它跟上，不用手动点刷新
-const LIST_AUTO_REFRESH_MS = 15000
-
-// 下发任务进度刷新间隔：下发过程只有几秒到几十秒，跟 15 秒的列表刷新会慢半拍，
-// 单独按 5 秒回读任务表状态，「正在下发 xxx」才跟得上
-const TASK_AUTO_REFRESH_MS = 5000
+// 轮询节奏不在页面写死：created 时从后端 /device/poll-config 取（见 loadPollConfig），
+// 现场要调快调慢只改后端配置。
 
 export default {
   name: 'DeviceList',
@@ -866,6 +860,10 @@ export default {
       taskTimer: null,
       // 本机提交的单条 RPC（重启 / 恢复出厂）不进任务表，这里按 sn 记住它在干什么
       rpcProgress: {},
+      // RPC 行内措辞：后端 /device/rpc/progress-labels 下发（running / success / fail）
+      rpcLabels: {},
+      // 轮询节奏：后端 /device/poll-config 下发，页面不再写死几秒
+      pollConfig: { listSeconds: 15, taskSeconds: 5, bizSeconds: 300, rpcSeconds: 3, rpcMaxAttempts: 60 },
       // 机型适配状态：sn -> { adapted, configPath, ... }
       adaptMap: {},
       adaptVisible: false,
@@ -887,6 +885,8 @@ export default {
       sipDialogPath: '',
       sipShowPwd: false,
       sipSubmitting: false,
+      /** 可编辑的语音线路清单：路数、当前号码、服务器全部由后端算 */
+      sipLines: [],
       sipEditForm: {
         sn: '',
         path: '',
@@ -936,7 +936,10 @@ export default {
       adminPwdVisible: false,
       adminPwdLoading: false,
       adminPwdRows: [],
-      rpcMethods: RPC_METHODS,
+      // 可下发方法清单，以后端 /device/rpc/methods 为准；空了就是后端没给，前端不兜底
+      rpcMethods: [],
+      // 快捷操作的「命令 → RPC」映射，以后端 /device/rpc/quick-commands 为准
+      quickCommandRpc: {},
       query: {
         page: 1,
         size: 20,
@@ -978,20 +981,10 @@ export default {
       if (!row) return '设备详情'
       return (row.oui ? row.oui + '-' : '') + row.sn + ' 详情'
     },
-    // 光模块筛选 + 表头字段排序，只作用于当前页数据
+    // 排序与光模块筛选都在后端做（/device/page 的 sortKey / sortOrder / optic），
+    // 页面拿到什么就显示什么——原来这里只排当前页 20 条，翻页就重新洗牌
     displayList() {
-      let rows = this.list
-      if (this.opticFilter) {
-        // 有没有光功率数据由后端判定：它才知道哪些参数名算 power、换算不出来算没有
-        rows = rows.filter(r => this.bizOf(r.sn).opticState === this.opticFilter)
-      }
-      if (this.sortKey) {
-        const key = this.sortKey
-        const dir = this.sortOrder === 'asc' ? 1 : -1
-        rows = [...rows].sort((a, b) =>
-          this.sortVal(a, key).localeCompare(this.sortVal(b, key), 'zh') * dir)
-      }
-      return rows
+      return this.list
     },
     // 一行账号都没读到时，底部提示不能还写着「可直接用于登录后台」
     adminPwdHasNoAccount() {
@@ -1003,33 +996,21 @@ export default {
       return '没读到账号与口令：原因见上方“说明”列，展开行可看每台设备读到的参数路径。'
     }
   },
+  watch: {
+    // 光模块状态筛选由后端查（opticState 只有后端判得出来），条件一变就重新请求
+    opticFilter() {
+      this.query.page = 1
+      this.load()
+    }
+  },
   created() {
     this.load()
     this.loadOnline()
     this.loadStat()
     this.loadTemplates()
     this.loadCapabilityOptions()
-    // 后端每 5 分钟自动刷新一次 LAN 网口状态，这里同频回读当前页的业务概要，
-    // 网口图标不用手动刷新就能跟上插拔变化
-    this.bizTimer = setInterval(() => {
-      if (!document.hidden) {
-        this.reloadBiz()
-      }
-    }, BIZ_AUTO_REFRESH_MS)
-    this.taskTimer = setInterval(() => {
-      if (!document.hidden) {
-        this.loadTasks()
-      }
-    }, TASK_AUTO_REFRESH_MS)
-    // 列表每 15 秒自动刷新：在线状态、顶栏总数/在线/离线、业务概要一起跟上，
-    // 不用手动点刷新。弹窗开着或勾了行时不刷，免得顶掉正在填的表单和选中的设备
-    this.listTimer = setInterval(() => {
-      if (!document.hidden && !this.hasBlockingDialog()) {
-        this.load(true)
-        this.loadStat()
-        this.loadOnline()
-      }
-    }, LIST_AUTO_REFRESH_MS)
+    this.loadRpcMeta()
+    this.loadPollConfig()
   },
   beforeDestroy() {
     if (this.bizTimer) {
@@ -1045,17 +1026,17 @@ export default {
       this.taskTimer = null
     }
   },
-  /**
-   * 有没有正在进行的交互：有就先不自动刷新。
-   * 弹窗里的表单、勾好的设备行，都会被一次后台刷新冲掉。
-   */
-  hasBlockingDialog() {
-    return !!(this.adaptVisible || this.wanVisible || this.wifiEditVisible ||
-      this.detailVisible || this.onlineVisible || this.businessVisible ||
-      this.customParamVisible || this.debugVisible || this.adminPwdVisible ||
-      this.remarkVisible || this.selection.length)
-  },
   methods: {
+    /**
+     * 有没有正在进行的交互：有就先不自动刷新。
+     * 弹窗里的表单、勾好的设备行，都会被一次后台刷新冲掉。
+     */
+    hasBlockingDialog() {
+      return !!(this.adaptVisible || this.wanVisible || this.wifiEditVisible ||
+        this.detailVisible || this.onlineVisible || this.businessVisible ||
+        this.customParamVisible || this.debugVisible || this.adminPwdVisible ||
+        this.remarkVisible || this.selection.length)
+    },
     /**
      * 拉设备分页数据。
      *
@@ -1067,7 +1048,12 @@ export default {
         this.loading = true
       }
       try {
-        const res = await fetchDevicePage(this.query)
+        const res = await fetchDevicePage({
+          ...this.query,
+          sortKey: this.sortKey || undefined,
+          sortOrder: this.sortOrder || undefined,
+          optic: this.opticFilter || undefined
+        })
         const data = res.data || {}
         this.list = data.items || []
         this.total = data.total || 0
@@ -1187,18 +1173,19 @@ export default {
       const tasks = row.tasks || []
       const task = tasks.length ? tasks[0] : null
       if (task) {
+        // 文案（正在下发 xxx / 阶段名 / 排队条数）与状态键都由后端给，页面只上图标和颜色
         lines.push({
           key: 'task-' + (task.id || task.taskNo),
           icon: 'el-icon-loading',
           text: task.label,
           tag: task.phase,
-          status: task.status === 'PENDING' ? 'queued' : 'running'
+          status: task.phaseKey || 'running'
         })
-        if (task.queuedOthers > 0) {
+        if (task.queuedText) {
           lines.push({
             key: 'task-queued',
             icon: 'el-icon-time',
-            text: '还有 ' + task.queuedOthers + ' 条任务排队',
+            text: task.queuedText,
             status: 'queued'
           })
         }
@@ -1294,12 +1281,8 @@ export default {
     },
 
     openWifiEdit(row, item) {
-      const params = item && item.params || {}
-      // 必须读 IEEE11iEncryptionModes：下发写的是这个参数，
-      // 拿 BeaconType 的值（Basic / 11i / WPAand11i）填进去设备会回 9003
-      const encryption = params.IEEE11iEncryptionModes ||
-        params.BasicEncryptionModes || params.WPAEncryptionModes || ''
-      const password = params.KeyPassphrase || params.PreSharedKey || params.WPA_PSK || ''
+      // 加密/密码真正可写的参数名与当前值由后端判定下发（不同固件参数名不同），
+      // 前端不再自己猜协议参数
       this.wifiEditForm = {
         sn: row.sn,
         // 频段、实例号、开关都取后端判好的，前端不再自己解析路径与猜状态
@@ -1307,8 +1290,8 @@ export default {
         path: item.path || '',
         instance: item.instance,
         ssid: item.ssid || '',
-        encryption: String(encryption).replace(/None/i, 'None'),
-        password: String(password),
+        encryption: String(item.encryptionValue || ''),
+        password: String(item.keyValue || ''),
         enabled: item.enabled
       }
       this.wifiEditVisible = true
@@ -1366,9 +1349,9 @@ export default {
     wanIp(sn) {
       return this.bizOf(sn).ip || '-'
     },
+    // 在线标记后端算好（/device/page 的 online 字段），与台账统计同一口径
     isOnline(row) {
-      const status = String(row.status || '').toLowerCase()
-      return status.includes('online') || status.includes('在线') || row.online === true
+      return row && row.online === true
     },
     // 连接名与状态文案都由后端给（没报 Name 时用「WAN PPP 1」这类兜底叫法），
     // 前端只决定标签颜色
@@ -1394,129 +1377,97 @@ export default {
     // 点一下就把设备叫醒（连接请求 + 一轮 GPV）既慢又会打扰正在用的用户，
     // 要最新值请走详情面板的「重新采集」
     /**
-     * 这台设备能下发的语音线路清单：设备上报了几个 Line 实例就列几个。
-     *
-     * <p>只有一路时不给勾选（用户说的「申报 1 个就没有勾选窗口」），
-     * 两路以上才摆在表单里让用户挑要开哪几个口。</p>
+     * 这台设备能下发的语音线路清单：路数、每路当前号码全由后端算
+     * （申报能力与实际采到的路数取大值、VoiceProfile 级服务器参数已补进每一路）。
      */
     sipLineOptions(sn) {
-      // 路数优先看申报（适配时登记 capSipCount）：申报 1 路就不摆勾选框，
-      // 申报多路才给挑。实际采不到时用申报值兜底——模板也是按它生成的，
-      // 不然「申报了 4 路、设备还没上报 Line.3」就只能让用户勾两路
-      const declared = Number(String(this.adaptOf(sn).capSipCount || '').replace(/\D/g, '')) || 0
-      // VoiceProfile 级那一行（…VoiceProfile.1.SIP.）只放注册/代理服务器，
-      // 不是一个话机口，不能当成第 1 路混进来
-      const rows = this.sipList(sn)
-      const lines = rows.filter(item => /\.Line\.\d+\.SIP\.$/.test(item.path || ''))
-      const known = new Map()
-      for (const item of lines) {
-        const m = /\.Line\.(\d+)\.SIP\.$/.exec(item.path || '')
-        if (m) known.set(Number(m[1]), item)
-      }
-      const actualMax = known.size ? Math.max(...known.keys()) : 0
-      const total = Math.max(declared, actualMax, 1)
-      const options = []
-      for (let line = 1; line <= total; line++) {
-        const item = known.get(line)
-        options.push({
-          line,
-          number: item ? (item.number || (item.params && item.params.AuthUserName) || '') : ''
-        })
-      }
-      return options
+      return this.sipLines || []
     },
 
-    /** 点开的这一行属于第几路：路径里 Line.N 就是，取不到算第 1 路。 */
+    /** 点开的这一行属于第几路：后端在每条 SIP 行上给了 line，取不到算第 1 路。 */
     sipLineOf(item) {
-      const m = /\.Line\.(\d+)\.SIP\.$/.exec((item && item.path) || '')
-      return m ? Number(m[1]) : 1
+      return item && item.line ? Number(item.line) : 1
     },
 
-    openSipParams(sn, item) {
+    /** 拉这台的语音线路清单（只读库里的快照，不唤醒设备） */
+    loadSipLines(sn) {
+      if (!sn) return Promise.resolve()
+      return fetchSipLines(sn)
+        .then(res => {
+          this.sipLines = res.data || []
+        })
+        .catch(() => {
+          this.sipLines = []
+        })
+    },
+
+    async openSipParams(sn, item) {
       const line = this.sipLineOf(item)
       this.sipDialogSn = sn
       this.sipDialogPath = (item && item.path) || ''
       this.sipShowPwd = false
-      const params = (item && item.params) || {}
-      // 字段被拆在两行里：账号密码挂在每一路 Line（…Line.1.SIP.），
-      // 注册 / 代理服务器挂在 VoiceProfile 级（…VoiceProfile.1.SIP.）。
-      // 只看点开的那一路，注册服务器就永远是空的，所以按整组补全
-      const firstOf = key => {
-        const own = params[key]
-        if (own !== undefined && String(own).trim() !== '') return String(own)
-        for (const row of this.sipList(sn)) {
-          const v = (row.params || {})[key]
-          if (v !== undefined && String(v).trim() !== '') return String(v)
-        }
-        return ''
-      }
-      const number = item && item.number
-        ? item.number
-        : (params.AuthUserName || params.URI || '')
+      this.sipLines = []
       this.sipEditForm = {
         sn,
         path: (item && item.path) || '',
         // 默认就是点开的那一路，避免在多路设备上忘了勾却把第 1 路覆盖掉
         lines: [line],
-        number: String(number || ''),
-        authUser: String(params.AuthUserName || number || ''),
-        password: String(params.AuthPassword || ''),
-        registrar: firstOf('RegistrarServer'),
-        registrarPort: firstOf('RegistrarServerPort') || '5060',
-        proxy: firstOf('ProxyServer'),
-        proxyPort: firstOf('ProxyServerPort') || '5060'
+        number: '',
+        authUser: '',
+        password: '',
+        registrar: '',
+        registrarPort: '',
+        proxy: '',
+        proxyPort: ''
       }
       this.sipVisible = true
+      await this.loadSipLines(sn)
+      const option = this.sipLines.find(row => row.line === line) || this.sipLines[0]
+      if (!option) return
+      this.sipEditForm = {
+        ...this.sipEditForm,
+        number: option.number || '',
+        authUser: option.authUser || option.number || '',
+        password: option.password || '',
+        registrar: option.registrar || '',
+        registrarPort: option.registrarPort || '',
+        proxy: option.proxy || '',
+        proxyPort: option.proxyPort || ''
+      }
     },
 
-    /** 点「下发到设备」= 提交一张 SIP 工单，与 WLAN 编辑走同一套下发链路。 */
+    /**
+     * 点「下发到设备」：只提交业务字段，按路拆单、占位符翻译、幂等键都由后端做。
+     */
     async submitSipEdit() {
       const form = this.sipEditForm
-      if (!form.number) {
-        this.$message.warning('电话号码 / URI 不能为空')
-        return
-      }
-      const lines = form.lines && form.lines.length ? [...form.lines].sort((a, b) => a - b) : [1]
       this.sipSubmitting = true
       try {
-        // 一路一张工单：工单模型是「一次下发一个业务实例」，写第几路由 values 里的
-        // instance 告诉渲染器（缺省 1），所以开三路 = 三张单，不是一张单塞三份
-        let done = 0
-        let failed = 0
-        for (const line of lines) {
-          try {
-            await createWorklist({
-              sn: form.sn,
-              category: 'SIP',
-              // 幂等键必须带上路号：服务器同秒内连开多单会认为重复提交，
-              // 三路合成一路就等于只开了第一路
-              worklistDesc: 'UI-SIP-' + form.sn + '-L' + line + '-' + Date.now(),
-              values: {
-                instance: String(line),
-                // 变量的键就是模板里占位符：sip_num 写 AuthUserName，sip_uri 写 URI，
-                // 密码、注册/代理服务器各自对应
-                '%sip_num%': form.authUser || form.number,
-                '%sip_uri%': form.number,
-                '%sip_pwd%': form.password,
-                '%sip_registrar%': form.registrar,
-                '%sip_registrar_port%': form.registrarPort,
-                '%sip_proxy%': form.proxy,
-                '%sip_port%': form.proxyPort
-              },
-              username: this.$store.getters.name || 'admin'
-            })
-            done++
-          } catch (e) {
-            failed++
-            this.$message.error('第 ' + line + ' 路提交失败：' + ((e && e.message) || ''))
-          }
+        const res = await submitSipEdit(form.sn, {
+          lines: form.lines,
+          number: form.number,
+          authUser: form.authUser,
+          password: form.password,
+          registrar: form.registrar,
+          registrarPort: form.registrarPort,
+          proxy: form.proxy,
+          proxyPort: form.proxyPort,
+          username: this.$store.getters.name || 'admin'
+        })
+        const data = res.data || {}
+        if (data.submitted) {
+          this.$message.success('SIP 语音下发工单已提交 ' + data.submitted + ' 张（第 ' +
+            (data.lines || []).join('、') + ' 路）')
         }
-        if (done) {
-          this.$message.success('SIP 语音下发工单已提交 ' + done + ' 张（第 ' + lines.join('、') + ' 路）')
-        }
-        if (!failed) {
+        const failures = data.failures || []
+        failures.forEach(row => {
+          this.$message.error('第 ' + row.line + ' 路提交失败：' + (row.message || ''))
+        })
+        if (!data.failed) {
           this.sipVisible = false
         }
+      } catch (e) {
+        this.$message.error('提交失败：' + ((e && e.message) || ''))
       } finally {
         this.sipSubmitting = false
       }
@@ -1532,17 +1483,8 @@ export default {
       const biz = this.bizOf(row.sn)
       const adapt = this.adaptOf(row.sn) || {}
       const mac = biz.mac
-      // 目录名与原始申报值都映射：适配档目录用归一化的 CM/CT/CU，
-      // yml profile 里的 isp 是申报时的原始值（如 CMCC）
-      const ispNames = {
-        CMCC: '中国移动', CM: '中国移动',
-        CT: '中国电信', CU: '中国联通', CBN: '中国广电',
-        standard: '标准/通用'
-      }
-      // 运营商单独一行：以设备台账登记值为准（适配时选定的运营商会写回台账），
-      // 台账还没写回时退回适配档里的申报值
-      const adaptIsp = row.isp || (adapt.profile && adapt.profile.isp) || adapt.adaptedIsp || adapt.isp || ''
-      const ispText = ispNames[adaptIsp] || adaptIsp
+      // 运营商中文名与能力串都由后端给（适配状态接口），页面不再维护码表
+      const ispText = adapt.ispText || row.isp || ''
       const rows = [
         { label: 'OUI', value: row.oui },
         { label: '设备 SN', value: row.sn },
@@ -1550,9 +1492,7 @@ export default {
         { label: '运营商', value: (ispText + (row.ispVersion ? ' ' + row.ispVersion : '')).trim() },
         {
           label: '设备能力',
-          value: adapt.adapted
-            ? this.adaptedCapabilityText(adapt)
-            : this.capabilityText(biz)
+          value: adapt.adapted ? (adapt.capabilityText || '') : (biz.capabilityText || '')
         },
         { label: '硬件版本', value: row.hardwareVersion },
         { label: '固件版本', value: row.softwareVersion },
@@ -1567,32 +1507,7 @@ export default {
       ]
       return rows.filter(r => r.value && r.value !== '-' && r.value !== '从未采集')
     },
-    // 从业务快照拼设备能力：WiFi 频段 + SIP 电话
-    capabilityText(biz) {
-      const parts = []
-      const wifi = biz.wifi || []
-      if (wifi.some(w => w.band === '2.4G')) parts.push('2.4G WiFi')
-      if (wifi.some(w => w.band === '5.8G')) parts.push('5.8G WiFi')
-      if ((biz.sip || []).length) parts.push('1电话')
-      return parts.join('、') || null
-    },
-    // 已适配设备用适配档能力展示：网口数量/速率、SIP 数量、WIFI 规格、样机来源。
-    // 运营商不在这里带——详情里它是独立一行，混进能力串会让两处口径打架
-    adaptedCapabilityText(adapt) {
-      const p = adapt.profile || adapt
-      const parts = []
-      if (p.lan_ports && p.lan_ports !== '无') {
-        parts.push('网口 ' + p.lan_ports + (p.lan_speed && p.lan_speed !== '无' && p.lan_speed !== '自动' ? '×' + p.lan_speed : ''))
-      } else if (p.lan_ports === '无') {
-        parts.push('无网口')
-      }
-      if (p.sip_count && p.sip_count !== '无') parts.push('SIP ' + p.sip_count + '路')
-      else if (p.sip_count === '无') parts.push('无SIP')
-      if (p.wifi_spec && p.wifi_spec !== '无') parts.push('WiFi ' + p.wifi_spec)
-      else if (p.wifi_spec === '无') parts.push('无WiFi')
-      const tail = p.sample_sn ? '（ ' + p.sample_sn + '）' : ''
-      return parts.join('、') + tail
-    },
+    // 能力串（未适配看业务快照、已适配看适配申报）都由后端拼好，页面只显示
     // 业务类型由后端判定（键名含 ServiceList，不区分厂商前缀）
     serviceMode(item) {
       return item.service || '-'
@@ -1601,14 +1516,12 @@ export default {
       return value === undefined || value === null || value === '' ? '-' : value
     },
 
-    sortVal(row, key) {
-      if (key === 'pon') return this.bizOf(row.sn).ponType || 'GE'
-      // 排序比的是秒数，格式化后的「1天2小时」是字符串，没法比大小
-      if (key === 'upTime') return this.bizOf(row.sn).uptimeSeconds || ''
-      if (key === 'ip') return String(this.bizOf(row.sn).ip || '')
-      return String(row[key] || '')
-    },
-    // 表头字段排序，由终端信息列组件抛出
+    /**
+     * 表头字段排序，由终端信息 / 运行信息列组件抛出。
+     *
+     * <p>排序键交给后端（台账列落 SQL，PON / 运行时长 / 管理 IP 走业务快照），
+     * 换一次排序就重新查一次：原来只排当前页，翻到第 2 页顺序就变了。</p>
+     */
     sortBy(key) {
       if (this.sortKey !== key) {
         this.sortKey = key
@@ -1619,6 +1532,8 @@ export default {
         this.sortKey = ''
         this.sortOrder = ''
       }
+      this.query.page = 1
+      this.load()
     },
     async loadOnline() {
       try {
@@ -1665,24 +1580,96 @@ export default {
     },
 
     // ---------------- 业务信息与快捷操作 ----------------
+    /**
+     * 快捷操作的命令 → RPC 映射：只认后端 /device/rpc/quick-commands 下发的结果，
+     * 缺失即后端漏配，明确报错，前端不做任何兜底映射。
+     */
+    rpcOf(cmd) {
+      const rpc = this.quickCommandRpc[cmd]
+      if (!rpc) {
+        this.$message.error('命令未在后端配置映射（/device/rpc/quick-commands）：' + cmd)
+        return null
+      }
+      return rpc
+    },
+    async loadRpcMeta() {
+      try {
+        const [methods, commands, labels] = await Promise.all([
+          fetchRpcMethods(), fetchQuickCommands(), fetchRpcProgressLabels()
+        ])
+        if (Array.isArray(methods.data) && methods.data.length) {
+          this.rpcMethods = methods.data
+        }
+        if (commands.data && typeof commands.data === 'object') {
+          this.quickCommandRpc = commands.data
+        }
+        if (labels.data && typeof labels.data === 'object') {
+          this.rpcLabels = labels.data
+        }
+      } catch (e) {
+        // 请求层已提示错误；清单留空暴露后端问题，前端不做兜底
+      }
+    },
+    /** 轮询节奏由后端给，拿到再建定时器；接口挂了就用默认值，页面不能因此不刷新 */
+    async loadPollConfig() {
+      try {
+        const res = await fetchPollConfig()
+        if (res.data && typeof res.data === 'object') {
+          this.pollConfig = { ...this.pollConfig, ...res.data }
+        }
+      } catch (e) {
+        // 用默认节奏，不阻塞页面
+      }
+      this.startTimers()
+    },
+    /**
+     * 建三个定时器：列表、任务进度、业务概要。
+     *
+     * <p>间隔来自 {@link #loadPollConfig}（后端 /device/poll-config）：
+     * 原来写死在页面顶部，现场想调慢就得发版。</p>
+     */
+    startTimers() {
+      const config = this.pollConfig
+      this.bizTimer = setInterval(() => {
+        if (!document.hidden) {
+          this.reloadBiz()
+        }
+      }, Math.max(1, config.bizSeconds) * 1000)
+      this.taskTimer = setInterval(() => {
+        if (!document.hidden) {
+          this.loadTasks()
+        }
+      }, Math.max(1, config.taskSeconds) * 1000)
+      // 列表自动刷新：在线状态、顶栏总数一起跟上；弹窗开着或勾了行时不刷，
+      // 免得顶掉正在填的表单和选中的设备
+      this.listTimer = setInterval(() => {
+        if (!document.hidden && !this.hasBlockingDialog()) {
+          this.load(true)
+          this.loadStat()
+          this.loadOnline()
+        }
+      }, Math.max(1, config.listSeconds) * 1000)
+    },
     handleDeviceCommand(cmd, row) {
       if (cmd === 'business') {
         this.openBusiness(row.sn)
         return
       }
+      const rpc = this.rpcOf(cmd)
+      if (!rpc) return
       if (cmd === 'probe') {
-        this.quickRpc(row.sn, 'GetRPCMethods', {}, false)
+        this.quickRpc(row.sn, rpc, {}, false)
         return
       }
       if (cmd === 'reboot') {
         this.$confirm('确认重启设备 ' + row.sn + '？', '重启设备', { type: 'warning' })
-          .then(() => this.quickRpc(row.sn, 'Reboot', {}, true))
+          .then(() => this.quickRpc(row.sn, rpc, {}, true))
           .catch(() => {})
         return
       }
       if (cmd === 'factoryReset') {
         this.$confirm('恢复出厂会清空设备全部配置，确认继续？', '恢复出厂', { type: 'warning' })
-          .then(() => this.quickRpc(row.sn, 'FactoryReset', {}, true))
+          .then(() => this.quickRpc(row.sn, rpc, {}, true))
           .catch(() => {})
       }
     },
@@ -1706,6 +1693,8 @@ export default {
         // 单条 RPC 不进下发任务表，行上的「正在重启」得由提交方自己记：
         // 别的页面轮询任务表是看不到这次操作的
         this.$set(this.rpcProgress, sn, {
+          // 记住方法名：出结果时按同一份后端措辞换成「完成 / 失败」
+          rpcName,
           label: this.rpcProgressLabel(rpcName),
           status: 'running'
         })
@@ -1715,6 +1704,9 @@ export default {
       }
     },
     pollQuickRpc(sn, taskId) {
+      const config = this.pollConfig || {}
+      const maxAttempts = Math.max(1, config.rpcMaxAttempts || 60)
+      const intervalMs = Math.max(1, config.rpcSeconds || 3) * 1000
       let count = 0
       const timer = setInterval(async() => {
         count += 1
@@ -1731,27 +1723,34 @@ export default {
             this.markRpcDone(sn, 'fail')
           }
         } catch (e) { /* 单次失败不打断 */ }
-        if (count >= 60) {
+        if (count >= maxAttempts) {
           clearInterval(timer)
           this.clearRpc(sn)
         }
-      }, 3000)
-    },
-    /** RPC 在设备上干什么：视角要给使用者看得懂的动词，不是 CWMP 方法名。 */
-    rpcProgressLabel(rpcName) {
-      const verbs = { Reboot: '正在重启', FactoryReset: '正在恢复出厂' }
-      return verbs[rpcName] || ('正在下发 ' + rpcName)
+      }, intervalMs)
     },
     /**
-     * 出结果后把行上的提示换成完成时/失败时的说法，留 6 秒让人看到，
+     * RPC 行内措辞：正在做什么、做完/失败怎么说，全由后端
+     * {@code /device/rpc/progress-labels} 给，页面不再做「去掉正在再拼完成」这种字符串手术。
+     */
+    rpcLabelsOf(rpcName) {
+      return this.rpcLabels[rpcName] || this.rpcLabels.default || {}
+    },
+    rpcProgressLabel(rpcName) {
+      const labels = this.rpcLabelsOf(rpcName)
+      return labels.running || ('正在下发 ' + rpcName)
+    },
+    /**
+     * 出结果后把行上的提示换成完成时/失败时的说法，留一会儿让人看到，
      * 再自己消失——指令跑完一行字立刻不见，看的人会以为没执行。
      */
     markRpcDone(sn, result) {
       const cur = this.rpcProgress[sn]
       if (!cur) return
-      const base = String(cur.label).replace(/^正在/, '')
+      const labels = this.rpcLabelsOf(cur.rpcName)
+      // 后端总会带 default 兜底；这里只留一个最短的保底词，不再拿「正在重启」去拼「已完成」
       this.$set(this.rpcProgress, sn, {
-        label: result === 'success' ? base + '完成' : base + '失败',
+        label: labels[result] || (result === 'success' ? '已完成' : '执行失败'),
         status: result
       })
       setTimeout(() => this.clearRpc(sn), 6000)
@@ -1908,12 +1907,14 @@ export default {
         this.$router.push({ name: 'WorklistInstances' })
         return
       }
-      // 恢复出厂类命令走现有 FactoryReset RPC，其余待后端接入
+      // 恢复出厂类命令走后端 quick-commands 映射的 RPC，其余待后端接入
       if (['factory-clear', 'factory-reset', 'deep-factory-reset', 'deep-factory-clear'].includes(cmd)) {
+        const rpc = this.rpcOf(cmd)
+        if (!rpc) return
         const sns = this.requireSelection()
         if (!sns) return
         this.$confirm('恢复出厂会清空设备全部配置，对已勾选 ' + sns.length + ' 台设备执行？', '恢复出厂', { type: 'warning' })
-          .then(() => sns.forEach(sn => this.quickRpc(sn, 'FactoryReset', {}, true)))
+          .then(() => sns.forEach(sn => this.quickRpc(sn, rpc, {}, true)))
           .catch(() => {})
         return
       }
@@ -1995,33 +1996,40 @@ export default {
       sns.forEach(sn => this.quickRpc(sn, this.debugForm.rpc, args, true))
       this.debugVisible = false
     },
-    exportDevices(sns) {
-      const rows = sns.length ? this.list.filter(r => sns.includes(r.sn)) : this.displayList
-      const header = ['SN', 'OUI', '运营商', '型号', '硬件版本', '固件版本', '状态', '注册时间', '最近上报']
-      const lines = rows.map(r => [
-        r.sn, r.oui, r.isp, r.productClass || r.deviceType, r.hardwareVersion,
-        r.softwareVersion, this.isOnline(r) ? '在线' : '离线',
-        this.formatTime(r.createdAt), this.formatTime(r.lastContactTime)
-      ])
-      const csv = [header].concat(lines).map(l => l.join(',')).join('\n')
-      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = 'devices.csv'
-      link.click()
-      URL.revokeObjectURL(link.href)
+    /**
+     * 导出台账：列、状态文案、时间格式都由后端生成，页面只把文本存成文件。
+     * 勾选了就导出勾选的，没勾选按当前筛选条件导出（后端最多 5000 条）。
+     */
+    async exportDevices(sns) {
+      try {
+        const params = sns.length ? { sns: sns.join(',') } : { ...this.query }
+        delete params.page
+        delete params.size
+        const res = await exportDevicesApi(params)
+        const data = res.data || {}
+        const blob = new Blob(['\ufeff' + (data.content || '')], { type: 'text/csv;charset=utf-8' })
+        const link = document.createElement('a')
+        link.href = URL.createObjectURL(blob)
+        link.download = data.fileName || 'devices.csv'
+        link.click()
+        URL.revokeObjectURL(link.href)
+      } catch (e) {
+        this.$message.error('导出失败：' + ((e && e.message) || ''))
+      }
     },
     refreshStatus() {
       this.load()
       this.loadOnline()
       this.$message.success('已刷新列表与在线状态')
     },
-    // 批量重启：勾选设备逐台下发 Reboot
+    // 批量重启：勾选设备逐台下发（RPC 由后端 quick-commands 映射决定）
     batchReboot() {
+      const rpc = this.rpcOf('batch-reboot')
+      if (!rpc) return
       const sns = this.requireSelection()
       if (!sns) return
       this.$confirm('确认重启已勾选的 ' + sns.length + ' 台设备？', '批量重启', { type: 'warning' })
-        .then(() => sns.forEach(sn => this.quickRpc(sn, 'Reboot', {}, true)))
+        .then(() => sns.forEach(sn => this.quickRpc(sn, rpc, {}, true)))
         .catch(() => {})
     },
     // ===== 查询超管账号密码 =====
@@ -2068,9 +2076,9 @@ export default {
       return (row.accounts && row.accounts.length) ? row.accounts[0] : {}
     },
     adminPwdStatusText(row) {
+      // 查询中是本页的临时状态；结果文案（已获取 / 无账号 / 超时 / 失败 / 离线）由后端给
       if (row.loading) return '查询中'
-      const map = { success: '已获取', empty: '无账号', timeout: '超时', fail: '失败', offline: '离线' }
-      return map[row.status] || '未知'
+      return row.statusText || '未知'
     },
     // 状态标签只说明结果类型，具体原因（设备回 9005 / 未回应 / 离线）在这列讲清楚，
     // 否则在线设备上两个横杠，看不出到底是设备不支持还是查询本身出了问题
@@ -2084,8 +2092,7 @@ export default {
     },
     adminPwdTagType(row) {
       if (row.loading) return 'info'
-      const map = { success: 'success', empty: 'info', timeout: 'warning', fail: 'danger', offline: 'info' }
-      return map[row.status] || 'info'
+      return row.statusLevel || 'info'
     },
     todoPending(text) {
       this.$message.info(text + '：功能开发中，后端接口接入后启用')

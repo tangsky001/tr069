@@ -4,8 +4,7 @@ import lombok.Data;
 
 import java.io.Serializable;
 
-/**
- * 管理端统一响应体。*/
+/** 管理端统一响应体 */
 @Data
 public class Result<T> implements Serializable {
 
@@ -38,7 +37,7 @@ public class Result<T> implements Serializable {
         this.data = data;
     }
 
-    /** 成功响应的默认提示语：返回给前端直接展示，用中文。 */
+    /** 成功响应的默认提示语：返回给前端直接展示，用中文 */
     public static final String SUCCESS_MESSAGE = "成功";
 
     public static <T> Result<T> success() {
@@ -61,12 +60,12 @@ public class Result<T> implements Serializable {
         return new Result<>(code, message, null);
     }
 
-    /** 令牌失效 / 未带令牌，业务码 {@link #UNAUTHORIZED_CODE}，通常配 HTTP 401 一起返回。 */
+    /** 令牌失效 / 未带令牌，业务码 {@link #UNAUTHORIZED_CODE}，通常配 HTTP 401 一起返回 */
     public static <T> Result<T> unauthorized(String message) {
         return new Result<>(UNAUTHORIZED_CODE, message, null);
     }
 
-    /** 没有权限，业务码 {@link #FORBIDDEN_CODE}，通常配 HTTP 403 一起返回。 */
+    /** 没有权限，业务码 {@link #FORBIDDEN_CODE}，通常配 HTTP 403 一起返回 */
     public static <T> Result<T> forbidden(String message) {
         return new Result<>(FORBIDDEN_CODE, message, null);
     }

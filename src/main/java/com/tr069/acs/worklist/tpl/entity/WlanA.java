@@ -2,11 +2,7 @@ package com.tr069.acs.worklist.tpl.entity;
 
 import lombok.Data;
 
-/**
- * 2.4G WiFi 配置。一行 = 一个实例（P22g-CIac 是 1-4）。
- * 字段命名约定：path_xx / val_xx 成对出现，val 里只放变量（%room% / %wifi_pwd% / 1 / true 等），
- * 绝不放真实口令。
- */
+/** 2.4G WiFi 配置。一行 = 一个实例（P22g-CIac 是 1-4） */
 @Data
 public class WlanA {
 

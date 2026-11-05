@@ -382,9 +382,9 @@ export default {
     portTop() {
       return this.mgmtRows.length ? MGMT_TOP + this.mgmtRows.length * MGMT_H : PORT_TOP
     },
-    /** 整板在线 ONT 合计：板卡下方「N ONT 在线」用 */
+    /** 整板在线 ONT 合计：后端随板卡给（board.onuOnline），页面不再逐口累加 */
     onlineTotal() {
-      return this.ports.reduce((sum, port) => sum + (port.onuOnline || 0), 0)
+      return this.board.onuOnline || 0
     },
     /** 灯带下面才是端口列：灯两列排，8 个口就是 4 行灯 */
     portsTop() {
@@ -430,34 +430,25 @@ export default {
     slotText() {
       return this.board.no == null ? '-' : this.board.no
     },
-    /** 丝印副标题：口类型 + 口数（窄板只有 76 宽，写太长会压到槽位字） */
+    /** 丝印副标题：后端拼好「GPON 8口 主控」，这里只按窄板宽度截断（纯排版） */
     subtitle() {
-      const mode = this.board.portMode || ''
-      const text = [mode, this.ports.length ? this.ports.length + '口' : '', this.board.controlBoard ? '主控' : '']
-        .filter(Boolean)
-        .join(' ')
+      const text = this.board.subtitle || ''
       return text.length > 11 ? text.slice(0, 10) + '…' : text
     },
     runState() {
-      return boardLampState(this.board.statusType)
+      return boardLampState(this.board.lampState)
     },
-    /** ALM：板卡状态异常常亮红 */
+    /** ALM：板卡状态异常常亮红——「哪种状态算异常」由后端随板卡给（alarmLamp） */
     alarmState() {
-      const type = this.board.statusType
-      return type === 'danger' || type === 'warning' ? 'alarm' : 'offline'
+      return this.board.alarmLamp || 'offline'
     },
-    /** ACT：板卡下有在线 ONT 就闪 */
+    /** ACT：板卡下有在线 ONT 就闪——后端随板卡给 actLamp */
     actState() {
-      return this.onlineTotal > 0 ? 'online' : 'offline'
+      return this.board.actLamp || 'offline'
     },
-    /** ENV：温度过高告警，没采到温度就灰着 */
+    /** ENV：温度告警灯——阈值比较在后端做（envLamp），页面不自己定「多少度算高」 */
     envState() {
-      const temp = this.board.temperature
-      if (temp == null) return 'offline'
-      // 告警阈值由后端给，页面不自己定「多少度算高」
-      const limit = this.options ? this.options.envTempAlarmC : null
-      if (limit == null) return 'offline'
-      return temp >= limit ? 'alarm' : 'offline'
+      return this.board.envLamp || 'offline'
     },
     /** 板卡右边缘（导轨就贴在板卡右边） */
     plateRight() {
@@ -514,64 +505,25 @@ export default {
     portNo(port) {
       return port.no == null ? '-' : port.no
     },
+    /**
+     * 面板上的口名 / 标注 / 光模块数值 / 悬停提示：
+     * 文本全部由后端随端口算好（labelText / panelText / subText / opticText / tooltipText），
+     * 这里只做透传——「什么口型、算不算在线、缺数据怎么说」都不该在页面再判一遍。
+     */
     portLabel(port) {
-      const no = this.portNo(port)
-      if (this.panel === 'pon') {
-        return 'PON ' + no
-      }
-      const mode = (this.board.portMode || '').toUpperCase()
-      const prefix = mode.indexOf('10GE') >= 0 || mode.indexOf('XGE') >= 0 ? '10GE' : mode || 'PORT'
-      return prefix + ' ' + no
+      return port.labelText || ('PORT ' + this.portNo(port))
     },
-    /** 标注第二行：PON 口看 ONT 总数/在线数，上行口看链路状态 */
     onuText(port) {
-      if (this.panel !== 'pon') {
-        return '链路 ' + (port.linkText || '未采集')
-      }
-      if (!port.onuText) {
-        return 'ONT 未采集'
-      }
-      if (!port.onuTotal) {
-        return '无 ONT'
-      }
-      return (port.onuOnline || 0) + ' / ' + port.onuTotal + ' ONT 在线'
+      return port.panelText || ''
     },
-    /** 标注第三行：接口号 + 上行口放通的 VLAN */
     subText(port) {
-      const parts = []
-      if (port.iface) {
-        parts.push(port.iface)
-      }
-      if (port.vlanText) {
-        parts.push('VLAN ' + port.vlanText)
-      }
-      return parts.join(' · ') || '—'
+      return port.subText || '—'
     },
-    /** 光模块数值一行：发光 / 收光 / 温度 / 偏置 / 电压（display port state 采的，没采到就写未采集） */
     opticText(port) {
-      const parts = []
-      if (port.txPower) parts.push('发光 ' + port.txPower)
-      if (port.rxPower) parts.push('收光 ' + port.rxPower)
-      if (port.opticTemperature) parts.push('温度 ' + port.opticTemperature)
-      if (port.biasCurrent) parts.push('偏置 ' + port.biasCurrent)
-      if (port.supplyVoltage) parts.push('电压 ' + port.supplyVoltage)
-      if (parts.length) {
-        return parts.join(' · ')
-      }
-      return port.hasOptic ? '光模块数值未采集' : '光模块未采集'
+      return port.opticText || ''
     },
     tooltip(port) {
-      const stateText = { online: '在线', alarm: '告警', offline: '离线' }[this.stateOf(port)]
-      return [
-        this.portLabel(port),
-        port.iface || '',
-        stateText,
-        port.onuText || 'ONT 未采集',
-        port.vlanText ? 'VLAN ' + port.vlanText : '',
-        this.opticText(port)
-      ]
-        .filter(Boolean)
-        .join(' · ')
+      return port.tooltipText || ''
     }
   }
 }

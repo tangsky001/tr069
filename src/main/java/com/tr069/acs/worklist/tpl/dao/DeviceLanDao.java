@@ -10,12 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * LAN 网口实例 DAO。一行 = 一个物理网口的下发路径与变量值。
- *
- * <p>网口个数由 {@code device.cap_lan_ports} 决定，速率可选项由
- * {@code device.cap_lan_speed} 决定（如「自动 / 100M / 1000M / 2500M」）。</p>
- */
+/** LAN 网口实例 DAO。一行 = 一个物理网口的下发路径与变量值 */
 @Repository
 public class DeviceLanDao {
 
@@ -63,7 +58,7 @@ public class DeviceLanDao {
         return jdbc.update("DELETE FROM device_lan WHERE device_id = ?", deviceId);
     }
 
-    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体。 */
+    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体 */
     public long upsert(DeviceLan r) {
         Optional<DeviceLan> exist = findOne(r.getDeviceId(), r.getInstanceNo());
         if (exist.isPresent()) {

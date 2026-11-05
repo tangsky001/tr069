@@ -2,9 +2,7 @@ package com.tr069.acs.worklist.tpl.entity;
 
 import lombok.Data;
 
-/**
- * 5.8G WiFi 配置。结构同 {@link WlanA}，实例 5-8。
- */
+/** 5.8G WiFi 配置。结构同 {@link WlanA}，实例 5-8 */
 @Data
 public class WlanB {
 

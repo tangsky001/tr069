@@ -5,32 +5,22 @@ import lombok.Data;
 import java.io.Serializable;
 import java.util.List;
 
-/**
- * 分页响应体，对应管理端的列表查询。
- */
+/** 分页响应体，对应管理端的列表查询 */
 @Data
 public class PageResult<T> implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    /**
-     * 当前页数据
-     */
+    /** 当前页数据 */
     private List<T> items;
 
-    /**
-     * 总记录数
-     */
+    /** 总记录数 */
     private long total;
 
-    /**
-     * 当前页码，从 1 开始
-     */
+    /** 当前页码，从 1 开始 */
     private long page;
 
-    /**
-     * 每页条数
-     */
+    /** 每页条数 */
     private long size;
 
     public PageResult() {

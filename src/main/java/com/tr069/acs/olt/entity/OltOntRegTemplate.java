@@ -8,15 +8,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * ONT 注册模板：光猫上线时按优先级匹配，命中哪条就按哪条注册。
- *
- * <p>一条模板就是「匹配条件 + 套哪套线路/业务模板」：条件有 PON 口、ONT 型号、
- * PON 类型；注册动作就是拿着设备自动发现到的那条记录去 {@code ont confirm}。</p>
- *
- * <p>{@link #oltId} 为空表示不限设备（公共模板）；同一个 OLT 上多条模板按
- * {@link #priority} 从小到大匹配，第一条命中的被采用。</p>
- */
+/** ONT 注册模板：光猫上线时按优先级匹配，命中哪条就按哪条注册 */
 @Data
 @TableName("olt_ont_reg_template")
 public class OltOntRegTemplate {

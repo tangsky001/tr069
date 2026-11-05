@@ -54,12 +54,12 @@
       </el-table-column>
       <el-table-column label="模板类型" width="130">
         <template slot-scope="{ row }">
-          <el-tag size="mini" :type="tagType(row.category)">{{ row.categoryLabel || row.category }}</el-tag>
+          <el-tag size="mini" :type="row.categoryLevel || 'info'">{{ row.categoryLabel || row.category }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="开通意图" min-width="260" show-overflow-tooltip>
         <template slot-scope="{ row }">
-          <span>{{ intentSummary(row) }}</span>
+          <span>{{ row.intentSummary }}</span>
         </template>
       </el-table-column>
       <el-table-column label="备注" min-width="160" show-overflow-tooltip>
@@ -226,6 +226,8 @@ export default {
       saving: false,
       list: [],
       categories: [],
+      // 支持增量语义的业务类型由后端 meta 下发（目前是 WAN_* 那几类）
+      incrementalCategories: [],
       // 类型 -> 该类型的意图字段定义
       fieldDefMap: {},
       // 绑定端口候选由后端给：选中值要直接写进型号的绑定节点，
@@ -241,9 +243,13 @@ export default {
     fieldDefs() {
       return this.fieldDefMap[this.form.category] || []
     },
-    /** 只有 WAN 类业务有「先清理存量再新建」的覆盖语义，增量开关只对它们有意义 */
+    /**
+     * 只有 WAN 类业务有「先清理存量再新建」的覆盖语义，增量开关只对它们有意义。
+     * 类型清单由后端 meta 下发（incrementalCategories），前端不做前缀推断：
+     * 清单里没有就是后端没配，开关不显示。
+     */
     wanCategory() {
-      return String(this.form.category || '').toUpperCase().startsWith('WAN_')
+      return this.incrementalCategories.includes(this.form.category)
     }
   },
   created() {
@@ -256,6 +262,7 @@ export default {
         const res = await fetchConfigTemplateMeta()
         const meta = res.data || {}
         this.categories = meta.categories || []
+        this.incrementalCategories = meta.incrementalCategories || []
         this.fieldDefMap = meta.fields || {}
         this.portGroups = meta.bindPortGroups || []
       } catch (e) {
@@ -278,30 +285,7 @@ export default {
       this.query = { category: '', keyword: '' }
       this.load()
     },
-    tagType(code) {
-      const map = {
-        WAN_DHCP: 'success', WAN_PPPOE: 'success', WAN_STATIC: 'success', WAN_BRIDGE: 'success',
-        WIFI_24G: 'danger', WIFI_58G: 'danger', SIP: 'warning', OTHER: 'info'
-      }
-      return map[code] || 'info'
-    },
-    /** 意图字段 -> 「标签：取值」摘要，取值显示后端定义的中文 */
-    intentSummary(row) {
-      const defs = this.fieldDefMap[row.category] || []
-      const fields = row.fields || {}
-      if (!defs.length) return '-'
-      return defs.map(d => {
-        const value = fields[d.key]
-        if (value === undefined || value === null || value === '' ||
-          (Array.isArray(value) && !value.length)) return null
-        const labelOf = v => {
-          const hit = (d.options || []).find(o => String(o.value) === String(v))
-          return hit ? hit.label : v
-        }
-        const text = Array.isArray(value) ? value.map(labelOf).join('、') : labelOf(value)
-        return d.label + '：' + text
-      }).filter(Boolean).join('　')
-    },
+    // 「开通意图」摘要与类型标签色都由后端随模板列表给（intentSummary / categoryLevel）
     // ---------------- 对话框 ----------------
     openCreate(category) {
       this.form = emptyForm()
@@ -321,25 +305,11 @@ export default {
         incremental: row.incremental === true,
         fields: Object.assign({}, row.fields || {})
       }
-      // 业务模式的历史值是混合大小写（Internet / Internet,TR069），先归一成设备口径，
-      // 否则新选项（INTERNET）匹配不上，下拉框会显示成一段裸值
-      this.normalizeServiceMode()
+      // 业务模式的归一化（大写、逗号分隔、去重）已收口到后端：读出口与保存时都做，
+      // 存量模板的混合大小写在这里拿到的就已经是设备口径
       this.applyFieldDefaults()
       this.dialogTitle = '编辑配置模板 - ' + row.name
       this.dialogVisible = true
-    },
-
-    /** 业务模式统一成设备口径（INTERNET / TR069 / VOIP / IPTV），兼容存量模板里的混合大小写。 */
-    normalizeServiceMode() {
-      const raw = this.form.fields.service_list
-      if (typeof raw !== 'string' || !raw) return
-      const tokens = raw.split(/[,，、+\/\s]+/)
-        .map(s => s.trim().toUpperCase())
-        .filter(Boolean)
-        .filter((v, i, a) => a.indexOf(v) === i)
-      if (tokens.length) {
-        this.$set(this.form.fields, 'service_list', tokens.join(','))
-      }
     },
 
     /** 未设置的意图字段按后端默认值补齐；默认值为 null 的（数字可空项）保持留空 */

@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 线路模板三个弹窗的命令预演：{@code kind} 决定算哪段命令。
- *
- * <p>索引、VLAN 都用字符串收（页面上是文本框，可能还没填），
- * 校验与取值由后端的 {@code numberInRange / csvInts} 统一做。</p>
- */
+/** 线路模板三个弹窗的命令预演：{@code kind} 决定算哪段命令 */
 @Data
 public class OltLineProfilePreviewRequest {
 

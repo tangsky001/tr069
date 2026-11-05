@@ -6,12 +6,7 @@ import com.tr069.acs.olt.model.OltBoardStatusRule;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * 板卡档案与状态翻译：设备侧知识，以前整张躺在页面里。
- *
- * <p>页面需要的不是「型号→档案」这张表，而是「这块板该怎么画、状态该怎么说」，
- * 所以由服务端按型号匹配好、连同板卡一起返回，页面拿到就能用。</p>
- */
+/** 板卡档案与状态翻译：设备侧知识，以前整张躺在页面里 */
 public final class OltBoardCatalog {
 
     private OltBoardCatalog() {
@@ -20,12 +15,7 @@ public final class OltBoardCatalog {
     /** 环境温度告警阈值(摄氏度)：超过就当告警 */
     public static final int ENV_TEMP_ALARM_C = 65;
 
-    /**
-     * 型号档案。
-     *
-     * <p><b>顺序不能随便调：</b>{@code XGBD} 必须排在 {@code GPBD} 前面——
-     * {@code H801XGBD} 里也有 {@code GPBD} 这串字符，先匹配 GPBD 会认错板。</p>
-     */
+    /** 型号档案 */
     private static final List<OltBoardProfile> PROFILES = List.of(
             new OltBoardProfile("H802SCUN", "SCUN 主控板（4 个管理/上行 GE 口）", "ge", "GE",
                     4, true, List.of("SCUN")),
@@ -73,10 +63,7 @@ public final class OltBoardCatalog {
         return null;
     }
 
-    /**
-     * 没配档案的板卡按端口类型推断面板样式，让主控板、上联板也有像样的面板；
-     * 认不出来就退回 generic，按端口数画一排通用口。
-     */
+    /** 没配档案的板卡按端口类型推断面板样式，让主控板、上联板也有像样的面板 */
     public static String panelKindOf(String portMode) {
         String mode = portMode == null ? "" : portMode.toUpperCase(Locale.ROOT);
         if (mode.isBlank()) {

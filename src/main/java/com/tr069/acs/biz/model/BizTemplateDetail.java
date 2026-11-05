@@ -6,9 +6,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 业务模板详情：模板本体 + 成员列表。
- */
+/** 业务模板详情：模板本体 + 成员列表 */
 @Data
 public class BizTemplateDetail {
 

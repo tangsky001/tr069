@@ -2,15 +2,7 @@ package com.tr069.acs.worklist.tpl.entity;
 
 import lombok.Data;
 
-/**
- * 型号主表。一行 = 一个 (isp, model_key, software_version) 组合。
- *
- * <p>字段承接原 MySQL {@code cpe_model}：既存从设备读到的固有属性（厂商、大类、
- * 软硬件版本），也存人工适配申报的能力（{@code capLanPorts} / {@code capSipCount} /
- * {@code capWifiSpec}）——后者决定各业务表该有几行。</p>
- *
- * <p>注意：这里<b>不存</b>设备的实时状态、台账信息、参数实时值，那些属于 MySQL。</p>
- */
+/** 型号主表。一行 = 一个 (isp, model_key, software_version) 组合 */
 @Data
 public class Device {
 

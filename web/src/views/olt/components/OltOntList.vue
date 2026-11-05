@@ -83,8 +83,8 @@ import { fetchOltOptions } from '@/api/olt'
 export default {
   name: 'OltOntList',
   props: {
-    /** 板卡 → 端口 → ONU，和 OltOntBoard 收的是同一份数据 */
-    ontBoards: {
+    /** 后端摊好的 ONU 行（板卡 × 端口 × ONU，已按槽位/端口/ID 排好），页面只渲染 */
+    ontRows: {
       type: Array,
       default: () => []
     },
@@ -105,46 +105,12 @@ export default {
     }
   },
   computed: {
-    /** 摊平成一行一条 ONU，按 PON 口 → ONU ID 排序 */
+    /**
+     * 摊平与排序都在后端（detail.ontRows：按槽位 → 端口 → ONU ID 排好），
+     * 这里只把 props 交出去渲染，不再从板卡树里自己遍历。
+     */
     rows() {
-      const rows = []
-      const boards = this.ontBoards || []
-      boards.forEach(slot => {
-        const ports = slot.ports || []
-        ports.forEach(port => {
-          const onts = port.onts || []
-          onts.forEach(ont => {
-            rows.push({
-              key: [slot.no, port.name, ont.id, ont.sn].join('-'),
-              ponNo: port.no,
-              portName: port.name,
-              iface: port.iface,
-              ontId: ont.id,
-              name: ont.name,
-              sn: ont.sn,
-              stateText: ont.stateText,
-              online: ont.online,
-              authorized: ont.authorized,
-              registerTime: ont.registerTime,
-              lastOfflineTime: ont.lastOfflineTime,
-              offlineReason: ont.offlineReason,
-              deviceType: ont.deviceType,
-              onuType: ont.onuType,
-              distance: ont.distance,
-              rxPower: ont.rxPower,
-              desc: ont.desc
-            })
-          })
-        })
-      })
-      rows.sort((a, b) => {
-        const byPort = (a.ponNo || 0) - (b.ponNo || 0)
-        if (byPort !== 0) {
-          return byPort
-        }
-        return (a.ontId || 0) - (b.ontId || 0)
-      })
-      return rows
+      return this.ontRows || []
     }
   },
   created() {

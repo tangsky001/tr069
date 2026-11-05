@@ -545,7 +545,7 @@ CREATE TABLE IF NOT EXISTS `olt_board` (
 CREATE TABLE IF NOT EXISTS `olt_sync_record` (
     `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     `olt_id`     BIGINT       DEFAULT NULL COMMENT 'olt_device.id，未保存的设备为 NULL',
-    `action`     VARCHAR(16)  NOT NULL COMMENT '动作：TEST 诊断测试 / SYNC 同步',
+    `action`     VARCHAR(16)  NOT NULL COMMENT '动作：TEST 诊断 / SYNC 同步 / CONFIG 配置 / QUERY 查询 / DELETE 删除',
     `success`    TINYINT      NOT NULL DEFAULT 0 COMMENT '是否成功',
     `message`    VARCHAR(1000) DEFAULT NULL COMMENT '结果说明或失败原因',
     `raw_output` MEDIUMTEXT   COMMENT '设备回显原文，超长截断',

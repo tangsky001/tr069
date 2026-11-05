@@ -1,8 +1,6 @@
 package com.tr069.acs.common.exception;
 
-/**
- * CWMP 报文构造或解析异常。
- */
+/** CWMP 报文构造或解析异常 */
 public class SoapException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;

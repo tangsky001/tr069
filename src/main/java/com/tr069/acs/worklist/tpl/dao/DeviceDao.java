@@ -10,14 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * 型号主表 DAO。两步点查的核心入口：
- * <pre>
- *   ① findByIspModelKeyVersion(...)  → 拿 device.id
- *   ② 业务表按 device_id + instance_no 取具体参数
- * </pre>
- * id 由注入的雪花生成器产生，跨节点部署时只要节点号不撞就安全。
- */
+/** 型号主表 DAO。两步点查的核心入口 */
 @Repository
 public class DeviceDao {
 
@@ -57,14 +50,7 @@ public class DeviceDao {
         this.snowflake = snowflake;
     }
 
-    /**
-     * 核心点查：按 (isp, model_key) 查唯一一条，命中唯一索引。
-     *
-     * <p>model_key 本身已含固件版本（{@code 型号_固件}，见
-     * {@code ModelMappingService.buildModelKey}），所以不需要再拼 software_version——
-     * 与 MySQL {@code cpe_model} 的 {@code uk_cpe_model(isp, model_key)} 保持一致，
-     * 同一份 modelKey 在两边查到的必须是同一条记录。</p>
-     */
+    /** 核心点查：按 (isp, model_key) 查唯一一条，命中唯一索引 */
     public Optional<Device> findByIspModelKey(String isp, String modelKey) {
         List<Device> list = jdbc.query(
                 "SELECT " + COLS + " FROM device WHERE isp = ? AND model_key = ? LIMIT 1",
@@ -72,15 +58,7 @@ public class DeviceDao {
         return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
     }
 
-    /**
-     * 同型号不分运营商的全部归档行。
-     *
-     * <p>适配是按「申报的运营商」归档的（比如选了 CMCC 就挂在 CMCC 目录下），
-     * 但设备台账里的运营商未必一致——光猫上报通常不带运营商，适配时才人工定。
-     * 于是会出现同一个 modelKey 存两份：一份没申报过（早期采集留下的空档）、
-     * 一份带完整能力申报。按 isp 只查一份就会命中空的那份，表现为「明明适配过，
-     * 模板却生成不出来」。这里按型号捞全，交给调用方挑有申报的那份。</p>
-     */
+    /** 同型号不分运营商的全部归档行 */
     public List<Device> findByModelKey(String modelKey) {
         return jdbc.query("SELECT " + COLS + " FROM device WHERE model_key = ? ORDER BY id",
                 ROW_MAPPER, modelKey);
@@ -96,9 +74,7 @@ public class DeviceDao {
         return jdbc.query("SELECT " + COLS + " FROM device ORDER BY id", ROW_MAPPER);
     }
 
-    /**
-     * 新增或更新：同 (isp, model_key, software_version) 已存在则 UPDATE，否则 INSERT。
-     */
+    /** 新增或更新：同 (isp, model_key, software_version) 已存在则 UPDATE，否则 INSERT */
     public boolean upsert(Device d) {
         // isp / status / root_node 在表里是 NOT NULL，业务上也都有明确默认值，
         // 调用方没设就补齐。注意 SQLite 的 DEFAULT 只在「完全不指定该列」时生效，

@@ -2,11 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 线路模板里加一个 GEM Port：{@code gem add <GEM Port 索引> eth tcont <T-CONT 索引> encrypt on}。
- *
- * <p>GEM Port 挂在 T-CONT 上，业务 VLAN 再从 GEM 映射进来——先 T-CONT、再 GEM Port、最后映射。</p>
- */
+/** 线路模板里加一个 GEM Port：{@code gem add  eth tcont  encrypt on} */
 @Data
 public class OltGemportRequest {
 

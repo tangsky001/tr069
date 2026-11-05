@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 新增 DBA 模板的表单（页面上「新增DBA模板」弹窗）。
- *
- * <p>五类模板对应华为 {@code dba-profile add} 的 type1~type5，
- * 每类需要的带宽字段不一样，服务端按类型校验。</p>
- */
+/** 新增 DBA 模板的表单（页面上「新增DBA模板」弹窗） */
 @Data
 public class OltDbaProfileRequest {
 

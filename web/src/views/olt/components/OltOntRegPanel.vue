@@ -64,9 +64,9 @@
       <el-form-item label-width="210px">
         <!-- 后台任务是静默跑的：不显示这几个时间，没法区分「没在跑」和「跑了没注册上」 -->
         <div class="reg-auto-status">
-          <span>上次扫描 <b>{{ fmtTime(autoConfig.lastScanAt) }}</b></span>
-          <span>上次注册 <b>{{ fmtTime(autoConfig.lastRegisterAt) }}</b></span>
-          <span>上次存盘 <b>{{ fmtTime(autoConfig.lastSaveAt) }}</b></span>
+          <span>上次扫描 <b>{{ autoConfig.lastScanText || '—' }}</b></span>
+          <span>上次注册 <b>{{ autoConfig.lastRegisterText || '—' }}</b></span>
+          <span>上次存盘 <b>{{ autoConfig.lastSaveText || '—' }}</b></span>
         </div>
         <el-button size="small" icon="el-icon-search" :loading="scanning" @click="runScanOnce">立即扫描一次</el-button>
         <el-button size="small" type="primary" icon="el-icon-check" @click="saveAutoConfig">保存设置</el-button>
@@ -304,7 +304,8 @@ import {
   saveOntRegTemplate,
   deleteOntRegTemplates,
   previewOntRegister,
-  registerOnt
+  registerOnt,
+  fetchOltOptions
 } from '@/api/olt'
 
 /**
@@ -356,21 +357,6 @@ function toServerConfig(config) {
   }
 }
 
-const AUTH_LABELS = {
-  SN: 'SN',
-  MAC: 'MAC',
-  LOID: 'LOID',
-  PASSWORD: 'Password'
-}
-
-/** 光猫工作模式的显示名，和模板弹窗里的选项一一对应 */
-const WORK_MODE_LABELS = {
-  HGU: 'HGU/网关型',
-  SFU: 'SFU/桥接型（不带路由功能）',
-  MIX: 'HGU + SFU 兼容/混合型',
-  MDU: 'ONU/外置型光猫（MDU）'
-}
-
 export default {
   name: 'OltOntRegPanel',
   components: { OltHelpLabel, OltOntRegTemplateDialog },
@@ -405,10 +391,16 @@ export default {
       registering: false,
       /** 预览弹窗里等确认的那批参数，确认后才拿去下发 */
       pendingPayload: null,
-      seq: 1
+      seq: 1,
+      /** 注册方式 / 工作模式的显示名，来自后端 /olt/options */
+      optionTables: null
     }
   },
   computed: {
+    /** 码表：注册方式短名、光猫工作模式中文名 */
+    codeTables() {
+      return (this.optionTables && this.optionTables.codeTables) || {}
+    },
     visibleTemplates() {
       return this.templates
     },
@@ -437,7 +429,9 @@ export default {
       if (!this.previewTemplate) {
         return '-'
       }
-      return WORK_MODE_LABELS[this.previewTemplate.workMode] || '-'
+      const mode = (this.codeTables.workModes || [])
+        .find(item => item.code === this.previewTemplate.workMode)
+      return mode ? mode.label : '-'
     }
   },
   watch: {
@@ -452,9 +446,19 @@ export default {
       this.reload()
     }
   },
+  created() {
+    fetchOltOptions()
+      .then(res => {
+        this.optionTables = res.data || null
+      })
+      .catch(() => {
+        this.optionTables = null
+      })
+  },
   methods: {
     authLabel(mode) {
-      return AUTH_LABELS[mode] || '-'
+      const labels = this.codeTables.authModeLabels || {}
+      return labels[mode] || '-'
     },
     /**
      * 从库里读模板、自动注册参数、注册记录。
@@ -489,15 +493,7 @@ export default {
       this.records = recordResult.data || []
       this.seq = this.templates.length + 1
     },
-    /** 后端时间戳转短格式：今天的只显示时分秒，更早的带上日期 */
-    fmtTime(value) {
-      if (!value) {
-        return '—'
-      }
-      const text = String(value).replace('T', ' ')
-      const today = new Date().toISOString().slice(0, 10)
-      return text.startsWith(today) ? text.slice(11, 19) : text.slice(5, 19)
-    },
+    // 「上次扫描 / 注册 / 存盘」的时间文本由后端随参数给（lastScanText 等），页面不再判今天
     /** 不等下一轮扫描，立刻按当前参数跑一轮（和后台任务同一条路径） */
     async runScanOnce() {
       if (!this.oltId || this.scanning) {

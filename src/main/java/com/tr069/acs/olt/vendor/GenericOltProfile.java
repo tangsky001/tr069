@@ -4,12 +4,7 @@ import com.tr069.acs.olt.telnet.OltVendor;
 
 import java.util.List;
 
-/**
- * 认不出厂商时的兜底 profile：两套命令都试。
- *
- * <p>型号识别也走这里——按已注册品牌的顺序挨家试一遍，新品牌注册进来自动生效，
- * 不用在这里补它们家的正则。</p>
- */
+/** 认不出厂商时的兜底 profile：两套命令都试 */
 public class GenericOltProfile extends AbstractOltVendorProfile {
 
     @Override

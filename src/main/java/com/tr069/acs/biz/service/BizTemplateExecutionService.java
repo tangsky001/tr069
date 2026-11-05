@@ -25,29 +25,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 业务模板整包下发：按成员顺序逐个下发，前一个结束才发下一个。
- *
- * <h3>为什么要串行</h3>
- * <p>成员之间是有依赖的：先建 WAN 连接，才能在它上面挂 VLAN、绑业务，
- * 最后才是 WiFi 与语音。一股脑全排进队列，设备按 FIFO 取是「按顺序取」，
- * 但前一个失败了后面的照样往下写，开出来的就是半套业务。所以这里等前一个成员
- * 结束再决定下一个，{@code continueOnError=false} 时失败即停。</p>
- *
- * <h3>进度</h3>
- * <p>接口立即返回执行记录 id，页面靠它轮询；每结束一个成员就把计数与明细写回
- * {@code biz_template_execution}，不用等整包跑完才看得到进展。</p>
- *
- * <h3>续跑</h3>
- * <p>推进状态挂在内存里，进程重启后未完成的执行无法续跑，会一直停在
- * {@code running}。这是已知取舍：整包下发本来就要盯着，重启后重新点一次即可。</p>
- */
+/** 业务模板整包下发：按成员顺序逐个下发，前一个结束才发下一个 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class BizTemplateExecutionService {
 
-    /** 整包下发在下发任务上的来源标记，回写进度时靠它认领自己的任务。 */
+    /** 整包下发在下发任务上的来源标记，回写进度时靠它认领自己的任务 */
     public static final String SOURCE_BIZ = "biz";
 
     private static final String STATUS_RUNNING = "running";
@@ -61,15 +45,13 @@ public class BizTemplateExecutionService {
     private final IntentDeliveryService intentDeliveryService;
     private final ObjectMapper objectMapper;
 
-    /** 正在跑的整包，按执行记录 id 索引。 */
+    /** 正在跑的整包，按执行记录 id 索引 */
     private final Map<Long, Progress> running = new ConcurrentHashMap<>();
 
-    /** taskNo -> 所属整包，下发任务结束事件回来时按它定位。 */
+    /** taskNo -> 所属整包，下发任务结束事件回来时按它定位 */
     private final Map<String, Progress> awaiting = new ConcurrentHashMap<>();
 
-    /**
-     * 单条执行记录。
-     */
+    /** 单条执行记录 */
     public BizTemplateExecution get(Long id) {
         BizTemplateExecution execution = executionMapper.selectById(id);
         if (execution == null) {
@@ -78,9 +60,7 @@ public class BizTemplateExecutionService {
         return execution;
     }
 
-    /**
-     * 下发记录列表，按时间倒序。
-     */
+    /** 下发记录列表，按时间倒序 */
     public List<BizTemplateExecution> list(String sn, Long templateId, int limit) {
         LambdaQueryWrapper<BizTemplateExecution> query = new LambdaQueryWrapper<>();
         if (sn != null && !sn.isBlank()) {
@@ -93,15 +73,7 @@ public class BizTemplateExecutionService {
         return executionMapper.selectList(query);
     }
 
-    /**
-     * 对一台设备整包下发业务模板。
-     *
-     * @param templateId 业务模板 id
-     * @param sn         设备序列号
-     * @param params     整包级的入参，成员上配的同名参数优先
-     * @param username   操作人
-     * @return 执行记录，含 id 供页面轮询
-     */
+    /** 对一台设备整包下发业务模板 */
     public BizTemplateExecution execute(Long templateId, String sn,
                                         Map<String, String> params, String username) {
         if (templateId == null) {
@@ -146,12 +118,7 @@ public class BizTemplateExecutionService {
 
     // ==================== 串行推进 ====================
 
-    /**
-     * 下发下一个成员。
-     *
-     * <p>任务号带执行记录 id 与成员序号，既是幂等键，也让事件回来时能直接定位
-     * 到是哪一个成员结束了。</p>
-     */
+    /** 下发下一个成员 */
     private synchronized void startNext(Progress progress) {
         if (progress.index() >= progress.items().size()) {
             finish(progress, null);
@@ -200,9 +167,7 @@ public class BizTemplateExecutionService {
         }
     }
 
-    /**
-     * 下发任务结束：认领自己的成员，记结果，决定继续还是停下。
-     */
+    /** 下发任务结束：认领自己的成员，记结果，决定继续还是停下 */
     @EventListener
     public synchronized void onTaskFinished(TaskFinishedEvent event) {
         DeviceTask task = event.getTask();
@@ -233,7 +198,7 @@ public class BizTemplateExecutionService {
         startNext(progress);
     }
 
-    /** 每结束一个成员就落一次库，页面不用等整包跑完才看得到进度。 */
+    /** 每结束一个成员就落一次库，页面不用等整包跑完才看得到进度 */
     private void persist(Progress progress) {
         BizTemplateExecution execution = progress.execution();
         execution.setFinishedCount(progress.results().size());
@@ -267,7 +232,7 @@ public class BizTemplateExecutionService {
 
     // ==================== 内部实现 ====================
 
-    /** 成员引用的配置模板 id；存量数据存的是旧的文件 key，解析不出数字即为失效。 */
+    /** 成员引用的配置模板 id；存量数据存的是旧的文件 key，解析不出数字即为失效 */
     private static Long parseTemplateId(String templateKey) {
         if (templateKey == null || templateKey.isBlank()) {
             return null;
@@ -288,9 +253,7 @@ public class BizTemplateExecutionService {
         }
     }
 
-    /**
-     * 一次整包下发的推进状态。
-     */
+    /** 一次整包下发的推进状态 */
     private static final class Progress {
 
         private final BizTemplateExecution execution;
@@ -317,7 +280,7 @@ public class BizTemplateExecutionService {
             this.username = username;
         }
 
-        /** 记录一个成员的结局。 */
+        /** 记录一个成员的结局 */
         void record(BizTemplateItemView item, boolean ok, String error) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("order", index + 1);

@@ -22,69 +22,43 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.Base64;
 
-/**
- * 管理端 JWT 密钥。
- *
- * <p>密钥不再写在配置文件里：配置文件会随 jar 一起分发，写在里面的密钥等于公开。
- * 这里改为从进程工作目录下的 {@code target/secret.xml} 读取（随部署产生，不入库、不进 git），
- * 读不到就随机生成一个写进去，保证每个现场拿到的是各自的密钥。</p>
- *
- * <p>取值的优先级：</p>
- * <ol>
- *   <li>显式指定 {@code admin.jwt.secret}（只用于临时排障，配置文件里不再保留这一项）；</li>
- *   <li>{@code -Djwt.secret.file=...} 指定的文件；</li>
- *   <li>{@code target/secret.xml}；</li>
- *   <li>以上都没有，随机生成并落盘。</li>
- * </ol>
- *
- * <p>多实例部署时要把同一个 secret.xml 放到各实例的工作目录下，否则彼此签发的令牌互不认。</p>
- */
+/** 管理端 JWT 密钥 */
 @Slf4j
 @Component
 public class JwtSecretProvider {
 
-    /** 缺省密钥文件名。 */
+    /** 缺省密钥文件名 */
     public static final String SECRET_FILE = "secret.xml";
 
-    /** 密钥文件中承载密钥的元素名。 */
+    /** 密钥文件中承载密钥的元素名 */
     private static final String SECRET_ELEMENT = "secret";
 
-    /** 允许用启动参数换一个密钥文件位置。 */
+    /** 允许用启动参数换一个密钥文件位置 */
     private static final String FILE_PROPERTY = "jwt.secret.file";
 
-    /** HS256 要求密钥不短于 32 字节。 */
+    /** HS256 要求密钥不短于 32 字节 */
     private static final int SECRET_BYTES = 32;
 
     private final SecretKey key;
 
-    /**
-     * Spring 唯一应使用的构造函数。
-     *
-     * <p>必须显式标注 {@code @Autowired}：本类还有一个供测试直接指定密钥文件的构造函数，
-     * 两个构造函数都没有 {@code @Autowired} 时，Spring 判定不出该选哪个，会退回无参构造并抛
-     * {@code No default constructor found}，容器起不来。</p>
-     */
+    /** Spring 唯一应使用的构造函数 */
     @Autowired
     public JwtSecretProvider(@Value("${admin.jwt.secret:}") String configured) {
         this(resolveSecretFile(), configured);
     }
 
-    /** 测试专用：指定密钥文件位置，避免污染部署目录。 */
+    /** 测试专用：指定密钥文件位置，避免污染部署目录 */
     JwtSecretProvider(Path file, String configured) {
         this.key = Keys.hmacShaKeyFor(secretOf(file.toAbsolutePath().normalize(), configured)
                 .getBytes(StandardCharsets.UTF_8));
     }
 
-    /**
-     * 签名密钥。
-     */
+    /** 签名密钥 */
     public SecretKey getKey() {
         return key;
     }
 
-    /**
-     * 缺省位置：进程工作目录下的 {@code target/secret.xml}，与 target/configuration 同一层。
-     */
+    /** 缺省位置：进程工作目录下的 {@code target/secret.xml}，与 target/configuration 同一层 */
     private static Path resolveSecretFile() {
         String explicit = System.getProperty(FILE_PROPERTY);
         if (explicit != null && !explicit.isBlank()) {
@@ -114,9 +88,7 @@ public class JwtSecretProvider {
         return Base64.getEncoder().encodeToString(bytes);
     }
 
-    /**
-     * 读取密钥文件；文件缺失、为空或格式不对都返回 null，由调用方重新生成。
-     */
+    /** 读取密钥文件；文件缺失、为空或格式不对都返回 null，由调用方重新生成 */
     private static String read(Path file) {
         if (!Files.isRegularFile(file)) {
             return null;
@@ -150,9 +122,7 @@ public class JwtSecretProvider {
         }
     }
 
-    /**
-     * 关掉外部实体解析：密钥文件虽小，也不能给 XXE 留口子。
-     */
+    /** 关掉外部实体解析：密钥文件虽小，也不能给 XXE 留口子 */
     private static DocumentBuilder safeBuilder() throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);

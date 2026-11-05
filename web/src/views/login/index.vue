@@ -68,14 +68,13 @@
 </template>
 
 <script>
-import { validUsername } from '@/utils/validate'
-
 export default {
   name: 'Login',
   data() {
+    // 用户名只做非空校验：能登录哪些账号由后端用户表决定，前端不做白名单
     const validateUsername = (rule, value, callback) => {
-      if (!validUsername(value)) {
-        callback(new Error('请输入正确的用户名'))
+      if (!value || !value.trim()) {
+        callback(new Error('请输入用户名'))
       } else {
         callback()
       }

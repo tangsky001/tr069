@@ -18,22 +18,16 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * 向设备下发 CWMP 指令的通用通道。
- */
+/** 向设备下发 CWMP 指令的通用通道 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class CwmpRpcService {
 
-    /**
-     * 会话级故障码：设备离线、下发超时、连接断开，由会话层生成，区别于设备返回的 CWMP 故障。
-     */
+    /** 会话级故障码：设备离线、下发超时、连接断开，由会话层生成，区别于设备返回的 CWMP 故障 */
     private static final String FAULT_SESSION = "8002";
 
-    /**
-     * 指令入队失败（队列不可用或该设备队列已满）。
-     */
+    /** 指令入队失败（队列不可用或该设备队列已满） */
     private static final String FAULT_ENQUEUE = "8003";
 
     private final com.tr069.acs.acs.session.SessionManager sessionManager;
@@ -42,14 +36,10 @@ public class CwmpRpcService {
 
     private final QueueProperties queueProperties;
 
-    /**
-     * 队列关闭时退回会话内存 outbox，此时拿不到 rpc_record 主键，
-     */
+    /** 队列关闭时退回会话内存 outbox，此时拿不到 rpc_record 主键 */
     private final AtomicInteger outboxSequence = new AtomicInteger(0);
 
-    /**
-     * 提交一条下发指令，返回设备回应（凭据）。
-     */
+    /** 提交一条下发指令，返回设备回应（凭据） */
     public CompletableFuture<SoapMessage> submit(String sn, String rpcName,
                                                  Map<String, Object> args) {
         if (queueProperties.isEnabled()) {
@@ -69,9 +59,7 @@ public class CwmpRpcService {
         return rpc.getResponse();
     }
 
-    /**
-     * SetParameterValues：values 为 name / value / valueType 三元组的列表。
-     */
+    /** SetParameterValues：values 为 name / value / valueType 三元组的列表 */
     public CompletableFuture<SoapMessage> setParameterValues(String sn,
                                                              List<ParameterValueStruct> values,
                                                              String parameterKey) {
@@ -81,9 +69,7 @@ public class CwmpRpcService {
         return submit(sn, "SetParameterValues", args);
     }
 
-    /**
-     * AddObject：在 objectName（父路径）下新建一个对象实例。
-     */
+    /** AddObject：在 objectName（父路径）下新建一个对象实例 */
     public CompletableFuture<SoapMessage> addObject(String sn, String objectName, String key) {
         Map<String, Object> args = new LinkedHashMap<>();
         args.put("ObjectName", objectName);
@@ -91,9 +77,7 @@ public class CwmpRpcService {
         return submit(sn, "AddObject", args);
     }
 
-    /**
-     * DeleteObject：删除 objectName 指向的实例（通常路径末段带实例号）。
-     */
+    /** DeleteObject：删除 objectName 指向的实例（通常路径末段带实例号） */
     public CompletableFuture<SoapMessage> deleteObject(String sn, String objectName, String key) {
         Map<String, Object> args = new LinkedHashMap<>();
         args.put("ObjectName", objectName);
@@ -101,26 +85,20 @@ public class CwmpRpcService {
         return submit(sn, "DeleteObject", args);
     }
 
-    /**
-     * Reboot。
-     */
+    /** Reboot */
     public CompletableFuture<SoapMessage> reboot(String sn, String key) {
         Map<String, Object> args = new LinkedHashMap<>();
         args.put("CommandKey", key == null ? "" : key);
         return submit(sn, "Reboot", args);
     }
 
-    /**
-     * 设备是否在线（有可用会话），下发前先过这一关。
-     */
+    /** 设备是否在线（有可用会话），下发前先过这一关 */
     public boolean isOnline(String sn) {
         CpeSession session = sessionManager.find(sn);
         return session != null && session.isOnline();
     }
 
-    /**
-     * 设备是否正处在这一轮会话里：有会话、在线、且最近 {@code seconds} 秒内有通信。
-     */
+    /** 设备是否正处在这一轮会话里：有会话、在线、且最近 {@code seconds} 秒内有通信 */
     public boolean isSessionFresh(String sn, long seconds) {
         CpeSession session = sessionManager.find(sn);
         return session != null && session.isOnline() && !session.isExpired(seconds);
@@ -128,9 +106,7 @@ public class CwmpRpcService {
 
 
 
-    /**
-     * 会话级故障：设备离线、超时、队列不可用。这类故障重试没有意义，直接判失败。
-     */
+    /** 会话级故障：设备离线、超时、队列不可用。这类故障重试没有意义，直接判失败 */
     public static boolean isSessionFault(SoapMessage resp) {
         if (resp == null || resp.getFault() == null) {
             return false;
@@ -139,9 +115,7 @@ public class CwmpRpcService {
         return FAULT_SESSION.equals(code) || FAULT_ENQUEUE.equals(code);
     }
 
-    /**
-     * 设备返回的故障描述，包含 CWMP 故障码。
-     */
+    /** 设备返回的故障描述，包含 CWMP 故障码 */
     public static String faultText(SoapMessage resp) {
         if (resp == null || resp.getFault() == null) {
             return "无响应";
@@ -161,10 +135,7 @@ public class CwmpRpcService {
         return sb.toString();
     }
 
-    /**
-     * SetParameterValues / AddObject / DeleteObject 响应里的 Status：
-     * 0 为成功，1 为部分成功或失败。
-     */
+    /** SetParameterValues / AddObject / DeleteObject 响应里的 Status */
     public static String statusOf(SoapMessage resp) {
         if (resp == null || resp.getBody() == null) {
             return null;
@@ -173,9 +144,7 @@ public class CwmpRpcService {
         return status == null ? null : String.valueOf(status);
     }
 
-    /**
-     * AddObjectResponse 里新建出来的实例号；没有则为空。
-     */
+    /** AddObjectResponse 里新建出来的实例号；没有则为空 */
     public static String instanceNumberOf(SoapMessage resp) {
         if (resp == null || resp.getBody() == null) {
             return null;

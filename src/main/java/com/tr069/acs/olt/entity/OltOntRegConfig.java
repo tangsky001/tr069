@@ -1,19 +1,14 @@
 package com.tr069.acs.olt.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 一台 OLT 的 ONT 自动注册参数。
- *
- * <p>后台定时任务按 {@link #scanSeconds} 去设备上跑一次自动发现，把匹配上模板的
- * 光猫注册掉；注册成功后隔 {@link #saveSeconds} 把配置存盘——华为只写运行配置，
- * 不 save 掉电就回到注册前，光猫全部掉线。</p>
- */
+/** 一台 OLT 的 ONT 自动注册参数 */
 @Data
 @TableName("olt_ont_reg_config")
 public class OltOntRegConfig {
@@ -46,6 +41,18 @@ public class OltOntRegConfig {
     private LocalDateTime lastRegisterAt;
 
     private LocalDateTime lastSaveAt;
+
+    /** 最近扫描时间文本：当天只写时分秒，跨天带上月日；没扫过是「—」 */
+    @TableField(exist = false)
+    private String lastScanText;
+
+    /** 最近注册时间文本，同上 */
+    @TableField(exist = false)
+    private String lastRegisterText;
+
+    /** 最近保存（读上来的 ONT 落库）时间文本，同上 */
+    @TableField(exist = false)
+    private String lastSaveText;
 
     private LocalDateTime createdAt;
 

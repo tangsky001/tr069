@@ -10,17 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * 桥接实例 DAO。一行 = 一个 (bridge, port) 组合。
- *
- * <p>桥接是唯一<b>默认需要 AddObject</b> 的业务：设备出厂通常没有现成的桥接 WAN 实例，
- * 下发必须先 AddObject 建 {@code WANConnectionDevice.{j}.WANIPConnection.} 拿到实例号，
- * 再 SetParameterValues 设 {@code Enable / ConnectionType=Bridged / NATEnabled=0 /
- * X_CMCC_VLANID / X_CMCC_BindLANPort}。所以这里 {@code action} 默认取 {@code ADD}。</p>
- *
- * <p>唯一键是 (device_id, bridge_instance, port_instance) 三元组，
- * 因为一个网桥下可以挂多个端口。</p>
- */
+/** 桥接实例 DAO。一行 = 一个 (bridge, port) 组合 */
 @Repository
 public class BridgingDao {
 
@@ -78,7 +68,7 @@ public class BridgingDao {
         return jdbc.update("DELETE FROM bridging WHERE device_id = ?", deviceId);
     }
 
-    /** 按 (device_id, bridge_instance, port_instance) 新增或更新，返回主键并回填到实体。 */
+    /** 按 (device_id, bridge_instance, port_instance) 新增或更新，返回主键并回填到实体 */
     public long upsert(Bridging r) {
         Optional<Bridging> exist = findOne(r.getDeviceId(), r.getBridgeInstance(), r.getPortInstance());
         if (exist.isPresent()) {

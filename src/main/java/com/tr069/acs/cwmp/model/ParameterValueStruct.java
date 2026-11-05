@@ -7,13 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 
-/**
- * CWMP 参数名值结构，对应 SOAP 中的 {@code cwmp:ParameterValueStruct}。
- *
- * <p>ACS 构造 SetParameterValues 时使用 {@link #name} 与 {@link #value}；
- * 解析 CPE 的 GetParameterValues 响应时
- * 会额外回填 {@link #valueType}。</p>
- */
+/** CWMP 参数名值结构，对应 SOAP 中的 {@code cwmp:ParameterValueStruct} */
 @Data
 @Builder
 @NoArgsConstructor
@@ -22,19 +16,13 @@ public class ParameterValueStruct implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    /**
-     * 参数完整路径，如 InternetGatewayDevice.DeviceInfo.SerialNumber
-     */
+    /** 参数完整路径，如 InternetGatewayDevice.DeviceInfo.SerialNumber */
     private String name;
 
-    /**
-     * 参数值
-     */
+    /** 参数值 */
     private String value;
 
-    /**
-     * 值类型，取自 xsi:type 去掉 xsd: 前缀后的类型名，如 string / unsignedInt / boolean
-     */
+    /** 值类型，取自 xsi:type 去掉 xsd: 前缀后的类型名，如 string / unsignedInt / boolean */
     private String valueType;
 
     public static ParameterValueStruct of(String name, String value) {

@@ -27,13 +27,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * 管理端登录认证。
- *
- * <p>接口路径同时支持管理端实际使用的 {@code /api/user/*} 与
- * vue-admin-template 模板自带的 {@code /vue-admin-template/user/*}，
- * 便于在未调整前端前直接联调。</p>
- */
+/** 管理端登录认证 */
 @Slf4j
 @RestController
 @RequiredArgsConstructor
@@ -131,7 +125,7 @@ public class AuthController {
         return Result.success();
     }
 
-    /** 老账号没有角色就按系统管理员：升级前它是唯一的角色，不给权限反而把自己锁在门外。 */
+    /** 老账号没有角色就按系统管理员：升级前它是唯一的角色，不给权限反而把自己锁在门外 */
     private static String roleOf(SysUser user) {
         String role = user.getRole();
         return role == null || role.isBlank() ? PermissionCodes.ROLE_SUPER_ADMIN : role;

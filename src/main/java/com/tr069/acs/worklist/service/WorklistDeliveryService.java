@@ -29,25 +29,13 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * 管理端下发工单：建单、转下发、记录步骤、推进状态。
- *
- * <h3>幂等</h3>
- * <p>以 {@code worklistDesc} 作为调用方流水号：同一编号重复提交只受理一次，
- * 返回既有工单。网络重试或用户手抖点两下都不会给设备重复开业务。</p>
- *
- * <h3>状态流转</h3>
- * <p>建单即 {@code build}，落库后立刻转成下发任务（{@link IntentDeliveryService}，
- * 来源标记 {@link #SOURCE_WORKLIST}）：受理成功置 {@code sending}，设备执行由
- * 下发引擎异步推进；任务结束按 {@link TaskFinishedEvent} 回写终态
- * {@code success} / {@code failed}，失败原因写进 remark。</p>
- */
+/** 管理端下发工单：建单、转下发、记录步骤、推进状态 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class WorklistDeliveryService {
 
-    /** 工单转下发任务时在 DeviceTask.source 上打的标记，回写结果时按它识别。 */
+    /** 工单转下发任务时在 DeviceTask.source 上打的标记，回写结果时按它识别 */
     public static final String SOURCE_WORKLIST = "worklist";
 
     private final WorklistMapper worklistMapper;
@@ -57,17 +45,12 @@ public class WorklistDeliveryService {
     private final IntentDeliveryService intentDeliveryService;
     private final ConfigTemplateService configTemplateService;
 
-    /** 流水号自增段：同一秒内连开多单时靠它区分。 */
+    /** 流水号自增段：同一秒内连开多单时靠它区分 */
     private static final AtomicLong DESC_SEQ = new AtomicLong();
 
     private static final DateTimeFormatter DESC_STAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
-    /**
-     * 生成工单流水号（幂等键），格式 {@code ADMIN-{业务}-{时间戳}-{自增}-{随机}}。
-     *
-     * <p>自增段保证同进程内同一秒连开多单不撞号；随机段防的是多实例部署——
-     * 两个节点各自持有自增计数器，同一秒可能算到同一个号。</p>
-     */
+    /** 生成工单流水号（幂等键），格式 {@code ADMIN-{业务}-{时间戳}-{自增}-{随机}} */
     private String newWorklistDesc(String category) {
         String biz = category == null || category.isBlank() ? "biz" : category;
         return String.format(Locale.ROOT, "ADMIN-%s-%s-%d-%03d",
@@ -75,15 +58,7 @@ public class WorklistDeliveryService {
                 DESC_SEQ.incrementAndGet(), ThreadLocalRandom.current().nextInt(1000));
     }
 
-    /**
-     * 创建下发工单。
-     *
-     * @param sn            设备序列号
-     * @param category      业务类型，如 {@code WIFI_24G / SIP / WAN_PPPOE}
-     * @param worklistDesc  调用方流水号，幂等键
-     * @param values        变量值，键为 {@code %room%} 这样的占位符
-     * @param username      操作人
-     */
+    /** 创建下发工单 */
     public Worklist create(String sn, String category, String worklistDesc,
                            Map<String, String> values, String username, Long templateId) {
         if (sn == null || sn.isBlank()) {
@@ -138,13 +113,7 @@ public class WorklistDeliveryService {
         return w;
     }
 
-    /**
-     * 补上调用方没填的业务变量，规则由 {@link TemplateVariables} 统一定义。
-     *
-     * <p>房间号取设备备注里登记的 {@code roomNo}，没登记才是 {@code 0000}；
-     * WiFi 密码没填是 {@code 88888888}。前端表单会把每个变量初始化成空串提交上来，
-     * 空串一律按「没填」处理。</p>
-     */
+    /** 补上调用方没填的业务变量，规则由 {@link TemplateVariables} 统一定义 */
     private Map<String, String> withDefaults(String category, CpeDevice device,
                                              Map<String, String> values) {
         Map<String, String> filled = new HashMap<>();
@@ -157,14 +126,7 @@ public class WorklistDeliveryService {
 
     // ==================== 工单 → 下发 ====================
 
-    /**
-     * 工单落库后立刻转成下发任务。
-     *
-     * <p>此前建单只写库：受理、渲染、执行全在 {@link IntentDeliveryService} 里，
-     * 却没有任何调用方把两者接起来，工单会一直停在 {@code build} 上不动。
-     * 受理被拒（型号未适配、现场不符合预期等）时直接把工单置为 {@code failed}，
-     * 原因写进 remark；受理通过则置 {@code sending}，等任务结束事件回写终态。</p>
-     */
+    /** 工单落库后立刻转成下发任务 */
     private void triggerDelivery(Worklist w, Map<String, String> values, Long templateId) {
         Long tpl = templateId != null ? templateId : defaultTemplateId(w.getWorklistName());
         Map<String, Object> vars = values == null ? new HashMap<>() : new HashMap<>(values);
@@ -186,11 +148,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    /**
-     * 未指定模板时按业务类型取第一条，让前端不开模板选择也能下发。
-     *
-     * <p>同一类业务有多条模板时取 id 最小的那条；想用别的，前端传 templateId 即可。</p>
-     */
+    /** 未指定模板时按业务类型取第一条，让前端不开模板选择也能下发 */
     private Long defaultTemplateId(String category) {
         try {
             List<Map<String, Object>> templates = configTemplateService.list(category, null);
@@ -205,7 +163,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    /** 下发任务结束回写工单终态：只认 {@link #SOURCE_WORKLIST} 来源，OpenAPI 的单不归工单管。 */
+    /** 下发任务结束回写工单终态：只认 {@link #SOURCE_WORKLIST} 来源，OpenAPI 的单不归工单管 */
     @EventListener
     public void onTaskFinished(TaskFinishedEvent event) {
         DeviceTask task = event.getTask();
@@ -242,9 +200,7 @@ public class WorklistDeliveryService {
         log.warn("工单转下发失败: id={}, err={}", w.getId(), reason);
     }
 
-    /**
-     * 记录工单的一条执行步骤。已有同序号步骤则覆盖，避免重试灌入重复步骤。
-     */
+    /** 记录工单的一条执行步骤。已有同序号步骤则覆盖，避免重试灌入重复步骤 */
     public WorklistStepRecord addStep(Long worklistId, int stepIndex, String comment,
                                       String rpc, Object requestArgs) {
         stepMapper.delete(new LambdaQueryWrapper<WorklistStepRecord>()
@@ -263,7 +219,7 @@ public class WorklistDeliveryService {
         return step;
     }
 
-    /** 推进工单状态。 */
+    /** 推进工单状态 */
     public void moveTo(Long worklistId, String status) {
         Worklist patch = new Worklist();
         patch.setId(worklistId);
@@ -272,7 +228,7 @@ public class WorklistDeliveryService {
         worklistMapper.updateById(patch);
     }
 
-    /** 读回工单里存的参数值。 */
+    /** 读回工单里存的参数值 */
     public Map<String, String> readValues(Worklist worklist) {
         if (worklist == null || worklist.getParameters() == null || worklist.getParameters().isBlank()) {
             return new HashMap<>();
@@ -287,7 +243,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    /** 供前端生成表单：某业务类型要填哪些变量。 */
+    /** 供前端生成表单：某业务类型要填哪些变量 */
     public static String normalize(String category) {
         return category == null ? "" : category.toUpperCase(Locale.ROOT);
     }

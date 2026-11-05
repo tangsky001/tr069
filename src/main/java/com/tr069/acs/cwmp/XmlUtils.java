@@ -18,11 +18,7 @@ import java.io.StringWriter;
 import java.security.SecureRandom;
 import java.util.List;
 
-/**
- * CWMP 报文的 DOM 构建与序列化工具。
- *
- * <p>输出不带 XML 声明、不带缩进空白。</p>
- */
+/** CWMP 报文的 DOM 构建与序列化工具 */
 @Slf4j
 public final class XmlUtils {
 
@@ -31,9 +27,7 @@ public final class XmlUtils {
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    /**
-     * 生成 cwmp:ID 的缺省取值，区间 1~1000000。
-     */
+    /** 生成 cwmp:ID 的缺省取值，区间 1~1000000 */
     public static String randomCwmpId() {
         return String.valueOf(RANDOM.nextInt(1000000) + 1);
     }
@@ -49,18 +43,14 @@ public final class XmlUtils {
         }
     }
 
-    /**
-     * 创建带命名空间的带前缀元素。
-     */
+    /** 创建带命名空间的带前缀元素 */
     public static Element element(Document doc, String nsUri, String prefix, String localName) {
         Element el = doc.createElementNS(nsUri, prefix + ":" + localName);
         el.setPrefix(prefix);
         return el;
     }
 
-    /**
-     * 创建无命名空间的纯文本元素。
-     */
+    /** 创建无命名空间的纯文本元素 */
     public static Element plainElement(Document doc, String localName, String value) {
         Element el = doc.createElement(localName);
         if (value != null) {
@@ -69,9 +59,7 @@ public final class XmlUtils {
         return el;
     }
 
-    /**
-     * 追加普通文本子元素。
-     */
+    /** 追加普通文本子元素 */
     public static Element appendText(Document doc, Element parent, String nsUri, String prefix,
                                      String localName, String value) {
         Element el = element(doc, nsUri, prefix, localName);
@@ -80,11 +68,7 @@ public final class XmlUtils {
         return el;
     }
 
-    /**
-     * 追加带 xsi:type 的子元素。
-     *
-     * @param xsdType 不含 xsd: 前缀的类型名，如 string / unsignedInt / boolean
-     */
+    /** 追加带 xsi:type 的子元素 */
     public static Element appendTyped(Document doc, Element parent, String nsUri, String prefix,
                                       String localName, String value, String xsdType) {
         Element el = element(doc, nsUri, prefix, localName);
@@ -95,11 +79,7 @@ public final class XmlUtils {
         return el;
     }
 
-    /**
-     * 追加空值元素：{@code <tag xsi:nil="true"/>}。
-     *
-     * <p>空串与 null 都视为空值。</p>
-     */
+    /** 追加空值元素：{@code } */
     public static Element appendNil(Document doc, Element parent, String nsUri, String prefix, String localName) {
         Element el = element(doc, nsUri, prefix, localName);
         el.setAttributeNS(SoapNamespace.XSI, SoapNamespace.PREFIX_XSI + ":nil", "true");
@@ -107,9 +87,7 @@ public final class XmlUtils {
         return el;
     }
 
-    /**
-     * 值非空则写文本，否则写 nil。
-     */
+    /** 值非空则写文本，否则写 nil */
     public static void appendTextOrNil(Document doc, Element parent, String nsUri, String prefix,
                                        String localName, String value) {
         if (value == null || value.isEmpty()) {
@@ -119,15 +97,7 @@ public final class XmlUtils {
         }
     }
 
-    /**
-     * 追加 SOAP-ENC 数组元素。
-     *
-     * <p>arrayType 使用完全限定名，如 {@code cwmp:ParameterValueStruct[3]}、{@code xsd:string[2]}。</p>
-     *
-     * @param itemTag    数组项的 tag 名，如 string / base64，此类元素不带命名空间
-     * @param nsUri      数组容器自身的命名空间
-     * @param arrayType  arrayType 属性值
-     */
+    /** 追加 SOAP-ENC 数组元素 */
     public static Element appendArray(Document doc, Element parent, String nsUri, String prefix,
                                       String localName, String arrayType, String itemTag,
                                       List<String> values) {
@@ -142,9 +112,7 @@ public final class XmlUtils {
         return el;
     }
 
-    /**
-     * 序列化为字符串：无 XML 声明、无缩进。
-     */
+    /** 序列化为字符串：无 XML 声明、无缩进 */
     public static String toXml(Node node) {
         try {
             TransformerFactory factory = TransformerFactory.newInstance();

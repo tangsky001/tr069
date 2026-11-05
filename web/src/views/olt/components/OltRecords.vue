@@ -15,9 +15,7 @@
       </el-table-column>
       <el-table-column label="动作" width="100" align="center">
         <template slot-scope="{ row }">
-          <el-tag size="mini" :type="row.action === 'SYNC' ? 'success' : 'info'">
-            {{ row.action === 'SYNC' ? '同步' : '诊断' }}
-          </el-tag>
+          <el-tag size="mini" :type="actionOf(row).type">{{ actionOf(row).text }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="结果" width="90" align="center">
@@ -42,12 +40,30 @@
  *
  * 三个厂商页共用，排障时看的就是这张表——采到的回显在这儿，拉不到数据时先看它。
  */
+
+/**
+ * 动作类型 → 标签文案与颜色。类型由后端随记录给（TEST/SYNC/CONFIG/QUERY/DELETE），
+ * 这里只做展示映射：查是查、删是删，不能再把查询和删除都叫「诊断」。
+ */
+const ACTION_TAGS = {
+  TEST: { text: '诊断', type: 'info' },
+  SYNC: { text: '同步', type: 'success' },
+  CONFIG: { text: '配置', type: 'warning' },
+  QUERY: { text: '查询', type: '' },
+  DELETE: { text: '删除', type: 'danger' }
+}
+
 export default {
   name: 'OltRecords',
   props: {
     records: {
       type: Array,
       default: () => []
+    }
+  },
+  methods: {
+    actionOf(row) {
+      return ACTION_TAGS[row && row.action] || { text: row && row.action ? row.action : '-', type: 'info' }
     }
   }
 }
