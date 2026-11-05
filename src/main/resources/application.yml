@@ -335,8 +335,7 @@ acs:
     wan-cleanup-timeout-seconds: 30
 
   # ==================== OLT（Telnet 采集） ====================
-  # OLT 不跑 TR-069，靠登录设备命令行采集。超时按现场设备响应速度调：
-  # 老旧设备敲一条 display board 要十几秒，命令超时给小了会频繁拿到半截回显
+
   olt:
     # 启动时自动补建 olt_device / olt_board / olt_sync_record
     auto-create-table: true
@@ -348,8 +347,7 @@ acs:
     command-timeout-ms: 20000
     # 单次采集留档的回显上限(字符)，超出截断
     max-raw-output-chars: 60000
-    # 会话池（每设备 2 会话轮换）的「保活开关」在管理页面切换，不在这里配置：
-    # 开 = 定期 display client 探活、会话一直沿用；关（默认）= 1 分钟没人用就 quit 退出登录
+
 
   # ==================== 北向接口 ====================
   openapi:
@@ -384,6 +382,9 @@ admin:
 
 
 logging:
+  pattern:
+    # 日志时间戳格式
+    dateformat: "yyyy-MM-dd HH:mm:ss"
   level:
     root: INFO
     com.tr069.acs: INFO

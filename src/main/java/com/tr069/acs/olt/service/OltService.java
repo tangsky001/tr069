@@ -93,9 +93,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -127,12 +128,23 @@ public class OltService {
     /** 采集记录里给页面看的回显片段，够看清 display board / temperature 的输出 */
     private static final int MAX_RAW_PREVIEW = 8000;
 
-    /** 后台补采线程池：OLT 的 Telnet 并发会话数很小（华为一般只放几个），两台并行足够 */
-    private static final ExecutorService DEEP_POOL = Executors.newFixedThreadPool(2, r -> {
-        Thread thread = new Thread(r, "olt-deep-sync");
-        thread.setDaemon(true);
-        return thread;
-    });
+    /** 后台补采线程数上限 */
+    private static final int DEEP_POOL_MAX = 20;
+
+    private static final ThreadPoolExecutor DEEP_POOL = deepPool();
+
+    private static final AtomicInteger DEEP_THREAD_SEQ = new AtomicInteger();
+
+    private static ThreadPoolExecutor deepPool() {
+        ThreadPoolExecutor pool = new ThreadPoolExecutor(DEEP_POOL_MAX, DEEP_POOL_MAX,
+                60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), r -> {
+            Thread thread = new Thread(r, "olt-deep-sync-" + DEEP_THREAD_SEQ.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        });
+        pool.allowCoreThreadTimeOut(true);
+        return pool;
+    }
 
     /** 正在后台补采的 OLT：同一台不重复排队 */
     private final Set<Long> deepSyncing = ConcurrentHashMap.newKeySet();

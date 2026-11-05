@@ -277,13 +277,16 @@ public class OltCliSession implements Closeable {
         snapshot.setPrompt(prompt);
 
         if (withBoards) {
-            if (vendor == OltVendor.HUAWEI && !boards.isEmpty()) {
-                // 华为那套（温度 / 逐板端口与光模块 / ONT / VLAN / 模板）还在这里逐条编排，
-                // 没搬到 profile 里；别的新厂商在自己的 profile.collectDetails 里接管
-                collectFromConfigView(boards, notes, snapshot, sections, true);
-            } else if (!boards.isEmpty()) {
-                OltVendorProfiles.of(vendor)
-                        .collectDetails(this::runCommand, snapshot, boards, notes, Math.min(commandTimeoutMs, 8000));
+            // sections 为空时只采版本与板卡，不进配置视图
+            if (!sections.isEmpty()) {
+                if (vendor == OltVendor.HUAWEI && !boards.isEmpty()) {
+                    // 华为那套（温度 / 逐板端口与光模块 / ONT / VLAN / 模板）还在这里逐条编排，
+                    // 没搬到 profile 里；别的新厂商在自己的 profile.collectDetails 里接管
+                    collectFromConfigView(boards, notes, snapshot, sections, true);
+                } else if (!boards.isEmpty()) {
+                    OltVendorProfiles.of(vendor)
+                            .collectDetails(this::runCommand, snapshot, boards, notes, Math.min(commandTimeoutMs, 8000));
+                }
             }
             if (snapshot.getBackplane() == null && vendor == OltVendor.HUAWEI) {
                 // MA5683T 这类设备的 display version 不带 PCB/Backplane 段，

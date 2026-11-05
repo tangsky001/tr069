@@ -4,23 +4,40 @@ import com.tr069.acs.olt.entity.OltBoard;
 import com.tr069.acs.olt.entity.OltDevice;
 import com.tr069.acs.olt.model.OltLineProfile;
 import com.tr069.acs.olt.model.OltOntDeleteResult;
+import com.tr069.acs.olt.model.OltPort;
 import com.tr069.acs.olt.model.OltVlanInfo;
 import com.tr069.acs.olt.telnet.OltCharset;
 import com.tr069.acs.olt.telnet.OltCliSession;
 import com.tr069.acs.olt.telnet.OltSnapshot;
+import com.tr069.acs.olt.telnet.OltVendor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /** OLT 命令行采集入口 */
 @Slf4j
 @Service
 public class OltTelnetService {
+
+    /** 回显等待的并行线程池，线程按需创建、空闲回收 */
+    private static final ExecutorService SECTION_POOL = Executors.newCachedThreadPool(r -> {
+        Thread thread = new Thread(r, "olt-collect-split");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private final OltSessionPool sessionPool;
 
@@ -51,9 +68,154 @@ public class OltTelnetService {
         return snapshot;
     }
 
+    /** 全量采集拆成多段并行截取回显，慢段之间互不阻塞 */
     private OltSnapshot doCollect(OltDevice device, Charset charset, boolean withBoards) throws IOException {
-        return sessionPool.execute(device, charset, charsetStrict(device, charset),
-                session -> session.collect(withBoards));
+        boolean strict = charsetStrict(device, charset);
+        if (!withBoards) {
+            return sessionPool.execute(device, charset, strict, session -> session.collect(false));
+        }
+        // 第一段：版本 + 板卡，拿到槽位表才能拆后面的段
+        OltSnapshot base = sessionPool.execute(device, charset, strict,
+                session -> session.collect(true, EnumSet.noneOf(OltCliSession.Section.class)));
+        List<OltBoard> boards = base.getBoards();
+        // 分段采集目前只编排了华为那套命令，其它厂商走原单会话全量
+        if (boards == null || boards.isEmpty() || base.getVendor() != OltVendor.HUAWEI) {
+            return base;
+        }
+        List<Part> parts = List.of(
+                new Part(EnumSet.of(OltCliSession.Section.TEMPERATURES,
+                        OltCliSession.Section.PORT_STATES, OltCliSession.Section.OPTICS), false),
+                new Part(EnumSet.of(OltCliSession.Section.ONTS), true),
+                new Part(EnumSet.of(OltCliSession.Section.VLANS, OltCliSession.Section.TEMPLATES), false));
+        List<Future<OltSnapshot>> futures = new ArrayList<>(parts.size());
+        for (Part part : parts) {
+            List<OltBoard> skeleton = skeleton(boards);
+            futures.add(SECTION_POOL.submit(() -> sessionPool.execute(device, charset, strict,
+                    session -> session.collectSections(skeleton, part.sections(), part.enrichOnt()))));
+        }
+        List<String> notes = new ArrayList<>(base.getNotes() == null ? List.of() : base.getNotes());
+        StringBuilder transcript = new StringBuilder(
+                base.getTranscript() == null ? "" : base.getTranscript());
+        for (int i = 0; i < parts.size(); i++) {
+            OltSnapshot part;
+            try {
+                part = futures.get(i).get();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("OLT 采集被中断", e);
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                notes.add("分段采集失败：" + cause.getMessage());
+                continue;
+            }
+            mergePart(base, part, parts.get(i).sections());
+            if (part.getNotes() != null) {
+                notes.addAll(part.getNotes());
+            }
+            if (part.getTranscript() != null) {
+                transcript.append(part.getTranscript());
+            }
+        }
+        base.setNotes(notes);
+        base.setTranscript(transcript.toString());
+        return base;
+    }
+
+    /** 分段采集任务定义 */
+    private record Part(Set<OltCliSession.Section> sections, boolean enrichOnt) {
+    }
+
+    /** 板卡骨架拷贝：只带槽位/板型/端口数，各段任务在拷贝上各自建端口 */
+    private static List<OltBoard> skeleton(List<OltBoard> boards) {
+        List<OltBoard> copies = new ArrayList<>(boards.size());
+        for (OltBoard board : boards) {
+            OltBoard copy = new OltBoard();
+            copy.setSlotNo(board.getSlotNo());
+            copy.setBoardType(board.getBoardType());
+            copy.setBoardKind(board.getBoardKind());
+            copy.setStatus(board.getStatus());
+            copy.setDescription(board.getDescription());
+            copy.setPortMode(board.getPortMode());
+            copy.setPortCount(board.getPortCount());
+            copies.add(copy);
+        }
+        return copies;
+    }
+
+    /** 把分段采集结果合回主板卡表 */
+    private static void mergePart(OltSnapshot merged, OltSnapshot part,
+                                  Set<OltCliSession.Section> sections) {
+        if (part == null) {
+            return;
+        }
+        if (sections.contains(OltCliSession.Section.VLANS) && part.getVlanInfo() != null) {
+            merged.setVlanInfo(part.getVlanInfo());
+        }
+        if (sections.contains(OltCliSession.Section.TEMPLATES) && part.getTemplateInfo() != null) {
+            merged.setTemplateInfo(part.getTemplateInfo());
+        }
+        if (part.getBoards() == null || merged.getBoards() == null) {
+            return;
+        }
+        Map<Integer, OltBoard> bySlot = new HashMap<>();
+        for (OltBoard board : merged.getBoards()) {
+            if (board.getSlotNo() != null) {
+                bySlot.put(board.getSlotNo(), board);
+            }
+        }
+        for (OltBoard partBoard : part.getBoards()) {
+            OltBoard target = partBoard.getSlotNo() == null ? null : bySlot.get(partBoard.getSlotNo());
+            if (target == null) {
+                continue;
+            }
+            if (sections.contains(OltCliSession.Section.TEMPERATURES) && partBoard.getTemperature() != null) {
+                target.setTemperature(partBoard.getTemperature());
+            }
+            if (partBoard.getPorts() == null) {
+                continue;
+            }
+            List<OltPort> ports = target.getPorts() == null ? new ArrayList<>() : target.getPorts();
+            target.setPorts(ports);
+            for (OltPort partPort : partBoard.getPorts()) {
+                OltPort port = findPort(ports, partPort.getPortNo());
+                if (port == null) {
+                    ports.add(partPort);
+                    continue;
+                }
+                if (sections.contains(OltCliSession.Section.PORT_STATES)) {
+                    port.setOpticStatus(partPort.getOpticStatus());
+                    port.setOpticalPresent(partPort.getOpticalPresent());
+                    port.setLinkStatus(partPort.getLinkStatus());
+                }
+                if (sections.contains(OltCliSession.Section.ONTS)) {
+                    port.setOnts(partPort.getOnts());
+                    port.setOnuTotal(partPort.getOnuTotal());
+                    port.setOnuOnline(partPort.getOnuOnline());
+                }
+                if (sections.contains(OltCliSession.Section.OPTICS)) {
+                    port.setTxPower(partPort.getTxPower());
+                    port.setRxPower(partPort.getRxPower());
+                    port.setOpticTemperature(partPort.getOpticTemperature());
+                    port.setBiasCurrent(partPort.getBiasCurrent());
+                    port.setSupplyVoltage(partPort.getSupplyVoltage());
+                    port.setModuleStatus(partPort.getModuleStatus());
+                    port.setLaserState(partPort.getLaserState());
+                    port.setTxFault(partPort.getTxFault());
+                }
+            }
+        }
+    }
+
+    private static OltPort findPort(List<OltPort> ports, Integer portNo) {
+        if (portNo == null) {
+            return null;
+        }
+        for (OltPort port : ports) {
+            if (portNo.equals(port.getPortNo())) {
+                return port;
+            }
+        }
+        return null;
     }
 
     /** 快速采集：只要板卡（型号 / 板卡类型 / 槽位 / 机框槽位数），秒级返回 */
