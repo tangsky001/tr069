@@ -59,6 +59,15 @@ final class OpenApiParamDoc {
         p("file", "文件本身（multipart/form-data）");
         p("fileType", "文件类型：FIRMWARE 固件 / CONFIG 配置 / VENDOR 厂商文件，不填按固件");
         p("version", "版本号，固件建议必填");
+        p("scope", "同步范围：boards 板卡 / ont 端口 ONT / vlan VLAN / template 模板");
+        p("onlyCurrent", "true 只看本设备 + 通用注册模板，不传看全部");
+        p("oltIp", "绑定到哪台 OLT 的地址，新建注册模板时用来预填");
+        p("defaults", "true 表示忽略已保存值、按默认值返回开局参数");
+        p("slotNo", "槽位号，业务板所在槽");
+        p("portNo", "PON 端口号");
+        p("profileId", "模板 ID，指定是哪条线路模板 / DBA 模板");
+        p("gemportId", "GEM port 编号，加映射时用来定位");
+        p("intervalMs", "会话保活探活周期（毫秒），不传按当前值");
 
         ID_OWNER.put("/api/olt", "OLT 台账");
         ID_OWNER.put("/api/files", "文件");
@@ -366,6 +375,47 @@ final class OpenApiParamDoc {
         f("mappingId", "GEM 内的映射序号");
         f("mappingMode", "映射方式：VLAN / 802.1p / Port");
         f("mappings", "GEM 内映射列表");
+        f("mappingIds", "GEM 映射序号，逗号分隔，如 `0,1`；留空表示从 0 顺延");
+        f("warnings", "预演提醒，不是错误（如「没填 VLAN，只会改端口模式」）");
+
+        // ==================== OLT ONT 注册 ====================
+        f("fsp", "框 / 槽 / 端口，如 `0/2/0`");
+        f("authMode", "注册方式：SN / MAC / LOID / PASSWORD");
+        f("priority", "匹配优先级，小的先命中");
+        f("oltIp", "绑定的 OLT 地址，页面展示用；`oltId` 为空表示所有设备通用");
+        f("workMode", "光猫工作模式：HGU / SFU / MIX / MDU");
+        f("bindPorts", "限定的 PON 口，逗号分隔，如 `0/1/0,0/1/1`；空表示不限");
+        f("ontModels", "限定的 ONT 型号，逗号分隔；空表示不限");
+        f("serviceVlanMap", "业务 VLAN 映射（`VLAN:描述, …`）；空表示沿用线路模板");
+        f("tr069Vlan", "TR-069 VLAN 及 ACS 模板，如 `46 10`");
+        f("iptvVlan", "IPTV 业务 VLAN");
+        f("multicastVlan", "组播 VLAN");
+        f("rows", "要注册的 ONT 行，留空表示设备上当前所有待注册的");
+        f("loid", "LOID 逻辑 ID，LOID 认证方式下用它");
+        f("checkCode", "认证码，LOID / PASSWORD 方式才有");
+        f("equipmentId", "设备 ID（Ont EquipmentID），部分版本才有");
+        f("vendorId", "厂商 ID，如 `HWTC`");
+        f("lastTime", "最后一次被自动发现的时间，回显原样");
+        f("ontSn", "ONT 的 SN / MAC / LOID");
+        f("scanSeconds", "自动发现扫描间隔（秒）");
+        f("saveSeconds", "注册成功后隔多久把 ONT 落库（秒）");
+        f("concurrency", "一轮最多注册几台");
+        f("autoMove", "1 表示 ONT 换 PON 口上线时自动迁移注册位置");
+        f("autoDeleteOffline", "1 表示注册表满时自动删除离线 ONT");
+        f("lastScanAt", "最近一次扫描时间");
+        f("lastRegisterAt", "最近一次注册时间");
+        f("lastSaveAt", "最近一次把 ONT 落库的时间");
+        f("lastScanText", "最近扫描时间的展示文本，没扫过是「—」");
+        f("lastRegisterText", "最近注册时间的展示文本");
+        f("lastSaveText", "最近落库时间的展示文本");
+        f("supported", "设备是否支持这次查询；false 时看 message 的原因");
+        f("totalPorts", "已装业务板上的 PON 口总数");
+        f("enabledPorts", "其中已开启自动发现的个数");
+        f("allEnabled", "是否全部已开启");
+        f("disabledPorts", "没开启的 PON 口，如 `0/1/3`");
+        f("slots", "槽位号数组，留空表示所有业务板");
+        f("macUnavailable", "这台 ONT 的 MAC 采不到（设备回 `0000-0000-0000` 或没查出来），不再重试");
+        f("profileUnavailable", "这台 ONT 的模板号采不到，不再重试");
 
         // ==================== OLT VLAN ====================
         f("vlan", "VLAN 快照，还没采过为 null");

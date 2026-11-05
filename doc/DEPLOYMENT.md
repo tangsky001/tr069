@@ -233,6 +233,11 @@ WantedBy=multi-user.target
 | `acs.worklist.root-path` | `./configuration` | 外部配置根目录（`models/`），目录为空时回退到 jar 同级 `configuration/` |
 | `acs.queue.enabled` | `true` | 关掉则退回进程内同步处理，无 Redis 环境下的降级选项 |
 | `acs.biz.auto-create-table` | `true` | 业务模板表自动补建 |
+| `acs.session.online-window-seconds` | `900` | 在线判定窗口（秒）：最近一次上报落在窗口内就算在线；每 60 秒清扫一次超窗设备置离线 |
+| `acs.olt.command-timeout-ms` | `20000` | OLT 单条命令等待提示符的超时（毫秒） |
+| `acs.olt.log-echo` | `false` | 是否把 OLT 每条命令的完整回显打进日志（排障时临时改 `true`，平时关掉省磁盘；命令耗时那行仍打） |
+| `acs.olt.max-raw-output-chars` | `60000` | 单次采集留档回显的字符上限，超出截断 |
+| `acs.olt.connect-timeout-ms` / `login-timeout-ms` | `8000` / `15000` | OLT 建连与登录超时（毫秒），登录含等待账号/密码提示符 |
 | `acs.database.fail-on-missing-table` | `false` | 表缺失时是否中止启动 |
 | `admin.jwt.expire-hours` | `12` | 管理端 token 有效期（小时） |
 
@@ -312,6 +317,9 @@ ACS 认证账号填 `hgw/hgw`（或现场实际值，对应 `acs.auth.cpe-to-acs
 | 连接串报 `Unsupported character encoding` | `characterEncoding` 写了 `utf8mb4` | 改成 `UTF-8` |
 | 启动即报数据库连接失败 | 库没建 / 账号口令不对 / 网络不通 | 先确认手工能 `mysql -h ... -u ... -p tr_acs` |
 | Redis 连不上 | 未部署 Redis | 装 Redis，或设 `acs.queue.enabled=false` 降级（入队失败会自动就地处理） |
+| OLT 采集「成功」但模板号 / MAC 大面积为 `-` | 整板表不带明细，后台补采没跑完或回显被截断 | 看采集记录里 `display current-configuration` 的回显长度；临时把 `acs.olt.log-echo` 改 `true` 重启看完整回显 |
+| OLT 注册一直失败 | 模板没匹配上 / 注册表满 / SN 已在别处注册 | 看「注册记录」的 `message` 列：没匹配到模板就检查模板的 PON 类型、端口、型号；表满可开「自动删离线」；SN 重复可开「自动移机」 |
+| 光模块数值为空、收光 `-` | 该版本不支持 `display port state` 或光模块未插 | 手工在接口视图执行 `display port state <口>` 确认；设备本身不支持时页面留空属正常 |
 
 ---
 
