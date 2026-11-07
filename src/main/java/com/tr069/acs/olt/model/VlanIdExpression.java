@@ -5,15 +5,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * 页面上填的 VLAN ID 表达式：{@code 100}、{@code 100-200}、{@code 100,102,200-210}。
- *
- * <p>设备一条命令能建一段连续 VLAN（{@code vlan standard 101 110}），但配成员端口得逐个 VLAN
- * 进视图，所以这里既给出「连续段」（拼建 VLAN 的命令），也能展开成一个个 ID（配端口用）。</p>
- *
- * <p>规则：1-4094、允许 {@code ,} 和 {@code -}、段必须前小后大；写错直接抛
- * {@link IllegalArgumentException}，消息就是给用户看的那句话。</p>
- */
+/** 页面上填的 VLAN ID 表达式：{@code 100}、{@code 100-200}、{@code 100,102,200-210} */
 public final class VlanIdExpression {
 
     /** VLAN ID 上限（手册：取值 1-4094） */
@@ -22,11 +14,7 @@ public final class VlanIdExpression {
     private VlanIdExpression() {
     }
 
-    /**
-     * 切成连续段，按填写顺序保留、自动去重排序：{@code 200-210,100} → [[100,100],[200,210]]。
-     *
-     * @throws IllegalArgumentException 表达式为空、含非法字符或 ID 越界
-     */
+    /** 切成连续段，按填写顺序保留、自动去重排序：{@code 200-210,100} → [[100,100],[200,210]] */
     public static List<int[]> segments(String text) {
         List<Integer> ids = expand(text);
         List<int[]> segments = new ArrayList<>();
@@ -46,11 +34,7 @@ public final class VlanIdExpression {
         return segments;
     }
 
-    /**
-     * 展开成具体 ID，升序去重。
-     *
-     * @throws IllegalArgumentException 表达式为空、含非法字符或 ID 越界
-     */
+    /** 展开成具体 ID，升序去重 */
     public static List<Integer> expand(String text) {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException("请填写 VLAN ID，例如 100 或 100-200,300");

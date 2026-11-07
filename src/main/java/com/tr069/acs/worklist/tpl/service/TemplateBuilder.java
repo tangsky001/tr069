@@ -18,86 +18,54 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-/**
- * 按「厂商参数命名规则 + 适配申报能力」拼出下发模板，写进各业务表。
- *
- * <p>这里做的是<b>拼接</b>而不是猜测：实例号来自厂商约定、路径后缀来自该型号实际
- * 采集到的参数名，能力有无来自适配时的人工申报。三者都不需要靠解读上报值去推断。</p>
- *
- * <h3>WiFi 的实例号约定</h3>
- * <p>光猫的 SSID 实例按射频分组，各厂商把每组的起始实例号放在固定位置——
- * 中兴 P22g-CIac 实测是 <b>SSID1 起为 2.4G、SSID5 起为 5.8G</b>（共 8 个实例）。
- * 所以模板取每组的第一个实例：</p>
- * <ul>
- *   <li>申报 {@code 2.4G} → 只写 {@code wlan_a}，实例号 {@value #SSID_24G}</li>
- *   <li>申报 {@code 2.4G+5.8G} → 再写 {@code wlan_b}，实例号 {@value #SSID_58G}</li>
- * </ul>
- * <p>申报只到「2.4G」与「2.4G+5.8G」两档，5G 是叠加在 2.4G 之上的，
- * 不存在「只有 5G 没有 2.4G」的组合，因此这里不需要为那种情况写分支。</p>
- *
- * <h3>为什么值一律是变量</h3>
- * <p>模板库要能整个拷走，所以 Password/PreSharedKey 这类字段只能写 {@code %wifi_pwd%}，
- * SSID 写 {@code %room%}。库里出现明文口令视为 Bug。</p>
- */
+/** 按「厂商参数命名规则 + 适配申报能力」拼出下发模板，写进各业务表 */
 @Slf4j
 @Service
 public class TemplateBuilder {
 
-    /** TR-098 下 SSID 实例的挂载位置（目前这个型号只用到 TR-098）。 */
+    /** TR-098 下 SSID 实例的挂载位置（目前这个型号只用到 TR-098） */
     private static final String TR098_WLAN = "LANDevice.1.WLANConfiguration.";
 
-    /** 2.4G 频段的 SSID 起始实例号（厂商约定，非推测）。 */
+    /** 2.4G 频段的 SSID 起始实例号（厂商约定，非推测） */
     public static final int SSID_24G = 1;
 
-    /** 5.8G 频段的 SSID 起始实例号（厂商约定，非推测）。 */
+    /** 5.8G 频段的 SSID 起始实例号（厂商约定，非推测） */
     public static final int SSID_58G = 5;
 
-    /** 语音业务挂载位置，中兴 P22g-CIac 实测只有 1 个 VoiceService / VoiceProfile 实例。 */
+    /** 语音业务挂载位置，中兴 P22g-CIac 实测只有 1 个 VoiceService / VoiceProfile 实例 */
     private static final String VOICE_BASE = "Services.VoiceService.1.VoiceProfile.1.";
 
-    /** 一路 SIP 账号的起始 Line 实例号（厂商约定，非推测）。 */
+    /** 一路 SIP 账号的起始 Line 实例号（厂商约定，非推测） */
     public static final int LINE_FIRST = 1;
 
-    /**
-     * WAN 业务连接挂载位置，取自真实下发报文（权威参考，非推测）：
-     * AddObject 建在 {@code WANConnectionDevice.2} 下。
-     */
+    /** WAN 业务连接挂载位置，取自真实下发报文（权威参考，非推测） */
     public static final String WAN_BASE = "WANDevice.1.WANConnectionDevice.2.";
 
-    /** AddObject 的对象名末段，末尾不带实例号——实例号由设备分配，事后才知道。 */
+    /** AddObject 的对象名末段，末尾不带实例号——实例号由设备分配，事后才知道 */
     public static final String WAN_IP_CONN = "WANIPConnection.";
 
-    /** AddObject 的对象名末段，末尾不带实例号——实例号由设备分配，事后才知道。 */
+    /** AddObject 的对象名末段，末尾不带实例号——实例号由设备分配，事后才知道 */
     public static final String WAN_PPP_CONN = "WANPPPConnection.";
 
-    /**
-     * IP 协议版本节点名（厂商私有，挂载在连接对象下）。
-     * 取值 {@code 1=IPv4 / 2=IPv6 / 3=IPv4+IPv6}，1 与 3 有实测样本，2 是按枚举顺序推断的。
-     */
+    /** IP 协议版本节点名（厂商私有，挂载在连接对象下） */
     public static final String WAN_IP_MODE = "X_CMCC_IPMode";
 
-    /** 参数路径里的实例号占位符，下发引擎 AddObject 后回填真实值。 */
+    /** 参数路径里的实例号占位符，下发引擎 AddObject 后回填真实值 */
     public static final String INSTANCE_PLACEHOLDER = "{i}";
 
-    /** LAN 网口挂载位置。 */
+    /** LAN 网口挂载位置 */
     private static final String LAN_BASE = "LANDevice.1.LANEthernetInterfaceConfig.";
 
-    /** 模板库里各业务 WAN 的排位号，用来区分 DHCP / PPPoE / Static / Bridge 各自的模板行。 */
+    /** 模板库里各业务 WAN 的排位号，用来区分 DHCP / PPPoE / Static / Bridge 各自的模板行 */
     public static final int WAN_SLOT_DHCP = 1;
     public static final int WAN_SLOT_PPPOE = 2;
     public static final int WAN_SLOT_STATIC = 3;
     public static final int WAN_SLOT_BRIDGE = 4;
 
-    /**
-     * 桥接连接的 ConnectionType。
-     *
-     * <p>TR-098 里桥接不是独立对象，仍是 {@code WANIPConnection}，只是连接类型写成
-     * {@code IP_Bridged}；PPPoE 桥接则挂在 {@code WANPPPConnection} 下、值写
-     * {@code PPPoE_Bridged}，由配置模板上的「桥接类型」切换。</p>
-     */
+    /** 桥接连接的 ConnectionType */
     public static final String WAN_BRIDGE_CONN_TYPE = "IP_Bridged";
 
-    /** 默认数据模型根节点：TR-098。 */
+    /** 默认数据模型根节点：TR-098 */
     private static final String DEFAULT_ROOT = "InternetGatewayDevice.";
 
     private final WlanADao wlanADao;
@@ -117,12 +85,7 @@ public class TemplateBuilder {
         this.deviceLanDao = deviceLanDao;
     }
 
-    /**
-     * 按设备的 WiFi 能力申报生成 2.4G / 5.8G 下发模板。
-     *
-     * @param device 型号主表记录，需含 {@code capWifiSpec} 与 {@code rootNode}
-     * @return 两张表各写了几条
-     */
+    /** 按设备的 WiFi 能力申报生成 2.4G / 5.8G 下发模板 */
     public WifiResult buildWifi(Device device) {
         WifiResult r = new WifiResult();
         if (device == null || device.getId() == null) {
@@ -150,21 +113,7 @@ public class TemplateBuilder {
         return r;
     }
 
-    /**
-     * 按设备的语音能力申报生成 SIP 下发模板，一路 Line 一条记录。
-     *
-     * <p>路径全部取自中兴 P22g-CIac 实际采集到的参数名。其中有两条是按 TR-104 标准
-     * 写一定会踩的坑，取自实测结果：</p>
-     * <ul>
-     *   <li>{@code VoiceProfile.1.Enable} 在这个型号上<b>并不存在</b>，可写开关只挂在
-     *       {@code Line.{i}.Enable}，写前者设备会回「无效参数」</li>
-     *   <li>号码不走 {@code DirectoryNumber}（该型号同样没有），账号由
-     *       {@code SIP.AuthUserName} 承载，注册地址由 {@code SIP.URI} 承载</li>
-     * </ul>
-     *
-     * @param device 型号主表记录，需含 {@code capSipCount} 与 {@code rootNode}
-     * @return 写了几条 SIP 记录
-     */
+    /** 按设备的语音能力申报生成 SIP 下发模板，一路 Line 一条记录 */
     public SipResult buildSip(Device device) {
         SipResult r = new SipResult();
         if (device == null || device.getId() == null) {
@@ -185,9 +134,7 @@ public class TemplateBuilder {
         return r;
     }
 
-    /**
-     * 申报的能力数量。申报值是人工填的字符串，可能是「1」「4」也可能是「无」。
-     */
+    /** 申报的能力数量。申报值是人工填的字符串，可能是「1」「4」也可能是「无」 */
     private static int declaredCount(String declared) {
         if (declared == null || declared.isBlank()) {
             return 0;
@@ -205,9 +152,7 @@ public class TemplateBuilder {
         }
     }
 
-    /**
-     * 根节点前缀，末尾保证带点，各业务拼路径共用。
-     */
+    /** 根节点前缀，末尾保证带点，各业务拼路径共用 */
     private static String rootOf(Device device) {
         String root = device.getRootNode();
         if (root == null || root.isBlank()) {
@@ -216,14 +161,12 @@ public class TemplateBuilder {
         return root.endsWith(".") ? root : root + ".";
     }
 
-    /**
-     * 拼某个 SSID 实例的路径前缀，如 {@code InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.}。
-     */
+    /** 拼某个 SSID 实例的路径前缀，如 {@code InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.} */
     private static String base(Device device, int instanceNo) {
         return rootOf(device) + TR098_WLAN + instanceNo + ".";
     }
 
-    /** 一路 SIP 账号的全部下发路径与变量值。 */
+    /** 一路 SIP 账号的全部下发路径与变量值 */
     private static Sip fillSip(Device device, String profile, int lineNo) {
         String line = profile + "Line." + lineNo + ".";
         Sip r = new Sip();
@@ -255,32 +198,7 @@ public class TemplateBuilder {
         return r;
     }
 
-    /**
-     * 生成 WAN DHCP（IPoE 上网）下发模板，对照真实下发报文逐项落库：
-     *
-     * <pre>
-     * AddObject        ...WANConnectionDevice.2.WANIPConnection.
-     * SetParameterValues  ...WANIPConnection.{i}.Enable            = 1
-     *                     ...WANIPConnection.{i}.ConnectionType    = IP_Routed
-     *                     ...WANIPConnection.{i}.IPAddressingType  = DHCP
-     *                     ...WANIPConnection.{i}.NATEnabled        = 1
-     *                     ...WANIPConnection.{i}.X_CMCC_VLANID     = %vlan_id%
-     *                     ...WANIPConnection.{i}.X_CMCC_BindLANPort = ""
-     * </pre>
-     *
-     * <p>两条实测结论直接决定这里的写法：其一，业务 WAN 建在
-     * {@code WANConnectionDevice.2} 下，实例号由设备 AddObject 时分配、事先不知道，
-     * 所以参数路径全部用 {@value #INSTANCE_PLACEHOLDER} 占位，下发引擎拿到返回实例号再回填；
-     * 其二，VLAN 的真实参数名是 {@code X_CMCC_VLANID}（不是能力树里出现的
-     * {@code X_CMCC_VLANIDMark}，那个是 TR069 通道上的另一个参数），VLAN 语义独立成
-     * {@code vlan} 表存，{@code wanInstance} 关联刚建的 WAN。</p>
-     *
-     * <p>绑定端口（截图里的 LAN/SSID/PON 多选）报文里下发的是空串（不修改），
-     * 模板先与报文保持一致存空，等绑定端口的取值格式（逗号分隔？下标？）确认后再接多选。</p>
-     *
-     * @param device 型号主表记录
-     * @return 写了几条（wan / vlan 各一张表）
-     */
+    /** 生成 WAN DHCP（IPoE 上网）下发模板，对照真实下发报文逐项落库 */
     public WanResult buildWanDhcp(Device device) {
         WanResult r = new WanResult();
         if (device == null || device.getId() == null) {
@@ -297,25 +215,14 @@ public class TemplateBuilder {
         deviceWanDao.upsert(wan);
         r.setWan(1);
 
-        upsertVlan(device, WAN_SLOT_DHCP, p + "X_CMCC_VLANID");
+        upsertVlan(device, WAN_SLOT_DHCP, p);
         r.setVlan(1);
 
         log.info("生成 WAN DHCP 模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
         return r;
     }
 
-    /**
-     * 生成 WAN PPPoE 下发模板。
-     *
-     * <p><b>与 DHCP 那套的区别只有对象和鉴权参数</b>：实例建在 {@code WANPPPConnection.}
-     * 下（该对象在能力树里确实存在，与 DHCP 的 {@code WANIPConnection.} 并列），
-     * 账号密码落到 TR-098 标准的 {@code Username} / {@code Password}。</p>
-     *
-     * <p><b>这两处是推断而非实测</b>：这台设备当前没有 PPPoE 连接，能力树上只采得到
-     * {@code WANPPPConnection} 这个对象名和 {@code WANPPPConnectionNumberOfEntries}，
-     * 采不到实例参数，所以鉴权参数名按标准取、整行标 {@code UNVERIFIED}。
-     * 拿到一台真跑 PPPoE 的设备（或一份 PPPoE 下发报文）即可验掉这个不确定性。</p>
-     */
+    /** 生成 WAN PPPoE 下发模板 */
     public WanResult buildWanPppoe(Device device) {
         WanResult r = new WanResult();
         if (device == null || device.getId() == null) {
@@ -334,20 +241,14 @@ public class TemplateBuilder {
         deviceWanDao.upsert(wan);
         r.setWan(1);
 
-        upsertVlan(device, WAN_SLOT_PPPOE, p + "X_CMCC_VLANID");
+        upsertVlan(device, WAN_SLOT_PPPOE, p);
         r.setVlan(1);
 
         log.info("生成 WAN PPPoE 模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
         return r;
     }
 
-    /**
-     * 生成 WAN 静态地址下发模板。
-     *
-     * <p>四个地址参数名取自能力树实测（{@code ExternalIPAddress} / {@code SubnetMask} /
-     * {@code DefaultGateway} / {@code DNSServers}），值一律留变量按房间分配。
-     * 静态与 DHCP 同为 {@code WANIPConnection}，差别只在 IPAddressingType=Static。</p>
-     */
+    /** 生成 WAN 静态地址下发模板 */
     public WanResult buildWanStatic(Device device) {
         WanResult r = new WanResult();
         if (device == null || device.getId() == null) {
@@ -367,29 +268,21 @@ public class TemplateBuilder {
         wan.setValGw(TemplateVariables.WAN_GW);
         wan.setPathDns(p + "DNSServers");
         wan.setValDns(TemplateVariables.WAN_DNS);
+        // 静态与 DHCP 同为 WANIPConnection，绑定端口也一样要能绑：
+        // 漏了这条 path，静态连接就永远绑不上 LAN，以前是 Take("没登记端口") 当成不支持
+        wan.setPathBindPort(p + "X_CMCC_BindLANPort");
+        wan.setValBindPort("");
         deviceWanDao.upsert(wan);
         r.setWan(1);
 
-        upsertVlan(device, WAN_SLOT_STATIC, p + "X_CMCC_VLANID");
+        upsertVlan(device, WAN_SLOT_STATIC, p);
         r.setVlan(1);
 
         log.info("生成 WAN 静态地址模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
         return r;
     }
 
-    /**
-     * 生成 WAN 桥接下发模板。
-     *
-     * <p>桥接在 TR-098 里不是独立对象，仍是 {@code WANIPConnection}，只是
-     * {@code ConnectionType} 换成 {@code IP_Bridged}（PPPoE 桥接换成
-     * {@code WANPPPConnection + PPPoE_Bridged}，由配置模板上的「桥接类型」切换）。
-     * 所以这里复用 DHCP 那套对象与 VLAN 节点，只改连接类型、<b>不登记地址与 NAT 参数</b>
-     * ——桥接不做 NAT、也没有地址获取方式，把这两项带上设备会整批拒。</p>
-     *
-     * <p>业务绑定（上网 / IPTV / OTT / 其他）不在这里定：它跟着配置模板上的
-     * 「桥接业务模式」走，下发时由 {@code IntentDeliveryService} 补写
-     * {@code X_CMCC_ServiceList}。</p>
-     */
+    /** 生成 WAN 桥接下发模板 */
     public WanResult buildWanBridge(Device device) {
         WanResult r = new WanResult();
         if (device == null || device.getId() == null) {
@@ -403,22 +296,14 @@ public class TemplateBuilder {
         deviceWanDao.upsert(wan);
         r.setWan(1);
 
-        upsertVlan(device, WAN_SLOT_BRIDGE, p + "X_CMCC_VLANID");
+        upsertVlan(device, WAN_SLOT_BRIDGE, p);
         r.setVlan(1);
 
         log.info("生成 WAN 桥接模板: deviceId={}, objectPath={}", device.getId(), wan.getObjectPath());
         return r;
     }
 
-    /**
-     * 生成 LAN 网口下发模板，几个网口写几行。
-     *
-     * <p>参数名都是能力树实测：{@code Enable} / {@code DuplexMode} / {@code MaxBitRate}。
-     * 网口是出厂就有的，不需要 AddObject，所以 action 一律 SET。</p>
-     *
-     * <p>双工与速率统一写 {@code Auto}（自适应）——真机上如果要求强制千兆全双工，
-     * 改这两个值即可，参数名不用动。</p>
-     */
+    /** 生成 LAN 网口下发模板，几个网口写几行 */
     public LanResult buildLan(Device device) {
         LanResult r = new LanResult();
         if (device == null || device.getId() == null) {
@@ -450,16 +335,7 @@ public class TemplateBuilder {
         return r;
     }
 
-    /**
-     * 一条 WAN 模板行的公共部分：挂载位置、开关、连接类型、MTU。
-     *
-     * <p>MTU 三种业务共用同一个参数名 {@code MaxMTUSize}（标准 TR-098 参数），
-     * 挂在各自的连接对象下，所以放在这里统一写；PPPoE 那行的前缀会自动指向
-     * {@code WANPPPConnection.}，不需要各业务再写一遍。</p>
-     *
-     * <p><b>值一律留空＝不修改</b>：PPPoE 常用 1492、IPoE/静态常用 1500，各现网不一样，
-     * 模板不替现场决定。要改就在配置模板上填 MTU，填 0 会被按下发失败处理（见渲染器）。</p>
-     */
+    /** 一条 WAN 模板行的公共部分：挂载位置、开关、连接类型、MTU */
     private static DeviceWan newWan(Device device, int slot, String connType, String objectSuffix) {
         DeviceWan wan = new DeviceWan();
         wan.setDeviceId(device.getId());
@@ -483,20 +359,26 @@ public class TemplateBuilder {
         return wan;
     }
 
-    /** 参数路径前缀，实例号留占位——AddObject 之后才知道是几号。 */
+    /** 参数路径前缀，实例号留占位——AddObject 之后才知道是几号 */
     private static String paramPrefix(DeviceWan wan) {
         return wan.getObjectPath() + INSTANCE_PLACEHOLDER + ".";
     }
 
-    /** VLAN 独立成表，{@code wanInstance} 关联到对应业务 WAN 的排位号。 */
-    private void upsertVlan(Device device, int wanInstance, String path) {
+    /** VLAN 独立成表，{@code wanInstance} 关联到对应业务 WAN 的排位号 */
+    private void upsertVlan(Device device, int wanInstance, String prefix) {
         Vlan vlan = new Vlan();
         vlan.setDeviceId(device.getId());
         vlan.setWanInstance(wanInstance);
         vlan.setAction("ADD");
         vlan.setVerified("UNVERIFIED");
-        vlan.setPathVlanId(path);
+        vlan.setPathVlanId(prefix + "X_CMCC_VLANID");
         vlan.setValVlanId(TemplateVariables.VLAN_ID);
+        vlan.setPathVlanMode(prefix + "X_CMCC_VLANMode");
+        vlan.setValVlanMode("");
+        vlan.setPath8021p(prefix + "X_CMCC_802-1pMark");
+        vlan.setVal8021p("");
+        vlan.setPathMulticast(prefix + "X_CMCC_MulticastVlan");
+        vlan.setValMulticast("");
         vlanDao.upsert(vlan);
     }
 
@@ -546,15 +428,12 @@ public class TemplateBuilder {
         return r;
     }
 
-    /**
-     * 该范围内是否已有实例。首实例（1 / 5）通常出厂就有，可直接 SET；
-     * 后续对接 SoC 信息齐全后，这里改为按实际采集结果判定。
-     */
+    /** 该范围内是否已有实例。首实例（1 / 5）通常出厂就有，可直接 SET */
     private static boolean instanceExists(Device device, int instanceNo) {
         return instanceNo == SSID_24G || instanceNo == SSID_58G;
     }
 
-    /** 本次生成结果，供调用方记录日志或回显。 */
+    /** 本次生成结果，供调用方记录日志或回显 */
     @Data
     public static class WifiResult {
         private int wlanA;
@@ -565,20 +444,20 @@ public class TemplateBuilder {
         }
     }
 
-    /** 本次 SIP 生成结果。 */
+    /** 本次 SIP 生成结果 */
     @Data
     public static class SipResult {
         private int sip;
     }
 
-    /** 本次 WAN 生成结果。 */
+    /** 本次 WAN 生成结果 */
     @Data
     public static class WanResult {
         private int wan;
         private int vlan;
     }
 
-    /** 本次 LAN 生成结果。 */
+    /** 本次 LAN 生成结果 */
     @Data
     public static class LanResult {
         private int lan;

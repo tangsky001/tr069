@@ -10,12 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * 5.8G WiFi 实例 DAO。结构与 {@link WlanADao} 一致，分成两张表是因为
- * 2.4G 与 5.8G 实例号不连续且在 TR-098 里挂不同射频，下发时要分别处理。
- *
- * <p>该型号是否应该有行由 {@code device.cap_wifi_spec} 决定（含 5.8G 才有）。</p>
- */
+/** 5.8G WiFi 实例 DAO。结构与 {@link WlanADao} 一致，分成两张表是因为 */
 @Repository
 public class WlanBDao {
 
@@ -73,7 +68,7 @@ public class WlanBDao {
         return jdbc.update("DELETE FROM wlan_b WHERE device_id = ?", deviceId);
     }
 
-    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体。 */
+    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体 */
     public long upsert(WlanB r) {
         Optional<WlanB> exist = findOne(r.getDeviceId(), r.getInstanceNo());
         if (exist.isPresent()) {

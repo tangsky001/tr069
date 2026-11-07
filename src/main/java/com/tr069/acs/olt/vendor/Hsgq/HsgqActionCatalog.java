@@ -1,4 +1,4 @@
-package com.tr069.acs.olt.vendor;
+package com.tr069.acs.olt.vendor.Hsgq;
 
 import com.tr069.acs.olt.model.OltAction;
 import com.tr069.acs.olt.model.OltActionParam;
@@ -12,24 +12,7 @@ import static com.tr069.acs.olt.model.OltAction.query;
 import static com.tr069.acs.olt.model.OltAction.queryIn;
 import static com.tr069.acs.olt.model.OltAction.queryWith;
 
-/**
- * 鸿升光 EPON OLT 的命令动作全集，逐条对照《EPON 光纤接入局端设备 4 口&amp;8 口系列命令行操作手册 V3.0.2》。
- *
- * <p><b>怎么加一条命令：</b>在对应章节的方法里加一行 {@code config(...) / in(...) / query(...)}，
- * 命令模板照抄手册那一格，参数用 {@code {key}} 占位并加进 {@code params}。
- * 页面会自动出现这个功能，不用改前端。</p>
- *
- * <p>视图规则（命令在哪个提示符下执行）：</p>
- * <ul>
- *   <li>{@link OltAction.View#CONFIG}：{@code OLT(config)#}，直接下发；</li>
- *   <li>{@link OltAction.View#VLAN}：先 {@code vlan standard <vlanId>} 进 vlan 视图，执行完 {@code exit}；</li>
- *   <li>{@link OltAction.View#PORT}：先 {@code interface <portType> <portNo>} 进端口视图；</li>
- *   <li>{@link OltAction.View#VLANIF}：先 {@code interface vlanif <vlanId>} 进三层接口视图。</li>
- * </ul>
- *
- * <p>已经录入的章节见 {@link #actions()}；手册里还剩 3.6~3.11（配置管理/升级/诊断/时间/用户/系统服务）、
- * 5~12 章，按同样格式继续往这里加即可。</p>
- */
+/** 鸿升光 EPON OLT 的命令动作全集，逐条对照《EPON 光纤接入局端设备 4 口&amp;8 口系列命令行操作手册 V3.0.2》 */
 public final class HsgqActionCatalog {
 
     private static final String CH_VLAN = "4.1 全局 VLAN 配置";

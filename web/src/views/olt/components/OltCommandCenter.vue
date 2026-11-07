@@ -91,7 +91,7 @@
 
 <script>
 import OltQuickSetupDialog from './OltQuickSetupDialog'
-import { fetchOltOptions } from '@/api/olt'
+import { fetchOltOptions, previewOltActions } from '@/api/olt'
 
 /**
  * 设备配置（命令动作中心）。
@@ -143,7 +143,13 @@ export default {
       output: null,
       quickVisible: false,
       /** 视图中文名等码表，来自 GET /api/olt/options */
-      viewLabels: null
+      viewLabels: null,
+      /** 命令文本：后端按执行侧同一套规则渲染，键是动作编号 */
+      previews: {},
+      /** 参数改动后的合并窗口：一边打字一边别打库 */
+      previewTimer: null,
+      /** 请求序号：只认最后一次返回，免得慢响应把新预览盖回去 */
+      previewSeq: 0
     }
   },
   computed: {
@@ -164,7 +170,20 @@ export default {
       handler() {
         this.resetValues()
         this.openChapters = this.groups.length ? [this.groups[0].chapter] : []
+        this.schedulePreviews()
       }
+    },
+    // 参数一动就重算预览（合并 400ms），页面不做任何字符串替换
+    values: {
+      deep: true,
+      handler() {
+        this.schedulePreviews()
+      }
+    }
+  },
+  beforeDestroy() {
+    if (this.previewTimer) {
+      clearTimeout(this.previewTimer)
     }
   },
   created() {
@@ -197,20 +216,41 @@ export default {
     viewText(view) {
       return (this.viewLabels && this.viewLabels[view]) || view
     },
+    /** 参数改动后 400ms 再算预览，避免每敲一个字符打一次接口 */
+    schedulePreviews() {
+      if (this.previewTimer) {
+        clearTimeout(this.previewTimer)
+      }
+      this.previewTimer = setTimeout(() => this.requestPreviews(), 400)
+    },
     /**
-     * 把占位符换成当前填的值，让用户先看清要发什么命令。
+     * 整页表单一次送后端，拿回每条动作的命令文本。
      *
-     * <p>进哪个视图、要不要 exit 由后端算好放在 {@code previewCommands} 里，
-     * 这里只做文本替换，不再判断视图。</p>
+     * <p>以前这里是 {@code template.replace(/\{(\w+)\}/g, ...)}：可选段 {@code [ ... ]}、
+     * 缺参怎么提示、视图怎么进出，页面都得跟着执行侧再实现一遍，改一处容易漏一处。
+     * 现在渲染只在后端做，预览与实际下发同源。</p>
      */
+    requestPreviews() {
+      if (!this.oltId || !this.actions.length) {
+        return
+      }
+      const items = this.actions.map(action => ({
+        code: action.code,
+        params: this.paramsOf(action)
+      }))
+      const seq = ++this.previewSeq
+      previewOltActions(this.oltId, items)
+        .then(res => {
+          // 慢响应回来时已经有更新的一次，丢掉
+          if (seq === this.previewSeq) {
+            this.previews = (res && res.data) || {}
+          }
+        })
+        .catch(() => {})
+    },
+    /** 命令预览文本：全部由后端渲染，这里只取 */
     preview(action) {
-      const params = this.paramsOf(action)
-      const templates = action.previewCommands && action.previewCommands.length
-        ? action.previewCommands
-        : (action.commands || [])
-      return templates.map(template => template.replace(/\{(\w+)\}/g, (all, key) => {
-        return params[key] ? params[key] : all
-      })).join('  →  ')
+      return this.previews[action.code] || ''
     },
     run(action) {
       if (!this.execHandler) {

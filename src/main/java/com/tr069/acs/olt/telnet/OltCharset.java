@@ -4,12 +4,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
-/**
- * OLT 命令行字符集。
- *
- * <p>国产 OLT 的中文回显多数是 GBK，部分新版本是 UTF-8。页面上的「自动」表示
- * 先用 UTF-8 连，回显里出现替换符（说明解码失败）时再用 GBK 重连一次。</p>
- */
+/** OLT 命令行字符集 */
 public final class OltCharset {
 
     /** 自动识别 */
@@ -18,9 +13,7 @@ public final class OltCharset {
     private OltCharset() {
     }
 
-    /**
-     * 解析配置值，非法值回落 UTF-8。
-     */
+    /** 解析配置值，非法值回落 UTF-8 */
     public static Charset resolve(String value) {
         if (value == null || value.isBlank()) {
             return StandardCharsets.UTF_8;
@@ -42,16 +35,12 @@ public final class OltCharset {
         }
     }
 
-    /**
-     * 是否为「自动」。
-     */
+    /** 是否为「自动」 */
     public static boolean isAuto(String value) {
         return value == null || value.isBlank() || AUTO.equalsIgnoreCase(value.trim());
     }
 
-    /**
-     * 自动识别失败时的兜底字符集。
-     */
+    /** 自动识别失败时的兜底字符集 */
     public static Charset fallback() {
         return Charset.forName("GBK");
     }

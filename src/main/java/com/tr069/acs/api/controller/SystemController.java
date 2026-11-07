@@ -23,12 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 系统管理：角色、权限、用户。
- *
- * <p>自己也要被权限管：看要 {@code system:view}，改要 {@code system:manage}，
- * 系统管理员例外（它在 {@link RoleService#has} 里直接放行）。</p>
- */
+/** 系统管理：角色、权限、用户 */
 @Slf4j
 @RestController
 @RequestMapping("/api/system")
@@ -41,7 +36,7 @@ public class SystemController {
 
     private final LoginLogService loginLogService;
 
-    /** 权限点清单，按模块分组，给页面勾选用。 */
+    /** 权限点清单，按模块分组，给页面勾选用 */
     @GetMapping("/permissions")
     public Result<Map<String, Object>> permissions() {
         Map<String, Object> data = Map.of("groups", PermissionCodes.groups());
@@ -53,7 +48,7 @@ public class SystemController {
         return Result.success(roleService.list());
     }
 
-    /** 建角色。新角色一个权限都没有，建完去勾。 */
+    /** 建角色。新角色一个权限都没有，建完去勾 */
     @PostMapping("/roles")
     public Result<Void> createRole(@RequestBody(required = false) RoleRequest request) {
         if (request == null) {
@@ -63,7 +58,7 @@ public class SystemController {
         return Result.success();
     }
 
-    /** 设置角色权限，整份覆盖。系统管理员会被拒。 */
+    /** 设置角色权限，整份覆盖。系统管理员会被拒 */
     @PutMapping("/roles/{code}/permissions")
     public Result<Void> setPermissions(@PathVariable String code,
                                        @RequestBody(required = false) PermissionsRequest request) {
@@ -77,20 +72,46 @@ public class SystemController {
         return Result.success();
     }
 
+    /** 用户列表：每行带 canDelete / canToggleStatus / canChangeRole */
     @GetMapping("/users")
-    public Result<List<Map<String, Object>>> users() {
-        return Result.success(userAdminService.list());
+    public Result<List<Map<String, Object>>> users(HttpServletRequest request) {
+        Object username = request.getAttribute(AdminAuthInterceptor.USERNAME_ATTR);
+        return Result.success(userAdminService.list(username == null ? null : String.valueOf(username)));
     }
 
-    /** 登录日志。传 userId 看某一个人的，不传看全部人的。 */
+    /** 账号与密码策略：新建/改密弹窗的提示与校验值都由后端给 */
+    @GetMapping("/password-policy")
+    public Result<Map<String, Object>> passwordPolicy() {
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("minLength", 6);
+        data.put("maxLength", 64);
+        data.put("usernamePattern", "字母、数字与下划线，4-32 位");
+        data.put("passwordHint", "至少 6 位");
+        data.put("needCurrentPassword", true);
+        return Result.success(data);
+    }
+
+    /** 登录日志。传 userId 看某一个人的，不传看全部人的 */
     @GetMapping("/login-logs")
     public Result<List<Map<String, Object>>> loginLogs(
             @RequestParam(value = "userId", required = false) Long userId,
+            @RequestParam(value = "ip", required = false) String ip,
+            @RequestParam(value = "source", required = false) String source,
+            @RequestParam(value = "from", required = false)
+            @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME)
+            java.time.LocalDateTime from,
+            @RequestParam(value = "to", required = false)
+            @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME)
+            java.time.LocalDateTime to,
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
-        if (userId != null) {
+        boolean filtered = (ip != null && !ip.isBlank()) || (source != null && !source.isBlank())
+                || from != null || to != null;
+        if (!filtered && userId != null) {
             return Result.success(loginLogService.ofUser(userId, limit));
         }
-        return Result.success(loginLogService.recent(limit));
+        return Result.success(loginLogService.search(userId, ip, source, from, to, limit));
     }
 
     @PostMapping("/users")
@@ -103,10 +124,7 @@ public class SystemController {
         return Result.success();
     }
 
-    /**
-     * 改用户。当前操作者的用户名从拦截器里取，用来拦住「删自己」，
-     * 以及改密码时验他自己的密码。
-     */
+    /** 改用户。当前操作者的用户名从拦截器里取，用来拦住「删自己」 */
     @PutMapping("/users/{id}")
     public Result<Void> updateUser(@PathVariable Long id,
                                    @RequestBody(required = false) UserRequest request,
@@ -144,7 +162,7 @@ public class SystemController {
     public static class UserRequest {
         private String username;
         private String password;
-        /** 改密码时必填：操作者自己的当前密码，二次验证用。 */
+        /** 改密码时必填：操作者自己的当前密码，二次验证用 */
         private String currentPassword;
         private String nickname;
         private String role;

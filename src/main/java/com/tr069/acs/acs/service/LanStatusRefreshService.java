@@ -16,14 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/**
- * LAN 网口状态定时自动刷新。
- *
- * <p>网口插线状态只有设备自己知道，ACS 拿到的永远是"上一次读到的值"：拔掉网线后
- * 设备不会主动上报，页面上的网口图标就会一直停在旧状态，只能人工点「重新采集」。
- * 这里按固定间隔对在线设备重读一遍网口状态叶子（{@link DeviceBusinessService#lanStatusPaths}），
- * 库里的值被刷成最新，前端照常读业务快照就能看到变化。</p>
- */
+/** LAN 网口状态定时自动刷新 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -36,17 +29,15 @@ public class LanStatusRefreshService {
     @Value("${acs.device.lan.auto-refresh.enabled:true}")
     private boolean enabled;
 
-    /** 单轮等待设备回值的上限（秒）。超时不判失败，下一轮继续。 */
+    /** 单轮等待设备回值的上限（秒）。超时不判失败，下一轮继续 */
     @Value("${acs.device.lan.auto-refresh.wait-seconds:120}")
     private long waitSeconds;
 
-    /** 单轮最多刷多少台，设备规模上来后防止一轮下发过多。 */
+    /** 单轮最多刷多少台，设备规模上来后防止一轮下发过多 */
     @Value("${acs.device.lan.auto-refresh.max-devices-per-round:200}")
     private int maxDevicesPerRound;
 
-    /**
-     * 一轮刷新：在线设备各下发一次网口状态读取，然后统一等回值。
-     */
+    /** 一轮刷新：在线设备各下发一次网口状态读取，然后统一等回值 */
     @Scheduled(fixedDelayString = "${acs.device.lan.auto-refresh.interval-millis:300000}")
     public void refreshOnlineDevices() {
         if (!enabled) {
@@ -108,7 +99,7 @@ public class LanStatusRefreshService {
                 sns.size(), pending.size(), replied, skipped, failed);
     }
 
-    /** 当前在线（有活动会话且未标离线）的设备序列号。 */
+    /** 当前在线（有活动会话且未标离线）的设备序列号 */
     private List<String> onlineSns() {
         List<String> sns = new ArrayList<>();
         for (CpeSession session : sessionManager.allSessions()) {

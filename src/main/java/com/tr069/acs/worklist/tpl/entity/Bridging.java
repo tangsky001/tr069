@@ -2,12 +2,7 @@ package com.tr069.acs.worklist.tpl.entity;
 
 import lombok.Data;
 
-/**
- * 桥接配置。一行 = 一个 (bridge, port) 组合。
- * 桥接下发实际是「WAN 连接设 ConnectionType=Bridged + 绑定 LAN 口」，表里存的是
- * 拼接好的下发路径；具体下发动作（含 AddObject 建实例）由下发入口按 conn_type 触发。
- * <p>{@code bindLanNo} 记录该桥端口绑定的 LAN 口号，方便人工核对。</p>
- */
+/** 桥接配置。一行 = 一个 (bridge, port) 组合 */
 @Data
 public class Bridging {
 

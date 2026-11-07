@@ -1,6 +1,7 @@
-package com.tr069.acs.olt.vendor;
+package com.tr069.acs.olt.vendor.Fiberhome;
 
 import com.tr069.acs.olt.telnet.OltVendor;
+import com.tr069.acs.olt.vendor.AbstractOltVendorProfile;
 
 import java.util.List;
 import java.util.regex.Pattern;

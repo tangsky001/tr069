@@ -17,14 +17,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 
-/**
- * CPE 上报多端口监听。
- *
- * <p>不同厂商、不同批次的光猫出厂固化的 ACS URL 端口并不一致，ACS 必须同时监听
- * 这些端口才能收到上报。端口清单由 {@code acs.cwmp.listen-ports} 配置，
- * 除主端口 {@code server.port} 外，其余端口通过追加 Tomcat 连接器实现，
- * 所有端口共用同一套处理逻辑（{@code /ACS-server/ACS} 与 {@code /cpe}）。</p>
- */
+/** CPE 上报多端口监听 */
 @Slf4j
 @Configuration
 public class CwmpMultiPortConfig {
@@ -38,9 +31,7 @@ public class CwmpMultiPortConfig {
     @Value("${server.tomcat.uri-encoding:UTF-8}")
     private String uriEncoding;
 
-    /**
-     * 为主端口之外的 CPE 上报端口追加连接器。
-     */
+    /** 为主端口之外的 CPE 上报端口追加连接器 */
     @Bean
     public WebServerFactoryCustomizer<TomcatServletWebServerFactory> cwmpAdditionalConnectors() {
         List<Integer> extraPorts = resolveExtraPorts();
@@ -60,9 +51,7 @@ public class CwmpMultiPortConfig {
         };
     }
 
-    /**
-     * 实际监听的端口集合：主端口 + 配置中的额外端口。
-     */
+    /** 实际监听的端口集合：主端口 + 配置中的额外端口 */
     private Set<Integer> listenedPorts(List<Integer> extraPorts) {
         Set<Integer> ports = new LinkedHashSet<>();
         ports.add(serverPort);
@@ -70,9 +59,7 @@ public class CwmpMultiPortConfig {
         return ports;
     }
 
-    /**
-     * 解析端口清单：支持逗号/分号/空格分隔，去重、去掉越界值，并跳过主端口避免重复绑定。
-     */
+    /** 解析端口清单：支持逗号/分号/空格分隔，去重、去掉越界值，并跳过主端口避免重复绑定 */
     private List<Integer> resolveExtraPorts() {
         Set<Integer> parsed = new LinkedHashSet<>();
         if (listenPorts != null) {
@@ -111,14 +98,7 @@ public class CwmpMultiPortConfig {
         return extra;
     }
 
-    /**
-     * 端口能否绑定：启动前先探一次。
-     *
-     * <p>只看配置看不出端口冲突，而额外连接器是在 Tomcat 启动时才绑定的，
-     * 绑定失败会冒泡成「嵌入式 Tomcat 启动失败」，整个应用起不来。
-     * 这里提前探一次，绑不上就跳过并报 ERROR——宁可少监听一个端口，
-     * 也不能因为一个端口把主端口和管理端一起搞挂。</p>
-     */
+    /** 端口能否绑定：启动前先探一次 */
     private static boolean portBindable(int port) {
         try (ServerSocket probe = new ServerSocket()) {
             probe.setReuseAddress(true);

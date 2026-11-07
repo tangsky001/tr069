@@ -4,18 +4,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * 雪花 ID 生成器。结构：
- * <pre>
- *   0 | 0000000 00000000 00000000 00000000 00000000 0 | 00000 | 00000 | 000000000000
- *   符号 |                时间戳(ms)                     | 数据中心 | 节点  |    序列
- * </pre>
- * 总长 64 位，从 1970 起可用约 69 年。
- *
- * <p>节点号走 {@code tr069tpl.snowflake-node-id} 配置（多节点部署时手动分配避免主键撞车）。
- * 单进程内序列号自增保证唯一，跨毫秒/同毫秒都自增；时钟回拨容忍：检测到回拨后等待追上，
- * 极端情况下抛错避免主键撞车。</p>
- */
+/** 雪花 ID 生成器。结构 */
 @Component
 public class SnowflakeIdGenerator {
 
@@ -42,9 +31,7 @@ public class SnowflakeIdGenerator {
         this.nodeId = nodeId;
     }
 
-    /**
-     * 生成下一个 ID，线程安全。
-     */
+    /** 生成下一个 ID，线程安全 */
     public synchronized long nextId() {
         long ts = System.currentTimeMillis();
         if (ts < lastTimestamp) {

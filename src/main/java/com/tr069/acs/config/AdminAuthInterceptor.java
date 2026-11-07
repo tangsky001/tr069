@@ -19,23 +19,13 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.io.IOException;
 
-/**
- * 管理端接口鉴权。
- *
- * <p>只拦 {@code /api/**}。设备侧的 CWMP 接口（{@code /ACS-server/ACS}、{@code /cpe}）
- * 不走这里——光猫不会有令牌，拦了设备就注册不上来。</p>
- *
- * <p>令牌取自 {@code X-Token} 头，与管理端 request 拦截器一致；同时兼容
- * {@code Authorization: Bearer} 与 {@code ?token=} 传参，方便接口调试。</p>
- */
+/** 管理端接口鉴权 */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AdminAuthInterceptor implements HandlerInterceptor {
 
-    /**
-     * 解析出的用户名，请求期间可直接取用，不必再解一遍令牌。
-     */
+    /** 解析出的用户名，请求期间可直接取用，不必再解一遍令牌 */
     public static final String USERNAME_ATTR = AdminAuthInterceptor.class.getName() + ".username";
 
     private static final String TOKEN_HEADER = "X-Token";
@@ -83,11 +73,7 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
         return true;
     }
 
-    /**
-     * 取用户的角色。每次都查库：改了角色要立刻生效，缓存了就得等重启。
-     *
-     * <p>管理端的请求量撑得住这一下——真正高频的是设备上报，那条路不进这里。</p>
-     */
+    /** 取用户的角色。每次都查库：改了角色要立刻生效，缓存了就得等重启 */
     private String roleOf(String username) {
         SysUser user = userMapper.selectOne(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getUsername, username)
@@ -95,9 +81,7 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
         return user == null ? null : user.getRole();
     }
 
-    /**
-     * 取令牌：优先 X-Token 头，其次 Authorization: Bearer，最后是 token 参数。
-     */
+    /** 取令牌：优先 X-Token 头，其次 Authorization: Bearer，最后是 token 参数 */
     private String resolveToken(HttpServletRequest request) {
         String token = request.getHeader(TOKEN_HEADER);
         if (token != null && !token.isBlank()) {
@@ -115,9 +99,7 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
         return param == null || param.isBlank() ? null : param.trim();
     }
 
-    /**
-     * 登录了但没权限：HTTP 403 + 业务码 {@link Result#FORBIDDEN_CODE}。
-     */
+    /** 登录了但没权限：HTTP 403 + 业务码 {@link Result#FORBIDDEN_CODE} */
     private void writeForbidden(HttpServletResponse response, String required) throws IOException {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType("application/json;charset=UTF-8");
@@ -125,9 +107,7 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
                 Result.forbidden("没有权限：" + required)));
     }
 
-    /**
-     * 没带令牌或令牌失效：HTTP 401 + 业务码 {@link Result#UNAUTHORIZED_CODE}，前端据此弹重新登录。
-     */
+    /** 没带令牌或令牌失效：HTTP 401 + 业务码 {@link Result#UNAUTHORIZED_CODE}，前端据此弹重新登录 */
     private void writeUnauthorized(HttpServletResponse response) throws IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json;charset=UTF-8");

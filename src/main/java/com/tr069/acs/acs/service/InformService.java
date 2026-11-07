@@ -14,24 +14,16 @@ import java.util.Comparator;
 import java.util.List;
 import com.tr069.acs.common.log.AcsCoreLog;
 
-/**
- * Inform 事务处理。
- *
- * <p>收到 Inform 后更新设备属性、记录 RPC 与 SOAP 报文、按事件码调度后续业务。</p>
- */
+/** Inform 事务处理 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class InformService {
 
-    /**
-     * 0 BOOTSTRAP 事件码，处理时须排在最前：它要先把设备档案建起来，其余事件才有着落
-     */
+    /** 0 BOOTSTRAP 事件码，处理时须排在最前：它要先把设备档案建起来，其余事件才有着落 */
     private static final String EVENT_BOOTSTRAP = "0 BOOTSTRAP";
 
-    /**
-     * ManagementServer.ConnectionRequestURL 的后缀
-     */
+    /** ManagementServer.ConnectionRequestURL 的后缀 */
     private static final String CONN_REQUEST_URL_SUFFIX = "ManagementServer.ConnectionRequestURL";
 
     private static final String SOFTWARE_VERSION_SUFFIX = "DeviceInfo.SoftwareVersion";
@@ -42,14 +34,7 @@ public class InformService {
 
     private final AcsCoreLog coreLog;
 
-    /**
-     * 处理一次 Inform：更新会话属性并返回排序后的事件码列表。
-     *
-     * @param session 设备会话
-     * @param inform  Inform 内容
-     * @param rawXml  原始报文，用于审计留痕
-     * @return 排序后的事件码，用于后续异步调度
-     */
+    /** 处理一次 Inform：更新会话属性并返回排序后的事件码列表 */
     public List<String> handle(CpeSession session, InformRequest inform, String rawXml) {
         List<ParameterValueStruct> parameters = inform.getParameterList() == null
                 ? List.of() : inform.getParameterList();
@@ -98,9 +83,7 @@ public class InformService {
         return eventCodes;
     }
 
-    /**
-     * 事件码排序：0 BOOTSTRAP 强制排在最前，其余保持原顺序。
-     */
+    /** 事件码排序：0 BOOTSTRAP 强制排在最前，其余保持原顺序 */
     private List<String> sortEventCodes(List<EventStruct> events) {
         List<String> codes = new ArrayList<>();
         if (events == null) {

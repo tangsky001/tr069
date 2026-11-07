@@ -10,17 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * VLAN 实例 DAO。
- *
- * <p>VLAN 不像 WiFi / SIP 那样有自己的顶层对象，它挂在某条 WAN 连接下面
- * （TR-098 里常见 {@code WANIPConnection.{i}.X_CMCC_VLANID}），
- * 所以这里用 {@code wan_instance} 关联 {@code device_wan.instance_no}，
- * 而不是自己的实例号。该字段可为空——表示这条 VLAN 尚未绑定到具体 WAN 实例。</p>
- *
- * <p>注意：SQLite 的 UNIQUE 约束允许多个 NULL，所以 {@code wan_instance IS NULL}
- * 的行不会被去重，判重时必须走显式查询而不是依赖约束报错。</p>
- */
+/** VLAN 实例 DAO */
 @Repository
 public class VlanDao {
 
@@ -56,9 +46,7 @@ public class VlanDao {
         this.snowflake = snowflake;
     }
 
-    /**
-     * 按 (device_id, wan_instance) 查。{@code wanInstance} 为 null 时匹配未绑定的行。
-     */
+    /** 按 (device_id, wan_instance) 查。{@code wanInstance} 为 null 时匹配未绑定的行 */
     public Optional<Vlan> findOne(long deviceId, Integer wanInstance) {
         String sql = wanInstance == null
                 ? "SELECT " + COLS + " FROM vlan WHERE device_id = ? AND wan_instance IS NULL LIMIT 1"
@@ -77,7 +65,7 @@ public class VlanDao {
         return jdbc.update("DELETE FROM vlan WHERE device_id = ?", deviceId);
     }
 
-    /** 按 (device_id, wan_instance) 新增或更新，返回主键并回填到实体。 */
+    /** 按 (device_id, wan_instance) 新增或更新，返回主键并回填到实体 */
     public long upsert(Vlan r) {
         Optional<Vlan> exist = findOne(r.getDeviceId(), r.getWanInstance());
         if (exist.isPresent()) {

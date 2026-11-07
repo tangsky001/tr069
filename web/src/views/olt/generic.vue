@@ -27,7 +27,7 @@
         先按通用视图展示已采到的数据。点上面的「诊断测试」重新认一次，认出来后会自动跳到对应厂商的页面。
       </div>
 
-      <el-tabs v-model="activeTab">
+      <el-tabs v-model="activeTab" @tab-click="handleTabClick">
         <el-tab-pane label="OLT 状态" name="spec">
           <div class="olt-summary">
             <div>
@@ -113,6 +113,8 @@
               :vlan-ip-interfaces="vlanIpInterfaces"
               :static-routes="staticRoutes"
               :vlan-group-rows="vlanGroupRows"
+              :add-port-vlan-handler="addPortVlan"
+              :remove-port-vlan-handler="removePortVlan"
               empty-text="尚未采集到 VLAN 信息，也可以点上面的「同步」立即刷新。"
             />
           </template>
@@ -126,7 +128,7 @@
         <el-tab-pane label="ONT 配置/状态" name="ont">
           <div class="olt-summary">
             <div>
-              业务板 <b>{{ ontBoards.length }}</b> 块，端口 <b>{{ ontPortTotal }}</b> 个，
+              业务板 <b>{{ ontBoardCount }}</b> 块，端口 <b>{{ ontPortTotal }}</b> 个，
               ONT <b>{{ ontSummary.total }}</b> 个（在线 {{ ontSummary.online }} / 离线 {{ ontSummary.offline }}）。
             </div>
           </div>
@@ -134,13 +136,13 @@
           <!-- 鸿升光：ONU 数量本来就少（一台几十条），平铺成一张表比按 PON 口折叠好查 -->
           <olt-ont-list
             v-if="isHsgq"
-            :ont-boards="ontBoards"
+            :ont-rows="ontRows"
             :sn-label="device.vendor === 'HSGQ' ? 'MAC 地址' : 'SN'"
             empty-text="尚未采集到 ONU 数据。点上面的「同步」，采集时会跑 show onu-info all。"
           />
           <olt-ont-board
             v-else
-            :ont-boards="ontBoards"
+            :ont-boards="ontCards"
             empty-text="尚未采集到端口/ONT 数据，点上面的「同步」立即刷新。"
           />
         </el-tab-pane>

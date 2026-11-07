@@ -6,17 +6,13 @@
  */
 
 /**
- * VLAN 列表压成连续区间：1,41,45,46 变成 1、41、45-46。
+ * 板卡运行灯：三态由后端按状态等级换算好下发（board.lampState），页面直接显示。
  *
- * 网管上就是这么写的，一行能塞下几十个 VLAN 时尤其有用。
+ * <p>原来这里还按 statusType 兜底推一次灯色，等于把「什么状态算异常」的规则
+ * 复制到页面；现在后端没给就是没给，按灭灯处理，暴露问题而不是猜。</p>
  */
-/**
- * 板卡运行灯：Normal 绿、异常红、没采到灰（面板表头和机框里的板卡状态灯共用）。
- */
-export function boardLampState(statusType) {
-  if (statusType === 'success') return 'online'
-  if (statusType === 'danger' || statusType === 'warning') return 'alarm'
-  return 'offline'
+export function boardLampState(lampState) {
+  return lampState || 'offline'
 }
 
 /**
@@ -28,33 +24,8 @@ export function boardLampState(statusType) {
  */
 export function portLampState(port) {
   if (!port) return 'offline'
-  if (port.lamp === 'warn') return 'alarm'
-  if ((port.onuTotal || 0) > 0 && (port.onuOnline || 0) === 0) return 'alarm'
-  if ((port.onuOnline || 0) > 0 || port.link === 'online') return 'online'
-  return 'offline'
-}
-
-export function compressVlans(vlans) {
-  const nums = (vlans || []).slice().sort((a, b) => a - b)
-  const parts = []
-  let start = null
-  let prev = null
-  nums.forEach(num => {
-    if (start === null) {
-      start = num
-      prev = num
-      return
-    }
-    if (num === prev + 1) {
-      prev = num
-      return
-    }
-    parts.push(start === prev ? String(start) : start + '-' + prev)
-    start = num
-    prev = num
-  })
-  if (start !== null) {
-    parts.push(start === prev ? String(start) : start + '-' + prev)
-  }
-  return parts.join('、')
+  // 三态由后端在 detail 组装时判定下发（光模块异常 / 光路断 → alarm）。
+  // 前端不再按 onuTotal / link 现算：后端没给 lampState 就是后端问题，
+  // 端口显示灰灯（offline）暴露出来；占位补出来的空端口本就没有业务数据，也是灰灯。
+  return port.lampState || 'offline'
 }

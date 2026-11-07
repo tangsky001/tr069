@@ -15,19 +15,13 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 数据库表结构启动自检。
- *
- * <p>建表脚本 sql/schema.sql 位于 jar 外部，首次部署若漏执行，应用仍会启动成功，
- * 直到设备上报时才抛出「表不存在」，排查成本高。这里在启动阶段做一次校验，
- * 缺失时直接给出可执行 sql/schema.sql 的明确提示。</p>
- */
+/** 数据库表结构启动自检 */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class DatabaseSchemaChecker implements ApplicationRunner {
 
-    /** 要求存在的核心表，需与 sql/schema.sql 保持一致。 */
+    /** 要求存在的核心表，需与 sql/schema.sql 保持一致 */
     private static final String[] REQUIRED_TABLES = {
             "sys_user", "operator_config", "cpe_device", "rpc_record",
             "soap_message", "worklist", "worklist_step",
@@ -36,11 +30,11 @@ public class DatabaseSchemaChecker implements ApplicationRunner {
 
     private final DataSource dataSource;
 
-    /** 是否执行自检。 */
+    /** 是否执行自检 */
     @Value("${acs.database.schema-check-enabled:true}")
     private boolean enabled;
 
-    /** 表缺失时是否终止启动。默认仅告警，避免影响已有部署。 */
+    /** 表缺失时是否终止启动。默认仅告警，避免影响已有部署 */
     @Value("${acs.database.fail-on-missing-table:false}")
     private boolean failOnMissingTable;
 
@@ -70,9 +64,7 @@ public class DatabaseSchemaChecker implements ApplicationRunner {
         }
     }
 
-    /**
-     * 逐个核对核心表是否存在于当前库。
-     */
+    /** 逐个核对核心表是否存在于当前库 */
     private List<String> findMissingTables() throws SQLException {
         List<String> missing = new ArrayList<>();
         try (Connection conn = dataSource.getConnection()) {

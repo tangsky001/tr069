@@ -4,15 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * 整机前面板：一体化 OLT（鸿升光这类）没有板卡插框，型号直接决定面板上有什么口。
- *
- * <p>前端据此画「一台设备的前面板」：左边型号，PON 口一排，右边上联 GE / XGE、
- * NMS、CONSOLE。以前只有「几个 PON 口」，上行口在页面上完全看不见。</p>
- *
- * <p>用普通类而不是 record：这块数据会随板卡一起写进设备行的 JSON 快照，
- * 读回来要能反序列化，普通类不依赖编译参数里的参数名。</p>
- */
+/** 整机前面板：一体化 OLT（鸿升光这类）没有板卡插框，型号直接决定面板上有什么口 */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

@@ -4,7 +4,7 @@
 
     <template v-else>
       <div v-if="editCount" class="vlan-edit-banner">
-        有 {{ editCount }} 处本地修改，尚未下发设备；重新打开页面后会还原成采集值
+        三层接口有 {{ editCount }} 处本地修改，尚未下发设备；重新打开页面后会还原成采集值
       </div>
 
       <!-- 1. 三层 VLAN 接口：vlanif 对应的 IP 和掩码 -->
@@ -56,9 +56,9 @@
           <template slot-scope="{ row }">{{ row.nativeVlan == null ? '-' : row.nativeVlan }}</template>
         </el-table-column>
         <el-table-column label="操作" width="120" align="center">
-          <template slot-scope="{ row, $index }">
-            <el-button type="text" size="mini" @click="openEdit('portVlan', row, $index)">编辑</el-button>
-            <el-button type="text" size="mini" class="vlan-row-danger" @click="openDelete('portVlan', row, $index)">删除</el-button>
+          <template slot-scope="{ row }">
+            <el-button type="text" size="mini" @click="openPortVlanAdd(row)">添加</el-button>
+            <el-button type="text" size="mini" class="vlan-row-danger" @click="openPortVlanRemove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -82,10 +82,9 @@
         </el-table-column>
       </el-table>
 
-      <!-- 4. 静态路由 -->
+      <!-- 4. 静态路由：只读展示采集结果，页面不提供增删改 -->
       <div class="vlan-section-head">
         <div class="olt-section-title">静态路由</div>
-        <el-button size="mini" type="success" icon="el-icon-plus" @click="openAdd('route')">新增静态路由</el-button>
       </div>
       <el-table v-if="routeRows.length" :data="routeRows" size="small" border>
         <el-table-column label="目的网络" width="200">
@@ -100,79 +99,67 @@
         <el-table-column label="优先级" width="100" align="center">
           <template slot-scope="{ row }">{{ row.preference == null ? '-' : row.preference }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120" align="center">
-          <template slot-scope="{ row, $index }">
-            <el-button type="text" size="mini" @click="openEdit('route', row, $index)">编辑</el-button>
-            <el-button type="text" size="mini" class="vlan-row-danger" @click="openDelete('route', row, $index)">删除</el-button>
-          </template>
-        </el-table-column>
       </el-table>
       <div v-else class="vlan-empty-row">没有静态路由</div>
 
-      <!-- 单条编辑 / 新增 / 删除 对话框：确认按钮绿色，修改暂存本地，下发设备的能力以后接 -->
+      <!-- 对话框：三层接口是本地暂存；上行 VLAN 透传是真实下发，成功后立刻重读 VLAN -->
       <el-dialog
         :title="dialog.title"
         :visible.sync="dialog.visible"
         width="460px"
         append-to-body
       >
-        <div v-if="dialog.mode === 'delete'" class="vlan-dialog-tip">
+        <!-- 上行口移除 VLAN：明确写清要动哪个口、哪些 VLAN -->
+        <div v-if="dialog.type === 'portVlan' && dialog.mode === 'delete'" class="vlan-dialog-tip">
+          将从 <b>{{ dialog.form.iface }}</b> 解除 VLAN
+          <b>{{ dialog.form.vlanText || '（无）' }}</b> 的绑定（下发 no port vlan），
+          设备上立即生效，随后立刻重读所有 VLAN。
+        </div>
+        <div v-else-if="dialog.mode === 'delete'" class="vlan-dialog-tip">
           确认删除这一条吗？删除先暂存在页面本地，下发设备的能力稍后接入。
         </div>
+        <template v-else-if="dialog.type === 'ipif'">
+          <div class="vlan-form-row">
+            <span class="vlan-form-label">VLAN ID</span>
+            <el-input v-model="dialog.form.vlanId" size="small" placeholder="2~4094" />
+          </div>
+          <div class="vlan-form-row">
+            <span class="vlan-form-label">VLAN IP 地址</span>
+            <el-input v-model="dialog.form.ipAddress" size="small" placeholder="如 10.172.10.254" />
+          </div>
+          <div class="vlan-form-row">
+            <span class="vlan-form-label">子网掩码</span>
+            <el-input v-model="dialog.form.mask" size="small" placeholder="如 255.255.255.0" />
+          </div>
+        </template>
+        <!-- 上行 VLAN 透传：放通 VLAN（真实下发） -->
         <template v-else>
-          <!-- 三层 VLAN 接口 -->
-          <template v-if="dialog.type === 'ipif'">
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">VLAN ID</span>
-              <el-input v-model="dialog.form.vlanId" size="small" placeholder="2~4094" />
-            </div>
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">VLAN IP 地址</span>
-              <el-input v-model="dialog.form.ipAddress" size="small" placeholder="如 10.172.10.254" />
-            </div>
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">子网掩码</span>
-              <el-input v-model="dialog.form.mask" size="small" placeholder="如 255.255.255.0" />
-            </div>
-          </template>
-          <!-- 上行 VLAN 透传 -->
-          <template v-else-if="dialog.type === 'portVlan'">
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">机框/板卡/端口</span>
-              <el-input v-model="dialog.form.iface" size="small" placeholder="如 0/8/1" :disabled="dialog.mode === 'edit'" />
-            </div>
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">VLAN ID 号</span>
-              <el-input v-model="dialog.form.vlanText" size="small" placeholder="VLAN ID号，范围2~4094，多个VLAN用逗号分隔" />
-            </div>
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">Native VLAN</span>
-              <el-input v-model="dialog.form.nativeVlan" size="small" placeholder="留空表示没有" />
-            </div>
-          </template>
-          <!-- 静态路由 -->
-          <template v-else>
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">目的网络</span>
-              <el-input v-model="dialog.form.destination" size="small" placeholder="如 0.0.0.0/0" />
-            </div>
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">下一跳网关</span>
-              <el-input v-model="dialog.form.nextHop" size="small" placeholder="如 10.172.10.1" />
-            </div>
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">出接口</span>
-              <el-input v-model="dialog.form.iface" size="small" placeholder="如 vlanif46" />
-            </div>
-            <div class="vlan-form-row">
-              <span class="vlan-form-label">优先级</span>
-              <el-input v-model="dialog.form.preference" size="small" placeholder="如 60" />
-            </div>
-          </template>
+          <div class="vlan-form-row">
+            <span class="vlan-form-label">机框/板卡/端口</span>
+            <el-input
+              v-model="dialog.form.iface"
+              size="small"
+              placeholder="如 0/7/0，多个口用逗号分隔"
+              :disabled="dialog.lockIface"
+            />
+          </div>
+          <div class="vlan-form-row">
+            <span class="vlan-form-label">VLAN</span>
+            <el-input v-model="dialog.form.vlanText" size="small" placeholder="如 41,45-46（支持区间）" />
+          </div>
+          <div class="vlan-form-row">
+            <span class="vlan-form-label">Native</span>
+            <el-checkbox v-model="dialog.form.nativeVlan">作为 Native VLAN（不打标签）</el-checkbox>
+          </div>
+          <div class="vlan-dialog-tip">
+            先 <code>vlan &lt;VLAN&gt; smart</code> 建出 VLAN（已存在的自动跳过），
+            再 <code>port vlan &lt;VLAN&gt; &lt;框/槽&gt; &lt;端口&gt;</code> 放通（多个口逐口各发一条）；
+            成功后立刻重读所有 VLAN。
+          </div>
         </template>
         <div slot="footer" class="vlan-dialog-foot">
           <el-button size="small" @click="dialog.visible = false">取消</el-button>
-          <el-button size="small" type="success" @click="confirmDialog">{{ dialog.action }}</el-button>
+          <el-button size="small" type="success" :loading="submitting" @click="confirmDialog">{{ dialog.action }}</el-button>
         </div>
       </el-dialog>
     </template>
@@ -180,16 +167,21 @@
 </template>
 
 <script>
-import { compressVlans } from '../utils'
-
 /**
  * VLAN 面板：三层接口、上行透传、二层互通、静态路由四张表。
  *
  * 数据全是登录后采集到的快照（不是页面下发的结果），这四张表对各厂商页面都适用。
  *
- * 编辑是预留的、按条独立操作：每个区块「新增」（+），每行「编辑 / 删除」，都走对话框，
- * 确认后只把修改暂存在页面本地（savedEdits，暂存后的行优先于采集值展示），并没有写回
- * 设备——下发命令的链路以后接，到时候把 confirmDialog 里的暂存逻辑换成调后端接口即可。
+ * 上行透传是真实下发：表头「新增 VLAN 透传」和每行「添加」都走对话框，
+ * 确认后由父页面调 {@code POST /api/olt/{id}/vlan/port-vlan} 下发
+ * {@code port vlan <VLAN> <框/槽> <端口>}，后端下发成功后立刻只重读 VLAN，
+ * 页面换上新快照；每行「删除」同理，下发 {@code no port vlan ...}。
+ *
+ * 三层接口的编辑还是预留的：确认后只把修改暂存在页面本地（savedEdits），
+ * 并没有写回设备——下发链路以后接，到时候把 confirmDialog 里的暂存逻辑换成调
+ * 后端接口即可。
+ *
+ * 静态路由只读：路由是人手一条条配上去的，页面上不提供增删改。
  */
 export default {
   name: 'OltVlanPanel',
@@ -217,12 +209,24 @@ export default {
     emptyText: {
       type: String,
       default: '尚未采集到 VLAN 信息，点上面的「同步」立即刷新。'
+    },
+    /** 上行口放通 VLAN（真实下发）：父页面传进来，下发成功后父页面换上新快照 */
+    addPortVlanHandler: {
+      type: Function,
+      default: null
+    },
+    /** 上行口解除 VLAN 绑定（真实下发） */
+    removePortVlanHandler: {
+      type: Function,
+      default: null
     }
   },
   data() {
     return {
-      /** 本地暂存的修改：每张表一份完整行数组（暂存后优先于采集值展示） */
+      /** 三层接口的本地暂存（只有这张表还是页面本地改） */
       savedEdits: null,
+      /** 上行口 VLAN 下发中：按钮转圈，防止连点重复下发 */
+      submitting: false,
       dialog: {
         visible: false,
         type: 'ipif',
@@ -230,6 +234,8 @@ export default {
         index: -1,
         action: '',
         title: '',
+        /** 端口是这一行带进来的就锁住，别让人顺手改到别的口上 */
+        lockIface: false,
         form: {}
       }
     }
@@ -238,55 +244,51 @@ export default {
     ipifRows() {
       return this.savedEdits ? this.savedEdits.ipifs : this.vlanIpInterfaces
     },
+    /** 透传表直接展示采集值：新增/删除都真实下发，成功后父页面重读 VLAN */
     portVlanRows() {
-      return this.savedEdits ? this.savedEdits.portVlans : this.portVlans
+      return this.portVlans
     },
+    /** 静态路由只读，不参与本地暂存 */
     routeRows() {
-      return this.savedEdits ? this.savedEdits.routes : this.staticRoutes
+      return this.staticRoutes
     },
     editCount() {
-      const saved = this.savedEdits
-      if (!saved) {
-        return 0
-      }
-      return saved.ipifs.length + saved.portVlans.length + saved.routes.length
+      return this.savedEdits ? this.savedEdits.ipifs.length : 0
     },
     dialogTitle() {
       return this.dialog.title
     }
   },
   methods: {
-    compressVlans,
+    /** 端口放通的 VLAN 串由后端压好（1、41、45-46），页面只显示 */
     portVlanText(row) {
-      if (row.vlanText != null) {
-        return row.vlanText
-      }
-      return row.vlans && row.vlans.length ? compressVlans(row.vlans) : ''
+      return (row && row.vlanText) || ''
     },
-    /** 三张表的暂存底稿：第一次改的时候从采集快照拷出来 */
+    /** 三层接口的暂存底稿：第一次改的时候从采集快照拷出来 */
     ensureSaved() {
-      if (this.savedEdits) {
-        return this.savedEdits
-      }
-      this.savedEdits = {
-        ipifs: this.vlanIpInterfaces.map(row => ({ ...row })),
-        portVlans: this.portVlans.map(row => ({
-          ...row,
-          vlanText: this.portVlanText(row)
-        })),
-        routes: this.staticRoutes.map(row => ({ ...row }))
+      if (!this.savedEdits) {
+        this.savedEdits = {
+          ipifs: this.vlanIpInterfaces.map(row => ({ ...row }))
+        }
       }
       return this.savedEdits
     },
     openAdd(type) {
+      const form = this.blankForm(type)
+      // 新增 VLAN 透传：默认把采到的上行口全填上（可改成单个口，多个口用逗号分隔）
+      if (type === 'portVlan') {
+        const ifaces = this.portVlanRows.map(row => row.iface).filter(Boolean)
+        form.iface = ifaces.join(',')
+      }
       this.dialog = {
         visible: true,
         type,
         mode: 'add',
         index: -1,
+        lockIface: false,
         action: this.actionText(type, 'add'),
         title: this.sectionLabel(type) + ' · 新增',
-        form: this.blankForm(type)
+        form
       }
     },
     openEdit(type, row, index) {
@@ -295,6 +297,7 @@ export default {
         type,
         mode: 'edit',
         index,
+        lockIface: false,
         action: this.actionText(type, 'edit'),
         title: this.sectionLabel(type) + ' · 编辑',
         form: { ...row }
@@ -306,9 +309,38 @@ export default {
         type,
         mode: 'delete',
         index,
+        lockIface: false,
         action: this.actionText(type, 'delete'),
         title: this.sectionLabel(type) + ' · 删除',
         form: { ...row }
+      }
+    },
+    /** 某一行的「添加」：口已经定了，只填要放通的 VLAN */
+    openPortVlanAdd(row) {
+      this.dialog = {
+        visible: true,
+        type: 'portVlan',
+        mode: 'add',
+        index: -1,
+        lockIface: true,
+        action: '添加 VLAN',
+        title: '上行口 ' + row.iface + ' · 添加 VLAN',
+        form: this.blankForm('portVlan')
+      }
+      this.dialog.form.iface = row.iface
+    },
+    /** 某一行的「删除」：把这行已放通的 VLAN 从这个口上解绑 */
+    openPortVlanRemove(row) {
+      const vlanText = this.portVlanText(row)
+      this.dialog = {
+        visible: true,
+        type: 'portVlan',
+        mode: 'delete',
+        index: -1,
+        lockIface: true,
+        action: '移除 VLAN',
+        title: '上行口 ' + row.iface + ' · 移除 VLAN',
+        form: { iface: row.iface, vlanText, nativeVlan: false }
       }
     },
     actionText(type, mode) {
@@ -322,20 +354,23 @@ export default {
       return '保存修改'
     },
     sectionLabel(type) {
-      return { ipif: '三层接口', portVlan: 'VLAN 透传', route: '静态路由' }[type] || '条目'
+      return { ipif: '三层接口', portVlan: 'VLAN 透传' }[type] || '条目'
     },
     blankForm(type) {
       if (type === 'ipif') {
         return { vlanId: '', ipAddress: '', mask: '', name: '' }
       }
-      if (type === 'portVlan') {
-        return { iface: '', vlanText: '', nativeVlan: '' }
-      }
-      return { destination: '', nextHop: '', iface: '', preference: '' }
+      return { iface: '', vlanText: '', nativeVlan: false }
     },
     confirmDialog() {
       const { type, mode, index, form } = this.dialog
-      const rows = this.ensureSaved()[{ ipif: 'ipifs', portVlan: 'portVlans', route: 'routes' }[type]]
+      // 上行 VLAN 透传：真实下发，成功后面板由父页面换上新快照
+      if (type === 'portVlan') {
+        this.submitPortVlan(mode, form)
+        return
+      }
+      // 三层接口：仍是本地暂存（下发链路以后接）
+      const rows = this.ensureSaved().ipifs
       if (mode === 'delete') {
         rows.splice(index, 1)
       } else if (mode === 'add') {
@@ -346,6 +381,38 @@ export default {
       this.dialog.visible = false
       this.$message.info('修改已暂存在页面本地，尚未下发设备')
       this.$emit('save', this.savedEdits)
+    },
+    /**
+     * 上行口 VLAN 的真实下发：add → port vlan ...，delete → no port vlan ...。
+     *
+     * <p>后端下发成功后立刻只重读 VLAN，返回的就是最新快照，父页面换上后
+     * 这张表当场变成设备上的真实数据（不用再点「同步」）。</p>
+     */
+    submitPortVlan(mode, form) {
+      const iface = String(form.iface || '').trim()
+      const vlanIds = String(form.vlanText || '').trim()
+      if (!iface) {
+        this.$message.warning('先填机框/板卡/端口，例如 0/7/0')
+        return
+      }
+      if (!vlanIds) {
+        this.$message.warning('先填 VLAN，例如 41,45-46')
+        return
+      }
+      const handler = mode === 'delete' ? this.removePortVlanHandler : this.addPortVlanHandler
+      if (typeof handler !== 'function') {
+        this.$message.warning('当前页面没有接上行口 VLAN 下发')
+        return
+      }
+      this.submitting = true
+      Promise.resolve(handler({ iface, vlanIds, nativeVlan: !!form.nativeVlan }))
+        .then(() => {
+          this.dialog.visible = false
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.submitting = false
+        })
     }
   }
 }

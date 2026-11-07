@@ -25,39 +25,68 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 文件台账：固件的上传、清单与删除。
- *
- * <p>上传走的还是 {@code /api}，要令牌；设备取文件走 {@code /files/{id}}，不要令牌。</p>
- */
+/** 文件台账：固件的上传、清单与删除 */
 @Slf4j
 @RestController
 @RequestMapping("/api/files")
 @RequiredArgsConstructor
 public class FileManageController {
 
-    /** 单个文件大小上限，防的是误传一个几个 G 的东西把磁盘塞满。 */
+    /** 单个文件大小上限，防的是误传一个几个 G 的东西把磁盘塞满 */
     private static final long MAX_SIZE = 512L * 1024 * 1024;
 
     private final CpeFileMapper fileMapper;
     private final CpeFileService fileService;
     private final RpcDispatchService rpcDispatchService;
 
-    /** 文件清单，新的在前。 */
+    /** 文件清单，新的在前 */
     @GetMapping
     public Result<List<CpeFile>> list() {
-        return Result.success(fileMapper.selectList(
-                new LambdaQueryWrapper<CpeFile>().orderByDesc(CpeFile::getId)));
+        List<CpeFile> files = fileMapper.selectList(
+                new LambdaQueryWrapper<CpeFile>().orderByDesc(CpeFile::getId));
+        files.forEach(FileManageController::decorate);
+        return Result.success(files);
     }
 
-    /** 文件详情。 */
+    /** 文件详情 */
     @GetMapping("/{id}")
     public Result<CpeFile> detail(@PathVariable Long id) {
         CpeFile file = fileMapper.selectById(id);
-        return file == null ? Result.failure("文件不存在") : Result.success(file);
+        if (file == null) {
+            return Result.failure("文件不存在");
+        }
+        decorate(file);
+        return Result.success(file);
     }
 
-    /** 设备取这个文件用的地址，下发 Download 时填的就是它。 */
+    /** 台账展示用的两个派生值：大小单位与摘要短串 */
+    private static void decorate(CpeFile file) {
+        file.setSizeText(sizeText(file.getSize()));
+        String sha = file.getSha256();
+        file.setShortSha256(sha == null || sha.isBlank() ? "-" : sha.substring(0, Math.min(16, sha.length())) + "…");
+        String type = file.getFileType() == null ? "" : file.getFileType().trim().toUpperCase();
+        file.setFileTypeText(switch (type) {
+            case "FIRMWARE" -> "固件";
+            case "CONFIG" -> "配置";
+            case "VENDOR" -> "厂商文件";
+            default -> type.isEmpty() ? "-" : type;
+        });
+        file.setFileTypeLevel("FIRMWARE".equals(type) ? "warning" : "info");
+    }
+
+    /** 字节数转人看的大小，保留一位小数 */
+    private static String sizeText(Long size) {
+        long bytes = size == null ? 0L : size;
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        if (bytes < 1024L * 1024) {
+            return String.format(java.util.Locale.ROOT, "%.1f KB", bytes / 1024.0);
+        }
+        return String.format(java.util.Locale.ROOT, "%.1f MB", bytes / 1024.0 / 1024.0);
+    }
+
+    /** 设备取这个文件用的地址，下发 Download 时填的就是它 */
     @GetMapping("/{id}/url")
     public Result<String> url(@PathVariable Long id) {
         if (fileMapper.selectById(id) == null) {
@@ -66,11 +95,7 @@ public class FileManageController {
         return Result.success(fileService.urlOf(id));
     }
 
-    /**
-     * 上传文件。
-     *
-     * @param fileType FIRMWARE 固件 / CONFIG 配置 / VENDOR 厂商文件，不填按固件
-     */
+    /** 上传文件 */
     @PostMapping
     public Result<CpeFile> upload(@RequestParam("file") MultipartFile file,
                                   @RequestParam(value = "fileType", required = false) String fileType,
@@ -92,14 +117,7 @@ public class FileManageController {
         }
     }
 
-    /**
-     * 把这个文件下发给一批设备（Download），升级固件走这个口。
-     *
-     * <p>每台设备各排一条 Download：队列是按设备分流的，多设备之间不会互相堵。
-     * 设备下载完会主动上报 TransferComplete，结果用返回的 taskId 查。</p>
-     *
-     * @param sns 设备序列号，数组或逗号分隔都行
-     */
+    /** 把这个文件下发给一批设备（Download），升级固件走这个口 */
     @PostMapping("/{id}/deliver")
     public Result<List<Map<String, Object>>> deliver(@PathVariable Long id,
                                                      @RequestBody(required = false) Map<String, Object> body) {
@@ -138,7 +156,7 @@ public class FileManageController {
         return Result.success(results);
     }
 
-    /** 台账上的类型转成 CWMP 下载的文件类型。 */
+    /** 台账上的类型转成 CWMP 下载的文件类型 */
     private static String cwmpFileType(String fileType) {
         String type = fileType == null ? "" : fileType.trim().toUpperCase();
         if ("CONFIG".equals(type) || "VENDOR".equals(type)) {
@@ -147,7 +165,7 @@ public class FileManageController {
         return "1 Firmware Upgrade Image";
     }
 
-    /** 序列号既接受数组也接受逗号分隔。 */
+    /** 序列号既接受数组也接受逗号分隔 */
     private static List<String> snsOf(Map<String, Object> body) {
         List<String> sns = new ArrayList<>();
         if (body == null) {
@@ -181,7 +199,7 @@ public class FileManageController {
         }
     }
 
-    /** 删除文件，连带清掉磁盘上的内容。 */
+    /** 删除文件，连带清掉磁盘上的内容 */
     @DeleteMapping("/{id}")
     public Result<Boolean> delete(@PathVariable Long id) {
         CpeFile file = fileMapper.selectById(id);

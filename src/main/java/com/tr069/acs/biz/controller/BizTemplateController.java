@@ -21,9 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 业务模板管理：把多张配置模板编排成一个业务，对设备整包下发。
- */
+/** 业务模板管理：把多张配置模板编排成一个业务，对设备整包下发 */
 @Slf4j
 @RestController
 @RequestMapping("/api/biz-template")
@@ -33,33 +31,25 @@ public class BizTemplateController {
     private final BizTemplateService bizTemplateService;
     private final BizTemplateExecutionService executionService;
 
-    /**
-     * 业务模板列表。
-     */
+    /** 业务模板列表 */
     @GetMapping("/list")
     public Result<List<BizTemplateDetail>> list(@RequestParam(required = false) String keyword) {
         return Result.success(bizTemplateService.list(keyword));
     }
 
-    /**
-     * 单个业务模板详情。
-     */
+    /** 单个业务模板详情 */
     @GetMapping("/{id}")
     public Result<BizTemplateDetail> detail(@PathVariable Long id) {
         return Result.success(bizTemplateService.get(id));
     }
 
-    /**
-     * 新增或更新业务模板。
-     */
+    /** 新增或更新业务模板 */
     @PostMapping("/save")
     public Result<BizTemplateDetail> save(@RequestBody BizTemplateSaveRequest request) {
         return Result.success(bizTemplateService.save(request));
     }
 
-    /**
-     * 删除业务模板。
-     */
+    /** 删除业务模板 */
     @PostMapping("/delete")
     public Result<Void> delete(@RequestBody IdRequest request) {
         if (request == null || request.getId() == null) {
@@ -69,9 +59,7 @@ public class BizTemplateController {
         return Result.success(null);
     }
 
-    /**
-     * 下发前自检：模板是否启用、成员是否齐全、引用的配置模板是否都可下发。
-     */
+    /** 下发前自检：模板是否启用、成员是否齐全、引用的配置模板是否都可下发 */
     @GetMapping("/{id}/validate")
     public Result<Map<String, Object>> validate(@PathVariable Long id) {
         List<String> issues = bizTemplateService.validate(id);
@@ -81,9 +69,7 @@ public class BizTemplateController {
         return Result.success(data);
     }
 
-    /**
-     * 下发记录列表。
-     */
+    /** 下发记录列表 */
     @GetMapping("/executions")
     public Result<List<BizTemplateExecution>> executions(
             @RequestParam(required = false) String sn,
@@ -92,17 +78,13 @@ public class BizTemplateController {
         return Result.success(executionService.list(sn, templateId, limit));
     }
 
-    /**
-     * 单条下发记录，含每个成员的执行结果。
-     */
+    /** 单条下发记录，含每个成员的执行结果 */
     @GetMapping("/executions/{id}")
     public Result<BizTemplateExecution> execution(@PathVariable Long id) {
         return Result.success(executionService.get(id));
     }
 
-    /**
-     * 对设备整包下发：按成员顺序串行执行，返回执行记录 id 供页面轮询进度。
-     */
+    /** 对设备整包下发：按成员顺序串行执行，返回执行记录 id 供页面轮询进度 */
     @PostMapping("/execute")
     public Result<BizTemplateExecution> execute(@RequestBody ExecuteRequest request) {
         if (request == null || request.getTemplateId() == null) {
@@ -112,17 +94,13 @@ public class BizTemplateController {
                 request.getTemplateId(), request.getSn(), request.getParams(), request.getUsername()));
     }
 
-    /**
-     * 仅含 id 的请求体。
-     */
+    /** 仅含 id 的请求体 */
     @Data
     public static class IdRequest {
         private Long id;
     }
 
-    /**
-     * 整包下发入参。
-     */
+    /** 整包下发入参 */
     @Data
     public static class ExecuteRequest {
         /** 业务模板 id */

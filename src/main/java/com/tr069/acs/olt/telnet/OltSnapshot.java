@@ -8,9 +8,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 一次命令行采集的结果。
- */
+/** 一次命令行采集的结果 */
 @Data
 public class OltSnapshot {
 

@@ -6,12 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 
-/**
- * 单条 ONT 按需查询的结果（光信息 / 版本 / 注册历史）。
- *
- * <p>回显是块状 key-value（一条 ONT 一块，注册历史可能有多块），解析成 blocks 给页面
- * 直接铺表格；原始回显也一并返回，解析漏了字段时页面还能看回显。</p>
- */
+/** 单条 ONT 按需查询的结果（光信息 / 版本 / 注册历史） */
 @Data
 public class OltOntQueryResult {
 

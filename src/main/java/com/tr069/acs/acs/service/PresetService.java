@@ -27,19 +27,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
-/**
- * 预设引擎：设备上报后按条件把配置收敛到目标值。
- *
- * <p>预设 = 匹配条件 + 动作列表。命中后才动作，动作里已经对得上的参数跳过，
- * 因此反复上报不会反复下发。一轮改完的参数会补进已知值，
- * 下一轮可能让另一条预设的条件成立，最多 {@value #MAX_ROUNDS} 轮防死循环。</p>
- */
+/** 预设引擎：设备上报后按条件把配置收敛到目标值 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PresetService {
 
-    /** 会话内收敛轮数上限。 */
+    /** 会话内收敛轮数上限 */
     private static final int MAX_ROUNDS = 4;
 
     private static final String BOOTSTRAP = "0 BOOTSTRAP";
@@ -54,7 +48,7 @@ public class PresetService {
 
     private static final String BUILTIN_NAME = "纳管（内置）";
 
-    /** 内置纳管的动作：把 ACS 地址、上报间隔与连接请求凭据写回设备。 */
+    /** 内置纳管的动作：把 ACS 地址、上报间隔与连接请求凭据写回设备 */
     private static final String BUILTIN_ACTIONS = "["
             + "{\"type\":\"set\",\"path\":\"ManagementServer.URL\",\"value\":\"${acsUrl}\"},"
             + "{\"type\":\"set\",\"path\":\"ManagementServer.PeriodicInformInterval\","
@@ -72,11 +66,11 @@ public class PresetService {
 
     private final ObjectMapper objectMapper;
 
-    /** 下发给设备的周期上报间隔(秒)，0 表示不改这一项。 */
+    /** 下发给设备的周期上报间隔(秒)，0 表示不改这一项 */
     @Value("${acs.device.provision.inform-interval-seconds:300}")
     private long informIntervalSeconds;
 
-    /** 下发给设备的 ACS 上报地址；留空按 public-host 与上报端口拼。 */
+    /** 下发给设备的 ACS 上报地址；留空按 public-host 与上报端口拼 */
     @Value("${acs.device.provision.acs-url:}")
     private String acsUrl;
 
@@ -89,14 +83,14 @@ public class PresetService {
     @Value("${acs.cwmp.cpe-path:/ACS-server/ACS}")
     private String cpePath;
 
-    /** 下发给设备的连接请求凭据；留空或 auto 时按 itms 处理。 */
+    /** 下发给设备的连接请求凭据；留空或 auto 时按 itms 处理 */
     @Value("${acs.device.provision.connection-request-username:}")
     private String crUsername;
 
     @Value("${acs.device.provision.connection-request-password:}")
     private String crPassword;
 
-    /** 每台设备每个预设上次执行的时间戳，进程内记忆。 */
+    /** 每台设备每个预设上次执行的时间戳，进程内记忆 */
     private final Map<String, Map<Long, Long>> lastRun = new ConcurrentHashMap<>();
 
     private final Map<Long, List<Condition>> conditionCache = new ConcurrentHashMap<>();
@@ -105,9 +99,7 @@ public class PresetService {
 
     private volatile boolean builtinReady = false;
 
-    /**
-     * 上报后收敛：按优先级跑预设，把设备配置拉到目标值。
-     */
+    /** 上报后收敛：按优先级跑预设，把设备配置拉到目标值 */
     public void converge(CpeSession session, InformRequest inform) {
         if (session == null) {
             return;
@@ -144,7 +136,7 @@ public class PresetService {
         }
     }
 
-    /** 预设改动后清掉解析缓存，下次命中重新解析。 */
+    /** 预设改动后清掉解析缓存，下次命中重新解析 */
     public void evict(Long id) {
         if (id == null) {
             return;
@@ -153,7 +145,7 @@ public class PresetService {
         actionCache.remove(id);
     }
 
-    /** 内置纳管预设只在第一次用到时落库，避免启动期就访问库。 */
+    /** 内置纳管预设只在第一次用到时落库，避免启动期就访问库 */
     private List<CpePreset> listEnabled() {
         ensureBuiltin();
         return presetMapper.selectList(new LambdaQueryWrapper<CpePreset>()
@@ -194,9 +186,7 @@ public class PresetService {
         }
     }
 
-    /**
-     * 收集一条预设要下的参数，已经对得上的跳过。
-     */
+    /** 收集一条预设要下的参数，已经对得上的跳过 */
     private void collect(CpePreset preset, CpeSession session, Map<String, String> known,
                          List<ParameterValueStruct> values, List<Action> others) {
         String root = rootOf(session);
@@ -221,7 +211,7 @@ public class PresetService {
         }
     }
 
-    /** 合并成一条 SetParameterValues 下发，并按新值继续收敛。 */
+    /** 合并成一条 SetParameterValues 下发，并按新值继续收敛 */
     private void send(String sn, List<ParameterValueStruct> values, Map<String, String> known) {
         log.info("预设下发: sn={}, 参数={}", sn, describe(values));
         List<ParameterValueStruct> copy = new ArrayList<>(values);
@@ -264,11 +254,7 @@ public class PresetService {
         });
     }
 
-    /**
-     * 下发改写过连接请求凭据时登记进台账。
-     *
-     * <p>采集读回的是改写前的值，台账留着旧值，唤醒就会拿设备已经不认的密码去认证。</p>
-     */
+    /** 下发改写过连接请求凭据时登记进台账 */
     private void rememberCredentials(String sn, List<ParameterValueStruct> values) {
         String user = null;
         String password = null;
@@ -410,7 +396,7 @@ public class PresetService {
         }
     }
 
-    /** 距离上次执行是否已超过间隔；BOOTSTRAP 时按预设配置决定是否强制重跑。 */
+    /** 距离上次执行是否已超过间隔；BOOTSTRAP 时按预设配置决定是否强制重跑 */
     private boolean due(String sn, CpePreset preset, boolean bootstrap) {
         Integer hours = preset.getReprovisionIntervalHours();
         if (hours == null || hours <= 0) {
@@ -447,7 +433,7 @@ public class PresetService {
         return out.isBlank() ? null : out;
     }
 
-    /** 变量替换：${acsUrl} 上报地址 / ${informInterval} 上报间隔 / ${crUsername} ${crPassword} 连接请求凭据。 */
+    /** 变量替换：${acsUrl} 上报地址 / ${informInterval} 上报间隔 / ${crUsername} ${crPassword} 连接请求凭据 */
     private String acsUrl() {
         if (acsUrl != null && !acsUrl.isBlank()) {
             return acsUrl.trim();
@@ -494,7 +480,7 @@ public class PresetService {
         return trimmed.startsWith("/") ? trimmed : "/" + trimmed;
     }
 
-    /** 动作路径写绝对的就直接用，写相对的按设备根节点补全。 */
+    /** 动作路径写绝对的就直接用，写相对的按设备根节点补全 */
     private static String absPath(String path, String root) {
         if (path == null || path.isBlank()) {
             return null;
@@ -506,13 +492,13 @@ public class PresetService {
         return root + trimmed;
     }
 
-    /** 同一轮里两条预设改同一个参数时后一条说了算，合并进一条 SPV 时不留重复路径。 */
+    /** 同一轮里两条预设改同一个参数时后一条说了算，合并进一条 SPV 时不留重复路径 */
     private static void put(List<ParameterValueStruct> values, ParameterValueStruct value) {
         values.removeIf(v -> value.getName().equals(v.getName()));
         values.add(value);
     }
 
-    /** 已知值里按后缀找，Inform 上报的是完整路径，预设里通常只写叶子段。 */
+    /** 已知值里按后缀找，Inform 上报的是完整路径，预设里通常只写叶子段 */
     private static String knownValue(Map<String, String> known, String suffix) {
         if (suffix == null || suffix.isBlank()) {
             return null;
@@ -615,40 +601,38 @@ public class PresetService {
         return value == null ? "" : value;
     }
 
-    /** 预设的匹配条件。 */
+    /** 预设的匹配条件 */
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Condition {
 
-        /** 字段：sn / oui / productClass / softwareVersion / hardwareVersion
-         *  / manufacturer / rootNode / isp，或 param:参数路径。 */
+        /** 字段：sn / oui / productClass / softwareVersion / hardwareVersion */
         private String field;
 
-        /** 比较方式：eq / neq / contains / startsWith / in / regex / gt / lt。 */
+        /** 比较方式：eq / neq / contains / startsWith / in / regex / gt / lt */
         private String op;
 
         private String value;
     }
 
-    /** 预设的动作。 */
+    /** 预设的动作 */
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Action {
 
-        /** set 设值 / reboot 重启 / addObject 建实例 / deleteObject 删实例。 */
+        /** set 设值 / reboot 重启 / addObject 建实例 / deleteObject 删实例 */
         private String type;
 
-        /** set 用：参数路径，可写相对路径，按设备根节点补全。 */
+        /** set 用：参数路径，可写相对路径，按设备根节点补全 */
         private String path;
 
-        /** set 用：目标值，支持 ${acsUrl} ${informInterval} ${crUsername}
-         *  ${crPassword} ${sn} ${productClass} ${rootNode}。 */
+        /** set 用：目标值，支持 ${acsUrl} ${informInterval} ${crUsername} */
         private String value;
 
-        /** addObject / deleteObject 用：对象路径。 */
+        /** addObject / deleteObject 用：对象路径 */
         private String objectName;
 
-        /** addObject / deleteObject / reboot 用：命令关键字。 */
+        /** addObject / deleteObject / reboot 用：命令关键字 */
         private String key;
     }
 }

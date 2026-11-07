@@ -9,7 +9,9 @@ export function fetchOltList(keyword) {
   return request({
     url: '/olt/list',
     method: 'get',
-    params: keyword ? { keyword } : {}
+    params: keyword ? { keyword } : {},
+    // 详情/列表带整机板卡+端口+ONT 数据，跨公网访问时 5s 默认超时不够
+    timeout: 30000
   })
 }
 
@@ -17,7 +19,8 @@ export function fetchOltList(keyword) {
 export function fetchOltDetail(id) {
   return request({
     url: '/olt/' + id,
-    method: 'get'
+    method: 'get',
+    timeout: 30000
   })
 }
 
@@ -26,7 +29,8 @@ export function saveOlt(data) {
   return request({
     url: '/olt/save',
     method: 'post',
-    data
+    data,
+    timeout: 30000
   })
 }
 
@@ -34,7 +38,8 @@ export function deleteOlt(id) {
   return request({
     url: '/olt/delete',
     method: 'post',
-    data: { id }
+    data: { id },
+    timeout: 30000
   })
 }
 
@@ -67,14 +72,50 @@ export function syncOlt(id) {
 }
 
 /**
- * 快速同步：只采板卡（display board 0）秒回，机框和型号先出来；
- * 端口状态 / ONT / VLAN / 模板由后端后台补采，页面轮询即可看到补齐的数据。
+ * 快速同步：只采板卡（display board 0）秒回，机框和型号先出来。
+ * scope 传 'boards' 时后端不再排后台深度补采——页面已改成按页签同步，
+ * 各页签点击时自己采自己那一段。
  */
-export function quickSyncOlt(id) {
+export function quickSyncOlt(id, scope) {
   return request({
     url: '/olt/' + id + '/quick-sync',
     method: 'post',
+    params: scope ? { scope } : {},
     timeout: 60000
+  })
+}
+
+/**
+ * 按页签同步：scope = boards / ont / vlan / template，
+ * 后端只采目标页签需要的数据段（温度 / 端口+ONT / VLAN / 模板），返回最新详情。
+ */
+export function syncOltSection(id, scope, force) {
+  return request({
+    url: '/olt/' + id + '/sync-section',
+    method: 'post',
+    params: force ? { scope, force: true } : { scope },
+    timeout: 180000
+  })
+}
+
+/** 会话池状态：保活开关、探活周期、每台设备的空闲会话数 */
+export function fetchOltSessionPool() {
+  return request({
+    url: '/olt/session-pool',
+    method: 'get',
+    timeout: 30000
+  })
+}
+
+/**
+ * 保活开关：开 = 每台 OLT 池中最多 2 个会话轮换，定期 display client 探活；
+ * 关（默认）= 会话 1 分钟没人用就 quit 退出登录，轮询采集要用时自己再登录
+ */
+export function setOltKeepalive(enabled, intervalMs) {
+  return request({
+    url: '/olt/session-pool/keepalive',
+    method: 'post',
+    data: { enabled, intervalMs }
   })
 }
 
@@ -87,6 +128,18 @@ export function refreshOlt(id) {
     url: '/olt/' + id + '/refresh',
     method: 'post',
     timeout: 180000
+  })
+}
+
+/**
+ * 确认所有待确认板卡（华为 board confirm 0）：新插的板卡停在 auto-find 时不加载业务。
+ * 返回确认后重采的最新详情，前端据此决定按钮是否继续显示。
+ */
+export function confirmOltBoards(id) {
+  return request({
+    url: '/olt/' + id + '/boards/confirm',
+    method: 'post',
+    timeout: 120000
   })
 }
 
@@ -128,11 +181,77 @@ export function deleteDbaProfiles(id, profileIds) {
 }
 
 /**
+ * 线路模板里加一条 T-CONT：下发 tcont <索引> dba-profile-id <DBA 模板>，
+ * 成功后只重读这条线路模板。data: { profileId, ponType, tcontId, dbaProfileId }
+ */
+export function addLineTcont(id, data) {
+  return request({
+    url: '/olt/' + id + '/line-profile/tcont',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 线路模板里加一个 GEM Port：gem add <索引> eth tcont <T-CONT> encrypt on。
+ * data: { profileId, ponType, tcontId, gemportId }
+ */
+export function addLineGemport(id, data) {
+  return request({
+    url: '/olt/' + id + '/line-profile/gemport',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 给 GEM Port 加映射：gem mapping <GEM> <映射序号> vlan <VLAN>（逗号分隔可一次多条）。
+ * data: { profileId, ponType, gemportId, mappingIds, vlans }
+ */
+export function addLineGemMapping(id, data) {
+  return request({
+    url: '/olt/' + id + '/line-profile/gem-mapping',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 线路模板三个弹窗的表单元数据：默认值、已占用的索引、可用区间、灰字提示
+ * 全在后端按快照算好，页面只管渲染。
+ * @param {number|string} id OLT ID
+ * @param {number} profileId 线路模板 ID
+ * @param {number} [gemportId] 加映射时带上，后端才算得出来这个 GEM 里哪些序号占了
+ */
+export function fetchLineProfileForm(id, profileId, gemportId) {
+  return request({
+    url: '/olt/' + id + '/line-profile/form',
+    method: 'get',
+    params: { profileId, gemportId }
+  })
+}
+
+/**
+ * 线路模板三个弹窗的命令预演：不下发，只返回这次会执行的命令与提醒。
+ * data: { kind: 'tcont'|'gemport'|'mapping', profileId, tcontId, dbaProfileId, gemportId, mappingIds, vlans }
+ */
+export function previewLineProfile(id, data) {
+  return request({
+    url: '/olt/' + id + '/line-profile/preview',
+    method: 'post',
+    data
+  })
+}
+
+/**
  * 这台 OLT 支持的命令动作目录（鸿升光对应手册 13 章里的功能格）。
  * 返回 [{ code, chapter, label, view, commands, params, query, danger, note }]
  */
 export function fetchOltActions(id) {
-  return request({ url: '/olt/' + id + '/actions', method: 'get' })
+  return request({ url: '/olt/' + id + '/actions', method: 'get', timeout: 30000 })
 }
 
 /**
@@ -174,6 +293,32 @@ export function deleteOltVlans(id, vlanIds) {
 }
 
 /**
+ * 上行口放通 VLAN：下发 port vlan <列表> <框/槽> <端口>（Native 时带 native），
+ * 成功后立刻只重读 VLAN，返回的详情里就是最新的 VLAN 数据。
+ * data: { iface: '0/7/0', vlanIds: '41,45-46', nativeVlan: false }
+ */
+export function addOltPortVlan(id, data) {
+  return request({
+    url: '/olt/' + id + '/vlan/port-vlan',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
+ * 上行口解除 VLAN 绑定：下发 no port vlan ...，成功后同样立刻只重读 VLAN。
+ */
+export function removeOltPortVlan(id, data) {
+  return request({
+    url: '/olt/' + id + '/vlan/port-vlan',
+    method: 'delete',
+    data,
+    timeout: 120000
+  })
+}
+
+/**
  * TR-069（ACS）模板列表：不读库，每次实时登设备执行 show onu-tr069-profile all。
  */
 export function fetchTr069Profiles(id) {
@@ -181,6 +326,209 @@ export function fetchTr069Profiles(id) {
     url: '/olt/' + id + '/tr069-profiles',
     method: 'get',
     timeout: 60000
+  })
+}
+
+/**
+ * 待注册 ONT：不读库，每次实时登设备执行 display ont autofind all。
+ *
+ * 这是设备上等着授权的光猫，注册完就不在这个表里了，所以每次点都重查。
+ */
+export function fetchOntAutofind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-autofind',
+    method: 'get',
+    timeout: 60000
+  })
+}
+
+/**
+ * PON 口自动发现开关状态：后端逐口登设备查 display ont-auto-find。
+ *
+ * 一个口一条命令，口多的设备要跑十几秒，所以超时放宽到 2 分钟。
+ */
+export function fetchOntAutoFind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-auto-find',
+    method: 'get',
+    timeout: 120000
+  })
+}
+
+/**
+ * 一键开启所有 GPON 业务板 PON 口的自动发现。
+ *
+ * 下发完后端会重采一次整机，连同重采一起给足超时。
+ */
+export function enableOntAutoFind(id) {
+  return request({
+    url: '/olt/' + id + '/ont-auto-find/enable',
+    method: 'post',
+    timeout: 180000
+  })
+}
+
+/**
+ * 删除业务板上的全部 ONT：后端按库里的板卡定位槽位（如 0/2）和采到 ONT 的端口，
+ * 逐口下发 ont delete <端口> all（设备逐条问 y/n），成功后整机重采。
+ *
+ * @param slots 只清这几块业务板（槽位号）；留空表示所有业务板
+ */
+export function deleteAllOnts(id, slots) {
+  return request({
+    url: '/olt/' + id + '/ont/delete-all',
+    method: 'post',
+    data: { slots: slots || [] },
+    timeout: 300000
+  })
+}
+
+/**
+ * 注册模板列表：从库里读（原来存在浏览器本地，换台电脑就没了）。
+ *
+ * @param onlyCurrent true 时只要「不限设备」和绑在这台 OLT 上的
+ */
+export function fetchOntRegTemplates(id, onlyCurrent) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/templates',
+    method: 'get',
+    params: { onlyCurrent: onlyCurrent ? 1 : 0 },
+    timeout: 30000
+  })
+}
+
+/** 新建模板的初始表单：默认值由后端给，页面不自带一份 */
+export function fetchOntRegTemplateDefault(id, oltIp) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/template/default',
+    method: 'get',
+    params: { oltIp: oltIp || '' },
+    timeout: 30000
+  })
+}
+
+/** 不等下一轮扫描，立刻按当前参数跑一轮自动注册（和后台定时任务同一条路径） */
+export function runOntRegScan(id) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/scan',
+    method: 'post',
+    timeout: 120000
+  })
+}
+
+/** 新增或修改一条注册模板 */
+export function saveOntRegTemplate(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/template',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 批量删除注册模板 */
+export function deleteOntRegTemplates(id, ids) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/templates',
+    method: 'delete',
+    data: ids,
+    timeout: 30000
+  })
+}
+
+/** 自动注册参数；没存过后端给一份默认值 */
+export function fetchOntRegConfig(id) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/config',
+    method: 'get',
+    timeout: 30000
+  })
+}
+
+/**
+ * 保存自动注册参数。
+ *
+ * 开关打开后后台定时任务按 scanSeconds 去设备上扫待注册光猫，命中模板就注册。
+ */
+export function saveOntRegConfig(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/config',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/** 注册记录：哪台注册了、套了哪个模板、没成的因为什么 */
+export function fetchOntRegRecords(id, limit) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/records',
+    method: 'get',
+    params: { limit: limit || 50 },
+    timeout: 30000
+  })
+}
+
+/** 只编命令不下发，下发前先在页面上核对一遍 */
+export function previewOntRegister(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/preview',
+    method: 'post',
+    data,
+    timeout: 60000
+  })
+}
+
+/**
+ * 注册选中的待注册 ONT。
+ *
+ * 逐台下发命令，一台失败不影响其它台，结果逐条返回。
+ */
+export function registerOnt(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont-reg/register',
+    method: 'post',
+    data,
+    timeout: 180000
+  })
+}
+
+/**
+ * 一键开局参数：默认值和已存的都在后端，页面只管要。
+ *
+ * @param defaults true 时忽略存过的、直接要默认值（「默认设置」按钮）
+ */
+export function fetchQuickSetupConfig(id, defaults) {
+  return request({
+    url: '/olt/' + id + '/quick-setup/config',
+    method: 'get',
+    params: { defaults: defaults ? 1 : 0 },
+    timeout: 30000
+  })
+}
+
+/** 保存一键开局参数：存库，换台电脑、换个人打开都是同一套 */
+export function saveQuickSetupConfig(id, data) {
+  return request({
+    url: '/olt/' + id + '/quick-setup/config',
+    method: 'post',
+    data,
+    timeout: 30000
+  })
+}
+
+/**
+ * 建一个 OLT 本地用户（登这台设备用的账号）。
+ *
+ * 华为这边 backend 走的是 terminal user name 那条交互式命令，一问一答比较慢，
+ * 超时放宽到 3 分钟。
+ */
+export function createOltTerminalUser(id, data) {
+  return request({
+    url: '/olt/' + id + '/terminal-user',
+    method: 'post',
+    data,
+    timeout: 180000
   })
 }
 
@@ -247,6 +595,20 @@ export function previewOltAction(id, data) {
   })
 }
 
+/**
+ * 批量命令预演：整页表单一次送上去，拿回 { 动作编号: 命令文本 }。
+ * 命令文本按执行侧同一套规则渲染（可选段、缺参占位），页面不做任何字符串替换。
+ * items: [{ code, params }]
+ */
+export function previewOltActions(id, items) {
+  return request({
+    url: '/olt/' + id + '/actions/previews',
+    method: 'post',
+    data: items,
+    timeout: 30000
+  })
+}
+
 /** 「新建 VLAN」表单的元数据：VLAN ID 范围、一次最多几个、哪些端口能做成员 */
 export function fetchVlanForm(id) {
   return request({
@@ -295,7 +657,8 @@ export function fetchOltOptions() {
   }
   return request({
     url: '/olt/options',
-    method: 'get'
+    method: 'get',
+    timeout: 30000
   }).then(res => {
     optionsCache = res
     return res
@@ -307,7 +670,8 @@ export function fetchOltRecords(id, limit) {
   return request({
     url: '/olt/' + id + '/records',
     method: 'get',
-    params: { limit: limit || 10 }
+    params: { limit: limit || 10 },
+    timeout: 30000
   })
 }
 

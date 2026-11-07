@@ -23,12 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 业务模板的增删改查。
- *
- * <p>业务模板本身只存「名称 + 分组 + 备注」，真正的业务内容是其成员指向的配置模板，
- * 因此成员保存采用整体替换：页面提交多少条就落多少条，省去逐条 diff 的复杂度。</p>
- */
+/** 业务模板的增删改查 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -39,11 +34,7 @@ public class BizTemplateService {
     private final ConfigTemplateService configTemplateService;
     private final ObjectMapper objectMapper;
 
-    /**
-     * 业务模板列表，含成员。
-     *
-     * @param keyword 名称 / 分组模糊匹配
-     */
+    /** 业务模板列表，含成员 */
     public List<BizTemplateDetail> list(String keyword) {
         LambdaQueryWrapper<BizTemplate> query = new LambdaQueryWrapper<>();
         if (keyword != null && !keyword.isBlank()) {
@@ -58,9 +49,7 @@ public class BizTemplateService {
         return result;
     }
 
-    /**
-     * 单个业务模板详情。
-     */
+    /** 单个业务模板详情 */
     public BizTemplateDetail get(Long id) {
         BizTemplate template = templateMapper.selectById(id);
         if (template == null) {
@@ -69,9 +58,7 @@ public class BizTemplateService {
         return detail(template);
     }
 
-    /**
-     * 新增或更新业务模板及其成员。
-     */
+    /** 新增或更新业务模板及其成员 */
     @Transactional(rollbackFor = Exception.class)
     public BizTemplateDetail save(BizTemplateSaveRequest request) {
         if (request == null || request.getTemplate() == null) {
@@ -118,9 +105,7 @@ public class BizTemplateService {
         return detail(template);
     }
 
-    /**
-     * 删除业务模板及其成员。
-     */
+    /** 删除业务模板及其成员 */
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         if (templateMapper.selectById(id) == null) {
@@ -131,11 +116,7 @@ public class BizTemplateService {
         templateMapper.deleteById(id);
     }
 
-    /**
-     * 校验业务模板能否下发：启用、有成员、成员模板都在且已迁移。
-     *
-     * @return 不可下发的原因列表，为空表示可以下发
-     */
+    /** 校验业务模板能否下发：启用、有成员、成员模板都在且已迁移 */
     public List<String> validate(Long id) {
         BizTemplate template = templateMapper.selectById(id);
         List<String> issues = new ArrayList<>();
@@ -159,9 +140,7 @@ public class BizTemplateService {
         return issues;
     }
 
-    /**
-     * 取成员实体，按执行顺序。
-     */
+    /** 取成员实体，按执行顺序 */
     public List<BizTemplateItem> itemsOf(Long templateId) {
         return itemMapper.selectList(new LambdaQueryWrapper<BizTemplateItem>()
                 .eq(BizTemplateItem::getTemplateId, templateId)
@@ -169,12 +148,7 @@ public class BizTemplateService {
                 .orderByAsc(BizTemplateItem::getId));
     }
 
-    /**
-     * 成员的展示结构，按执行顺序。
-     *
-     * <p>下发要用它：业务类型、入参覆盖、引用的配置模板是否还在，都在这一层补出来，
-     * 实体里只有 templateKey 一个字符串。</p>
-     */
+    /** 成员的展示结构，按执行顺序 */
     public List<BizTemplateItemView> viewsOf(Long templateId) {
         List<BizTemplateItemView> views = new ArrayList<>();
         for (BizTemplateItem item : itemsOf(templateId)) {
@@ -243,9 +217,7 @@ public class BizTemplateService {
         return view;
     }
 
-    /**
-     * 成员引用的配置模板 id；存量数据存的是旧的文件 key，解析不出数字即视为失效。
-     */
+    /** 成员引用的配置模板 id；存量数据存的是旧的文件 key，解析不出数字即视为失效 */
     private static Long parseId(String templateKey) {
         if (templateKey == null || templateKey.isBlank()) {
             return null;
@@ -268,9 +240,7 @@ public class BizTemplateService {
         }
     }
 
-    /**
-     * 解析成员上配置的入参覆盖（JSON 对象字符串）。
-     */
+    /** 解析成员上配置的入参覆盖（JSON 对象字符串） */
     @SuppressWarnings("unchecked")
     public Map<String, String> parseParams(String json) {
         Map<String, String> params = new LinkedHashMap<>();

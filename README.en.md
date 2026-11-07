@@ -16,17 +16,21 @@ built with Spring Boot 3 + Vue 2.
 > "file + step orchestration" to **intent templates stored in the database**, and delivery now
 > resolves "intent + model mapping" into real CWMP parameters at runtime
 > (`exec/IntentDeliveryService`). Work orders and business template packages both run on this chain.
-> Converged OLT management is wired to **real Telnet collection** (verified on a Huawei MA5683T),
-> but it is **read-only**: values are collected and displayed, **no write command is ever sent**
-> (creating VLANs, adding/removing ONTs, rebooting boards are all unimplemented). The template tabs
-> (DBA/line profile, service/TR069/traffic profile) show the device's current configuration collected
-> over real commands, but their "Add / Delete" buttons are still placeholders.
+> Converged OLT management is wired to **real Telnet** (verified on a Huawei MA5683T): collection is
+> read-only (`display` / `show`), while **config delivery is live** for VLAN create/delete, DBA profile
+> create/delete, line-profile T-CONT / GEM port / GEM mapping, TR069 profile creation, one-click setup,
+> **ONT registration** (`ont confirm` + service-port), the per-port `ont-auto-find` switch and
+> **deleting all ONTs on a service board**. Registration has its own tab (matching templates, command
+> preview, batch delivery, registration records, optional auto-scan). Single-ONT reboot / delete and
+> board reboot are **not** wired yet.
 >
 > The **ONT config / status** table follows the layout used in the field: auth code (SN) →
 > **management IP** → **MAC** → **service flow** → **line profile** / **service profile**
-> (two separate columns), then status and the on-demand query icons; two batch buttons
-> (**reboot ONU** / **delete registration**) sit in the bottom-right corner (they act on the
-> selected rows and currently only report that writes are not open yet).
+> (two separate columns), then status and the on-demand query icons. MAC and both profile IDs are
+> finished by a background backfill (MAC per ONT via `display ont ipconfig`, profile IDs from the
+> `ont add` lines of `display current-configuration`); once collected they are **only overwritten,
+> never dropped** by later syncs. Two batch buttons (**reboot ONU** / **delete registration**) sit in
+> the bottom-right corner and still only report that writes are not open yet.
 >
 > **On-demand queries (one login per click)**: clicking the SN or a profile column runs three
 > commands in a single session — `display current-configuration ont 0/<slot>/<port> <ONT ID>`
@@ -102,7 +106,20 @@ WLAN split by 2.4G / 5.8G, SIP voice (real line instances only):
 
 ![Device detail - business panel](doc/Display/162116_423.png)
 
-### OLT management (real device collection, **read-only**)
+### Super admin account and password (read live from the device)
+
+Select devices and click "query super admin account": each device is queried on its own — the ACS
+first sends a CWMP Connection Request to bring the device up (offline ones are given time to
+reconnect), then issues `GetParameterValues` against the ISP-specific node
+(`DeviceInfo.X_CMCC_TeleComAccount.*` / `X_CT-COM_TeleComAccount.*` / `X_CU_TeleComAccount.*`) and
+falls back to the generic nodes (`UserInterface.X_HW_WebUserInfo.{i}` / `User.{i}`) when that node
+does not exist. Account and password come back in clear text and can be used to log into the ONT's
+web UI right away; one row per device, a failing device never blocks the others, and extra accounts
+expand to show their instance number and real parameter path:
+
+![Super admin account and password](doc/Display/180849_848.png)
+
+### OLT management (real device collection, **config delivery included**)
 
 Collected from the OLT CLI over Telnet, verified on a Huawei MA5683T.
 
@@ -112,11 +129,16 @@ unrecognized to `generic.vue`. The vendor is detected from the version output at
 time, persisted with the device, so a newly added device lands directly on its vendor page.
 The screenshots below are all from the **Huawei** panel.
 
-> **Read-only.** Only `display` / `show` commands are sent (`enable` → `config` merely enters the
-> config view, because temperature / ONT / VLAN commands are only accepted there; it quits right
-> after). Every tab shows the **device's current configuration**, not an ACS intent, and there is no
-> write entry point — changing VLANs, registering/deleting ONTs or rebooting boards must be done on
-> the device CLI. Write operations: section 2 #15.
+> **Collection is read-only, config delivery is live.** Only `display` / `show` commands are sent
+> while collecting (`enable` → `config` merely enters the config view, because temperature / ONT /
+> VLAN commands are only accepted there; it quits right after). Every tab shows the **device's
+> current configuration**, not an ACS intent.
+> **Writable**: VLAN create/delete, DBA profile create/delete, line-profile T-CONT / GEM port /
+> GEM mapping, TR069 profile creation, one-click setup, **ONT registration (`ont confirm` +
+> service ports)**, the **per-port auto-find switch** and **deleting all ONTs on a board** — all as
+> form / preview / deliver with constraints and command sequences computed by the backend.
+> Still CLI-only: single-ONT reboot/delete, board reboot, template add/delete. Write operations:
+> section 2 #15.
 
 - **OLT status / configuration**: model, version and patch, backplane, control board MAC, uptime, sync summary; board cards list model / status / description / temperature / port and ONT totals;
 - **Board diagram**: `P0`-`P7` port rows are pinned at the height of the matching physical port on the diagram; expanding a row lists every ONT under that port (ID / SN / model / online-offline);
@@ -182,7 +204,7 @@ history, rendered as card blocks.
 
 ![ONT version / registration history dialog](doc/Display/013753_883.png)
 
-#### DBA / line profile (real collection, read-only)
+#### DBA / line profile (real collection, create/delete wired)
 
 - **DBA profile**: `display dba-profile all detail` + `display dba-profile all` — profile ID / name / type / fixed·assured·maximum bandwidth (kbps, raw numbers). The summary table only carries the ID and a numeric type, so names are filled back from the detail output by ID;
 - **ONT line profile**: `display ont-lineprofile gpon all` only returns the summary; the per-`profile-id` detail carries T-CONT (`DBA Profile-ID`), GEM ports and GEM mappings (`Mapping VLAN`). When one GEM port carries several mappings they are merged the way the vendor NMS shows them (mapping ID `0,1` / VLAN `45,4011`);
@@ -192,7 +214,7 @@ history, rendered as card blocks.
 
 ![OLT management - DBA / line profile](doc/Display/164917_540.png)
 
-#### Service / TR069 / traffic profile (real collection, read-only)
+#### Service / TR069 / traffic profile (real collection; TR069 create wired)
 
 - **ONT service profile**: `display ont-srvprofile gpon all` summary + per-profile detail, LAN/POTS port counts (`ont-port pots adaptive 32 eth adaptive 8`);
 - **TR069 management profile**: `display ont tr069-server-profile all`, ACS URL and login account (the password is ciphertext and is not collected);
@@ -208,8 +230,9 @@ history, rendered as card blocks.
 #### OLT status and VLAN (real collection)
 
 The PON board type decides the keyword in the command: `gpon` is tried first, falling back to `epon`
-(`display ont-lineprofile epon all`). The "Add / Delete" buttons on every template tab are
-**placeholders** (they report that delivery is not wired yet).
+(`display ont-lineprofile epon all`). The add/delete buttons on the **Huawei** template tabs are
+**placeholders** (they report that delivery is not wired yet); on the HSGQ page the TR-069 profile
+panel creates profiles for real, and the rest of its writes go through the device command center.
 
 OLT status page: 3 boards (1 service / 1 control / 1 uplink), backplane and version, each board
 listing `P0`-`P7` and its ONT count at the physical port height on the right of the diagram.
@@ -227,7 +250,7 @@ smart VLAN), static route (`0.0.0.0/0 → 10.172.10.1`).
 Screenshots are **not moved or renamed** — they all live in the root of
 [`doc/Display/`](./doc/Display) (troubleshooting screenshots in `Debug/`). The tables below split
 them into the **ACS side** (ACS service / ONT device management) and the **OLT side**
-(converged OLT management, read-only collection).
+(converged OLT management: read-only collection, live config delivery).
 
 **ACS side (ACS service / ONT device management)**
 
@@ -243,11 +266,12 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | `174419_542.png` | Device list after adaptation | Screenshots · Device management | In use |
 | `013530_034.png` | Device list (current) | Screenshots · Device list | In use |
 | `162116_423.png` | Device detail business panel | Screenshots · Device detail | In use |
+| `180849_848.png` | Super admin account / password dialog (read live) | Screenshots · Super admin account | In use |
 | `013724_056.png` | ONT admin UI platform server config | 1.4 Device provisioning | In use |
 | `162046_560.png` | Device list (**older** version, used before `013530_034`) | — | Unused (kept) |
 | `025159_916.png` | Device list (**older** version, used early on) | — | Unused (kept) |
 
-**OLT side (converged OLT management, read-only collection)**
+**OLT side (converged OLT management: read-only collection, live config delivery)**
 
 | File | Content | Where it is used | Status |
 | --- | --- | --- | --- |
@@ -283,19 +307,21 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | Parameter tree export | Export the capability tree per model to `configuration/models/`, and locate the model file by device | `worklist/service/ModelTreeStore` |
 | Business snapshot | `device` / `wan` / `wifi` / `lan` / `sip` / `pon` sections, single-device and whole-page batch reads; LAN section adds link state (`connected`) and MAC, SIP section keeps only real line instances (drops the `VoiceProfile.{n}.SIP.` aggregate), ledger registration time and last inform time are returned too | `acs/service/DeviceBusinessService` |
 | **Automatic LAN port refresh** | Periodically (5 min by default) re-reads port state leaves (`Enable/Status/X_CT-COM_*LineStatus/MAC/speed`) for online devices, so unplugging a cable does not require a manual "re-collect"; online devices only, port leaves only, a wait timeout is not a failure (the command stays queued) | `acs/service/LanStatusRefreshService`, `DeviceBusinessService#lanStatusPaths` |
-| **Super-admin account lookup** | `GET /api/device/{sn}/admin-account`: reads `User.{i}.Username/Password` live from an online device and returns it in plain text; returns `offline` when offline; falls back to TR-098 / TR-181 standard paths when no tree was collected; re-sends item by item when a whole batch is rejected, sharing a 30s budget; only accounts under `.User.{i}.` count, so WAN dial-up accounts are not collected by mistake | `acs/service/DeviceAccountService`, `api/controller/DeviceController` |
+| **Super-admin account lookup** | `GET /api/device/{sn}/admin-account`: reads `User.{i}.Username/Password` and returns it in plain text; an online session is woken up before reading and an offline device gets a connection request (up to 30 s) before `offline` is reported; falls back to TR-098 / TR-181 standard paths when no tree was collected; re-sends item by item when a whole batch is rejected, sharing a 30s budget; only accounts under `.User.{i}.` count, so WAN dial-up accounts are not collected by mistake | `acs/service/DeviceAccountService`, `api/controller/DeviceController` |
 | Model semantic mapping | `cpe_model` + `model_param_mapping` / `model_object_mapping`: business field ↔ the model's real CWMP path, with candidate path recommendation by SN | `worklist/controller/ModelMappingController`, `ModelMappingService` |
 | Model adaptation | After collection, declare ISP / LAN port count / speed / SIP count / WiFi spec, verify each item with a test collection, then save the adaptation record (capability tree XML + adaptation yml); the declared ISP is written back to the device ledger, and list and detail views follow the ledger. **Band detection** combines four rules — band parameter / channel list / 802.11 standard / SSID wording; when only 5G is labelled and 2.4G is not, it is treated as dual-band, and when no band can be detected at all it falls back to the radio count (full rule list in [doc/ADAPTED_MODELS.en.md](./doc/ADAPTED_MODELS.en.md)) | `worklist/service/ModelAdaptationService`, `ModelTreeStore` |
 | RPC delivery (async) | Delivery returns a task id; poll the result by id; timeouts are finalized uniformly | `agent/RpcDispatchService`, `queue/RpcTaskQueue`, `api/controller/RpcTaskController` |
 | Queue smoothing | Inform and delivery go through Redis queues; degrades to in-process handling when Redis is unavailable | `queue/*` |
-| **Configuration intent templates** | Stored in `config_template`, describing provisioning intent only (no data is delivered): 7 categories (WAN DHCP / WAN PPPoE / WAN static IP / WAN bridge / 2.4G WiFi / 5.8G WiFi / SIP), each with its own intent fields; `/meta` field definitions, list, detail, save, delete | `template/*` (`ConfigTemplateService`, `ConfigTemplateController`) |
+| **Configuration intent templates** | Stored in `config_template`, describing provisioning intent only (no data is delivered): 7 categories (WAN DHCP / WAN PPPoE / WAN static IP / WAN bridge / 2.4G WiFi / 5.8G WiFi / SIP), each with its own intent fields; `/meta` field definitions, list, detail, save, delete; **incremental** switch (`incremental`): when on, delivery only `AddObject`s this one service, skips the WAN cleanup and never touches services already on the device | `template/*` (`ConfigTemplateService`, `ConfigTemplateController`) |
 | Business templates | Several intent templates orchestrated into one package: list, detail, save, delete, pre-delivery self-check `/validate`, delivery record query | `biz/*` (`BizTemplateService`, `BizTemplateExecutionService`) |
 | **Work order delivery (admin)** | `POST /api/worklist/instances` uses `worklistDesc` as the idempotency key; after persisting, it immediately becomes a delivery task (`IntentDeliveryService`, `source=worklist`); on completion `TaskFinishedEvent` writes back the final state and failure reason; work orders and step records are queryable | `worklist/service/WorklistDeliveryService`, `worklist/controller/WorklistExecuteController` |
 | Dashboard | Online/offline, vendor distribution, template statistics (counting intent templates) | `api/service/DashboardService` |
 | Data model adaptation | Dual model support for TR-098 (`InternetGatewayDevice.`) and TR-181 (`Device.`): root node decided by majority of Inform parameters, business prefixes expanded for both models, model records and capability tree XML record the data model and are reconciled | `acs/model/DataModel`, `InformService`, `DeviceBusinessService` |
 | **Intent delivery executor** | Intent fields + model semantic mapping → CWMP paths and values → `AddObject` as needed then batched `SetParameterValues`, all recorded in `device_task`; idempotent per `taskNo` | `exec/*` (`IntentDeliveryService`, `IntentPlanRenderer`) |
 | **Northbound API** | Dedicated port 8899 + `/openapi/v1/**`: device ledger/online/capability tree/business snapshot/work order results, delivery acceptance and result query, Webhook event push (online/offline, delivery finished), reusing admin JWT auth | `openapi/*` |
-| **OLT CLI collection (read-only)** | Telnet login → paging off → `display board 0` / `display version` → `enable` → `config` (config view is entered only to read temperature / ONT / VLAN, nothing is configured) → temperature → one `display ont info 0 <slot> all` per service board → `display vlan all` → `display port vlan 0/<slot>/<port>` per uplink/control port → `display ip interface brief` / `display ip routing-table` → `quit`; boards, per-port ONTs (with every ONT detail), VLANs, L3 interfaces and static routes are persisted (`olt_device.vlan_json`, `olt_board.ports_json`); one round right after startup, then every 5 minutes; the page only reads the latest data and never touches the device. Only `display` / `show` are sent — **no write command at all** (changing VLANs, adding/removing ONTs, rebooting boards are unimplemented). The vendor is detected from the version output after login and written back to `olt_device.vendor`, which routes the device to its vendor page (`web/src/views/olt/vendors.js`). Verified on a Huawei MA5683T | `olt/*` (`telnet/OltCliSession`, `telnet/OltInfoParser`, `service/OltService`, `service/OltTelnetService`) |
+| **OLT CLI collection (read-only)** | Telnet login → paging off → `display board 0` / `display version` → `enable` → `config` (config view is entered only to read temperature / ONT / VLAN, nothing is configured) → temperature → one `display ont info 0 <slot> all` per service board → `display vlan all` → `display port vlan 0/<slot>/<port>` per uplink/control port → `display ip interface brief` / `display ip routing-table` → `quit`; boards, per-port ONTs (with every ONT detail), VLANs, L3 interfaces and static routes are persisted (`olt_device.vlan_json`, `olt_board.ports_json`); one round right after startup, a full round every 30 hours as a safety net and a board-status refresh every 2 minutes, while tab sync collects only the section it needs. The page only reads the latest data and never touches the device. Collection sends only `display` / `show`; writes go through the delivery endpoints — ONT registration and deleting board ONTs are wired, single-ONT reboot/delete and board reboot are not. The vendor is detected from the version output after login and written back to `olt_device.vendor`, which routes the device to its vendor page (`web/src/views/olt/vendors.js`). Verified on a Huawei MA5683T | `olt/*` (`telnet/OltCliSession`, `telnet/OltInfoParser`, `service/OltService`, `service/OltTelnetService`) |
+| **ONT detail backfill** | The board-wide table (`display ont info 0 <slot> all`) carries neither MAC nor profile IDs, so a background job fills them in: MAC per ONT via `display ont ipconfig <port> <ONT ID>` (once found it is skipped for good; a `0000-0000-0000` answer is flagged and never retried), profile IDs from one `display current-configuration` run by parsing `ont add … ont-lineprofile-id / ont-srvprofile-id`. Only missing values are fetched, then persisted and reused | `olt/telnet/OltCliSession#enrichOntProfiles`, `#fillOntProfilesFromConfig`, `olt/service/OltService#collectOntDetailsAndPersist` |
+| **ONT details: overwrite, never delete** | Every write path (full sync / tab sync / quick sync / board refresh / background backfill) merges in `writeBoards`: rows are matched by SN (falling back to slot + port + ONT ID when the SN changed); an empty new value keeps the stored MAC / management IP / line profile / service profile, a collected value overwrites it; `-` and `0000-0000-0000` count as "not collected" and never overwrite | `olt/service/OltService#mergeUnsyncedPortData`, `#mergeOntDetails`, `#applyOntDetail` |
 | **OLT template collection (read-only)** | Same Telnet session continues with the templates: `display dba-profile all detail` + `display dba-profile all` (names filled back by ID, the summary only carries the ID and a numeric type), `display ont-lineprofile <gpon\|epon> all` summary + per-`profile-id` detail (T-CONT `DBA Profile-ID`, `<Gem Index:n>` and the `Mapping VLAN` table), `display ont-srvprofile <gpon\|epon> all` summary + per-profile detail (`ont-port pots/eth adaptive`), `display ont tr069-server-profile all` (ACS URL and account), `display traffic table ip all` (CIR / PIR), `display current-configuration section service-port` (service flows; fixed field semantics, preferred over the table output). PON type is probed `gpon` first, then `epon`; the built-in `profile-id 0` is hidden; the result overwrites `olt_device.template_json` as a whole (a failed round keeps the previous data) | `olt/telnet/OltInfoParser` (`parseDbaProfiles` / `parseDbaDetails` / `parseLineProfiles` / `parseSrvProfiles` / `parseTr069Profiles` / `parseTrafficTables` / `parseServicePortsFromConfig`), `olt/telnet/OltCliSession#collectTemplates` |
 | **OLT CLI robustness** | ① Huawei's continuation prompt `( Press 'Q' to break ) ----` is recognized as paging; when the prompt shares a line with content, only the prompt is stripped and no space is sent, so paging never hangs; ② paging is disabled per vendor: Huawei gets `scroll` (`screen-length` belongs to VRP switches, OLTs reject it), re-sent after entering the config view; ③ parameter completion prompts (including the `<cr>`-less `{ all<K>\|bound-info<K> }:`) are answered with an automatic Enter instead of blocking for the full 8s timeout | `olt/telnet/TelnetClient#handlePagination`, `olt/telnet/OltVendor#getPagingCommands`, `olt/telnet/OltCliSession#readToPrompt` |
 | Admin auth | JWT login, `sys_user` lookup, initial admin created on first startup; besides validating the token, the JWT interceptor **derives the required permission from the request URL and method** (`GET` needs `xxx:view`, write methods need `xxx:manage`) and rejects with 403 when it is missing | `api/controller/AuthController`, `config/AdminAuthInterceptor`, `api/auth/PermissionCodes` |
@@ -315,8 +341,8 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | Device detail | `/device-detail/:sn` | Done (capability tree, parameter tree, RPC debug + business panel: info cards for uptime/registration time/last inform/inform IP, LAN port block, WLAN split by band, SIP listing real lines only) |
 | Work orders | `/worklist/instances` | Done (work order and step query; batch creation entry is "One-click work order ▲" in the device list toolbar) |
 | OLT ledger | `/olt/management` | Done (**entry page**: ledger CRUD, connectivity diagnostic, trigger sync; **dispatches by vendor** to the three detail pages below; a newly added device goes straight to its vendor page once identified) |
-| OLT detail · Huawei | `/olt/huawei/:id` | Done (**real Telnet collection, read-only**: OLT status (boards/temperature/port ONTs/diagram), configuration, VLAN, **DBA/line profile**, **service/TR069/traffic profile**, ONT config and status, collection records; port rows pinned on the board diagram; the ONT config/status table has auth code / run flag / **management IP** / **MAC** / **service flow** / **line profile** / **service profile** columns, rows are selectable and **reboot ONU / delete registration** buttons sit in the bottom-right; on-demand dialogs: click SN → authorization info + service flow, click ONT ID → hardware capability/status, service flow "View" → service flow table; **cannot change device config**, the "Add/Delete" buttons on template tabs, the batch ops buttons and the four service flow buttons are all placeholders; ONT registration, OLA, ONU rear panel, OLT upgrade, standby, protection are still placeholders) |
-| OLT detail · HSGQ | `/olt/hsgq/:id` | Done (**all-in-one panel, read-only**: device overview (4 PON ports, generated per model), PON port status, ONU list (placeholder), configuration, VLAN, collection records) |
+| OLT detail · Huawei | `/olt/huawei/:id` | Done (**real Telnet: read-only collection + live config delivery**: OLT status (boards/temperature/port ONTs/diagram), configuration, VLAN, **DBA/line profile**, **service/TR069/traffic profile**, ONT config and status, collection records; port rows pinned on the board diagram; the ONT config/status table has auth code / run flag / **management IP** / **MAC** / **service flow** / **line profile** / **service profile** columns, rows are selectable and **reboot ONU / delete registration** buttons sit in the bottom-right; on-demand dialogs: click SN → authorization info + service flow, click ONT ID → hardware capability/status, service flow "View" → service flow table; **config delivery is live** for VLAN create/delete, DBA profile create/delete, line-profile T-CONT / GEM port / GEM mapping, one-click setup, **ONT registration** (matching templates + auto-scan), the **per-port `ont-auto-find` switch** and **deleting all ONTs on a board** — constraints, defaults and command previews all come from the backend, and only the affected data is re-read after delivery; the add/delete buttons on the Huawei template tabs, single-ONT reboot/delete and the four service flow buttons are still placeholders, and OLA / ONU rear panel / OLT upgrade / standby / protection are empty tabs) |
+| OLT detail · HSGQ | `/olt/hsgq/:id` | Done (**all-in-one panel**: device overview with the spec line `8 × GPON + 4 × GE + 4 × XGE`, PON ports plus uplink GE / XGE / NMS / CONSOLE drawn per model; PON port status, **ONU list** (real data from `show onu-info all`), configuration, VLAN (create/delete), **TR069 profiles** (create), one-click setup, **device config command center** (system / firmware / ONU upgrade, link aggregation, ONT add/delete/reset), collection records; the per-row "Config" dropdown in the ONU list is still a placeholder) |
 | OLT detail · Generic | `/olt/generic/:id` | Done (unrecognized vendors, ZTE and FiberHome land here: boards, ONTs, VLAN, configuration, collection records; **read-only**, once identified the device can be re-tested and routes to the matching vendor page) |
 | **User management** | `/system/users` | Done (create/edit/delete users, role changes take effect immediately, password change, enable/disable; the list carries **last login / login IP / login source**; the delete button of the initial `admin` is disabled) |
 | **Role permissions** | `/system/roles` | Done (tick **view / manage** per module; the **system administrator row is disabled**; a role still in use cannot be deleted) |
@@ -428,29 +454,41 @@ state and never touches the device.**
 | OLT status | ✅ Implemented | `display board 0`, `display version`, temperature commands | Board cards (model/status/temperature/port and ONT totals), diagram port rows |
 | Configuration | ✅ Implemented | `display version` and friends | Model, version and patch, backplane, control board MAC, uptime |
 | VLAN | ✅ Implemented | `display vlan all`, `display port vlan`, `display ip interface brief`, `display ip routing-table` | L3 interfaces, uplink pass-through, L2 interworking, static routes |
-| **DBA/line profile** | ✅ Implemented | `display dba-profile all (detail)`, `display ont-lineprofile … all` + per-`profile-id` detail | DBA bandwidth tiers, T-CONT↔DBA, GEM port↔mapping VLAN; "Add/Delete" buttons are **placeholders** |
-| **Service/TR069/traffic profile** | ✅ Implemented | `display ont-srvprofile … all` + detail, `display ont tr069-server-profile all`, `display traffic table ip all`, `display current-configuration section service-port` | LAN/POTS port counts, ACS URL and account, CIR/PIR, service flow details; "Add/Delete" buttons are **placeholders** |
-| ONT config / status | ✅ Implemented | `display ont info 0 <slot> all` | One table per board: port × ONT totals/online/offline; columns include auth code / run flag / **management IP** / **MAC** / **service flow** / **line profile** / **service profile** / description / status / query icons |
+| **VLAN create / delete** | ✅ Implemented (write) | `vlan standard <ID>` / `undo vlan <ID>` | The new VLAN shows up as soon as the command returns (1–2 s) and the full re-collection moves to the background; duplicate IDs are rejected before delivery |
+| **DBA/line profile** | ✅ Implemented | `display dba-profile all (detail)`, `display ont-lineprofile … all` + per-`profile-id` detail | DBA bandwidth tiers, T-CONT↔DBA, GEM port↔mapping VLAN |
+| **DBA profile create / delete** | ✅ Implemented (write) | `dba-profile add …` / `undo dba-profile profile-id` | Form constraints come from `GET /{id}/dba-profile/form`; preview and delivery share one code path |
+| **Line profile · add T-CONT** | ✅ Implemented (write) | `tcont <index> dba-profile-id <DBA>` | The `+` after a T-CONT index; the index defaults to the first free slot |
+| **Line profile · add GEM port** | ✅ Implemented (write) | `gem add <GEM> eth tcont <T-CONT> encrypt on` | "Add GEM port"; T-CONT defaults to the one already carrying GEMs, the hint shows `available GEM ports: 3-1023` |
+| **Line profile · add GEM mapping** | ✅ Implemented (write) | `gem mapping <GEM> <index> vlan <VLAN>` | The `+` after a mapping ID, greyed out when no GEM port exists; index and VLAN map one-to-one |
+| **Service/TR069/traffic profile** | ✅ Implemented | `display ont-srvprofile … all` + detail, `display ont tr069-server-profile all`, `display traffic table ip all`, `display current-configuration section service-port` | LAN/POTS port counts, ACS URL and account, CIR/PIR, service flow details; the add/delete buttons on these three Huawei tabs are **placeholders** (the TR069 create endpoint `POST /{id}/tr069-profiles` already works and the HSGQ TR-069 panel uses it) |
+| ONT config / status | ✅ Implemented | `display ont info 0 <slot> all`; MAC via `display ont ipconfig`, profile IDs backfilled from the `ont add` lines of `display current-configuration` | One table per board: port × ONT totals/online/offline; columns include auth code / run flag / **management IP** / **MAC** / **service flow** / **line profile** / **service profile** / description / status / query icons. MAC and profile IDs are background-backfilled and never wiped by later collection (overwrite only) |
 | **Click SN → authorization info + service flow** | ✅ Implemented (read-only) | `display current-configuration ont 0/<slot>/<port> <ONT ID>` + `display service-port port 0/<slot>/<port> ont <ONT ID>` + `display ont info 0 <slot> <port> <ONT ID>` | Authorization: SN / description / line profile / service profile, plus the service flow table; the management IP comes from the detail output |
 | **Click ONT ID → hardware capability / status** | ✅ Implemented (read-only) | `display ont capability 0/<slot> <port> <ONT ID>` | Uplink PON port count / POTS / ETH / GEM port count / IP configuration support / T-CONT count / flow control type / ONT type / per-T-CONT PQ counts, labels and values translated to Chinese |
 | **Service flow "View" → service flow table** | ✅ Implemented (read-only) | `display service-port port 0/<slot>/<port> ont <ONT ID>` | Flow ID / OLT-side VLAN / VLAN attribute / GEM port / ONT user-side VLAN / upstream+downstream traffic profile / edit / select; the four buttons at the bottom are **all placeholders** |
 | Collection records | ✅ Implemented | local `olt_sync_record` | Duration, summary and raw output of every sync and diagnostic run |
-| **Reboot ONU / delete registration** (batch buttons) | ⬜ Placeholder | — | Buttons are in place with row-selection validation, no command wired — see section 2 #16 |
-| ONT registration (autofind) | ⬜ Placeholder | `display ont autofind all` | Command not wired |
-| OLA | ⬜ Placeholder | — | Not wired |
+| **ONT registration (autofind)** | ✅ Implemented (write) | `display ont autofind all` → per ONT `ont confirm … omci [ont-lineprofile-id / ont-srvprofile-id]` → `service-port …` | Dedicated tab: live autofind list, template matching by model (or one fixed template), command preview, batch delivery, registration records; optional timed auto-scan and auto-registration. On success the model is written into the ONT description and service ports are created from the template |
+| **ONT auto-find switch** | ✅ Implemented (write) | `interface gpon 0/<slot>` → `display ont-auto-find <port>` / `port <port> ont-auto-find enable` | Header shows the state per port (N/M enabled) with a one-click "enable all"; the state is read back from the device afterwards |
+| **Delete board ONTs** | ✅ Implemented (write) | `interface gpon 0/<slot>` → per port `ont delete <port> all` | Bottom-right of the ONT status panel: clears board by board from the collected boards, behind a confirmation, then re-collects |
+| **Reboot ONU / delete registration** (single ONT, batch buttons) | ⬜ Placeholder | — | Both buttons still report "writes not open yet". `ont delete <port> <ONT ID>` can already be generated (used by auto-registration to clear offline records) but has no page entry; `ont reboot` is not wired — see section 2 #16 |
+| OLA | ⬜ Placeholder | — | Huawei page only (HSGQ covers link aggregation in its command center) |
 | ONU rear panel editor | ⬜ Placeholder | — | Not wired |
-| OLT upgrade | ⬜ Placeholder | — | Not wired |
+| OLT upgrade | ⬜ Placeholder | — | Huawei page only (HSGQ upgrades run from the command center) |
 | Standby | ⬜ Placeholder | — | Not wired |
 | Protection | ⬜ Placeholder | — | Not wired |
-| Optical power (Tx/Rx) | ⬜ Not collected | — | This firmware's `display port` only supports desc/mode/statistics/vlan |
+| Optical power (Tx / Rx / temperature / bias / voltage) | ✅ Implemented | Interface view `interface gpon 0/<slot>` → `display port state <port>` | Collected per port and stored with the board ports; shown in the panel tooltip and in the "Tx / Rx / temperature" columns. Rx still comes from the RX column of `display board 0/<slot>` |
 
-HSGQ page (`/olt/hsgq/:id`): device overview, PON port status, configuration, VLAN and collection
-records are implemented; the ONU list is a placeholder.
+HSGQ page (`/olt/hsgq/:id`): device overview, PON port status, **ONU list** (real data from
+`show onu-info all`), configuration, VLAN, **TR-069 profiles**, **device config** (command center:
+system / firmware / ONU upgrade, link aggregation, ONT management) and collection records are
+implemented; the per-row "Config" dropdown in the ONU list is still a placeholder.
 Generic page (`/olt/generic/:id`): OLT status, configuration, VLAN, ONT config/status and collection
 records are implemented.
 
-**Every page is read-only**: only `display` / `show` commands are sent; writes (creating VLANs,
-adding/removing ONTs, rebooting boards, editing templates) are all unimplemented — see section 2 #15.
+**Collection is read-only, config delivery is live**: only `display` / `show` are sent while
+collecting; writes cover VLAN create/delete, DBA profile create/delete, line-profile
+T-CONT / GEM port / GEM mapping, TR069 profile creation, one-click setup, **ONT registration
+(`ont confirm` + service ports), the per-port auto-find switch and deleting all ONTs on a board**.
+Single-ONT reboot/delete, board reboot and template add/delete still need CLI work — see section 2 #15.
 
 ---
 
@@ -500,20 +538,20 @@ session cannot be used to rewrite passwords in bulk.
 | 2 | Batch template delivery | Partial | Business template whole-package batch delivery is wired (one execution record per device, success/failure summary); config intent template batch delivery creates work orders through the "batch template delivery" entry. Pending: whole-batch progress board, one-click retry |
 | 3 | ~~Business template whole-package delivery~~ | **Done** | `POST /api/biz-template/execute`: runs members serially, records in `biz_template_execution`; a member failure stops or continues per `continueOnError`, and continuing with failures is recorded as `partial` |
 | 4 | ~~One-click work order (provision / maintenance)~~ | **Done** | Select devices in the list and create one order per device, each with its own serial number (`worklistDesc` idempotency); a single failure is recorded but the rest continue, failures summarized at the end |
-| 5 | Batch device ops backend | Partial (**super-admin password wired**) | Telnet switch and command execution, WAN-side access, WiFi switch, disable SIP, delete WAN connection, lift internet restriction, SSID prefix cleanup, config export/clone, force inform — each needs parameter paths filled in per vendor/model (always via model mapping, never hardcoded). Super-admin lookup works but requires the device to be online and the model to expose `User.{i}.Username/Password` over TR-069 |
-| 6 | ~~Real OLT converged management~~ | **Done (read-only)** | Telnet **collection** is wired (verified on a Huawei MA5683T): ledger, boards and temperature, per-port and per-ONT details, VLAN with L3 interfaces / static routes, **DBA/line profile**, **service/TR069/traffic profile** (incl. TR069 server profile and traffic policing profile) and service flow details are all persisted from real output; "Sync" on the page plus a 5-minute background refresh. Only `display` / `show` are sent — **writes are unimplemented**, see #15. Remaining placeholders: ONT registration (`display ont autofind all`), OLA, ONU rear panel editor, OLT upgrade, standby, protection, and the "Add/Delete" buttons on the template tabs. Optical power (Tx/Rx) is not collected: this firmware's `display port` only supports desc/mode/statistics/vlan. Per-tab status: [section 1.5](#15-olt-tabs-implemented--placeholder) |
+| 5 | Batch device ops backend | Partial (**super-admin password wired**) | Telnet switch and command execution, WAN-side access, WiFi switch, disable SIP, delete WAN connection, lift internet restriction, SSID prefix cleanup, config export/clone, force inform — each needs parameter paths filled in per vendor/model (always via model mapping, never hardcoded). Super-admin lookup works and wakes an offline device first (connection request, up to 30 s), but the model must expose `User.{i}.Username/Password` over TR-069 |
+| 6 | ~~Real OLT converged management~~ | **Done** | Telnet **collection** is wired (verified on a Huawei MA5683T): ledger, boards and temperature, per-port and per-ONT details, VLAN with L3 interfaces / static routes, **DBA/line profile**, **service/TR069/traffic profile** (incl. TR069 server profile and traffic policing profile) and service flow details are all persisted from real output; tab sync only collects the section it needs, a full round runs every 30 hours as a safety net and board status every 2 minutes, while MAC and profile IDs are background-backfilled. Collection sends only `display` / `show`; **config delivery is implemented** for VLAN create/delete, DBA profile create/delete, line-profile T-CONT / GEM port / GEM mapping, TR069 profile creation, one-click setup, **ONT registration (`ont confirm` + service ports)**, the **per-port auto-find switch** and **deleting all ONTs on a board**. Single-ONT reboot/delete and board reboot are still missing, see #15. Remaining placeholders: the **Huawei** page's OLA, ONU rear panel editor, OLT upgrade, standby and protection (HSGQ covers link aggregation / upgrades in its command center), plus the add/delete buttons on the Huawei template tabs. Optical power (Tx / Rx / temperature / bias / voltage) is collected separately in the interface view: `interface gpon 0/<slot>` → `display port state <port>`. Per-tab status: [section 1.5](#15-olt-tabs-implemented--placeholder) |
 | 7 | Legacy data migration | Not started | Existing `biz_template_item.template_key` still holds old file keys, so `BizTemplateService.parseId` reports "config template not found"; a migration script to `config_template.id` is needed |
 | 8 | Intent field expansion | In progress | WAN currently has IP protocol / VLAN usage / port binding only; to add: WAN IP acquisition mode, PPPoE account, SIP server/account, WiFi SSID/password (VLAN ID and specific ports are still not persisted, decided at delivery time) |
 | 9 | Legacy mechanism cleanup | Mostly done | Old file templates / wizard compilation / old work order orchestration engine deleted, work orders now go through `IntentDeliveryService`; the `worklist` package keeps records, model mapping, capability tree export and work order creation/query — naming can be revisited at the end. **UDP connection request (TR-111 hole punching) removed**: on an internal network the devices are directly reachable, so traversal is unnecessary, and its "sent counts as success" behaviour used to pre-empt the HTTP path while hiding wake-up failures |
-| 10 | Others | Not started | Finer delivery audit logs, finer permission roles, device alarms (optical power degradation, bulk offline alerts), offline threshold derived from the device's actual `PeriodicInformInterval` (currently fixed at 120s). Provisioning now delivers a unified 300s interval, so this can be computed from the interval read back into the ledger instead of tuned by hand |
-| 11 | UI polish | Not started | ① Collapse (`+N`) or horizontal scroll when a device has more than 4 LAN ports, currently overflowing; ② skip disabled SSIDs during business **collection** (today only the view filters them, collection still reads everything); ③ visual distinction for disabled SSIDs in the detail page, currently only the "disabled" text in the status column; ④ runtime column sorting applies to the current page only (backend paged sorting not wired yet) |
-| 12 | Wake-up coverage for batch ops | Not started | Provisioning, work orders, business templates and manual collection already wake the device; reboot / factory reset / custom TR069 parameter delivery / super-admin password lookup in the batch ops toolbar are human-triggered too but still wait for the periodic inform (each entry needs one `wakeUp` call for click-and-it-happens behaviour) |
+| 10 | Others | Not started | Finer delivery audit logs, finer permission roles, device alarms (optical power degradation, bulk offline alerts), offline threshold derived from the device's actual `PeriodicInformInterval` (currently a fixed `acs.session.online-window-seconds=900` window, swept every 60 s). Provisioning now delivers a unified 300s interval, so this can be computed from the interval read back into the ledger instead of tuned by hand |
+| 11 | UI polish | In progress | ① Collapse (`+N`) or horizontal scroll when a device has more than 4 LAN ports, currently overflowing; ② skip disabled SSIDs during business **collection** (today only the view filters them, collection still reads everything); ③ visual distinction for disabled SSIDs in the detail page, currently only the "disabled" text in the status column. ~~④ runtime column sorting applies to the current page only~~ **Done**: `sortKey` / `sortOrder` reach the backend, `DeviceListService` sorts ledger columns in SQL and derived columns from the business snapshot, so paging keeps the same order |
+| 12 | Wake-up coverage for batch ops | **Partial** | Provisioning, work orders, business templates, manual collection and **super-admin password lookup** all wake the device (`DeviceAccountService`: an online session is woken up before reading, an offline device gets a connection request with up to 30 s wait, only then does it report `offline`); the remaining **batch reboot / factory reset / custom TR069 parameter delivery** still wait for the periodic inform and each entry needs one `wakeUp` call |
 | 13 | Provisioning result visibility | Not started | Provisioning exists only in the logs: success, the fault reason when the device rejects it, and the last provisioning time are all log-only, invisible in the ledger and UI. A device marked read-only therefore goes unnoticed unless someone reads the logs |
 | 14 | CR credential rewrite compatibility | Not started | A few firmwares share `ManagementServer.ConnectionRequestUsername/Password` with the device login account, so rewriting them changes the web login password too. Needs a per-model allowlist (skip the rewrite) or reading the login account first and comparing |
-| 15 | OLT write operations (config delivery) | Not started | The Telnet link is **read-only** (`display` / `show`); the pages show the device's current state and any change must be made on the device CLI. Commands still to implement: `ont add / delete / reset`, `reboot`, `vlan create / port vlan`, `ont autofind confirm`, `save` (Huawei needs `save` to persist). Three things must land first: a command allowlist with parameter validation (only safe character sets, no arbitrary command injection), a dry-run before writing plus output-based success judgement (today only the prompt is checked, and a failed write returns `% … error` followed by the same prompt), and operation auditing (who changed which command on which device and when — `olt_sync_record` only stores collection records today) |
-| 16 | **ONT batch operation buttons** (reboot ONU / delete registration) | **Placeholder** | Buttons and row-selection validation are in place, clicking reports "write operations are not open yet". Ship together with the write channel in #15: `ont reboot 0/<slot>/<port> <ONT ID>`, `ont delete 0/<slot>/<port> <ONT ID>`, plus a confirmation dialog and a result receipt |
+| 15 | OLT write operations (config delivery) | **Partial** | **Wired**: VLAN create/delete, DBA profile create/delete, line-profile add T-CONT / GEM port / GEM mapping, TR069 profile creation, one-click setup — all as "form / preview / deliver" endpoints where preview and delivery share one code path and only the affected template is re-read afterwards; **ONT registration (`ont confirm` + `service-port`), the per-port `ont-auto-find` switch, deleting all ONTs on a board (per-port `ont delete <port> all`) and board confirmation (`board confirm 0`)** are wired too. **Not wired**: single-ONT `ont reboot` / `ont reset`, single-ONT `ont delete <port> <ONT ID>`, manual `service-port` add/change/delete (beyond the one created during registration), `save` (Huawei needs `save` to persist). Three things must land first: a command allowlist with parameter validation (only safe character sets, no arbitrary command injection), a dry-run before writing plus output-based success judgement (today only the prompt is checked, and a failed write returns `% … error` followed by the same prompt), and operation auditing (who changed which command on which device and when — `olt_sync_record` only stores collection records today) |
+| 16 | **ONT batch operation buttons** (reboot ONU / delete registration) | **Partial** | Clearing a whole board is wired (`ont delete <port> all`, see 1.5 "Delete board ONTs"); the **single-ONT reboot / delete on selected rows is still a placeholder** and reports "writes not open yet". Backend can already build `ont delete <port> <ONT ID>` (used by auto-registration to clear offline records); still missing: a per-ONT entry in the PON board view, `ont reboot`, a confirmation dialog and a per-ONT result receipt (partial failures must be identifiable) |
 | 17 | **Service flow operation buttons** (query GMP multicast status / query unknown multicast policy / delete service flow / add service flow) | **Placeholder** | All four buttons in the service flow dialog report "not open yet". The first two are read commands, the last two are writes: wire them separately behind #15 — writes need the allowlist and auditing first, reads can be parsed directly |
-| 18 | **MAC column value** | Partial | Only MAC-authenticated (EPON) ONTs carry a MAC as their auth code, which can be formatted as `aa:bb:cc:dd:ee:ff`; GPON SN authentication exposes no MAC on the OLT side, so the column shows `-`. Getting it from the ONT itself would have to go through the TR-069 parameter mapping (see #5) |
+| 18 | ~~**MAC column value**~~ | **Done** | GPON SN-authenticated ONTs get their MAC from the OLT too: the background backfill sends `display ont ipconfig <port> <ONT ID>` to online ONTs without a MAC and normalises `ONT MAC` to `AA:BB:CC:DD:EE:FF` (Huawei's 4-4-4 form is accepted); only `0000-0000-0000` keeps the `-` and is flagged so it is not retried. A collected MAC is never wiped by later collection |
 | 19 | Output label case fallback | Handled | English labels are not case-stable across firmware versions (e.g. `Traffic Schedulers` / `traffic Schedulers`), so the translation table tries an exact match first and falls back to a case-insensitive one; labels/values wrapped onto the next line are stitched back together |
 
 ---
@@ -582,7 +620,7 @@ Packages under `com.tr069.acs`, split by responsibility:
 | `template` | **Configuration intent templates**: entity, Mapper, Service, Controller (intent field definitions centralized in `ConfigTemplateService#FIELD_DEFS`) |
 | `biz` | Business templates: orchestration entity, member view, execution records, pre-delivery self-check |
 | `worklist` | ONT records (`loader`/`registry`/`model`), model semantic mapping (`ModelMappingService`), capability tree export (`ModelTreeStore`), model adaptation (`ModelAdaptationService`), work order creation and query (`WorklistDeliveryService`, `controller/WorklistExecuteController`) |
-| `olt` | **OLT management (read-only)**: Telnet session and command orchestration (`telnet/OltCliSession`, only `display` / `show` / `enable` / `config` / `quit`), output parsing (`telnet/OltInfoParser`: boards / VLAN / ONTs / DBA / line profiles / service and TR069 profiles / traffic profiles / service flows), vendor command differences (`telnet/OltVendor`), raw connection (`telnet/TelnetClient`, paging prompts and continuation), template and collection models (`model/OltDbaProfile`, `OltLineProfile`, `OltGemport`, `OltGemMapping`, `OltSrvProfile`, `OltTr069Profile`, `OltTrafficTable`, `OltServicePort`), ledger and sync (`service/OltService`), scheduled refresh (`service/OltAutoRefreshService`), controllers and models |
+| `olt` | **OLT management (collection + delivery)**: Telnet session and command orchestration (`telnet/OltCliSession`, only `display` / `show` / `enable` / `config` / `quit`), output parsing (`telnet/OltInfoParser`: boards / VLAN / ONTs / DBA / line profiles / service and TR069 profiles / traffic profiles / service flows), vendor command differences (`telnet/OltVendor`), raw connection (`telnet/TelnetClient`, paging prompts and continuation), template and collection models (`model/OltDbaProfile`, `OltLineProfile`, `OltGemport`, `OltGemMapping`, `OltSrvProfile`, `OltTr069Profile`, `OltTrafficTable`, `OltServicePort`), ledger and sync (`service/OltService`), scheduled refresh (`service/OltAutoRefreshService`), controllers and models |
 | `api` | Admin APIs: device, capability, business, RPC task, statistics, login, plus **system management** (users / role permissions / login log) and their Services; the `auth` sub-package holds the permission-point list, login-source detection and real-IP detection |
 | `exec` | **Intent delivery executor**: plan rendering (`IntentPlanRenderer`), execution and task table (`IntentDeliveryService`, `DeviceTask`), task-finished events |
 | `openapi` | **Northbound API**: port and path isolation (`config`), query/delivery/event-subscription controllers, Webhook push and event delivery, device online/offline detection (`watch`) |
@@ -675,12 +713,16 @@ For ONT onboarding, packaging for production and troubleshooting, see
 | `acs.worklist.root-path` | `./configuration` | External config root (`models/`); relative paths resolve against the jar directory, so any working directory points to the same place |
 | `acs.queue.enabled` | `true` | Disable to fall back to in-process handling |
 | `acs.device.account.read-timeout-seconds` | `30` | How long to wait for a device when querying its local account (super-admin password) |
+| `acs.device.account.total-timeout-seconds` | `70` | Total budget for one account query (seconds): wake-up + two read rounds + per-path retries; keep it below the frontend's 90s request timeout |
+| `acs.device.account.offline-wakeup-wait-seconds` | `30` | How long to wait for an offline device to reconnect after a connection request (seconds) |
 | `acs.device.lan.auto-refresh.enabled` | `true` | Master switch for periodic LAN port status refresh |
 | `acs.device.lan.auto-refresh.interval-millis` | `300000` | Refresh interval (ms), 5 minutes by default |
 | `acs.device.lan.auto-refresh.wait-seconds` | `120` | Per-round wait limit for device responses (seconds); a timeout is not a failure |
 | `acs.device.lan.auto-refresh.max-devices-per-round` | `200` | Max devices refreshed per round |
 | `acs.agent.rpc-timeout` | `510` | Timeout for a single RPC waiting for the device (seconds) |
 | `acs.exec.request-timeout-seconds` | `90` | Timeout for a delivery waiting for the device (seconds) |
+| `acs.olt.log-echo` | `false` | Whether the full output of every OLT command is written to the log (set `true` temporarily when troubleshooting). Turning it off only drops the output body; the command timing line is still printed |
+| `acs.olt.max-raw-output-chars` | `60000` | Character cap for the raw output archived by a collection run; longer output is truncated |
 | `acs.openapi.port` | `8899` | Dedicated northbound port; set 0 to host it under the admin port |
 | `acs.openapi.path-prefix` | `/openapi/v1` | Northbound path prefix; auth and port isolation both key off it |
 | `acs.openapi.webhook.max-attempts` | `5` | Max retries for event push |
@@ -786,13 +828,13 @@ places to start (full list in section 2):
 
 How to join in: issues and PRs on either repository are seen; PRs are preferred on GitHub (Gitee is
 synced from it). When reporting a parsing bug, include the **raw text output** plus the device model
-and version; if you change command or parsing behaviour, please add a case under
-`src/test/java/com/tr069/acs/olt/telnet/` (the existing cases are built from real output samples).
+and version; if you change command or parsing behaviour, please attach the matching output excerpt and
+explain what the parser did before and after (the repository currently ships no unit tests).
 
 The remaining items (#7 legacy data migration, #10 alarms and finer permissions, #11 UI polish,
 #12 wake-up coverage for batch ops, #13 provisioning visibility, #14 CR credential rewrite
-compatibility, #16 ONT batch operation buttons, #17 service flow operation buttons, #18 MAC column
-value, #19 output label case fallback) are open for anyone to pick up — just open an issue and say so.
+compatibility, #16 ONT batch operation buttons, #17 service flow operation buttons,
+#19 output label case fallback) are open for anyone to pick up — just open an issue and say so.
 
 > This project is meant for managing **devices you are authorized to manage**: get permission before
 > pointing it at someone else's network or devices, and follow local laws and your operator's rules.

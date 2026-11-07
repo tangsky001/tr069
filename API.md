@@ -45,13 +45,13 @@
 ### 1.3 统一响应体
 
 ```json
-{ "code": 200, "message": "success", "data": { } }
+{ "code": 200, "message": "成功", "data": { } }
 ```
 
 | 字段 | 说明 |
 | --- | --- |
 | `code` | `200` 成功；`500` 通用业务失败；`401` 登录失效；`403` 没权限；其它为各接口自定义业务码 |
-| `message` | 成功时是 `success`，失败时是可直接展示给用户中文原因 |
+| `message` | 成功时是 `成功`，失败时是可直接展示给用户中文原因 |
 | `data` | 业务数据，失败时通常为 `null` |
 
 业务码沿用 HTTP 语义，省一层翻译：成功 `200`、业务失败 `500`、缺令牌 `401`、缺权限 `403`。
@@ -86,7 +86,7 @@ HTTP 状态码只在缺令牌与缺权限时和业务码一起跟着变（HTTP 4
 // 请求
 { "username": "admin", "password": "******" }
 // 响应
-{ "code": 200, "message": "success",
+{ "code": 200, "message": "成功",
   "data": { "token": "eyJhbGciOi...", "role": "SUPER_ADMIN", "source": "WEB" } }
 ```
 
@@ -126,7 +126,7 @@ HTTP 状态码只在缺令牌与缺权限时和业务码一起跟着变（HTTP 4
 
 ### 2.3 登出
 
-`POST /api/user/logout` — 服务端无状态 Token，此接口仅用于前端清会话，返回 `success`。
+`POST /api/user/logout` — 服务端无状态 Token，此接口仅用于前端清会话，返回 `成功`。
 
 ---
 
@@ -143,7 +143,7 @@ HTTP 状态码只在缺令牌与缺权限时和业务码一起跟着变（HTTP 4
 | 型号语义映射 | `/api/models` | §4.7 |
 | 工单 / 光猫档案 | `/api/worklist` | §4.8 |
 | 首页概览 | `/api/dashboard` | §4.9 |
-| OLT 管理（Telnet 采集） | `/api/olt` | §4.10 |
+| OLT 管理（Telnet 采集 + 配置下发 + ONT 注册） | `/api/olt` | §4.10 |
 | 设备预设（引擎内部） | 无接口 | §4.11 |
 | 文件与固件 | `/api/files` | §4.12 |
 | 系统管理（用户与角色权限） | `/api/system` | §4.13 |
@@ -239,6 +239,18 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 | POST | `` | `ConfigTemplateSaveRequest` | 新增或更新（带 `id` 为更新） |
 | POST | `/{id}/delete` | — | 删除 |
 
+`ConfigTemplateSaveRequest`：
+
+```json
+{ "id": null, "name": "WAN-Internet", "category": "WAN_DHCP", "groupName": "",
+  "enabled": true, "remark": "", "incremental": false, "fields": { "vlan_id": 41 } }
+```
+
+- `incremental`（默认 `false`）：**增量业务**开关。`true` 时下发只 `AddObject` 新增这一条业务，
+  **不删除、不改写**设备上已有的其它业务（已有的 IPTV / VOIP / 用户自建 Internet 都保持原样）；
+  `false` 为整单覆盖，WAN 类业务会先清理同设备上除 TR069 管理通道外的连接再新建。
+  判据取任务上的模板 id，下发时现查模板，因此改了开关对排队中的任务同样生效。
+
 ### 4.6 业务模板
 
 基础路径 `/api/biz-template`。多张意图模板编排成一个业务包。
@@ -310,28 +322,70 @@ curl 'http://127.0.0.1:8888/api/device/page?page=1&size=20&isp=telecom' -H 'X-To
 `online` 按 `last_contact_time` 落在 `acs.dashboard.online-window-seconds`（默认 900 秒）内判定，
 与 §4.1 的会话实时在线口径不同——重启后会话表清空，前者不受影响。
 
-### 4.10 OLT 管理（Telnet 采集）
+### 4.10 OLT 管理（Telnet 采集 + 配置下发）
 
 基础路径 `/api/olt`。
 
-OLT 不走 TR-069：纳管方式是 Telnet 登录设备命令行执行查询。台账在 `olt_device`，
+OLT 不走 TR-069：纳管方式是 Telnet 登录设备命令行。台账在 `olt_device`，
 同步结果在 `olt_board`，每次连接/同步的回显留档在 `olt_sync_record`（排查解析问题用）。
+**采集只发 `display` / `show`，配置下发走独立接口**（VLAN、DBA、线路模板、TR-069 模板、一键开局、
+ONT 注册、自动发现开关、删除业务板 ONT），两者共用同一个会话池。
+
+**返回约定**：所有写接口返回的都是 `OltDetail`——下发成功后再采一遍的最新详情，页面直接用它刷新，
+不用再调一次 `GET /{id}`。预演接口（`*/preview`）只编命令、不碰设备，返回
+`{commands: [...], warnings: [...]}`（`OltQuickSetupPreview`）。
 
 | 方法 | 路径 | 参数 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/list` | `keyword`(名称/地址/型号模糊) | OLT 列表，密码不回显，只给 `hasPassword` |
-| GET | `/{id}` | — | 详情：`{device, boards, records}`，`records` 为最近 10 条 |
+| GET | `/{id}` | — | 详情：`{device, boards, records, vlan, template, ontRows, deepSyncing}` |
+| GET | `/options` | — | 台账表单备选：厂商码表、字符集、默认端口与默认账号 |
 | POST | `/save` | 见下 | 新增（`id` 为空）或修改（`id` 必填） |
 | POST | `/delete` | `{id}` | 删除台账，同时物理清理板卡 |
 | POST | `/test` | 保存入参 | 诊断测试，**未保存的表单也能测**；不覆盖已采集的板卡 |
 | POST | `/{id}/test` | — | 对已保存设备做诊断测试 |
-| POST | `/{id}/sync` | — | 登录采集版本与板卡，覆盖写 `olt_board` 并刷新台账，返回最新详情 |
-| POST | `/{id}/vlan` | `{vlanIds, tagged[], untagged[]}` | 新建 VLAN 并配成员端口，成功后自动重采 |
-| DELETE | `/{id}/vlan` | `[100, 200]` | 删除勾选的 VLAN（下发 `no vlan ...`，连续段合并成一条），成功后自动重采 |
-| GET | `/{id}/actions` | — | 命令动作目录：这台设备能下发哪些命令（章节 / 功能 / 参数 / 视图 / 是否查询 / 是否高风险） |
-| POST | `/{id}/exec` | `{code, params}` | 执行一条命令动作。查询类返回设备回显，配置类下发后重采并返回最新详情 |
+| POST | `/{id}/sync` | — | 全量采集：版本、板卡、端口 ONT、VLAN、模板、业务流，覆盖写库 |
+| POST | `/{id}/quick-sync` | `scope`(可选) | 只采板卡，秒级返回机框与型号；其余数据后台补（`deepSyncing=true`） |
+| POST | `/{id}/sync-section` | `scope`=`boards`/`ont`/`vlan`/`template`、`force` | 按页签只采目标数据段；已有明细按 SN 回填，不会被抹空 |
+| POST | `/{id}/refresh` | — | 实时刷新：直连设备采最新数据并入库 |
+| POST | `/{id}/boards/confirm` | — | 确认所有待确认板卡（华为 `board confirm 0`） |
+| POST | `/{id}/ont-query` | `{action, frameNo, slotNo, portNo, ontId}` | 单条 ONT 按需查询，`action`=`optical`/`version`/`register` |
+| POST | `/{id}/port-optics` | `slotNo`, `portNo` | 端口光模块按需查询（`display port state <口>`） |
 | GET | `/{id}/records` | `limit`(默认10，上限100) | 采集记录，`rawPreview` 为回显片段 |
 | GET | `/web-accounts` | — | 「允许访问的 Web 登录账号」候选，来自 `sys_user` 启用账号 |
+| GET | `/session-pool` | — | 会话池状态：保活开关、探活周期、每台设备空闲会话数 |
+| POST | `/session-pool/keepalive` | `{enabled}` | 保活开关 |
+
+写操作（请求体与预演见 §4.10.1）：
+
+| 方法 | 路径 | 参数 | 说明 |
+| --- | --- | --- | --- |
+| GET / POST | `/{id}/vlan/form`、`/{id}/vlan/preview` | — / VLAN 入参 | 新建 VLAN 的表单元数据 / 命令预演 |
+| POST | `/{id}/vlan` | `{vlanIds, tagged[], untagged[]}` | 新建 VLAN 并配成员端口，成功后自动重采 |
+| DELETE | `/{id}/vlan` | `[100, 200]` | 删除勾选的 VLAN（连续段合并成一条 `no vlan ...`） |
+| POST / DELETE | `/{id}/vlan/port-vlan` | `{iface, vlanIds, nativeVlan}` | 上行口放通 / 解除 VLAN（`port vlan` / `no port vlan`） |
+| GET | `/{id}/dba-profile/form` | — | 新增 DBA 模板的表单元数据（五类模板的取值上下限） |
+| POST | `/{id}/dba-profile/preview` | DBA 入参 | 命令预演 |
+| POST / DELETE | `/{id}/dba-profile` | DBA 入参 / `[10, 11]` | 新增 / 删除 DBA 模板 |
+| GET | `/{id}/line-profile/form` | `profileId`, `gemportId`(可选) | 线路模板三个弹窗的表单元数据 |
+| POST | `/{id}/line-profile/preview` | 见 §4.10.1 | 三个弹窗的命令预演 |
+| POST | `/{id}/line-profile/tcont` | `{profileId, ponType, tcontId, dbaProfileId}` | 加一条 T-CONT |
+| POST | `/{id}/line-profile/gemport` | `{profileId, ponType, tcontId, gemportId}` | 加一个 GEM Port |
+| POST | `/{id}/line-profile/gem-mapping` | `{profileId, gemportId, mappingIds, vlans}` | 给 GEM Port 加映射（可一次多条） |
+| GET / POST | `/{id}/tr069-profiles` | — / TR-069 入参 | TR-069 模板列表（实时读设备）/ 新增模板 |
+| GET | `/{id}/tr069/form` | — | TR-069 模板表单默认值与取值约束 |
+| GET | `/{id}/quick-setup/form`、`/{id}/quick-setup/config` | `defaults` | 一键开局的表单元数据 / 已保存的开局参数 |
+| POST | `/{id}/quick-setup/config` | 开局参数 | 保存开局参数（同一台设备谁打开都是这一套） |
+| POST | `/{id}/quick-setup/preview`、`/{id}/quick-setup` | 见 §4.10.1 | 一键开局预演 / 下发 |
+| POST | `/{id}/terminal-user` | `{username, password, level, profile, reenter, appendedInfo}` | 在 OLT 上建本地用户（6~15 位，`level` 1 只看 / 2 可改） |
+| GET | `/{id}/ont-auto-find` | — | 各 PON 口自动发现开关状态（`supported/totalPorts/enabledPorts/disabledPorts`） |
+| POST | `/{id}/ont-auto-find/enable` | — | 一键开启全部 GPON 业务板 PON 口的自动发现 |
+| POST | `/{id}/ont/delete-all` | `{slots: []}` | 删除业务板上的全部 ONT（留空=所有业务板），逐口 `ont delete <端口> all` |
+| GET | `/{id}/actions` | — | 命令动作目录（章节 / 功能 / 参数 / 视图 / 是否查询 / 是否高风险） |
+| POST | `/{id}/exec` | `{code, params}` | 执行一条命令动作；查询类返回回显，配置类返回重采后的详情 |
+| POST | `/{id}/actions/preview`、`/{id}/actions/previews` | `{code, params}` / 数组 | 单条 / 整页批量命令预演，返回 `{动作编号: 命令文本}` |
+
+ONT 注册（autofind → `ont confirm`）单独见 §4.10.2。
 
 新建 VLAN 入参（页面「创建」弹窗）：
 
@@ -420,7 +474,7 @@ OLT 不走 TR-069：纳管方式是 Telnet 登录设备命令行执行查询。�
 | --- | --- |
 | 用户视图下 `config` 也是 Unknown command | 先 `enable` 进特权视图，再 `config`；`quit` 只退一层，**不能再 quit**（那是 logout，设备会停下来问 y/n） |
 | `display temperature all` → `% Parameter error` | 退到按槽位 `display temperature 0/<槽位>`，回显 `The temperature of the board:  41C( 105F)` |
-| 这一版 `display port` 只有 desc/mode/statistics/vlan | **不发任何 display port 命令**，页面端口行只显示 ONT 数量 |
+| 这一版 `display port` 只有 desc/mode/statistics/vlan | 采集阶段**不发 `display port`**，端口行按 `display board 0` 的端口数补齐；光模块数值另走接口视图 `interface gpon 0/<槽位>` → `display port state <口>`（见下） |
 | `display ont info 0 1 all` 只在 config 视图生效 | ONT 采集放在 config 视图里，参数是空格分隔；**按板查，不逐端口查**，一条命令带回整块板各端口的 ONT |
 | 空端口在整板回显里没有对应段落 | 按板卡端口数补齐，记成 0 个 ONT，端口仍然列出 |
 
@@ -471,7 +525,9 @@ ONT 数量必须用**空格分隔**的参数（`display ont info 0 1 all`，不�
 端口列表以 JSON 存在 `olt_board.ports_json`（端口数不多，不单开表），详情接口按 `board.ports` 数组返回。
 每个端口带 `frameNo` / `slotNo` / `portNo`，页面显示成 `P0 0/1/0   23 ONT / 22 在线`——接口标识和
 命令行里的 F/S/P 一致，能直接对上物理口；回显里没出现的端口记 `0 ONT / 0 在线`，照常列出。
-不发 display port 命令，因此不采集光模块在位状态，页面也不画灯。
+端口本身不发 `display port`；光模块数值在接口视图下用 `display port state <端口>` 单独采
+（Tx 发光 / 收光 / 温度 / 偏置电流 / 电压），随板卡端口一起入库，点开光模块弹窗时也会实时再查一次
+（`POST /{id}/port-optics`）。
 
 点开某个端口会列出这个口下**每一条 ONT**（`onts[]`），在线和不在线都在，页面显示
 `#0  SN  型号  在线/离线`。字段：`ontId` / `sn`（GPON 是 SN，EPON 是 MAC） / `runState`
@@ -517,6 +573,156 @@ H802SCUN（主控板 4 个 GE 口）、H801X2CS（2 路 10GE）、HSGQ-E04（4 �
 
 型号、版本、板卡均为宽松解析：解析不出就留空（页面显示 `-`），不阻断同步。
 解析不符合现场设备时，用 `GET /{id}/records` 拿到原始回显（前 8000 字符）再补正则。
+
+#### 4.10.1 写操作与命令预演
+
+三条通用规则：
+
+1. **预演与下发同源**：`*/preview` 和真正的下发接口调的是同一段命令拼装代码，预演返回
+   `{commands, warnings}`，页面照着显示即可，不存在「预览一套、执行另一套」。
+2. **下发后只重读受影响的那部分**（VLAN 只重读 VLAN、DBA 只重读 DBA 模板），接口返回的
+   `OltDetail` 已经是刷新后的数据。
+3. **参数在下发前就校验**：索引重复、越界、端口被两边占用、模板不存在，都会直接返回
+   `success=false` 并说明原因，不会把一条注定被设备拒绝的命令发下去。
+
+新增 DBA 模板（`profileId` 10-512，`type` type1~type5，带宽按类型取用）：
+
+```json
+{ "profileId": 10, "name": "dba_1000", "type": "type2",
+  "fixKbps": null, "assureKbps": 1000000, "maxKbps": null }
+```
+
+线路模板三件事（T-CONT → GEM Port → GEM 映射，按这个顺序做）：
+
+```json
+// POST /{id}/line-profile/tcont
+{ "profileId": 10, "ponType": "gpon", "tcontId": 1, "dbaProfileId": 10 }
+
+// POST /{id}/line-profile/gemport
+{ "profileId": 10, "ponType": "gpon", "tcontId": 1, "gemportId": 1 }
+
+// POST /{id}/line-profile/gem-mapping（序号与 VLAN 一一对应，可一次多条）
+{ "profileId": 10, "ponType": "gpon", "gemportId": 1,
+  "mappingIds": "0,1", "vlans": "46,41" }
+```
+
+新增 TR-069 模板（`profileId` 1-32）：
+
+```json
+{ "profileId": 10, "profileName": "acs_hn", "url": "http://10.10.19.2:9090/ACS-server/ACS",
+  "acsUsername": "itms", "acsPassword": "itms",
+  "informEnable": true, "informInterval": 300,
+  "username": "itms", "password": "itms", "port": 7547 }
+```
+
+上行口放通 / 解除 VLAN（`iface` 必须写到端口，如 `0/7/0`）：
+
+```json
+{ "iface": "0/7/0", "vlanIds": "41,45-46", "nativeVlan": false }
+```
+
+一键开局：一次提交端口 VLAN 模式、业务 VLAN、TR-069 模板，后端按顺序编命令；
+
+```json
+{
+  "portModeEnabled": true,
+  "ports": [{ "type": "gpon", "no": 1 }],
+  "mode": "hybrid",
+  "vlanList": "100-200,300",
+  "createVlanIds": "100,200",
+  "addCreatedToPorts": true,
+  "tr069": { "profileId": 10, "profileName": "acs_hn", "url": "http://10.10.19.2:9090/ACS-server/ACS" }
+}
+```
+
+删除业务板上的全部 ONT（`slots` 留空表示所有业务板，槽位号来自采集到的板卡）：
+
+```json
+{ "slots": [2] }
+```
+
+写失败的返回：`{"success": false, "message": "…"}`，HTTP 仍是 200；
+命令已下发但设备回 `% … error` 时，`message` 里带设备原文，页面据此提示。
+
+#### 4.10.2 ONT 注册（autofind → ont confirm）
+
+一条光猫从「待注册」到「能上网」要经过：采集待注册 → 匹配模板 → 预演 → 下发注册 →
+建业务虚口。前四步都是接口，最后一步在注册成功后由后端自动完成。
+
+| 方法 | 路径 | 参数 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/{id}/ont-autofind` | — | 实时登设备执行 `display ont autofind all`，返回待注册 ONT（`id/fsp/sn/loid/model/vendorId/ponType`），不读库 |
+| GET | `/{id}/ont-reg/templates` | `onlyCurrent` | 注册模板列表；`onlyCurrent=true` 只返回本设备 + 通用模板 |
+| GET | `/{id}/ont-reg/template/default` | `oltIp`(可选) | 新建模板的默认值（`oltId`/`oltIp` 按设备预填） |
+| POST | `/{id}/ont-reg/template` | 模板对象 | 新增或更新模板（`id` 为空即新增） |
+| DELETE | `/{id}/ont-reg/templates` | `[1, 2]` | 批量删除模板（逻辑删除） |
+| GET / POST | `/{id}/ont-reg/config` | — / 参数对象 | 自动注册参数（见下表），没存过给一份默认值 |
+| POST | `/{id}/ont-reg/scan` | — | 立刻跑一轮自动注册，返回本轮成功台数 |
+| GET | `/{id}/ont-reg/records` | `limit`(默认 50) | 注册记录，含模板名快照、命令、失败原因、操作人与来源 |
+| POST | `/{id}/ont-reg/preview` | 注册请求 | 只编命令不下发，返回 `["…", "…"]` |
+| POST | `/{id}/ont-reg/register` | 注册请求 | 注册选中的 ONT，逐台返回结果 |
+
+注册请求（`rows` 留空表示注册设备上当前所有待注册的；`templateId` 留空按优先级自动匹配）：
+
+```json
+{
+  "templateId": 3,
+  "rows": [
+    { "id": 1, "fsp": "0/2/0", "sn": "4857544312345678", "model": "HG8245", "ponType": "GPON" }
+  ]
+}
+```
+
+`rows[].id` 就是 `display ont autofind` 回显里的 `Number`，`ont confirm` 用它定位端口与槽位；
+`sn`/`loid`/`password` 按模板的 `authMode` 取用。
+
+注册模板字段（`olt_ont_reg_template`，命中规则：启用 + PON 类型/端口/型号全部匹配，优先级小的先命中）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `priority` | 匹配优先级，小的先试 |
+| `enabled` | 1 启用 / 0 停用 |
+| `authMode` | `SN` / `MAC` / `LOID` / `PASSWORD` |
+| `ponType` | `GPON` / `EPON` |
+| `lineProfileId` / `srvProfileId` | `ont confirm … ont-lineprofile-id` / `ont-srvprofile-id` |
+| `bindPorts` | 限定 PON 口，逗号分隔（如 `0/1/0,0/1/1`），空表示不限 |
+| `ontModels` | 限定光猫型号，逗号分隔，空表示不限 |
+| `workMode` | `HGU` / `SFU` / `MIX` / `MDU` |
+| `serviceVlanMap` | 业务 VLAN 映射（`VLAN:描述, …`），空表示沿用线路模板 |
+| `tr069Vlan` / `iptvVlan` / `multicastVlan` | TR-069 / IPTV / 组播 VLAN |
+| `oltId` | 限定设备；`NULL` 表示所有 OLT 通用 |
+
+自动注册参数（`olt_ont_reg_config`，一台 OLT 一条）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `enabled` | 1 打开后，后台按 `scanSeconds` 定时扫描并注册 |
+| `scanSeconds` | 扫描间隔（秒） |
+| `saveSeconds` | 注册成功后隔多久把 ONT 落库（秒） |
+| `concurrency` | 一轮最多注册几台 |
+| `autoMove` | 1 时 ONT 换 PON 口上线自动迁移注册位置 |
+| `autoDeleteOffline` | 1 时注册表满自动删离线 ONT（逐台 `undo service-port` + `ont delete`） |
+| `lastScanAt` / `lastRegisterAt` / `lastSaveAt` | 最近扫描 / 注册 / 落库时间（另有 `*Text` 便于直接展示） |
+
+注册结果（`OltOntRegisterResult`）：
+
+```json
+[{ "fsp": "0/2/0", "sn": "4857544312345678", "model": "HG8245",
+   "templateName": "华为HGU-默认", "authMode": "SN", "success": true,
+   "message": "已按模板「华为HGU-默认」注册；型号已写入描述；业务虚口 3 条",
+   "command": "ont confirm 0 4857544312345678 omci ont-lineprofile-id 10 ont-srvprofile-id 10" }]
+```
+
+要点：
+
+- **命令块**：`interface gpon 0/<槽位>` → `ont confirm …` → （注册成功后）`service-port …` → `quit`；
+  业务 VLAN 取模板的 `serviceVlanMap`，没配就沿用线路模板里的 GEM 映射。
+- **注册成功后会补一条 `ont modify <端口> <ONT ID> desc "<型号>"`**，写失败只记在 `message` 里，不影响注册结论。
+- **失败处理按设备回显关键字走**：
+  - 回显带 `exist` / `duplicate` / `already`（SN 已在别的口注册）：开了 `autoMove` 会先删旧记录再重试，成功记为「已自动移机」；没开就直接把设备原文放进 `message`；
+  - 回显带 `exceed` / `full` / `no more`（注册表满）：开了 `autoDeleteOffline` 会先清离线 ONT 再重试，成功记为「注册表已满，清掉 N 台离线 ONT 后注册成功」；
+  - 模板没匹配到时是「没有匹配到注册模板：PON 类型、端口或型号对不上，或者模板都停用了」。
+- 自动注册的来源记为 `AUTO`，手动注册记为 `MANUAL`，两者在 `ont-reg/records` 里可区分。
 
 ## OLT 首屏两段式同步（板卡先出来，慢数据后台补）
 
@@ -618,8 +824,10 @@ list.add(in(OltAction.View.PON, "pon.mac.bind", CH_PON_AUTH, "MAC 认证：添�
 
 ## OLT 自动采集（不用手点同步）
 
-后台定时任务 `OltAutoRefreshService`：**启动后 5 秒自动采一轮，之后每 5 分钟一轮**，
+后台定时任务 `OltAutoRefreshService`：**启动后 5 秒自动采一轮，之后每 30 小时一轮全量**，
 每轮重新登录每台 OLT 走一遍上面的采集，重新写 `olt_board` 和台账字段。
+板卡状态另有 `OltBoardRefreshService`：**每 2 分钟一轮**，每条只发 `display board 0`，设备忙就跳过（人工操作优先）。
+页签上的「同步」走 `POST /{id}/sync-section`，只采当前页签需要的那几段，不依赖定时任务。
 板卡插拔、端口 ONT 数、设备重启后的运行时长这些只能到设备上看的东西，页面上会自动跟上；
 页面不主动去「同步设备」，只读库里的最新数据。
 
@@ -628,12 +836,13 @@ list.add(in(OltAction.View.PON, "pon.mac.bind", CH_PON_AUTH, "MAC 认证：添�
 
 | 常量 | 值 | 说明 |
 | --- | --- | --- |
-| `INTERVAL_MILLIS` | 5 分钟 | 两轮之间的间隔，失败退避也按它的倍数算 |
+| `INTERVAL_MILLIS` | 30 小时 | 全量采集两轮之间的间隔，失败退避也按它的倍数算 |
 | `INITIAL_DELAY_MILLIS` | 5 秒 | 启动后跑第一轮，只留出建表和连接池初始化的时间 |
-| `maxRoundMillis` | 5 分钟 | 单轮耗时上限，超了剩下的设备留到下一轮 |
+| `maxRoundMillis` | 30 分钟 | 单轮耗时上限，超了剩下的设备留到下一轮 |
 | `MAX_BACKOFF` | 6 | 连续失败最多退避到 6 倍间隔 |
+| `OltBoardRefreshService.INTERVAL_MILLIS` | 2 分钟 | 板卡状态刷新周期（只发 `display board 0`） |
 
-几个保护：串行采集（OLT 的 Telnet 并发会话数很小）且上一轮没跑完本轮跳过；
+几个保护：设备间并行采集（默认最多 20 路，实际并行度取设备数与该值的较小者），上一轮没跑完本轮跳过；
 单台连不上时按连续失败次数把它的间隔逐步拉长（最多 6 倍），连好后恢复，不让一台掉线设备拖慢整轮；
 单台失败只记日志和采集记录（操作人写「自动刷新」），不影响其他 OLT。
 
@@ -1247,10 +1456,32 @@ CWMP 是短连接：光猫报完一轮就把 TCP 断了。**连接断开不等�
 **文件**：`GET /api/files`、`GET /api/files/{id}`、`GET /api/files/{id}/url`、`POST /api/files`、
 `POST /api/files/{id}/deliver`、`DELETE /api/files/{id}`
 
-**OLT**：`GET /api/olt/list`、`GET /api/olt/{id}`、`POST /api/olt/save`、`POST /api/olt/delete`、
-`POST /api/olt/test`、`POST /api/olt/{id}/test`、`POST /api/olt/{id}/sync`、
-`POST /api/olt/{id}/quick-sync`、`POST /api/olt/{id}/refresh`、
-`GET /api/olt/{id}/records`、`GET /api/olt/web-accounts`
+**OLT**：`GET /api/olt/list`、`GET /api/olt/{id}`、`GET /api/olt/options`、`POST /api/olt/save`、
+`POST /api/olt/delete`、`POST /api/olt/test`、`POST /api/olt/{id}/test`、`POST /api/olt/{id}/sync`、
+`POST /api/olt/{id}/quick-sync`、`POST /api/olt/{id}/sync-section`、`POST /api/olt/{id}/refresh`、
+`POST /api/olt/{id}/boards/confirm`、`POST /api/olt/{id}/ont-query`、`POST /api/olt/{id}/port-optics`、
+`GET /api/olt/{id}/records`、`GET /api/olt/web-accounts`、`GET /api/olt/session-pool`、
+`POST /api/olt/session-pool/keepalive`
+
+**OLT 写操作**：`GET /api/olt/{id}/vlan/form`、`POST /api/olt/{id}/vlan/preview`、
+`POST /api/olt/{id}/vlan`、`DELETE /api/olt/{id}/vlan`、`POST|DELETE /api/olt/{id}/vlan/port-vlan`、
+`GET /api/olt/{id}/dba-profile/form`、`POST /api/olt/{id}/dba-profile/preview`、
+`POST /api/olt/{id}/dba-profile`、`DELETE /api/olt/{id}/dba-profile`、
+`GET /api/olt/{id}/line-profile/form`、`POST /api/olt/{id}/line-profile/preview`、
+`POST /api/olt/{id}/line-profile/tcont`、`POST /api/olt/{id}/line-profile/gemport`、
+`POST /api/olt/{id}/line-profile/gem-mapping`、`GET|POST /api/olt/{id}/tr069-profiles`、
+`GET /api/olt/{id}/tr069/form`、`GET /api/olt/{id}/quick-setup/form`、
+`GET|POST /api/olt/{id}/quick-setup/config`、`POST /api/olt/{id}/quick-setup/preview`、
+`POST /api/olt/{id}/quick-setup`、`POST /api/olt/{id}/terminal-user`、
+`GET /api/olt/{id}/actions`、`POST /api/olt/{id}/exec`、`POST /api/olt/{id}/actions/preview`、
+`POST /api/olt/{id}/actions/previews`、`GET /api/olt/{id}/ont-auto-find`、
+`POST /api/olt/{id}/ont-auto-find/enable`、`POST /api/olt/{id}/ont/delete-all`
+
+**OLT ONT 注册**：`GET /api/olt/{id}/ont-autofind`、`GET|DELETE /api/olt/{id}/ont-reg/templates`、
+`GET /api/olt/{id}/ont-reg/template/default`、`POST /api/olt/{id}/ont-reg/template`、
+`GET|POST /api/olt/{id}/ont-reg/config`、
+`POST /api/olt/{id}/ont-reg/scan`、`GET /api/olt/{id}/ont-reg/records`、
+`POST /api/olt/{id}/ont-reg/preview`、`POST /api/olt/{id}/ont-reg/register`
 
 **北向查询**：`GET /openapi/v1/devices`、`GET /openapi/v1/devices/{sn}`、
 `GET /openapi/v1/devices/{sn}/online`、`GET /openapi/v1/devices/{sn}/capability/tree`、

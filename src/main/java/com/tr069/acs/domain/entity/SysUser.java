@@ -8,9 +8,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 管理端用户。
- */
+/** 管理端用户 */
 @Data
 @TableName("sys_user")
 public class SysUser {
@@ -24,20 +22,16 @@ public class SysUser {
 
     private String nickname;
 
-    /**
-     * 角色编码，对应 sys_role.code。
-     */
+    /** 角色编码，对应 sys_role.code */
     private String role;
 
-    /** 最近一次登录来源：WEB / CLIENT / MOBILE。 */
+    /** 最近一次登录来源：WEB / CLIENT / MOBILE */
     private String lastLoginSource;
 
-    /** 最近一次登录 IP。 */
+    /** 最近一次登录 IP */
     private String lastLoginIp;
 
-    /**
-     * 状态：1 启用，0 禁用
-     */
+    /** 状态：1 启用，0 禁用 */
     private Integer status;
 
     @TableLogic

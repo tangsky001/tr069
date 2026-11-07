@@ -10,11 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * 2.4G WiFi 实例 DAO。一行 = 一个 SSID 实例的全部下发路径与变量值。
- *
- * <p>该型号是否应该有行由 {@code device.cap_wifi_spec} 决定（含 2.4G 才有）。</p>
- */
+/** 2.4G WiFi 实例 DAO。一行 = 一个 SSID 实例的全部下发路径与变量值 */
 @Repository
 public class WlanADao {
 
@@ -72,7 +68,7 @@ public class WlanADao {
         return jdbc.update("DELETE FROM wlan_a WHERE device_id = ?", deviceId);
     }
 
-    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体。 */
+    /** 按 (device_id, instance_no) 新增或更新，返回主键并回填到实体 */
     public long upsert(WlanA r) {
         Optional<WlanA> exist = findOne(r.getDeviceId(), r.getInstanceNo());
         if (exist.isPresent()) {

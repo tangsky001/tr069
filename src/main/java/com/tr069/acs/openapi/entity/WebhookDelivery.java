@@ -7,23 +7,18 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 事件投递记录。
- *
- * <p>幂等键是 {@code webhook_id + event_id}：同一条事件不会因为重试推给接收方两遍，
- * 接收方拿 {@code eventId} 去重，平台这边则能查到每一次尝试的结果。</p>
- */
+/** 事件投递记录 */
 @Data
 @TableName("openapi_webhook_delivery")
 public class WebhookDelivery {
 
-    /** 等待推送。 */
+    /** 等待推送 */
     public static final String STATUS_PENDING = "PENDING";
 
-    /** 推送成功（2xx）。 */
+    /** 推送成功（2xx） */
     public static final String STATUS_SUCCESS = "SUCCESS";
 
-    /** 重试次数用尽仍未成功。 */
+    /** 重试次数用尽仍未成功 */
     public static final String STATUS_FAILED = "FAILED";
 
     @TableId(type = IdType.AUTO)

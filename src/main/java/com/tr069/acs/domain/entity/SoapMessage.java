@@ -7,9 +7,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * SOAP 报文日志。
- */
+/** SOAP 报文日志 */
 @Data
 @TableName("soap_message")
 public class SoapMessage {
@@ -21,14 +19,10 @@ public class SoapMessage {
 
     private String sn;
 
-    /**
-     * 报文类型：Inform / InformResponse / GetParameterValues ...
-     */
+    /** 报文类型：Inform / InformResponse / GetParameterValues */
     private String msgType;
 
-    /**
-     * 方向：in / out
-     */
+    /** 方向：in / out */
     private String direction;
 
     private String eventCode;

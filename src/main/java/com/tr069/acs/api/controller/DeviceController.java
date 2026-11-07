@@ -11,11 +11,13 @@ import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.agent.RpcDispatchService;
 import com.tr069.acs.common.PageResult;
 import com.tr069.acs.common.Result;
+import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.exec.DeviceTaskProgressService;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.queue.RpcTaskQueue;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
+import com.tr069.acs.api.service.DeviceListService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,9 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 设备管理接口：设备台账查询与 CWMP 方法手动下发。
- */
+/** 设备管理接口：设备台账查询与 CWMP 方法手动下发 */
 @Slf4j
 @RestController
 @RequestMapping("/api/device")
@@ -49,13 +49,9 @@ public class DeviceController {
     private final DeviceBusinessService businessService;
     private final DeviceAccountService accountService;
     private final DeviceTaskProgressService taskProgressService;
+    private final DeviceListService deviceListService;
 
-    /**
-     * 一批设备当前正在进行的下发任务，列表页每行用它显示「正在下发 xxx」。
-     *
-     * <p>顺带把每台设备指令队列里压着的条数一起给回来：重启 / 恢复出厂这类单条 RPC
-     * 不建任务，页面拿不到任务行，但至少能看出这台设备还有活没干完。</p>
-     */
+    /** 一批设备当前正在进行的下发任务，列表页每行用它显示「正在下发 xxx」 */
     @GetMapping("/tasks/active")
     public Result<Map<String, Map<String, Object>>> activeTasks(@RequestParam String sns) {
         List<String> snList = java.util.Arrays.stream(sns.split(","))
@@ -68,13 +64,75 @@ public class DeviceController {
         return Result.success(taskProgressService.activeBatch(snList));
     }
 
-    /**
-     * 设备台账统计：总数 / 在线 / 离线。
-     *
-     * <p>口径与列表每一行的在线标签一致，都取 {@code cpe_device.status}：
-     * 顶上这三个数就是列表里绿标灰标的数量，两者不会打架。首页概览用的是
-     * 「最近上报落在窗口内」的另一套口径，那边统计的是业务在线率，不要混用。</p>
-     */
+    /** 可下发的 CWMP 方法清单（下拉建议项，仍允许手工输入其它方法） */
+    @GetMapping("/rpc/methods")
+    public Result<List<String>> rpcMethods() {
+        return Result.success(List.of(
+                RpcMethod.GET_RPC_METHODS.getValue(),
+                RpcMethod.GET_PARAMETER_NAMES.getValue(),
+                RpcMethod.GET_PARAMETER_VALUES.getValue(),
+                RpcMethod.SET_PARAMETER_VALUES.getValue(),
+                RpcMethod.GET_PARAMETER_ATTRIBUTES.getValue(),
+                RpcMethod.SET_PARAMETER_ATTRIBUTES.getValue(),
+                RpcMethod.ADD_OBJECT.getValue(),
+                RpcMethod.DELETE_OBJECT.getValue(),
+                RpcMethod.REBOOT.getValue(),
+                RpcMethod.FACTORY_RESET.getValue(),
+                RpcMethod.DOWNLOAD.getValue(),
+                RpcMethod.UPLOAD.getValue(),
+                RpcMethod.SCHEDULE_INFORM.getValue(),
+                RpcMethod.CHANGE_DU_STATE.getValue()));
+    }
+
+    /** 快捷操作的「命令 → RPC」映射，页面菜单 command 与下发方法由这里对上 */
+    @GetMapping("/rpc/quick-commands")
+    public Result<Map<String, String>> quickCommands() {
+        Map<String, String> commands = new LinkedHashMap<>();
+        commands.put("probe", RpcMethod.GET_RPC_METHODS.getValue());
+        commands.put("reboot", RpcMethod.REBOOT.getValue());
+        commands.put("batch-reboot", RpcMethod.REBOOT.getValue());
+        commands.put("factoryReset", RpcMethod.FACTORY_RESET.getValue());
+        commands.put("factory-reset", RpcMethod.FACTORY_RESET.getValue());
+        commands.put("factory-clear", RpcMethod.FACTORY_RESET.getValue());
+        commands.put("deep-factory-reset", RpcMethod.FACTORY_RESET.getValue());
+        commands.put("deep-factory-clear", RpcMethod.FACTORY_RESET.getValue());
+        return Result.success(commands);
+    }
+
+    /** 列表页的轮询节奏：几秒刷一次列表、任务、业务概要、RPC 结果 */
+    @GetMapping("/poll-config")
+    public Result<Map<String, Object>> pollConfig() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        // 列表（在线状态、顶栏统计）
+        config.put("listSeconds", 15);
+        // 下发任务进度：比列表快，下发只有几秒到几十秒
+        config.put("taskSeconds", 5);
+        // 业务概要回读：与后端 LAN 网口状态自动刷新（5 分钟）同频
+        config.put("bizSeconds", 300);
+        // 单条 RPC 结果轮询与最大等待次数（列表页行内提示）
+        config.put("rpcSeconds", 3);
+        config.put("rpcMaxAttempts", 60);
+        // 设备详情页盯单个任务：2 秒一次，最多等约 5 分钟
+        config.put("detailRpcSeconds", 2);
+        config.put("detailRpcMaxAttempts", 150);
+        return Result.success(config);
+    }
+
+    /** RPC 行内提示的措辞：设备上正在干什么、干完/失败怎么说 */
+    @GetMapping("/rpc/progress-labels")
+    public Result<Map<String, Map<String, String>>> rpcProgressLabels() {
+        Map<String, Map<String, String>> labels = new LinkedHashMap<>();
+        labels.put(RpcMethod.REBOOT.getValue(), Map.of(
+                "running", "正在重启", "success", "重启完成", "fail", "重启失败"));
+        labels.put(RpcMethod.FACTORY_RESET.getValue(), Map.of(
+                "running", "正在恢复出厂", "success", "恢复出厂完成", "fail", "恢复出厂失败"));
+        // 没登记的方法按这句说，页面不再自己拼
+        labels.put("default", Map.of(
+                "running", "正在下发", "success", "下发完成", "fail", "下发失败"));
+        return Result.success(labels);
+    }
+
+    /** 设备台账统计：总数 / 在线 / 离线 */
     @GetMapping("/stat")
     public Result<Map<String, Object>> stat() {
         long total = cpeDeviceMapper.selectCount(new LambdaQueryWrapper<>());
@@ -87,12 +145,7 @@ public class DeviceController {
         return Result.success(data);
     }
 
-    /**
-     * 设备分页查询，支持按序列号、房间号模糊匹配与运营商筛选。
-     *
-     * <p>房间号是台账侧登记的分群依据（下发时替换模板 {@code %room%} 的取值来源），
-     * 与序列号一样按模糊匹配：填 10 就能把 1001、1002 这一串房间一起捞出来。</p>
-     */
+    /** 设备分页查询，支持按序列号、房间号模糊匹配与运营商筛选 */
     @GetMapping("/page")
     public Result<PageResult<CpeDevice>> page(
             @RequestParam(defaultValue = "1") long page,
@@ -100,23 +153,76 @@ public class DeviceController {
             @RequestParam(required = false) String sn,
             @RequestParam(required = false) String isp,
             @RequestParam(required = false) String deviceType,
-            @RequestParam(required = false) String roomNo) {
-        LambdaQueryWrapper<CpeDevice> wrapper = new LambdaQueryWrapper<>();
-        wrapper.like(isNotBlank(sn), CpeDevice::getSn, sn)
-                .like(isNotBlank(roomNo), CpeDevice::getRoomNo, roomNo)
-                .eq(isNotBlank(isp), CpeDevice::getIsp, isp)
-                .eq(isNotBlank(deviceType), CpeDevice::getDeviceType, deviceType)
-                .orderByDesc(CpeDevice::getLastContactTime);
-
-        IPage<CpeDevice> result = cpeDeviceMapper.selectPage(new Page<>(page, size), wrapper);
-        return Result.success(PageResult.of(result.getRecords(), result.getTotal(), page, size));
+            @RequestParam(required = false) String roomNo,
+            @RequestParam(required = false) String optic,
+            @RequestParam(required = false) String sortKey,
+            @RequestParam(required = false) String sortOrder) {
+        // 排序 / 光模块筛选都在后端：台账列进 SQL，派生列走业务快照（见 DeviceListService）
+        return Result.success(deviceListService.page(page, size, sn, isp, deviceType, roomNo,
+                optic, sortKey, sortOrder));
     }
 
-    /**
-     * 批量业务信息：设备列表页整页一次拉取 WAN/WLAN/SIP 概要，避免逐行发请求。
-     *
-     * <p>sns 为逗号分隔的序列号，单台失败不影响其余。</p>
-     */
+    /** 导出台账 CSV：列、在线文案、时间格式全在后端定，页面只负责把文本存成文件 */
+    @GetMapping("/export")
+    public Result<Map<String, Object>> export(
+            @RequestParam(required = false) String sns,
+            @RequestParam(required = false) String sn,
+            @RequestParam(required = false) String isp,
+            @RequestParam(required = false) String deviceType,
+            @RequestParam(required = false) String roomNo) {
+        LambdaQueryWrapper<CpeDevice> wrapper = new LambdaQueryWrapper<>();
+        if (isNotBlank(sns)) {
+            List<String> snList = java.util.Arrays.stream(sns.split(","))
+                    .map(String::trim).filter(s -> !s.isEmpty()).toList();
+            if (!snList.isEmpty()) {
+                wrapper.in(CpeDevice::getSn, snList);
+            }
+        } else {
+            wrapper.like(isNotBlank(sn), CpeDevice::getSn, sn)
+                    .like(isNotBlank(roomNo), CpeDevice::getRoomNo, roomNo)
+                    .eq(isNotBlank(isp), CpeDevice::getIsp, isp)
+                    .eq(isNotBlank(deviceType), CpeDevice::getDeviceType, deviceType);
+        }
+        wrapper.orderByDesc(CpeDevice::getLastContactTime).last("limit 5000");
+        List<CpeDevice> records = cpeDeviceMapper.selectList(wrapper);
+        StringBuilder csv = new StringBuilder("SN,OUI,运营商,型号,硬件版本,固件版本,状态,注册时间,最近上报");
+        for (CpeDevice device : records) {
+            csv.append('\n')
+                    .append(cell(device.getSn())).append(',')
+                    .append(cell(device.getOui())).append(',')
+                    .append(cell(device.getIsp())).append(',')
+                    .append(cell(device.getProductClass() == null ? device.getDeviceType() : device.getProductClass())).append(',')
+                    .append(cell(device.getHardwareVersion())).append(',')
+                    .append(cell(device.getSoftwareVersion())).append(',')
+                    .append(CpeDevice.onlineOf(device.getStatus()) ? "在线" : "离线").append(',')
+                    .append(cell(timeText(device.getCreatedAt()))).append(',')
+                    .append(cell(timeText(device.getLastContactTime())));
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("fileName", "devices.csv");
+        data.put("content", csv.toString());
+        data.put("count", records.size());
+        return Result.success(data);
+    }
+
+    /** CSV 单元格：逗号、引号、换行都要转义，否则一行会被拆成两列 */
+    private static String cell(String value) {
+        if (value == null) {
+            return "";
+        }
+        String text = value.trim();
+        if (text.contains(",") || text.contains("\"") || text.contains("\n")) {
+            return "\"" + text.replace("\"", "\"\"") + "\"";
+        }
+        return text;
+    }
+
+    private static String timeText(java.time.LocalDateTime time) {
+        return time == null ? ""
+                : time.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    /** 批量业务信息：设备列表页整页一次拉取 WAN/WLAN/SIP 概要，避免逐行发请求 */
     @GetMapping("/business/batch")
     public Result<Map<String, Map<String, Object>>> businessBatch(@RequestParam String sns) {
         List<String> snList = java.util.Arrays.stream(sns.split(","))
@@ -127,9 +233,7 @@ public class DeviceController {
         return Result.success(businessService.summaryBatch(snList));
     }
 
-    /**
-     * 设备详情，同时回带在线会话的实时属性。
-     */
+    /** 设备详情，同时回带在线会话的实时属性 */
     @GetMapping("/{sn}")
     public Result<Map<String, Object>> detail(@PathVariable String sn) {
         CpeDevice device = cpeDeviceMapper.selectOne(
@@ -155,9 +259,7 @@ public class DeviceController {
         return Result.success(data);
     }
 
-    /**
-     * 设备在线状态。
-     */
+    /** 设备在线状态 */
     @GetMapping("/{sn}/status")
     public Result<Map<String, Object>> status(@PathVariable String sn) {
         CpeSession session = sessionManager.find(sn);
@@ -168,9 +270,7 @@ public class DeviceController {
         return Result.success(data);
     }
 
-    /**
-     * 在线会话列表。
-     */
+    /** 在线会话列表 */
     @GetMapping("/online")
     public Result<List<Map<String, Object>>> online() {
         List<Map<String, Object>> list = new ArrayList<>();
@@ -197,13 +297,7 @@ public class DeviceController {
         return value != null && !value.isBlank();
     }
 
-    /**
-     * 保存设备的房间号与备注。
-     *
-     * <p>房间号是下发时替换模板变量 {@code %room%} 的取值来源，例如把备注设为 0001，
-     * 下发 WiFi 名称时就会用 0001 替换掉模板里的 {@code %room%}。两者都是台账侧的
-     * 运维字段，不参与 CWMP 交互，因此直接改设备表即可，不需要设备在线。</p>
-     */
+    /** 保存设备的房间号与备注 */
     @PostMapping("/{sn}/remark")
     public Result<Boolean> updateRemark(@PathVariable String sn,
                                         @RequestBody(required = false) RemarkRequest request) {
@@ -222,9 +316,7 @@ public class DeviceController {
         return Result.success(rows > 0);
     }
 
-    /**
-     * 房间号与备注的保存入参。两个字段都允许传空串表示清空。
-     */
+    /** 房间号与备注的保存入参。两个字段都允许传空串表示清空 */
     @Data
     public static class RemarkRequest {
 
@@ -233,27 +325,42 @@ public class DeviceController {
         private String remark;
     }
 
-    /**
-     * 查询设备本地账号（超管 telecomadmin 等）。
-     *
-     * <p>每台设备的超管口令可能不一样，只能到设备上现读。这里对在线设备下发
-     * {@code GetParameterValues} 读 {@code User.{i}.Username} / {@code Password}，
-     * 账号与口令都是明文返回，前端直接展示给运维登后台用。</p>
-     *
-     * <p>请求会挂起等设备回值，最长 {@code acs.device.account.read-timeout-seconds}
-     * （默认 30s）；设备离线立即返回 offline，不空等。</p>
-     *
-     * @return {@code accounts}：账号列表，每项 instance / path / username / password；
-     *         {@code status}：success / empty / timeout / fail / offline
-     */
+    /** 查询设备本地账号（超管 telecomadmin 等） */
     @GetMapping("/{sn}/admin-account")
     public Result<Map<String, Object>> adminAccount(@PathVariable String sn) {
-        return Result.success(accountService.queryAdminAccount(sn));
+        Map<String, Object> data = new LinkedHashMap<>(accountService.queryAdminAccount(sn));
+        // 状态中文与标签色在此统一补：查询结果有 offline / timeout / fail / empty / success 五个分支，
+        // 页面原来自己维护一张码表，后端加一个分支就显示成「未知」
+        String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
+        data.put("statusText", adminStatusText(status));
+        data.put("statusLevel", adminStatusLevel(status));
+        return Result.success(data);
     }
 
-    /**
-     * 手动下发一条 CWMP RPC。
-     */
+    /** 超管账号查询结果的中文：查到了 / 没账号 / 超时 / 失败 / 设备离线 */
+    private static String adminStatusText(String status) {
+        return switch (status) {
+            case "success" -> "已获取";
+            case "empty" -> "无账号";
+            case "timeout" -> "超时";
+            case "fail" -> "失败";
+            case "offline" -> "离线";
+            default -> "未知";
+        };
+    }
+
+    /** 对应的标签配色：成功绿、无账号灰、超时橙、失败红、离线灰 */
+    private static String adminStatusLevel(String status) {
+        return switch (status) {
+            case "success" -> "success";
+            case "empty", "offline" -> "info";
+            case "timeout" -> "warning";
+            case "fail" -> "danger";
+            default -> "info";
+        };
+    }
+
+    /** 手动下发一条 CWMP RPC */
     @PostMapping("/{sn}/rpc/{rpcName}")
     public Result<Map<String, Object>> rpc(@PathVariable String sn,
                                            @PathVariable String rpcName,
@@ -268,23 +375,13 @@ public class DeviceController {
         return Result.success(data);
     }
 
-    /** IPPing 诊断对象在 TR-181 下的挂载位置。 */
+    /** IPPing 诊断对象在 TR-181 下的挂载位置 */
     private static final String PING_BASE_TR181 = "Device.IP.Diagnostics.IPPing.";
 
-    /** IPPing 诊断对象在 TR-098 下的挂载位置（直接挂在根节点下，没有 IP.Diagnostics 这一层）。 */
+    /** IPPing 诊断对象在 TR-098 下的挂载位置（直接挂在根节点下，没有 IP.Diagnostics 这一层） */
     private static final String PING_BASE_TR098 = "InternetGatewayDevice.IPPingDiagnostics.";
 
-    /**
-     * 下发 IPPing 诊断。
-     *
-     * <p>诊断对象的挂载位置两个数据模型完全不同：TR-181 藏在 {@code Device.IP.Diagnostics.} 下，
-     * TR-098 直接挂在 {@code InternetGatewayDevice.} 下。路径写错设备回 9005（无效参数名），
-     * 页面上只看得到「诊断没跑」，分不清是路径错了还是设备没执行——
-     * 这个分支因此放在后端：只有后端知道这台设备按哪种模型解读，页面传目标地址就行。</p>
-     *
-     * <p>三个参数必须一次性下发：只设 {@code DiagnosticsState=Requested} 而不先设 Host，
-     * 设备会拿上一次残留的目标去 ping，页面显示的结果是对着错目标跑出来的。</p>
-     */
+    /** 下发 IPPing 诊断 */
     @PostMapping("/{sn}/diagnostics/ping")
     public Result<Map<String, Object>> pingDiagnostics(@PathVariable String sn,
                                                         @RequestBody(required = false) PingRequest request) {
@@ -309,7 +406,7 @@ public class DeviceController {
         return Result.success(data);
     }
 
-    /** 诊断对象挂载位置，按设备登记的数据模型选。 */
+    /** 诊断对象挂载位置，按设备登记的数据模型选 */
     private String pingBase(String sn) {
         return DataModel.TR181 == DataModel.ofRoot(rootNodeOf(sn)) ? PING_BASE_TR181 : PING_BASE_TR098;
     }
@@ -321,13 +418,7 @@ public class DeviceController {
         return device == null ? null : device.getRootNode();
     }
 
-    /**
-     * 手动设置若干 CWMP 参数。
-     *
-     * <p>页面只提交「路径 + 值 + xsd 类型」三元组，{@code SetParameterValues} 的报文结构
-     * 由后端拼。类型不填按 string 处理——设备的自检多半只认自己声明的类型，
-     * 拿不准时在页面上选对类型，比让后端猜更直接。</p>
-     */
+    /** 手动设置若干 CWMP 参数 */
     @PostMapping("/{sn}/params/set")
     public Result<Map<String, Object>> setParams(@PathVariable String sn,
                                                  @RequestBody(required = false) ParamSetRequest request) {
@@ -352,13 +443,7 @@ public class DeviceController {
         return Result.success(data);
     }
 
-    /**
-     * {@code SetParameterValues} 的入参。
-     *
-     * <p>用 LinkedHashMap 是为了保住 Name → Value → Value_type 的顺序：
-     * CWMP 的 ParameterValueStruct 是 sequence，元素写反了设备会拒收，
-     * 而 Map.of() 的迭代顺序由哈希决定，不能保证。</p>
-     */
+    /** {@code SetParameterValues} 的入参 */
     private static Map<String, Object> spvArgs(String key, List<Map<String, String>> params) {
         Map<String, Object> args = new LinkedHashMap<>();
         args.put("ParameterKey", key == null || key.isBlank() ? "acs-param-set" : key.trim());
@@ -374,14 +459,14 @@ public class DeviceController {
         return entry;
     }
 
-    /** IPPing 诊断入参。 */
+    /** IPPing 诊断入参 */
     @Data
     public static class PingRequest {
         /** 目标 IP 或域名 */
         private String host;
     }
 
-    /** 自定义参数下发入参。 */
+    /** 自定义参数下发入参 */
     @Data
     public static class ParamSetRequest {
         /** 参数键，设备回传时会带上，便于把回应与本次下发对上 */
@@ -389,7 +474,7 @@ public class DeviceController {
         private List<ParamItem> items;
     }
 
-    /** 一条待设置的参数：路径 + 值 + xsd 类型。 */
+    /** 一条待设置的参数：路径 + 值 + xsd 类型 */
     @Data
     public static class ParamItem {
         private String name;

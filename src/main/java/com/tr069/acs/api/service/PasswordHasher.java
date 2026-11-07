@@ -11,15 +11,7 @@ import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
 import java.util.Base64;
 
-/**
- * 管理端口令散列。
- *
- * <p>使用 PBKDF2WithHmacSHA256，JDK 自带算法，不引入额外依赖。
- * 存储格式为 {@code pbkdf2$迭代次数$盐(base64)$散列(base64)}。</p>
- *
- * <p>为了平滑迁移，校验时若遇到历史明文口令，仍按明文比对并放行，
- * 由 {@code AuthController} 在登录成功后自动升级为散列值。</p>
- */
+/** 管理端口令散列 */
 @Slf4j
 @Component
 public class PasswordHasher {
@@ -31,9 +23,7 @@ public class PasswordHasher {
 
     private final SecureRandom random = new SecureRandom();
 
-    /**
-     * 生成口令散列。
-     */
+    /** 生成口令散列 */
     public String hash(String raw) {
         byte[] salt = new byte[SALT_BYTES];
         random.nextBytes(salt);
@@ -41,9 +31,7 @@ public class PasswordHasher {
         return PREFIX + "$" + ITERATIONS + "$" + b64(salt) + "$" + b64(hash);
     }
 
-    /**
-     * 校验明文口令与库中存储值是否匹配。
-     */
+    /** 校验明文口令与库中存储值是否匹配 */
     public boolean matches(String raw, String stored) {
         if (raw == null || stored == null) {
             return false;
@@ -73,9 +61,7 @@ public class PasswordHasher {
         return MessageDigest.isEqual(expected, actual);
     }
 
-    /**
-     * 存储值是否已是散列格式（false 表示历史明文口令，需要升级）。
-     */
+    /** 存储值是否已是散列格式（false 表示历史明文口令，需要升级） */
     public boolean isHashed(String stored) {
         return stored != null && stored.startsWith(PREFIX + "$");
     }

@@ -157,6 +157,14 @@
             <version>3.46.1.0</version>
         </dependency>
 
+        <!-- ==================== OLT Telnet 采集：Netty NIO 客户端 ==================== -->
+        <!-- IAC 协商/回显解析手写在 TelnetClient 里，这里只用 Netty 的网络层 -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+            <version>4.1.115.Final</version>
+        </dependency>
+
         <!-- ==================== 接口文档：启动后浏览器打开 /doc.html 看全部接口 ==================== -->
         <!-- knife4j 负责中文文档界面，它自带与之匹配的 springdoc（含原生 Swagger UI）。
              不要再单独声明 springdoc：版本一旦与 knife4j 不一致，
@@ -179,9 +187,24 @@
         <finalName>pilotacs-server</finalName>
 
         <resources>
+            <!--
+                banner.txt 单独开过滤：用 @project.version@ 把 pom 版本打进启动横幅。
+                只对这一个文件开，其余资源一律不过滤（yml 里的 ${} 占位符要保持原样）。
+                定界符沿用 spring-boot-starter-parent 配的 @...@，不会碰 ${}。
+            -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>banner.txt</include>
+                </includes>
+            </resource>
             <resource>
                 <directory>src/main/resources</directory>
                 <filtering>false</filtering>
+                <excludes>
+                    <exclude>banner.txt</exclude>
+                </excludes>
             </resource>
             <!--
                 全库只有一份建表脚本：根目录 sql/schema.sql。

@@ -2,49 +2,36 @@ package com.tr069.acs.worklist.model;
 
 import java.util.List;
 
-/**
- * 业务语义字典：固定的业务对象与业务字段定义。
- *
- * <p>业务模板只描述这几类业务对象和这些字段，不含任何 CWMP 节点路径；
- * 路径由型号映射表（{@code model_param_mapping} / {@code model_object_mapping}）给出，
- * 所以新增一种光猫不会动业务模板。</p>
- *
- * <p>{@code hints} 是节点名关键字，人工做映射时用来从设备能力树里推荐候选节点，
- * 只影响推荐顺序，不做自动绑定——节点命名各厂商差异大，最终由人工确认。</p>
- */
+/** 业务语义字典：固定的业务对象与业务字段定义 */
 public final class SemanticSchema {
 
     private SemanticSchema() {
     }
 
-    /**
-     * 业务字段定义。
-     */
+    /** 业务字段定义 */
     public record BizField(String code, String label, String type, boolean required, String... hints) {
     }
 
-    /**
-     * 业务对象定义。
-     */
+    /** 业务对象定义 */
     public record BizObject(String code, String label, boolean needInstance, List<BizField> fields) {
     }
 
-    /** Internet 上网 WAN（DHCP 或静态）。 */
+    /** Internet 上网 WAN（DHCP 或静态） */
     public static final String INTERNET_WAN = "Internet_WAN";
-    /** 语音 WAN。 */
+    /** 语音 WAN */
     public static final String VOIP_WAN = "VOIP_WAN";
-    /** 桥接 WAN。 */
+    /** 桥接 WAN */
     public static final String BRIDGE_WAN = "Bridge_WAN";
-    /** 2.4G 射频。 */
+    /** 2.4G 射频 */
     public static final String WIFI_2G = "WiFi_2G";
-    /** 5G 射频。 */
+    /** 5G 射频 */
     public static final String WIFI_5G = "WiFi_5G";
-    /** SIP 语音（VoiceService 配置，区别于承载它的 VOIP_WAN 连接）。 */
+    /** SIP 语音（VoiceService 配置，区别于承载它的 VOIP_WAN 连接） */
     public static final String VOICE = "Voice_Service";
-    /** 设备管理类意图（Telnet / 超管 / 重启等），多为厂商私有节点。 */
+    /** 设备管理类意图（Telnet / 超管 / 重启等），多为厂商私有节点 */
     public static final String DEVICE_MGMT = "Device_Mgmt";
 
-    /** WAN 类业务共用的字段。 */
+    /** WAN 类业务共用的字段 */
     private static final List<BizField> WAN_FIELDS = List.of(
             new BizField("enable", "启用连接", "boolean", true, "Enable"),
             new BizField("name", "连接名称", "string", false, "Name"),
@@ -64,7 +51,7 @@ public final class SemanticSchema {
             new BizField("username", "拨号账号", "string", false, "Username"),
             new BizField("password", "拨号口令", "string", false, "Password"));
 
-    /** WiFi 射频共用的字段。 */
+    /** WiFi 射频共用的字段 */
     private static final List<BizField> WIFI_FIELDS = List.of(
             new BizField("radio_enable", "射频开关", "boolean", true, "Enable", "Radio"),
             new BizField("ssid", "SSID 名称", "string", true, "SSID"),
@@ -78,7 +65,7 @@ public final class SemanticSchema {
             new BizField("radio_hardware_enable", "无线模块硬件开关", "boolean", false, "Module", "Hardware"),
             new BizField("wps_disable", "禁用 WPS", "boolean", false, "WPSDisable"));
 
-    /** SIP 语音（VoiceService/VoiceProfile）字段。 */
+    /** SIP 语音（VoiceService/VoiceProfile）字段 */
     private static final List<BizField> VOICE_FIELDS = List.of(
             new BizField("protocol", "语音协议", "string", false, "SignalingProtocol"),
             new BizField("registrar", "SIP 注册服务器", "string", false, "RegistrarServer", "ProxyServer"),
@@ -97,7 +84,7 @@ public final class SemanticSchema {
             new BizField("sip_user_info", "SIP 用户信息", "string", false, "Account", "UserInfo", "Auth"),
             new BizField("prefer_existing_account", "优先用已存在账号", "boolean", false, "Account", "Exist"));
 
-    /** 设备管理类意图字段，多为厂商私有节点，映射后才有报文。 */
+    /** 设备管理类意图字段，多为厂商私有节点，映射后才有报文 */
     private static final List<BizField> DEVICE_MGMT_FIELDS = List.of(
             new BizField("unlock_limit", "解除上网限制", "boolean", false, "Limit", "Restrict"),
             new BizField("telnet_enable", "开启 Telnet", "boolean", false, "TelnetEnable", "Telnet"),
@@ -118,9 +105,7 @@ public final class SemanticSchema {
             new BizField("roaming_threshold_24g", "2.4G 漫游阈值", "string", false, "Roaming", "RSSI"),
             new BizField("roaming_threshold_58g", "5G 漫游阈值", "string", false, "Roaming", "RSSI"));
 
-    /**
-     * 全部业务对象，顺序即下发顺序。
-     */
+    /** 全部业务对象，顺序即下发顺序 */
     public static final List<BizObject> OBJECTS = List.of(
             new BizObject(INTERNET_WAN, "Internet 上网 WAN", true, WAN_FIELDS),
             new BizObject(VOIP_WAN, "语音 WAN", true, WAN_FIELDS),
@@ -130,9 +115,7 @@ public final class SemanticSchema {
             new BizObject(VOICE, "SIP 语音", false, VOICE_FIELDS),
             new BizObject(DEVICE_MGMT, "设备管理", false, DEVICE_MGMT_FIELDS));
 
-    /**
-     * 按业务对象编码取定义，未定义返回 null。
-     */
+    /** 按业务对象编码取定义，未定义返回 null */
     public static BizObject objectOf(String code) {
         for (BizObject object : OBJECTS) {
             if (object.code().equals(code)) {
@@ -142,9 +125,7 @@ public final class SemanticSchema {
         return null;
     }
 
-    /**
-     * 全部业务对象编码。
-     */
+    /** 全部业务对象编码 */
     public static List<String> objectCodes() {
         return OBJECTS.stream().map(BizObject::code).toList();
     }

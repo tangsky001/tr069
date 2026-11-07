@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS `config_template` (
     `enabled`     TINYINT      NOT NULL DEFAULT 1 COMMENT '是否启用',
     `remark`      VARCHAR(255) COMMENT '备注',
     `fields`      TEXT         COMMENT '意图字段 JSON，键值与型号语义映射的 biz_field 对齐',
+    `incremental` TINYINT      NOT NULL DEFAULT 0 COMMENT '增量业务：只新增这一条业务，不清理/不改写设备上已有的其它业务',
     `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
     `updated_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
@@ -544,7 +545,7 @@ CREATE TABLE IF NOT EXISTS `olt_board` (
 CREATE TABLE IF NOT EXISTS `olt_sync_record` (
     `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     `olt_id`     BIGINT       DEFAULT NULL COMMENT 'olt_device.id，未保存的设备为 NULL',
-    `action`     VARCHAR(16)  NOT NULL COMMENT '动作：TEST 诊断测试 / SYNC 同步',
+    `action`     VARCHAR(16)  NOT NULL COMMENT '动作：TEST 诊断 / SYNC 同步 / CONFIG 配置 / QUERY 查询 / DELETE 删除',
     `success`    TINYINT      NOT NULL DEFAULT 0 COMMENT '是否成功',
     `message`    VARCHAR(1000) DEFAULT NULL COMMENT '结果说明或失败原因',
     `raw_output` MEDIUMTEXT   COMMENT '设备回显原文，超长截断',
@@ -554,6 +555,83 @@ CREATE TABLE IF NOT EXISTS `olt_sync_record` (
     PRIMARY KEY (`id`),
     KEY `idx_olt_sync_record` (`olt_id`, `id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT 连接与同步记录';
+
+-- ONT 注册模板：光猫上线时按优先级匹配，命中哪条就按哪条自动注册
+CREATE TABLE IF NOT EXISTS `olt_ont_reg_template` (
+    `id`               BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `olt_id`           BIGINT       DEFAULT NULL COMMENT 'olt_device.id，NULL 表示不限设备',
+    `olt_ip`           VARCHAR(64)  DEFAULT NULL COMMENT '绑定的 OLT 地址，页面展示用',
+    `name`             VARCHAR(64)  NOT NULL COMMENT '模板名称，如 Auto-GPON',
+    `priority`         INT          NOT NULL DEFAULT 0 COMMENT '优先级，小的先匹配',
+    `enabled`          TINYINT      NOT NULL DEFAULT 1 COMMENT '是否启用',
+    `auth_mode`        VARCHAR(16)  NOT NULL DEFAULT 'SN' COMMENT '注册方式：SN / MAC / LOID / PASSWORD',
+    `pon_type`         VARCHAR(16)  NOT NULL DEFAULT 'GPON' COMMENT 'PON 类型：GPON / EPON',
+    `line_profile_id`  INT          DEFAULT NULL COMMENT '线路模板 ID（ont-lineprofile-id）',
+    `srv_profile_id`   INT          DEFAULT NULL COMMENT '业务模板 ID（ont-srvprofile-id）',
+    `bind_ports`       VARCHAR(255) DEFAULT NULL COMMENT '限定的 PON 口，逗号分隔，空表示不限',
+    `ont_models`       VARCHAR(255) DEFAULT NULL COMMENT '限定的 ONT 型号，逗号分隔，空表示不限',
+    `work_mode`        VARCHAR(16)  DEFAULT NULL COMMENT '光猫工作模式：HGU / SFU / MIX / MDU',
+    `service_vlan_map` VARCHAR(255) DEFAULT NULL COMMENT '业务 VLAN 映射，空表示沿用线路模板',
+    `tr069_vlan`       VARCHAR(64)  DEFAULT NULL COMMENT 'TR069 VLAN 及 ACS 模板，如 46 10',
+    `iptv_vlan`        VARCHAR(64)  DEFAULT NULL COMMENT 'IPTV 组播 VLAN',
+    `multicast_vlan`   VARCHAR(64)  DEFAULT NULL COMMENT '透传未知多播 VLAN',
+    `remark`           VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `deleted`          TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    `created_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_ont_reg_template` (`olt_id`, `enabled`, `priority`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT ONT 注册模板';
+
+-- 自动注册参数：每台 OLT 一条，控制扫描间隔、并发、自动存盘
+CREATE TABLE IF NOT EXISTS `olt_ont_reg_config` (
+    `id`                 BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `olt_id`             BIGINT   NOT NULL COMMENT 'olt_device.id',
+    `enabled`            TINYINT  NOT NULL DEFAULT 0 COMMENT '是否启用 ONT 上线自动注册',
+    `scan_seconds`       INT      NOT NULL DEFAULT 30 COMMENT '自动发现扫描间隔(秒)',
+    `save_seconds`       INT      NOT NULL DEFAULT 28800 COMMENT '注册成功后隔多久把配置存盘(秒)',
+    `concurrency`        INT      NOT NULL DEFAULT 1 COMMENT '一轮最多注册几个',
+    `auto_move`          TINYINT  NOT NULL DEFAULT 0 COMMENT 'ONT 换 PON 口上线时自动迁移注册位置',
+    `auto_delete_offline` TINYINT NOT NULL DEFAULT 0 COMMENT '注册表满时自动删除离线 ONT',
+    `last_scan_at`       DATETIME DEFAULT NULL COMMENT '上次扫描时间',
+    `last_register_at`   DATETIME DEFAULT NULL COMMENT '上次成功注册的时间',
+    `last_save_at`       DATETIME DEFAULT NULL COMMENT '上次存盘时间',
+    `created_at`         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ont_reg_config_olt` (`olt_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT ONT 自动注册参数';
+
+-- 注册记录：每台光猫注册的结果留痕，页面回看哪台注册了、哪台为什么没注册上
+CREATE TABLE IF NOT EXISTS `olt_ont_reg_record` (
+    `id`            BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `olt_id`        BIGINT        DEFAULT NULL COMMENT 'olt_device.id',
+    `template_id`   BIGINT        DEFAULT NULL COMMENT 'olt_ont_reg_template.id',
+    `template_name` VARCHAR(64)   DEFAULT NULL COMMENT '模板名称快照',
+    `fsp`           VARCHAR(32)   DEFAULT NULL COMMENT '框/槽/端口',
+    `ont_sn`        VARCHAR(64)   DEFAULT NULL COMMENT 'ONT SN / MAC / LOID',
+    `model`         VARCHAR(64)   DEFAULT NULL COMMENT 'ONT 型号',
+    `auth_mode`     VARCHAR(16)   DEFAULT NULL COMMENT '注册方式',
+    `success`       TINYINT       NOT NULL DEFAULT 0 COMMENT '是否注册成功',
+    `source`        VARCHAR(16)   NOT NULL DEFAULT 'AUTO' COMMENT '来源：AUTO 自动 / MANUAL 手动',
+    `command`       VARCHAR(500)  DEFAULT NULL COMMENT '下发的命令',
+    `message`       VARCHAR(1000) DEFAULT NULL COMMENT '结果说明或失败原因',
+    `operator`      VARCHAR(64)   DEFAULT NULL COMMENT '操作人，自动注册写「自动注册」',
+    `created_at`    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_ont_reg_record` (`olt_id`, `id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT ONT 注册记录';
+
+-- 一键开局参数：原来存在浏览器本地，换台电脑就没了，也不该在前端再留一份默认值
+CREATE TABLE IF NOT EXISTS `olt_quick_setup_config` (
+    `id`          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `olt_id`      BIGINT   NOT NULL COMMENT 'olt_device.id',
+    `config_json` LONGTEXT DEFAULT NULL COMMENT '开局参数快照(JSON)，字段就是 HuaweiQuickSetupRequest',
+    `created_at`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_quick_setup_config_olt` (`olt_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'OLT 一键开局参数';
 
 -- 预设：设备上报后按条件自动把配置收敛到目标值，取代逐台手工下发
 CREATE TABLE IF NOT EXISTS `cpe_preset` (

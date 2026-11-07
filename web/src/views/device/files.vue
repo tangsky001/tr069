@@ -48,20 +48,20 @@
       <el-table-column prop="name" label="文件名" min-width="180" />
       <el-table-column label="类型" width="110">
         <template slot-scope="{ row }">
-          <el-tag size="mini" :type="row.fileType === 'FIRMWARE' ? 'warning' : 'info'">
-            {{ row.fileType }}
+          <el-tag size="mini" :type="row.fileTypeLevel || 'info'">
+            {{ row.fileTypeText || row.fileType }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="version" label="版本" width="120" />
       <el-table-column label="大小" width="110">
         <template slot-scope="{ row }">
-          <span>{{ sizeText(row.size) }}</span>
+          <span>{{ row.sizeText }}</span>
         </template>
       </el-table-column>
       <el-table-column label="摘要" min-width="180">
         <template slot-scope="{ row }">
-          <span class="sha">{{ short(row.sha256) }}</span>
+          <span class="sha">{{ row.shortSha256 }}</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="240">
@@ -157,16 +157,7 @@ export default {
         .finally(() => { this.loading = false })
     },
 
-    sizeText(size) {
-      const bytes = Number(size) || 0
-      if (bytes < 1024) return bytes + ' B'
-      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-      return (bytes / 1024 / 1024).toFixed(1) + ' MB'
-    },
-
-    short(sha) {
-      return !sha ? '-' : sha.substring(0, 16) + '…'
-    },
+    // 大小文本、摘要短串、类型中文都由后端随文件清单给（sizeText / shortSha256 / fileTypeText）
 
     onFileChange(file, list) {
       this.fileList = list.slice(-1)

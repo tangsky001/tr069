@@ -2,12 +2,7 @@ package com.tr069.acs.olt.model;
 
 import lombok.Data;
 
-/**
- * 页面「增加」弹窗提交的 TR-069 模板参数。
- *
- * <p>字段范围照设备命令帮助：profile-name 1-32、url 1-64、用户名/密码 0-24、
- * port 1-65535、inform-interval 1-86400。</p>
- */
+/** 页面「增加」弹窗提交的 TR-069 模板参数 */
 @Data
 public class OltTr069ProfileRequest {
 

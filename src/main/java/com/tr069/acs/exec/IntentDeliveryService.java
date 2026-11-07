@@ -33,6 +33,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -48,38 +49,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import com.tr069.acs.common.log.AcsCoreLog;
 
-/**
- * 意图模板下发执行器。
- *
- * <p>业务只说要「开通」，剩下的三步这一步做完：</p>
- * <ol>
- *   <li><strong>对齐型号</strong>：按设备的 ProductClass + 固件版本找到 {@code cpe_model}，
- *       型号没做语义映射就拒绝，避免拿着猜测的路径往设备上写；</li>
- *   <li><strong>渲染计划</strong>：模板的意图字段 + 本次请求的业务值，经
- *       {@link IntentPlanRenderer} 翻译成该型号真实的 CWMP 路径与值；</li>
- *   <li><strong>执行并留痕</strong>：先按需 AddObject 建实例，再分批 SetParameterValues，
- *       全程状态写进 {@code device_task}，结束时发布 {@link TaskFinishedEvent}。</li>
- * </ol>
- *
- * <p>下发必须等设备回应：ACS 只能在设备主动上报后的那次空 POST 里捎带指令，
- * 所以这里吃掉的是「等设备窗口」的时间，不是 CPU。调用方拿到的是已受理的任务，
- * 结果另poll task 接口或等 Webhook 回调。</p>
- *
- * <p>同一 {@code source + taskNo} 只会被受理一次：重复提交返回既有任务，
- * 不会因为网络重试把同一条业务下发两遍。</p>
- */
+/** 意图模板下发执行器 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class IntentDeliveryService {
 
-    /**
-     * 模板业务类型 → 型号语义映射里的业务对象。
-     *
-     * <p>模板面向的是「开通什么业务」（WAN DHCP、2.4G WiFi），
-     * 映射表面向的是「设备上的哪一块」（Internet_WAN、WiFi_2G），两者在这里对齐。
-     * 调用方也可以直接用 {@code bizObject} 指定，绕开这张表。</p>
-     */
+    /** 模板业务类型 → 型号语义映射里的业务对象 */
     private static final Map<String, String> BIZ_OBJECTS = Map.of(
             "WAN_DHCP", "Internet_WAN",
             "WAN_PPPOE", "Internet_WAN",
@@ -91,13 +67,13 @@ public class IntentDeliveryService {
             "SIP", "Voice_Service",
             "OTHER", "Device_Mgmt");
 
-    /** 单批 SetParameterValues 携带的参数个数，避免报文过大被设备拒收。 */
+    /** 单批 SetParameterValues 携带的参数个数，避免报文过大被设备拒收 */
     private static final int VALUE_BATCH = 32;
 
-    /** 下发后回读参数等待设备应答的秒数。超时就不再等，交给后面的全量补采。 */
+    /** 下发后回读参数等待设备应答的秒数。超时就不再等，交给后面的全量补采 */
     private static final int READBACK_TIMEOUT_SECONDS = 8;
 
-    /** 下发等待设备回应的时间不定，统一丢到这个后台线程池。 */
+    /** 下发等待设备回应的时间不定，统一丢到这个后台线程池 */
     private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool(r -> {
         Thread thread = new Thread(r, "acs-exec");
         thread.setDaemon(true);
@@ -124,69 +100,34 @@ public class IntentDeliveryService {
     /** 下发后补采一次能力树，让新建的实例即时出现在设备列表里 */
     private final com.tr069.acs.acs.service.DeviceCapabilityService capabilityService;
 
-    /**
-     * 路径里的 WAN 挂载位置，形如 {@code WANConnectionDevice.2.}。
-     *
-     * <p>实例号是捕获组：{@link #detectWanDevice(String)} 要把它取出来比对，
-     * 写成非捕获的 {@code \d+} 时 {@code group(1)} 会抛
-     * {@code IndexOutOfBoundsException}，判读静默失败、计划原样下发。</p>
-     */
+    /** 路径里的 WAN 挂载位置，形如 {@code WANConnectionDevice.2.} */
     private static final Pattern WAN_DEVICE = Pattern.compile("WANConnectionDevice\\.(\\d+)\\.");
 
-    /**
-     * 每台设备一把清理锁：同一批次的多个业务任务不能同时清点、删除连接。
-     *
-     * <p>批量下发 Internet + VoIP 是两个任务，各自跑在 {@link #EXECUTOR} 的不同线程上，
-     * 不加锁就会「一个在建、一个在删」，删掉对方刚建好的连接。</p>
-     */
+    /** 每台设备一把清理锁：同一批次的多个业务任务不能同时清点、删除连接 */
     private final Map<String, Object> wanCleanupLocks = new ConcurrentHashMap<>();
 
-    /**
-     * 每台设备的清理台账：批次窗口内不重复清理，本批次新建的连接永不进删除清单。
-     *
-     * <p>这是「删除只跑一次」的落点。窗口只解决前后脚的两个任务，
-     * 新建清单解决窗口过期后再来一单的情况：只要是我们建的，什么时候都不删。</p>
-     */
+    /** 每台设备的清理台账：批次窗口内不重复清理，本批次新建的连接永不进删除清单 */
     private final Map<String, WanCleanupState> wanCleanupLedger = new ConcurrentHashMap<>();
 
-    /** 下发等待设备回应的超时（秒）。 */
+    /** 下发等待设备回应的超时（秒） */
     @Value("${acs.exec.request-timeout-seconds:90}")
     private long requestTimeoutSeconds;
 
-    /**
-     * 同一台设备两次 WAN 清理之间的最小间隔（秒）：间隔内的第二单视为同一批次，不再清理。
-     *
-     * <p>批量下发两条业务时，第二单开工时第一单的连接刚建好，
-     * 此时再清一次就把它删了——这正是「下发两条只剩一条」的根因。</p>
-     */
+    /** 同一台设备两次 WAN 清理之间的最小间隔（秒）：间隔内的第二单视为同一批次，不再清理 */
     @Value("${acs.exec.wan-cleanup-window-seconds:600}")
     private long wanCleanupWindowSeconds;
 
-    /**
-     * 下发前反向唤醒后，最多等多少秒设备上来建链。
-     *
-     * <p>设备收到连接请求一般在几秒内上来。等满这个时间还没建链就先发，
-     * 指令留在队列里，不把「暂时叫不醒」直接判成失败。</p>
-     */
+    /** 下发前反向唤醒后，最多等多少秒设备上来建链 */
     @Value("${acs.exec.wakeup-wait-seconds:30}")
     private long wakeupWaitSeconds;
 
-    /**
-     * 单条清理指令（DeleteObject）等设备回应的秒数。
-     *
-     * <p>比 {@link #requestTimeoutSeconds} 短：清理是尽力而为，设备不在线时
-     * 为它等满下发窗口，整包后面几个成员就全被拖住了。</p>
-     */
+    /** 单条清理指令（DeleteObject）等设备回应的秒数 */
     @Value("${acs.exec.wan-cleanup-timeout-seconds:30}")
     private long wanCleanupTimeoutSeconds;
 
     // ==================== 受理 ====================
 
-    /**
-     * 受理一次下发：同步完成校验与计划渲染，执行过程异步。
-     *
-     * @return 任务记录，重复提交返回已有任务
-     */
+    /** 受理一次下发：同步完成校验与计划渲染，执行过程异步 */
     public DeviceTask deliver(DeliveryRequest request) {
         DeviceTask existing = findByTaskNo(request.source(), request.taskNo());
         if (existing != null) {
@@ -220,17 +161,7 @@ public class IntentDeliveryService {
         return task;
     }
 
-    /**
-     * 先反向唤醒设备，等它建链再返回。
-     *
-     * <p>CWMP 的指令只能捎在设备主动发起的那轮会话里下发：连接请求发出后，设备会上来
-     * Inform 并紧接着发空 POST 把队列里的指令取走。会话没建立就提交指令，设备这轮
-     * 取不到，只能等下一次周期上报才有机会——周期通常是十几分钟，
-     * 于是每条指令都撞满 {@code request-timeout-seconds} 超时，整单判死。</p>
-     *
-     * <p>等待有上限：叫不醒就照旧下发，指令留在队列里，设备下次上报仍会取走，
-     * 不至于把「设备暂时不上线」直接判成下发失败。</p>
-     */
+    /** 先反向唤醒设备，等它建链再返回 */
     private void awaitSession(String sn, String taskNo) {
         // 唤醒 + 等建链的判定统一放在 DeviceCapabilityService，采集/刷新走的是同一套
         if (capabilityService.wakeUpAndAwait(sn, wakeupWaitSeconds)) {
@@ -241,16 +172,12 @@ public class IntentDeliveryService {
         }
     }
 
-    /**
-     * 按 id 查任务，不存在返回 null。
-     */
+    /** 按 id 查任务，不存在返回 null */
     public DeviceTask get(Long id) {
         return id == null ? null : taskMapper.selectById(id);
     }
 
-    /**
-     * 按外部单号查任务。
-     */
+    /** 按外部单号查任务 */
     public DeviceTask findByTaskNo(String source, String taskNo) {
         if (source == null || taskNo == null) {
             return null;
@@ -261,9 +188,7 @@ public class IntentDeliveryService {
                 .last("LIMIT 1"));
     }
 
-    /**
-     * 任务视图：把 JSON 字段还原成对象，方便接口直接返回。
-     */
+    /** 任务视图：把 JSON 字段还原成对象，方便接口直接返回 */
     public Map<String, Object> view(DeviceTask task) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("id", task.getId());
@@ -283,9 +208,7 @@ public class IntentDeliveryService {
         return data;
     }
 
-    /**
-     * 模板类型支持的业务对象清单，供接口做参数提示。
-     */
+    /** 模板类型支持的业务对象清单，供接口做参数提示 */
     public Map<String, String> bizObjects() {
         return BIZ_OBJECTS;
     }
@@ -354,15 +277,16 @@ public class IntentDeliveryService {
         Map<String, String> overrides = new LinkedHashMap<>();
         if (values != null) {
             values.forEach((k, v) -> {
-                if (v != null && !String.valueOf(v).isBlank()) {
-                    overrides.put(k, String.valueOf(v));
+                String text = textValue(v);
+                if (text != null && !text.isBlank()) {
+                    overrides.put(k, text);
                 }
             });
         }
         Map<String, Object> intentFields = new LinkedHashMap<>();
         if (tplFields != null) {
             intentFields.putAll(tplFields);
-            tplFields.forEach((k, v) -> overrides.putIfAbsent(k, v == null ? null : String.valueOf(v)));
+            tplFields.forEach((k, v) -> overrides.putIfAbsent(k, textValue(v)));
         }
 
         // 重启这类设备管理意图是标准 RPC，不依赖型号适配：没做过适配的设备也应该能重启
@@ -390,19 +314,7 @@ public class IntentDeliveryService {
         taskMapper.updateById(task);
     }
 
-    /**
-     * 把渲染出的参数名校正为该型号真实存在的那套，并剔掉设备上根本没有的参数。
-     *
-     * <p>模板是跨厂商通用的写法，落到具体型号常常要换名：地址获取方式模板写
-     * {@code IPAddressingType}，这台设备按 TR-098 叫 {@code AddressingType}；VLAN 模板写
-     * {@code X_CMCC_VLANID}，移动定制机上真实存在的是 {@code X_CMCC_VLANIDMark}。
-     * 照模板原样发，设备回 9003 Invalid arguments——SetParameterValues 是按批生效的，
-     * 一条写错整批都废，前面 AddObject 刚建好的连接也就白建了。所以这一步必须落在下发之前。</p>
-     *
-     * <p>校不动的不硬写：宁可跳过并在日志里留痕由人补映射，也不猜一个节点写进去。
-     * 这台设备的参数和型号档案都查不到时，{@link ModelTreeStore#resolvePaths} 返回空结果，
-     * 这里保持模板原路径——信息不足时不能反过来把参数删掉。</p>
-     */
+    /** 把渲染出的参数名校正为该型号真实存在的那套，并剔掉设备上根本没有的参数 */
     private IntentPlan alignParameterNames(String sn, IntentPlan plan) {
         if (plan.parameters().isEmpty()) {
             return plan;
@@ -430,6 +342,16 @@ public class IntentDeliveryService {
             if ("boolean".equalsIgnoreCase(type)) {
                 value = booleanValue(value);
             }
+            if (LAN_INTERFACE_NODE.equalsIgnoreCase(leafOf(path))) {
+                // 绑定端口落到 X_CMCC_LanInterface 上时，值必须是 LAN 口的完整路径串，
+                // 页面给的 LAN1,LAN2 写下去会被整批拒（SPV 按批生效，会连 Enable 一起废掉）
+                String bound = lanInterfaceValue(path, value);
+                if (bound == null) {
+                    log.warn("绑定端口值无法映射到 LAN 口路径，本次不下发: {} = {}", path, value);
+                    continue;
+                }
+                value = bound;
+            }
             items.add(new PlanItem(item.bizObject(), item.bizField(), path, value, type));
         }
         List<String> errors = new ArrayList<>(plan.errors());
@@ -439,20 +361,58 @@ public class IntentDeliveryService {
         return new IntentPlan(plan.bizObject(), plan.instance(), plan.objectsToAdd(), items, errors);
     }
 
-    /**
-     * WAN 连接补写「业务绑定」参数（这台设备上是 {@code X_CMCC_ServiceList}）。
-     *
-     * <p>实测这条不加，业务就下不去：新建出来的连接在没绑业务之前拒绝启用——
-     * {@code Enable} 单独回 9003 Invalid arguments，同一批里带着它就整批 9003。
-     * 补写 {@code X_CMCC_ServiceList=INTERNET} 之后，同一实例的同一批六条（含 Enable）
-     * 一次成功。设备上原有的连接也印证了这套规则：
-     * {@code Name=2_INTERNET_R_VID_41} 对应 {@code X_CMCC_ServiceList=INTERNET}、
-     * {@code Name=3_VOIP_R_VID_45} 对应 {@code VOIP}。</p>
-     *
-     * <p>参数名由设备的能力树决定（各厂商写法不一，CMCC 是 ServiceList），这里逐个候选名
-     * 去树上试，树上没有就不写——宁缺毋滥，写错名字比不写更糟。模板自己带了业务绑定的
-     * 时候以模板为准，不重复加。</p>
-     */
+    /** 绑定端口节点：中国移动定制机上真叫这个名字，取值为 LAN 口路径 */
+    private static final String LAN_INTERFACE_NODE = "X_CMCC_LanInterface";
+
+    private static String leafOf(String path) {
+        if (path == null) {
+            return "";
+        }
+        int idx = path.lastIndexOf('.');
+        return idx < 0 ? path : path.substring(idx + 1);
+    }
+
+    /** 把页面勾选的 {@code LAN1,LAN2} 翻成设备认的 LAN 口路径串 */
+    private static String lanInterfaceValue(String path, String value) {
+        String v = value == null ? "" : value.trim();
+        StringBuilder sb = new StringBuilder();
+        for (String part : v.split("[,;\\s]+")) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            String port = lanPortPath(path, p);
+            if (port == null) {
+                return null;
+            }
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            sb.append(port);
+        }
+        return sb.toString();
+    }
+
+    /** LAN{n} → 根节点下的 LANEthernetInterfaceConfig.{n}；已经是路径的照原样收下 */
+    private static String lanPortPath(String wanPath, String port) {
+        if (port.startsWith("InternetGatewayDevice.") || port.startsWith("Device.")) {
+            return port;
+        }
+        if (port.length() < 4 || !port.regionMatches(true, 0, "LAN", 0, 3)) {
+            return null;
+        }
+        String no = port.substring(3);
+        for (int i = 0; i < no.length(); i++) {
+            if (!Character.isDigit(no.charAt(i))) {
+                return null;
+            }
+        }
+        int dot = wanPath.indexOf('.');
+        String root = dot < 0 ? "InternetGatewayDevice." : wanPath.substring(0, dot + 1);
+        return root + "LANDevice.1.LANEthernetInterfaceConfig." + no;
+    }
+
+    /** WAN 连接补写「业务绑定」参数（这台设备上是 {@code X_CMCC_ServiceList}） */
     private IntentPlan ensureServiceBinding(String sn, IntentPlan plan, Map<String, Object> values,
                                             Map<String, String> overrides) {
         if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
@@ -463,10 +423,11 @@ public class IntentDeliveryService {
         }
         String service = serviceOf(values, overrides);
         if ("OTHER".equalsIgnoreCase(service)) {
-            // 桥接的「其他 / Other」是纯二层透传，不绑业务。本机型能力树里没采到过
-            // OTHER 这个取值，写上去被拒会把整批 SPV 拖掉、桥接反而建不起来
-            log.info("业务模式为 Other，跳过业务绑定补写（纯二层透传）: sn={}", sn);
-            return plan;
+            // 「其他 / Other」不是不绑业务，而是业务绑定就写 OTHER：设备上现存的桥接
+            // 4_OTHER_B_VID_100 的 X_CMCC_ServiceList 正是 OTHER，且它连着。
+            // 以前这里当成"纯二层透传不绑业务"跳过，结果同一批里的 Enable 被设备拒
+            // （没绑业务的连接不许启用），整批 9003，桥接一条也建不起来。
+            log.info("业务模式为 Other，按 OTHER 补写业务绑定（不绑业务时设备拒绝启用）: sn={}", sn);
         }
         String first = plan.parameters().get(0).path();
         int cut = first.lastIndexOf('.');
@@ -497,27 +458,7 @@ public class IntentDeliveryService {
         return plan;
     }
 
-    /**
-     * WAN 连接补写「VLAN 模式」（这台设备上是 {@code X_CMCC_VLANMode}）。
-     *
-     * <p>下发 VLAN ID 而不带模式，等于没下发：这台设备在 {@code VLANMode=0}
-     * （透传/不打标签）时，会把写进来的 {@code X_CMCC_VLANIDMark} 原样回成功、
-     * 转头丢掉，读回来还是 0——于是连接以无标签方式拨上去，拿到的是上级
-     * 网关的 192.168.1.x，VLAN 形同没配。实测对比：</p>
-     * <ul>
-     *   <li>实例 8：整批 {@code [VLANIDMark=100, …, Enable=true]} 返回成功，
-     *       回读 {@code VLANIDMark=0}，设备自动命名为 {@code 8_INTERNET_R_VID_}
-     *       （VID 段为空），Connected 拿到 192.168.1.7。</li>
-     *   <li>实例 5：先有 {@code VLANMode=2}，再写 {@code VLANIDMark=100}，
-     *       两项都存活，设备自动命名为 {@code 5_INTERNET_R_VID_100}。</li>
-     * </ul>
-     *
-     * <p>所以 VLAN ID 有值时，模式必须跟着写，且要写在 ID 之前——
-     * {@link #orderByDependency} 同档内保持原序，这里直接插在 ID 那一项前面。</p>
-     *
-     * <p>与业务绑定同样的规矩：参数名由这台设备的能力树决定，逐个候选名去试，
-     * 树上没有就不写；VLAN ID 为空或 0 时不写模式（本来就不打标签）。</p>
-     */
+    /** WAN 连接补写「VLAN 模式」（这台设备上是 {@code X_CMCC_VLANMode}） */
     IntentPlan ensureVlanMode(String sn, IntentPlan plan) {
         if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
             return plan;
@@ -561,18 +502,7 @@ public class IntentDeliveryService {
         return plan;
     }
 
-    /**
-     * 把本次刚写下去的参数读回来落库，让设备列表立刻对得上现场。
-     *
-     * <p>下发改的是设备现值，库里的快照不会自己跟上。只靠 {@link #refreshCapability} 的
-     * 全量补采是不够的：它要把整棵树重新走一遍，实测六十秒上下，而运维在下发完几秒内
-     * 就会刷新列表——那一刻库里还是下发前的旧值，看着像「下发没生效」，
-     * 实际手机上已经能搜到新 SSID 了。</p>
-     *
-     * <p>所以这里先按本次下发的路径回读一次（几秒内），全量补采仍照常异步跑，
-     * 负责把新建出来的实例补进快照。回读以设备上报值为准：下发成功但设备没吃进去的，
-     * 库里就留真实值，比留我们以为下发的值更可信。</p>
-     */
+    /** 把本次刚写下去的参数读回来落库，让设备列表立刻对得上现场 */
     private void refreshDeliveredValues(String sn, IntentPlan plan) {
         List<String> paths = new ArrayList<>();
         for (PlanItem item : plan.parameters()) {
@@ -594,16 +524,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /**
-     * 下发完成后补采一次能力树，让新实例出现在设备列表里。
-     *
-     * <p>前端那条「N 条 WAN 连接」读的是 {@code cpe_parameter} 的快照，而快照只在
-     * 全量采集（GetParameterNames 走一遍子树）时才会更新。新建出来的实例不在
-     * 上次采集的路径清单里，于是下发明明成功了，列表上还是旧的那几条。
-     * 这里在建完实例后补一次采集，把新连接补进快照。</p>
-     *
-     * <p>采集是异步的，失败只记日志，不影响本次下发的结论。</p>
-     */
+    /** 下发完成后补采一次能力树，让新实例出现在设备列表里 */
     private void refreshCapability(String sn) {
         if (sn == null || sn.isBlank()) {
             return;
@@ -615,16 +536,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /**
-     * 判断本次下发要不要在成功后重启设备。
-     *
-     * <p>「下发业务完成后重启光猫」是配置模板（OTHER/Device_Mgmt）里的字段
-     * {@code reboot_after}，渲染时会把它写进 {@code intentFields} 快照。这里把它读出来，
-     * true/1/是 都视为启用。</p>
-     *
-     * <p>独立建单的「重启」模板，以及业务模板整包里作为最后一个成员的「重启」成员，
-     * 都会走到这里。</p>
-     */
+    /** 判断本次下发要不要在成功后重启设备 */
     private boolean needReboot(DeviceTask task) {
         String json = task.getIntentFields();
         if (json == null || json.isBlank()) {
@@ -654,16 +566,8 @@ public class IntentDeliveryService {
         }
     }
 
-    /**
-     * 整批被拒时逐条重发，定位到底哪一条不合法。
-     *
-     * <p>SetParameterValues 按批生效：一条不合法整批都废，而设备只回一个笼统的
-     * 9003/9007，无从判断错在哪个路径、哪个值。这里把这一批拆开逐条再发一遍，
-     * 被拒的那条就浮出来了。重复写同一个参数是幂等的，不会有额外副作用。</p>
-     *
-     * @return 被拒参数的说明；全都能写进去时返回 null（说明整批失败是别的原因）
-     */
-    /** 逐条定位的结果：设备拒收的（判失败），以及设备不接受、已跳过的（仅提示）。 */
+    /** 整批被拒时逐条重发，定位到底哪一条不合法 */
+    /** 逐条定位的结果：设备拒收的（判失败），以及设备不接受、已跳过的（仅提示） */
     private static class LocateResult {
 
         private final List<String> rejected = new ArrayList<>();
@@ -706,7 +610,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /** 启用开关类参数：{@code Enable} / {@code SSIDAdvertisementEnabled} 等。 */
+    /** 启用开关类参数：{@code Enable} / {@code SSIDAdvertisementEnabled} 等 */
     private static boolean isSwitch(String path) {
         String leaf = leafOfPath(path);
         return leaf != null && leaf.matches("(?i).*(enable|enabled|disable|disabled)$");
@@ -722,7 +626,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /** 同一个参数换几种 xsi:type 与值的写法，设备认哪种就用哪种。 */
+    /** 同一个参数换几种 xsi:type 与值的写法，设备认哪种就用哪种 */
     private static List<ParameterValueStruct> alternates(ParameterValueStruct v) {
         List<ParameterValueStruct> alts = new ArrayList<>();
         String name = v.getName();
@@ -738,7 +642,7 @@ public class IntentDeliveryService {
         return alts;
     }
 
-    /** 库里这台设备该参数的当前值。被拒时打出来对照——设备原本用什么写法，一目了然。 */
+    /** 库里这台设备该参数的当前值。被拒时打出来对照——设备原本用什么写法，一目了然 */
     private String currentValue(String sn, String path) {
         try {
             List<CpeParameter> rows = parameterMapper.selectList(
@@ -753,29 +657,17 @@ public class IntentDeliveryService {
         }
     }
 
-    /** 业务绑定的默认取值：没指定业务模式时按上网处理。 */
+    /** 业务绑定的默认取值：没指定业务模式时按上网处理 */
     private static final String SERVICE_INTERNET = "INTERNET";
 
-    /** 设备认识的业务绑定取值，取型号能力树里 {@code X_CMCC_ServiceList} 的实测值。 */
-    private static final List<String> SERVICE_TOKENS = List.of("INTERNET", "TR069", "VOIP", "IPTV");
+    /** 设备认识的业务绑定取值，取型号能力树里 {@code X_CMCC_ServiceList} 的实测值 */
+    private static final List<String> SERVICE_TOKENS =
+            List.of("INTERNET", "TR069", "VOIP", "IPTV", "OTHER");
 
-    /**
-     * 桥接会用到、但本机型能力树里还没采到样本的取值。
-     *
-     * <p>{@code OTHER} 是桥接的默认业务模式（纯二层透传），{@code OTT} 是桥接选项之一；
-     * 移动规范里有这两个值，但这批样机只采到 INTERNET/TR069/VOIP/IPTV。照填下发并留一条
-     * 提示——被设备拒时日志里能直接看出是这两个值的问题，而不是静默改成 INTERNET。</p>
-     */
-    private static final List<String> SERVICE_TOKENS_UNVERIFIED = List.of("OTHER", "OTT");
+    /** 桥接会用到、但本机型能力树里还没采到样本的取值 */
+    private static final List<String> SERVICE_TOKENS_UNVERIFIED = List.of("OTT");
 
-    /**
-     * 业务绑定的取值：本次显式传的值 &gt; 配置模板里保存的业务模式 &gt; 默认 INTERNET。
-     *
-     * <p>配置模板把「业务模式」存在 fields 里、调用方放进的是 overrides，只看 values 会让
-     * 模板上选的 VOIP 完全失效——每条连接都被绑成 INTERNET，语音通道被当成上网连接走。
-     * 实测过：模板 {@code WAN_DHCP_VOIP_45} 的业务模式选的是 VOIP，下发补写的却是 INTERNET。
-     * 这里按与参数覆盖一致的优先级取，再统一成设备认的大写写法。</p>
-     */
+    /** 业务绑定的取值：本次显式传的值 &gt; 配置模板里保存的业务模式 &gt; 默认 INTERNET */
     private static String serviceOf(Map<String, Object> values, Map<String, String> overrides) {
         Object raw = values == null ? null : values.get("service_list");
         if (raw == null || String.valueOf(raw).isBlank()) {
@@ -784,13 +676,7 @@ public class IntentDeliveryService {
         return normalizeServiceList(raw == null ? null : String.valueOf(raw));
     }
 
-    /**
-     * 业务模式归一成设备口径：{@code Internet / internet, VOIP} 变成 {@code INTERNET,VOIP}。
-     *
-     * <p>配置模板的选项是给人看的写法（{@code Internet}、{@code Internet,TR069}），设备上
-     * 实测只认 {@code INTERNET} / {@code TR069} / {@code VOIP} / {@code IPTV} 这几种大写写法，
-     * 混着大小写发过去会被判 9007。</p>
-     */
+    /** 业务模式归一成设备口径：{@code Internet / internet, VOIP} 变成 {@code INTERNET,VOIP} */
     static String normalizeServiceList(String raw) {
         if (raw == null || raw.isBlank()) {
             return SERVICE_INTERNET;
@@ -814,14 +700,14 @@ public class IntentDeliveryService {
         return out.isEmpty() ? SERVICE_INTERNET : String.join(",", out);
     }
 
-    /** VLAN 模式的取值：2 = 打 802.1Q 标签，路由/桥接带 VLAN 的业务都要它。 */
+    /** VLAN 模式的取值：2 = 打 802.1Q 标签，路由/桥接带 VLAN 的业务都要它 */
     private static final String VLAN_TAG_MODE = "2";
 
-    /** VLAN 模式参数的候选写法，逐个去能力树上试，谁在树上用谁。 */
+    /** VLAN 模式参数的候选写法，逐个去能力树上试，谁在树上用谁 */
     private static final List<String> VLAN_MODE_NAMES =
             List.of("X_CMCC_VLANMode", "X_CT-COM_VLANMode", "VLANMode");
 
-    /** 业务绑定参数的候选写法，逐个去能力树上试，谁在树上用谁。 */
+    /** 业务绑定参数的候选写法，逐个去能力树上试，谁在树上用谁 */
     private static final List<String> SERVICE_LIST_NAMES =
             List.of("X_CMCC_ServiceList", "ServiceList", "X_CT-COM_ServiceList");
 
@@ -835,16 +721,7 @@ public class IntentDeliveryService {
                 || "ServiceList".equalsIgnoreCase(leafOfPath(item.path()));
     }
 
-    /**
-     * 布尔型参数统一按 xsd:boolean 的标准词法 {@code true/false} 下发。
-     *
-     * <p>{@code xsd:boolean} 的词法值是 {@code true/false/1/0} 四种，但实现照不全的
-     * 设备不少：只接受 {@code true} 的见过，只接受 {@code 1} 的也见过。业务字段填的是
-     * {@code 1/0}，这台设备自己上报用的是 {@code TRUE/FALSE}，平台另一条下发通道历来写
-     * {@code true/false} 且在这台设备上成功过——取三方都认的标准布尔词。</p>
-     *
-     * <p>认不出来的原样返回：这里要是自作主张改了非布尔值，就又多一个踩坑点。</p>
-     */
+    /** 布尔型参数统一按 xsd:boolean 的标准词法 {@code true/false} 下发 */
     static String booleanValue(String raw) {
         String value = raw == null ? "" : raw.trim();
         if ("1".equals(value) || "true".equalsIgnoreCase(value)) {
@@ -856,16 +733,7 @@ public class IntentDeliveryService {
         return raw;
     }
 
-    /**
-     * 按设备侧型号标识去 SQLite 适配库里匹配已适配的型号。
-     *
-     * <p>型号不是设备台账里的 SN，而是 ProductClass + 固件版本算出来的 key，
-     * 同型号同固件共用一份适配结果。归档时可能挂在实际运营商目录下，也可能在
-     * {@code standard} 下，两处都找一遍。</p>
-     *
-     * <p>查不到就是没适配过——这不是下发能补的，必须回到适配流程重新采集
-     * （采集导出后会由 {@link ModelTemplateService} 生成模板）。</p>
-     */
+    /** 按设备侧型号标识去 SQLite 适配库里匹配已适配的型号 */
     private Device findAdaptedModel(CpeDevice device, String bizObject) {
         String modelKey = ModelMappingService.buildModelKey(
                 device.getProductClass(), device.getSoftwareVersion());
@@ -913,7 +781,7 @@ public class IntentDeliveryService {
         return adapted;
     }
 
-    /** 实例号：写第几个（第几个 SSID、第几路语音），缺省 1。 */
+    /** 实例号：写第几个（第几个 SSID、第几路语音），缺省 1 */
     private static int resolveInstance(Map<String, Object> values) {
         Object raw = values == null ? null : values.get("instance");
         if (raw == null) {
@@ -927,12 +795,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /**
-     * 这份归档有没有做过能力申报。
-     *
-     * <p>申报是模板生成的唯一输入：没有它，WiFi / SIP / LAN 的条数全是 0，
-     * 下发只能报「模板里没有第 N 个实例」。所以匹配型号时它比运营商更关键。</p>
-     */
+    /** 这份归档有没有做过能力申报 */
     private static boolean declared(Device model) {
         return model != null && (notBlank(model.getCapWifiSpec())
                 || notBlank(model.getCapSipCount())
@@ -978,7 +841,14 @@ public class IntentDeliveryService {
             // 第一个刚建好的连接当成残留删掉
             if (isWan(task.getCategory())) {
                 plan = alignWanDevice(task, plan);
-                cleanupWan(task);
+                // 模板上勾了「增量业务」就完全跳过清理：只 AddObject 新增这一条，
+                // 设备上已有的 IPTV / VOIP / 用户自建 Internet 一条都不动
+                if (incremental(task)) {
+                    log.info("增量业务，跳过 WAN 清理（只新增，不删不改已有连接）: sn={}, taskNo={}",
+                            task.getSn(), task.getTaskNo());
+                } else {
+                    cleanupWan(task);
+                }
             }
             // AddObject 的实例号是设备分配的，可能和计划渲染时占的号不同，
             // 必须回填进参数路径，否则会写到错误的实例上去
@@ -1060,24 +930,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /**
-     * 重排下发顺序：先写「定身份」的 VLAN 参数，剩下的按原序，{@code Enable} 一律放最后。
-     *
-     * <p>顺序不是讲究，是这台 CMCC 光猫能不能收下的前提，实测如下（均在 AddObject 新建出来的
-     * 实例上逐条单发验证）：</p>
-     * <ul>
-     *   <li>刚建出来的连接上，只有 {@code X_CMCC_VLANIDMark} / {@code X_CMCC_VLANMode}
-     *       写得进去；{@code ConnectionType} / {@code AddressingType} / {@code NATEnabled} /
-     *       {@code Name} / {@code X_CMCC_ServiceList} 一律回 9007 Invalid parameter value。
-     *       把 VLAN 那几个写完，其余参数才开放写——所以要打头。</li>
-     *   <li>{@code Enable} 反过来，必须等连接配齐：VLAN 之前写它是 9007，VLAN 之后写它是 9003。
-     *       它是每批都被判 9003 的那一条。</li>
-     *   <li>两者都满足后，五条按顺序单点全部成功。</li>
-     * </ul>
-     *
-     * <p>{@code X_CMCC_ServiceList} 这类业务绑定紧随 VLAN 之后：先绑业务，后面的连接参数
-     * 才写得进去。只重排、不增删改：原先这批参数的取值一个都没变，改的只是下发次序。</p>
-     */
+    /** 重排下发顺序：先写「定身份」的 VLAN 参数，剩下的按原序，{@code Enable} 一律放最后 */
     static List<PlanItem> orderByDependency(List<PlanItem> items) {
         if (items == null || items.size() < 2) {
             return items;
@@ -1109,7 +962,7 @@ public class IntentDeliveryService {
         return ordered;
     }
 
-    /** 业务字段就叫 enable（WiFi / LAN / WAN 各模板一致）；字段名不可靠时退到参数末段名。 */
+    /** 业务字段就叫 enable（WiFi / LAN / WAN 各模板一致）；字段名不可靠时退到参数末段名 */
     private static boolean isEnable(PlanItem item) {
         return "enable".equalsIgnoreCase(item.bizField())
                 || "Enable".equalsIgnoreCase(leafOfPath(item.path()));
@@ -1119,13 +972,7 @@ public class IntentDeliveryService {
         return item.bizField() != null && item.bizField().toLowerCase().contains("vlan");
     }
 
-    /**
-     * 这是 VLAN ID 那一条，而不是 VLAN 模式。
-     *
-     * <p>两个参数的业务字段名都带 vlan，得靠末段名区分：ID 是 {@code VLANIDMark} /
-     * {@code VLANID} 这类，模式是 {@code VLANMode} 这类。判错了要么漏写模式
-     * （VLAN 不生效），要么把模式当成 ID 跳过了补写。</p>
-     */
+    /** 这是 VLAN ID 那一条，而不是 VLAN 模式 */
     private static boolean isVlanId(PlanItem item) {
         if (!isVlan(item)) {
             return false;
@@ -1142,7 +989,7 @@ public class IntentDeliveryService {
         return leaf.contains("mode");
     }
 
-    /** VLAN ID 的数值，取不出来（空/负数/非数字）返回 0，表示「这次不带 VLAN」。 */
+    /** VLAN ID 的数值，取不出来（空/负数/非数字）返回 0，表示「这次不带 VLAN」 */
     private static int vlanIdOf(PlanItem item) {
         String raw = item.value() == null ? "" : item.value().trim();
         if (raw.isEmpty() || "-1".equals(raw)) {
@@ -1160,13 +1007,7 @@ public class IntentDeliveryService {
         return path == null || path.isEmpty() ? "" : path.substring(path.lastIndexOf('.') + 1);
     }
 
-    /**
-     * AddObject 返回的实例号回填进参数路径。
-     *
-     * <p>渲染计划时参数路径里的实例号是占位值（plan.instance()），设备实际分配的
-     * 可能是另一个号——不改写就会把参数写到错误的实例上。只动「以 AddObject 对象名
-     * 开头、且实例号段等于占位值」的路径，其余路径一律不碰。</p>
-     */
+    /** AddObject 返回的实例号回填进参数路径 */
     static List<PlanItem> remapInstances(IntentPlan plan, Map<String, Integer> allocated) {
         if (allocated.isEmpty()) {
             return plan.parameters();
@@ -1195,7 +1036,7 @@ public class IntentDeliveryService {
         return out;
     }
 
-    /** 解析 AddObject 返回的实例号，取不到或非正数返回 null（维持占位值不动）。 */
+    /** 解析 AddObject 返回的实例号，取不到或非正数返回 null（维持占位值不动） */
     private static Integer parseInstance(String raw) {
         if (raw == null) {
             return null;
@@ -1208,29 +1049,42 @@ public class IntentDeliveryService {
         }
     }
 
-    /**
-     * 该业务是否要动 WAN 连接。只有 WAN 类才需要清理，WiFi / SIP 下发不要碰。
-     */
+    /** 业务字段值转成可下发的字符串 */
+    private static String textValue(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Collection<?> list) {
+            StringBuilder sb = new StringBuilder();
+            for (Object item : list) {
+                if (item == null) {
+                    continue;
+                }
+                String s = String.valueOf(item).trim();
+                if (s.isEmpty()) {
+                    continue;
+                }
+                if (sb.length() > 0) {
+                    sb.append(',');
+                }
+                sb.append(s);
+            }
+            return sb.toString();
+        }
+        return String.valueOf(v);
+    }
+
+    /** 该业务是否要动 WAN 连接。只有 WAN 类才需要清理，WiFi / SIP 下发不要碰 */
     private static boolean isWan(String category) {
         return category != null && category.toUpperCase().startsWith("WAN_");
     }
 
-    /**
-     * WAN 下发前清理旧业务连接：TR069 管理通道保留，其余逐个删除。
-     *
-     * <p><strong>先删后建，且一个批次只删一次</strong>。批量下发 Internet + VoIP 是两个
-     * 任务，各跑各的线程：第二个任务开工时若再清一次，第一个刚建好的连接就在存量快照里，
-     * 会被当成出厂残留删掉——现场看到的就是「两条都下发成功了，最后只剩一条」。
-     * 所以这里用 {@link #wanCleanupLedger} 记账：窗口内来过的第二单直接跳过清理，
-     * 台账里已记的新建连接无论何时都不进删除清单。</p>
-     *
-     * <p>识不出管理通道时不删任何一条，照常继续下发：删错管理通道设备就脱管了，
-     * 那比旧连接抢路由严重得多。</p>
-     *
-     * <p><strong>清理失败不判死整单</strong>：设备不回、删不动、快照读不全都是
-     * 「没清掉」，不是「不能发」。清不掉就留着旧连接继续下发，业务起来了比什么都强；
-     * 真要清理由下一次下发或人工处理。只有清理这一步，绝不能反过来拖垮下发。</p>
-     */
+    /** 这一单是不是「增量业务」：模板上勾了这个开关，就只新增、不清理也不改写已有业务 */
+    private boolean incremental(DeviceTask task) {
+        return task != null && configTemplateService.incrementalOf(task.getTemplateId());
+    }
+
+    /** WAN 下发前清理旧业务连接：TR069 管理通道保留，其余逐个删除 */
     private void cleanupWan(DeviceTask task) {
         String sn = task.getSn();
         // 同一台设备串行：一个任务在建、另一个在删是最难复现也最难查的故障
@@ -1300,7 +1154,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /** 异常的可读描述：超时类异常没有 message，只打 null 现场没法排查。 */
+    /** 异常的可读描述：超时类异常没有 message，只打 null 现场没法排查 */
     private static String textOf(Throwable e) {
         if (e == null) {
             return "未知原因";
@@ -1309,29 +1163,14 @@ public class IntentDeliveryService {
         return msg == null || msg.isBlank() ? e.getClass().getSimpleName() : msg;
     }
 
-    /**
-     * 记下本次新建的连接路径，后续任何清理都不许删它。
-     *
-     * <p>路径按「对象名 + 响应返回的实例号」拼：删过一轮后设备会重排实例号，
-     * 只有响应里那个号是准的。</p>
-     */
+    /** 记下本次新建的连接路径，后续任何清理都不许删它 */
     private void rememberCreated(String sn, String objectName, int instance) {
         String prefix = objectName.endsWith(".") ? objectName + instance + "." : objectName + "." + instance + ".";
         wanCleanupLedger.computeIfAbsent(sn, k -> new WanCleanupState()).remember(prefix);
         log.info("已登记本次新建的 WAN 连接（后续清理不再删它）: sn={}, path={}", sn, prefix);
     }
 
-    /**
-     * 设备 {@code ManagementServer} 指向的那条 WAN 连接。
-     *
-     * <p>管理通道不能按「第几个实例」认：出厂自带的实例号会漂移，换批设备就可能认错。
-     * 这里取设备自己申报的指向——{@code ManagementServer} 下哪个参数的值带
-     * {@code WANIPConnection.n.} / {@code WANPPPConnection.n.}，那条就是管理通道；
-     * 只给了实例号的（有些厂商只写 {@code 9}）也照收，由
-     * {@link WanCleanup#matchesManagement(String, String)} 按号比对。</p>
-     *
-     * @return 连接片段（{@code WANIPConnection.9.}）或实例号（{@code 9}），认不出返回 null
-     */
+    /** 设备 {@code ManagementServer} 指向的那条 WAN 连接 */
     String findManagementWanPath(String sn) {
         try {
             List<CpeParameter> rows = parameterMapper.selectList(
@@ -1367,14 +1206,7 @@ public class IntentDeliveryService {
         return null;
     }
 
-    /**
-     * 按设备实际的 WAN 挂载位置校正下发计划。
-     *
-     * <p>模板里的挂载位置是型号级的、当初照着另一台设备的报文写死的
-     * （{@code WANConnectionDevice.2}），换一台结构不同的设备（比如只有 {@code .1}）
-     * 照发就是 9002 Internal error。下发前拿这台设备采集到的真实实例号改一遍，
-     * AddObject 的父对象和后续参数路径都要跟着改。</p>
-     */
+    /** 按设备实际的 WAN 挂载位置校正下发计划 */
     private IntentPlan alignWanDevice(DeviceTask task, IntentPlan plan) {
         Integer actual = detectWanDevice(task.getSn());
         if (actual == null) {
@@ -1394,19 +1226,8 @@ public class IntentDeliveryService {
         return new IntentPlan(plan.bizObject(), plan.instance(), objects, params, plan.errors());
     }
 
-    /**
-     * 这台设备的 WAN 连接挂在 {@code WANConnectionDevice} 的第几个实例下。
-     *
-     * <p>取设备自己上报的能力快照，不发 RPC；采不到就返回 null，让计划保持原样
-     * （宁可按模板发，也好过凭空猜一个实例号）。快照记录的是「清理前」的状态，
-     * 业务连接还在，正是判挂载位置该看的那一份。</p>
-     *
-     * <p>一份快照里可能残留多个批次采集出的 {@code WANConnectionDevice} 编号，
-     * 取最小的那个：设备上真正生效的挂载点是唯一的，编号最小即最靠前的一级。
-     * 早先这里是「取第一条匹配行」，行序由数据库决定，同一台设备两次下发可能落到
-     * 不同编号上。</p>
-     */
-    /** 包内可见：挂载位置判读是要盯住的逻辑，留给单元测试直接验证。 */
+    /** 这台设备的 WAN 连接挂在 {@code WANConnectionDevice} 的第几个实例下 */
+    /** 包内可见：挂载位置判读是要盯住的逻辑，留给单元测试直接验证 */
     Integer detectWanDevice(String sn) {
         try {
             List<CpeParameter> rows = parameterMapper.selectList(
@@ -1443,11 +1264,7 @@ public class IntentDeliveryService {
                 .replaceAll("WANConnectionDevice." + instance + ".");
     }
 
-    /**
-     * 清理明细：每条连接是什么业务、占不占用、留还是删，逐条列清。
-     *
-     * <p>下发失败时最需要的是「当时到底判成了什么」，而不是一句汇总数字。</p>
-     */
+    /** 清理明细：每条连接是什么业务、占不占用、留还是删，逐条列清 */
     private static String describe(WanCleanup.Plan plan) {
         StringBuilder sb = new StringBuilder();
         for (WanCleanup.WanLink link : plan.keep()) {
@@ -1468,16 +1285,7 @@ public class IntentDeliveryService {
         return i < 0 ? String.valueOf(path) : path.substring(i);
     }
 
-    /**
-     * 读出设备上现有的 WAN 连接及其参数。
-     *
-     * <p>先取库里的快照（{@code summary}），库里没有（这台设备还没采过）才向设备要一轮。
-     * 清理要的只是「有哪些存量连接」，快照足够；每次清理都真采一轮是几百条路径的
-     * GetParameterValues，会把设备这一轮的下发窗口占满，设备回应不过来就是整轮超时、
-     * 指令被重排队列，后面的业务全被拖垮。</p>
-     *
-     * <p>快照陈旧只会「少删」（漏掉新出现的连接），不会「误删」，方向是安全的。</p>
-     */
+    /** 读出设备上现有的 WAN 连接及其参数 */
     private List<WanCleanup.WanLink> fetchWanLinks(String sn) {
         List<WanCleanup.WanLink> cached = wanLinksFrom(businessService.summary(sn));
         if (!cached.isEmpty()) {
@@ -1529,18 +1337,7 @@ public class IntentDeliveryService {
         eventPublisher.publishEvent(new TaskFinishedEvent(this, task));
     }
 
-    /**
-     * SIP 配置模板字段 → 下发变量。
-     *
-     * <p>模板面向开通界面，字段名是 {@code registrar} / {@code proxy} / {@code sip_user_info}；
-     * 下发要的变量是 {@code %sip_proxy%} / {@code %sip_num%} / {@code %sip_pwd%}。
-     * 名字对不上，模板上填好的语音参数就一个都传不进去，下发只剩「缺业务字段值」。</p>
-     *
-     * <p>账号密码那块是一整段文本，一行一路语音，行内「账号 密码」，按本次要写的第几路
-     * 取对应行；行里还能带 {@code %room%} 这类变量，后面统一替换。</p>
-     *
-     * <p>一律 {@code putIfAbsent}：调用方显式传的变量优先，模板只做补位。</p>
-     */
+    /** SIP 配置模板字段 → 下发变量 */
     private static void applySipTemplateVariables(Map<String, Object> values,
                                                   Map<String, String> fields, int instance) {
         String proxy = firstNonBlank(fields.get("proxy"), fields.get("registrar"));
@@ -1577,7 +1374,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /** 取第一个非空值，都没有返回 null。 */
+    /** 取第一个非空值，都没有返回 null */
     private static String firstNonBlank(String... candidates) {
         if (candidates == null) {
             return null;
@@ -1596,12 +1393,7 @@ public class IntentDeliveryService {
         return out;
     }
 
-    /**
-     * 把一批待下发参数拼成可读文本，只在下发失败时打进日志。
-     *
-     * <p>值一并打印：9003 报的是「值不合法」，只看到参数名无从判断。
-     * 下发计划本就明文存在 {@code device_task} 里，日志里出现的口令与库里是同一份。</p>
-     */
+    /** 把一批待下发参数拼成可读文本，只在下发失败时打进日志 */
     private static String dump(List<ParameterValueStruct> values) {
         StringBuilder sb = new StringBuilder();
         for (ParameterValueStruct v : values) {
@@ -1613,12 +1405,7 @@ public class IntentDeliveryService {
         return sb.toString();
     }
 
-    /**
-     * 判定响应是否算失败，成功返回 null。
-     *
-     * <p>SetParameterValues 即便返回成功，Status 为 1 也意味着设备没全收，
-     * 这时必须当失败报出去，否则上层会以为开通成功。</p>
-     */
+    /** 判定响应是否算失败，成功返回 null */
     private String failureOf(SoapMessage resp, String action) {
         if (resp == null) {
             return action + " 失败: 设备无响应";
@@ -1637,17 +1424,40 @@ public class IntentDeliveryService {
         return future.get(requestTimeoutSeconds, TimeUnit.SECONDS);
     }
 
-    /** 清理指令的等待：短于正式下发，见 {@link #wanCleanupTimeoutSeconds}。 */
+    /** 清理指令的等待：短于正式下发，见 {@link #wanCleanupTimeoutSeconds} */
     private SoapMessage awaitCleanup(CompletableFuture<SoapMessage> future) throws Exception {
         return future.get(wanCleanupTimeoutSeconds, TimeUnit.SECONDS);
     }
 
     private List<List<PlanItem>> chunks(List<PlanItem> items) {
+        // WAN 连接的 Enable 单独放最后一批：设备要求先把业务绑定 / VLAN / 绑定端口配好
+        // 才允许启用，同一批里带着 Enable 时，前面任何一条被拒都会把启用一起拖掉，
+        // 而且日志里只看得到整批 9003，分不清是"配置不对"还是"不许启用"
+        List<PlanItem> body = new ArrayList<>(items.size());
+        List<PlanItem> enables = new ArrayList<>();
+        for (PlanItem item : items) {
+            if (isWanEnable(item)) {
+                enables.add(item);
+            } else {
+                body.add(item);
+            }
+        }
         List<List<PlanItem>> chunks = new ArrayList<>();
-        for (int i = 0; i < items.size(); i += VALUE_BATCH) {
-            chunks.add(items.subList(i, Math.min(items.size(), i + VALUE_BATCH)));
+        for (int i = 0; i < body.size(); i += VALUE_BATCH) {
+            chunks.add(body.subList(i, Math.min(body.size(), i + VALUE_BATCH)));
+        }
+        if (!enables.isEmpty()) {
+            // 配置那一批先发；它失败时整个任务就此收尾，绝不会顺手把半成品启用
+            chunks.add(enables);
         }
         return chunks;
+    }
+
+    /** WAN 连接的启用开关：{@code WANIPConnection.{i}.Enable} / {@code WANPPPConnection.{i}.Enable} */
+    private static boolean isWanEnable(PlanItem item) {
+        String path = item.path();
+        return path != null && path.contains("Connection.")
+                && "Enable".equalsIgnoreCase(leafOf(path));
     }
 
     // ==================== 序列化 ====================
@@ -1714,9 +1524,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /**
-     * 模板默认值与本次请求值合并：请求优先，合并结果随任务落库，便于事后复查「当时要下发什么」。
-     */
+    /** 模板默认值与本次请求值合并：请求优先，合并结果随任务落库，便于事后复查「当时要下发什么」 */
     private Map<String, Object> merge(Map<String, Object> base, Map<String, Object> override) {
         Map<String, Object> result = new LinkedHashMap<>(base);
         if (override != null) {
@@ -1729,20 +1537,14 @@ public class IntentDeliveryService {
         return raw == null ? null : String.valueOf(raw);
     }
 
-    /**
-     * 一台设备的 WAN 清理台账：上次清理时间 + 本批次新建的连接路径。
-     *
-     * <p>「删除只跑一次」靠它落地：批量下发第二条业务时，{@link #fresh(long)} 为真
-     * 说明同批次已经清过，直接跳过；{@link #createdPaths()} 里的连接无论隔多久都不删——
-     * 下发完会补采快照，它们随后就会出现在存量里，只靠时间窗口挡不住。</p>
-     */
+    /** 一台设备的 WAN 清理台账：上次清理时间 + 本批次新建的连接路径 */
     private static final class WanCleanupState {
 
         private volatile long lastCleanedAtMillis;
 
         private final Set<String> created = ConcurrentHashMap.newKeySet();
 
-        /** 距上次清理还没超过窗口：视为同一批次，不再清理。 */
+        /** 距上次清理还没超过窗口：视为同一批次，不再清理 */
         boolean fresh(long windowMillis) {
             long last = lastCleanedAtMillis;
             return last > 0 && System.currentTimeMillis() - last < windowMillis;

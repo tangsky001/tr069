@@ -10,16 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * 业务模板相关表的自动建表。
- *
- * <p>业务模板是后加的功能，存量部署的库里没有这三张表。启动阶段从唯一的
- * {@code sql/schema.sql} 里挑出这三张表的定义补建，缺一张就重跑，
- * 重复执行无害（CREATE TABLE IF NOT EXISTS）。</p>
- *
- * <p>跑在 Bean 初始化阶段（InitializingBean）而非 ApplicationRunner：后者要等容器刷新结束
- * 才轮到，届时定时任务已在并发运行，表若晚于任务建出来就会被查成「不存在」。</p>
- */
+/** 业务模板相关表的自动建表 */
 @Slf4j
 @Component
 @RequiredArgsConstructor

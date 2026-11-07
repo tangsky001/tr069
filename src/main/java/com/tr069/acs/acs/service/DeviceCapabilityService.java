@@ -52,33 +52,28 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** 设备能力采集。*/
+/** 设备能力采集 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeviceCapabilityService {
 
-    /**
-     * 0 BOOTSTRAP 事件码前缀，设备首次上线或恢复出厂后上报，此时设备能力可能已变，强制重采。
-     */
+    /** 0 BOOTSTRAP 事件码前缀，设备首次上线或恢复出厂后上报，此时设备能力可能已变，强制重采 */
     private static final String EVENT_BOOTSTRAP = "0 BOOTSTRAP";
 
-    /**
-     * 采集状态：只拿到了已知路径那几个参数（设备身份），参数树没采到。
-     *
-     * <p>不算 success——它导不出型号能力档案，拿它归档会把一份残缺的 XML 锁成型号档案；
-     * 但也不是失败：设备身份进库了，页面上能看到这是什么猫。</p>
-     */
+    /** 采集状态：只拿到了已知路径那几个参数（设备身份），参数树没采到 */
     private static final String PARTIAL = "partial";
 
-    /**
-     * 兜底的根数据模型节点：设备台账与会话都还没认出来时按 TR-098 处理。
-     * 真正生效的根节点来自 {@link DataModel#detect}，别在不确定的地方写死字符串。
-     */
+    /** 兜底的根数据模型节点：设备台账与会话都还没认出来时按 TR-098 处理 */
     private static final String DEFAULT_ROOT = DataModel.TR098.getRoot();
 
-    /** 只采集这些子树，相对数据模型根节点书写。 */
+    /** 只采集这些子树，相对数据模型根节点书写 */
     private static final List<String> SUBTREES_TR098 = List.of(
+            // 设备身份与运行时长：Manufacturer / SoftwareVersion / SerialNumber / UpTime
+            // 都在 DeviceInfo 这一层，节点数只有几十个，但以前一棵都没采——
+            // 于是页面上的「运行时长」永远是空的（设备明明能报，实测
+            // InternetGatewayDevice.DeviceInfo.UpTime 返回 unsignedInt 秒数）
+            "DeviceInfo.",
             // WAN
             "WANDevice.",
             // LAN 网口（TR-098 的 WiFi 挂在 LANDevice 下面，随 LAN 子树一并取回）
@@ -86,8 +81,10 @@ public class DeviceCapabilityService {
             // SIP 电话
             "Services.VoiceService.");
 
-    /** TR-181（{@code Device.}）下的业务子树。 */
+    /** TR-181（{@code Device.}）下的业务子树 */
     private static final List<String> SUBTREES_TR181 = List.of(
+            // 设备身份与运行时长，同上
+            "DeviceInfo.",
             // WAN
             "WAN.",
             // LAN 网口
@@ -99,30 +96,19 @@ public class DeviceCapabilityService {
             "Services.VoiceService.",
             "VoiceService.");
 
-    /**
-     * 会话级故障码：下发超时、连接断开、指令未入队，由会话层与本服务生成，
-     * 区别于设备返回的 CWMP 故障码。
-     */
+    /** 会话级故障码：下发超时、连接断开、指令未入队，由会话层与本服务生成 */
     private static final String FAULT_SESSION = "8002";
 
-    /**
-     * 指令入队失败（队列不可用或该设备队列已满），同样不是设备返回的故障。
-     */
+    /** 指令入队失败（队列不可用或该设备队列已满），同样不是设备返回的故障 */
     private static final String FAULT_ENQUEUE = "8003";
 
-    /**
-     * 批量写入的分片大小，避免单条 INSERT 过长。
-     */
+    /** 批量写入的分片大小，避免单条 INSERT 过长 */
     private static final int INSERT_CHUNK = 500;
 
-    /**
-     * 值回填的分片大小。
-     */
+    /** 值回填的分片大小 */
     private static final int UPDATE_CHUNK = 200;
 
-    /**
-     * 单个参数值的落库长度上限，超出截断，防止 TEXT 溢出导致整批写入失败。
-     */
+    /** 单个参数值的落库长度上限，超出截断，防止 TEXT 溢出导致整批写入失败 */
     private static final int MAX_VALUE_LENGTH = 20000;
 
     private static final DateTimeFormatter BATCH_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
@@ -132,78 +118,78 @@ public class DeviceCapabilityService {
     private final CpeParameterMapper parameterMapper;
     private final QueueProperties queueProperties;
     private final com.tr069.acs.worklist.service.ModelTreeStore modelTreeStore;
-    /** 设备台账：取运营商，采完再把识别出的运营商写回去。 */
+    /** 设备台账：取运营商，采完再把识别出的运营商写回去 */
     private final CpeDeviceMapper deviceMapper;
-    /** 按运营商的能力采集标准。 */
+    /** 按运营商的能力采集标准 */
     private final CapabilityProfiles capabilityProfiles;
 
-    /** 采集总开关。 */
+    /** 采集总开关 */
     @Value("${acs.device.capability.enabled:true}")
     private boolean enabled;
 
-    /** 收到 Inform 后是否自动触发采集。 */
+    /** 收到 Inform 后是否自动触发采集 */
     @Value("${acs.device.capability.collect-on-inform:true}")
     private boolean collectOnInform;
 
-    /** BOOTSTRAP 事件是否强制重新采集。 */
+    /** BOOTSTRAP 事件是否强制重新采集 */
     @Value("${acs.device.capability.force-on-bootstrap:true}")
     private boolean forceOnBootstrap;
 
-    /** 距上次采集超过该小时数才重采，0 表示每次 Inform 都采。 */
+    /** 距上次采集超过该小时数才重采，0 表示每次 Inform 都采 */
     @Value("${acs.device.capability.refresh-interval-hours:24}")
     private long refreshIntervalHours;
 
-    /** 单条 GetParameterValues 携带的参数个数。 */
+    /** 单条 GetParameterValues 携带的参数个数 */
     @Value("${acs.device.capability.value-batch-size:64}")
     private int valueBatchSize;
 
-    /** 单次采集读取的参数个数上限。 */
+    /** 单次采集读取的参数个数上限 */
     @Value("${acs.device.capability.max-parameters:20000}")
     private int maxParameters;
 
-    /** 递归 GetParameterNames 失败时，是否改用 NextLevel=true 逐层展开。 */
+    /** 递归 GetParameterNames 失败时，是否改用 NextLevel=true 逐层展开 */
     @Value("${acs.device.capability.fallback-next-level:true}")
     private boolean fallbackNextLevel;
 
-    /** 逐层展开时最多展开多少个对象。 */
+    /** 逐层展开时最多展开多少个对象 */
     @Value("${acs.device.capability.max-object-rounds:500}")
     private int maxObjectRounds;
 
-    /** 采集与回调使用的线程数。 */
+    /** 采集与回调使用的线程数 */
     @Value("${acs.device.capability.worker-threads:8}")
     private int workerThreads;
 
-    /** 采集成功后是否把参数树导出为型号 XML 文件（models/{isp}/{型号}.xml）。 */
+    /** 采集成功后是否把参数树导出为型号 XML 文件（models/{isp}/{型号}.xml） */
     @Value("${acs.device.capability.export-model-tree:true}")
     private boolean exportModelTree;
 
-    /** 是否按能力树里的厂商私有前缀（X_CMCC_ / X_CT-COM_ / X_CU_）回写设备运营商。*/
+    /** 是否按能力树里的厂商私有前缀（X_CMCC_ / X_CT-COM_ / X_CU_）回写设备运营商 */
     private boolean autoDetectIsp = true;
 
-    /** 下发前补采时最多等这么久，超时就按现有参数拼路径。 */
+    /** 下发前补采时最多等这么久，超时就按现有参数拼路径 */
     @Value("${acs.device.capability.auto-collect-timeout-millis:120000}")
     private long autoCollectTimeoutMillis;
 
-    /** 每台设备最近一次采集状态。 */
+    /** 每台设备最近一次采集状态 */
     private final Map<String, CollectStatus> statuses = new ConcurrentHashMap<>();
 
-    /** 正在采集中的设备，避免同一台设备被并发采集。 */
+    /** 正在采集中的设备，避免同一台设备被并发采集 */
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
 
-    /** 自适应档设备「连续扫不动参数树」的次数（sn → 连续失败次数）。*/
+    /** 自适应档设备「连续扫不动参数树」的次数（sn → 连续失败次数） */
     private final Map<String, Integer> treeFailures = new ConcurrentHashMap<>();
 
-    /** 连续扫不动多少次才降级。 */
+    /** 连续扫不动多少次才降级 */
     private static final int TREE_FAIL_THRESHOLD = 2;
 
-    /**一轮采集的总时长上限（毫秒）。*/
+    /** 一轮采集的总时长上限（毫秒） */
     @Value("${acs.capability.collect-timeout-ms:600000}")
     private long collectTimeoutMillis;
 
-    /** 本轮采集的到期时刻（sn → 毫秒时间戳）。 */
+    /** 本轮采集的到期时刻（sn → 毫秒时间戳） */
     private final Map<String, Long> deadlines = new ConcurrentHashMap<>();
 
-    /** 连接请求的默认账号（ACS -> CPE），配置里写 auto 或留空表示设备侧免认证。 */
+    /** 连接请求的默认账号（ACS -> CPE），配置里写 auto 或留空表示设备侧免认证 */
     @Value("${acs.auth.acs-to-cpe-username:}")
     private String defaultAcsToCpeUser;
 
@@ -212,60 +198,39 @@ public class DeviceCapabilityService {
 
     private static final String AUTH_AUTO = "auto";
 
-    /** 连接请求凭据的最后兜底（电信 ITMS 现场通用 itms/itms）。*/
+    /** 连接请求凭据的最后兜底（电信 ITMS 现场通用 itms/itms） */
     private static final String DEFAULT_CR_USER = "itms";
 
     private static final String DEFAULT_CR_PASSWORD = "itms";
 
-    /**
-     * 是否在手动采集前主动唤醒设备（连接请求）。*/
+    /** 是否在手动采集前主动唤醒设备（连接请求） */
     @Value("${acs.device.capability.wakeup-enabled:true}")
     private boolean wakeupEnabled;
 
-    /**
-     * 唤醒后最多等多少秒设备建链（手动采集、业务刷新等场景）。
-     *
-     * <p>下发场景各有一个独立的同名键，见 {@code acs.exec.wakeup-wait-seconds}。</p>
-     */
+    /** 唤醒后最多等多少秒设备建链（手动采集、业务刷新等场景） */
     @Value("${acs.exec.wakeup-wait-seconds:30}")
     private long wakeupWaitSeconds;
 
-    /** 唤醒过但没凭据的设备（sn → 下次再试的时刻），免得每次采集都撞一次 401。 */
+    /** 唤醒过但没凭据的设备（sn → 下次再试的时刻），免得每次采集都撞一次 401 */
     private final Map<String, Long> wakeupRetryAfter = new ConcurrentHashMap<>();
 
-    /** 无凭据唤醒失败后隔多久再试（毫秒）。 */
+    /** 无凭据唤醒失败后隔多久再试（毫秒） */
     private static final long WAKEUP_RETRY_INTERVAL = 60 * 60 * 1000L;
 
-    /** 设备最近有通信就算还在下发窗口，不必叫它（秒）。 */
+    /** 设备最近有通信就算还在下发窗口，不必叫它（秒） */
     private static final long WAKEUP_SESSION_FRESH_SECONDS = 60L;
 
-    /**
-     * 从 Inform 上报参数预判出的运营商（sn → 运营商代码）。
-     *
-     * <p>只在这次 Inform 触发的采集里用：采集跑在台账入库之前，查库拿不到运营商，
-     * 靠它先顶上。台账入库后以库里的为准（人工申报过的也以申报为准）。</p>
-     */
+    /** 从 Inform 上报参数预判出的运营商（sn → 运营商代码） */
     private final Map<String, String> informIsp = new ConcurrentHashMap<>();
 
-    /**
-     * 队列关闭时退回会话内存 outbox，此时拿不到 rpc_record 主键，
-     * 用负数序号避免与数据库主键相撞。
-     */
+    /** 队列关闭时退回会话内存 outbox，此时拿不到 rpc_record 主键 */
     private final AtomicInteger outboxSequence = new AtomicInteger(0);
 
     private volatile ExecutorService executor;
 
     // ==================== 入口 ====================
 
-    /**
-     * Inform 到达时调用。
-     *
-     * <p>必须发生在回复 InformResponse 之前：采集指令要提前排进下发队列，
-     * 才能被 CPE 紧接着的那次空 POST 取走，抢住这个窗口期。</p>
-     *
-     * @param session 设备会话
-     * @param inform  Inform 内容，用于识别 BOOTSTRAP 与判定根数据模型节点
-     */
+    /** Inform 到达时调用 */
     public void onInform(CpeSession session, InformRequest inform) {
         if (!enabled || !collectOnInform || session == null) {
             return;
@@ -289,14 +254,7 @@ public class DeviceCapabilityService {
         }
     }
 
-    /**
-     * 从 Inform 上报的参数里认运营商，记下来给紧接着的这次采集用。
-     *
-     * <p>为什么不等查库：{@link #onInform} 必须在回复 InformResponse 之前跑完（要抢空 POST
-     * 窗口），而台账入库走队列消费者，晚 100ms 以上。所以第一次上报的设备，采集开跑时
-     * 台账上还没有运营商，只能按通用档走——电信设备就享受不到本档的策略
-     * （自适应降级、绕开 {@code X_CTC_}）。</p>
-     */
+    /** 从 Inform 上报的参数里认运营商，记下来给紧接着的这次采集用 */
     private void rememberInformIsp(String sn, InformRequest inform) {
         if (inform == null || inform.getParameterList() == null) {
             return;
@@ -315,13 +273,7 @@ public class DeviceCapabilityService {
         log.info("按 Inform 私有前缀预判采集标准: sn={}, isp={}", sn, detected.getCode());
     }
 
-    /**
-     * 手动触发一次采集，供管理端调用。
-     *
-     * @param sn    设备序列号
-     * @param force 是否跳过「距上次采集时间」的判断
-     * @return 采集状态快照
-     */
+    /** 手动触发一次采集，供管理端调用 */
     public CollectStatus collect(String sn, boolean force) {
         CpeSession session = sessionManager.find(sn);
         String root = session != null && session.getRootNode() != null
@@ -333,21 +285,12 @@ public class DeviceCapabilityService {
         return start(sn, root, "manual");
     }
 
-    /**
-     * 查询采集状态，从未采集过返回 null。
-     */
+    /** 查询采集状态，从未采集过返回 null */
     public CollectStatus status(String sn) {
         return statuses.get(sn);
     }
 
-    /**
-     * 下发前确保这台设备的配置已上报过：没上报就现采一次，等它采完再拼路径。
-     *
-     * <p>模板只说明要下发哪些业务属性，真正能写什么节点得看设备自己上报的树。设备从没上报过
-     * 时这里补一次采集，业务方不用先手工采集再下发。</p>
-     *
-     * @return 结束时这台设备是否已经有了可用参数树
-     */
+    /** 下发前确保这台设备的配置已上报过：没上报就现采一次，等它采完再拼路径 */
     public boolean ensureCollected(String sn) {
         if (sn == null || sn.isEmpty()) {
             return false;
@@ -393,9 +336,7 @@ public class DeviceCapabilityService {
         }
     }
 
-    /**
-     * 设备能力汇总：支持多少路径、其中多少对象/参数、多少可写、最近采集时间。
-     */
+    /** 设备能力汇总：支持多少路径、其中多少对象/参数、多少可写、最近采集时间 */
     public Map<String, Object> summary(String sn) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("sn", sn);
@@ -497,11 +438,7 @@ public class DeviceCapabilityService {
         return status;
     }
 
-    /**
-     * 采集成功后把能力树导出成型号 XML，供同型号设备复用与下发取路径。
-     *
-     * <p>导出是旁路动作：失败只记日志，不影响采集结果本身。</p>
-     */
+    /** 采集成功后把能力树导出成型号 XML，供同型号设备复用与下发取路径 */
     private void exportModelTreeAsync(String sn) {
         try {
             executor().execute(() -> {
@@ -518,9 +455,7 @@ public class DeviceCapabilityService {
         }
     }
 
-    /**
-     * 两步采集的编排：先拉全量路径，再分批读值。
-     */
+    /** 两步采集的编排：先拉全量路径，再分批读值 */
     private CompletableFuture<Void> runCollect(String sn, String root, String batch,
                                                CollectStatus status) {
         status.setStatus("running");
@@ -607,14 +542,7 @@ public class DeviceCapabilityService {
         });
     }
 
-    /**
-     * 按 {@link #SUBTREES} 逐个拉取参数路径。
-     *
-     * <p>不再从根一次性递归整棵树：光猫全树动辄上万节点，平台实际只用得上
-     * WAN、WiFi、LAN 网口、SIP 电话这几块。子树逐个下发，某块设备没有就跳过去。</p>
-     *
-     * <p>一个会话同时只允许一条未回应的下发，所以子树之间必须串行。</p>
-     */
+    /** 按 {@link #SUBTREES} 逐个拉取参数路径 */
     private CompletableFuture<List<Node>> collectNames(String sn, String root,
                                                        CapabilityProfiles.Profile profile,
                                                        CollectStatus status) {
@@ -661,14 +589,7 @@ public class DeviceCapabilityService {
         }, executor());
     }
 
-    /**
-     * 逐棵子树都问不出来时的最后一步：拿整棵树的根再问一遍。
-     *
-     * <p>子树全军覆没不一定是设备没这块能力，也可能是这固件压根不吃「子树路径」——
-     * 只知道 {@code InternetGatewayDevice.}，给个 {@code WANDevice.} 就回 9002。
-     * 根节点能出东西的话，{@code NextLevel=false} 一次就是整棵树。
-     * 这里把所有姿势过一遍（递归 / 逐层 × 带尾点 / 不带尾点），全落空才算这台拉不了参数树。</p>
-     */
+    /** 逐棵子树都问不出来时的最后一步：拿整棵树的根再问一遍 */
     private CompletableFuture<List<Node>> probeRoot(String sn, String root,
                                                     CapabilityProfiles.Profile profile,
                                                     AtomicInteger rounds, CollectStatus status) {
@@ -709,13 +630,7 @@ public class DeviceCapabilityService {
         return chain.thenApply(v -> sink);
     }
 
-    /**
-     * 拉取单个子树：先递归 GPN，递归没拿到东西时退化为逐层展开。
-     *
-     * <p>子树取不到有两种原因：设备压根没有这条路径（另一种数据模型、或者该功能是选配），
-     * 以及设备不吃 NextLevel=false。两者都往 {@link #expandLevel} 兜一次，宁可多一轮来回，
-     * 也不误判成设备没有这块业务；会话级故障（离线、超时）才直接中止。</p>
-     */
+    /** 拉取单个子树：先递归 GPN，递归没拿到东西时退化为逐层展开 */
     private CompletableFuture<Void> collectSubtree(String sn, String path,
                                                    CapabilityProfiles.Profile profile,
                                                    List<Node> sink,
@@ -753,11 +668,7 @@ public class DeviceCapabilityService {
         }, executor());
     }
 
-    /**
-     * 递归拉一棵子树：{@code NextLevel=false} 一次拿全量。
-     *
-     * @return 是否拿到了节点
-     */
+    /** 递归拉一棵子树：{@code NextLevel=false} 一次拿全量 */
     private CompletableFuture<Boolean> fetchRecursive(String sn, String path, List<Node> sink,
                                                       CollectStatus status) {
         return getParameterNames(sn, path, false).thenApply(resp -> {
@@ -778,11 +689,7 @@ public class DeviceCapabilityService {
         });
     }
 
-    /**
-     * 逐层展开一棵子树：{@code NextLevel=true} 拿到下一层，命中的对象继续往下钻。
-     *
-     * @return 是否拿到了节点
-     */
+    /** 逐层展开一棵子树：{@code NextLevel=true} 拿到下一层，命中的对象继续往下钻 */
     private CompletableFuture<Boolean> fetchLevel(String sn, String path, List<Node> sink,
                                                   AtomicInteger rounds, CollectStatus status,
                                                   CapabilityProfiles.Profile profile) {
@@ -796,13 +703,7 @@ public class DeviceCapabilityService {
         });
     }
 
-    /**
-     * 按实例号逐个探测：{@code WANDevice.} 问不出来时，改问 {@code WANDevice.1.} / {@code .2.} ……
-     *
-     * <p>设备对「对象后面没跟实例号」的路径回 9002 Internal error 时，这是唯一还能拿到树的办法。
-     * 代价是每个实例号要等设备一次上报周期，所以探到第一个不存在的实例号就停，
-     * 上限由采集标准的 {@code max-instances} 控制。</p>
-     */
+    /** 按实例号逐个探测：{@code WANDevice.} 问不出来时，改问 {@code WANDevice.1.} / {@code .2.} …… */
     private CompletableFuture<Boolean> probeInstances(String sn, String path,
                                                       CapabilityProfiles.Profile profile,
                                                       List<Node> sink, AtomicInteger rounds,
@@ -858,15 +759,7 @@ public class DeviceCapabilityService {
         });
     }
 
-    /**
-     * 最后一道兜底：GetParameterNames 各种姿势都不认时，按采集标准里登记的已知路径
-     * 直接发 GetParameterValues（一条一回），至少把业务参数读回来。
-     *
-     * <p>只在采集标准显式配了 {@code probe-paths} 时才走，默认不开。
-     * 清单只放真正用得上的路径：读不到的会被二分拆批剔掉，每剔除一轮就是一次来回。
-     * （早年间每条路径要等设备一个上报周期，所以清单刻意保持短；指令捎带打通之后，
-     * 一个会话里能连发几十条，这层顾虑没有了，但清单仍不宜膨胀。）</p>
-     */
+    /** 最后一道兜底：GetParameterNames 各种姿势都不认时，按采集标准里登记的已知路径 */
     private CompletableFuture<Boolean> probeKnownPaths(String sn, String path,
                                                        CapabilityProfiles.Profile profile,
                                                        List<Node> sink, CollectStatus status) {
@@ -912,10 +805,10 @@ public class DeviceCapabilityService {
                 .thenApply(v -> true);
     }
 
-    /** 已做过实例扩展的「sn|root」，同一次采集里每棵子树的兜底不重复扩展。 */
+    /** 已做过实例扩展的「sn|root」，同一次采集里每棵子树的兜底不重复扩展 */
     private final Set<String> expandedRoots = ConcurrentHashMap.newKeySet();
 
-    /** 设备上报的条目数；解析不出来按 0 处理，也就是不扩实例。 */
+    /** 设备上报的条目数；解析不出来按 0 处理，也就是不扩实例 */
     private static int intOf(String value) {
         if (value == null || value.isBlank()) {
             return 0;
@@ -927,15 +820,7 @@ public class DeviceCapabilityService {
         }
     }
 
-    /**
-     * 按设备自报的条目数把实例 2..N 补采回来。
-     *
-     * <p>兜底清单只能写死一个实例号（{@code LANEthernetInterfaceConfig.1}），可设备报的
-     * {@code LANEthernetInterfaceNumberOfEntries} 才是真口数：MSG2100E 自报 4 口，
-     * 兜底清单只问了 1 口，采完页面就只能画出一个网口，申报 4 口也看不出依据。
-     * 这里先读三个条目数，再按它把 2..N 的开关、状态、速率、号码补上；读不到的路径
-     * 会被拆批剔掉，不影响已有的那一口。</p>
-     */
+    /** 按设备自报的条目数把实例 2..N 补采回来 */
     private CompletableFuture<Void> expandInstances(String sn, String root, List<Node> sink,
                                                     CollectStatus status) {
         if (root == null || root.isEmpty() || !expandedRoots.add(sn + "|" + root)) {
@@ -993,14 +878,7 @@ public class DeviceCapabilityService {
         }, executor());
     }
 
-    /**
-     * 这个对象是否在采集标准的「禁止展开」名单里：比对对象名（路径末段）的前缀。
-     *
-     * <p>电信定制机 {@code X_CTC_} 那一套（天翼插件、ITMS 探针、天翼管家、DPI 软探针、
-     * 业务虚拟对象）固件一遍历进去就抛 9002 Internal error，整棵子树连带报废；
-     * ITMS 自己也从不递归遍历，只按需读指定字段。展开时绕开这些分支，
-     * 标准子树才走得完。</p>
-     */
+    /** 这个对象是否在采集标准的「禁止展开」名单里：比对对象名（路径末段）的前缀 */
     private static boolean isSkipped(String path, CapabilityProfiles.Profile profile) {
         if (profile == null || profile.getSkipPrefixes() == null) {
             return false;
@@ -1015,15 +893,7 @@ public class DeviceCapabilityService {
         return false;
     }
 
-    /**
-     * 最后一档兜底（整棵树级别）：GetParameterNames 一句都问不出来时，按采集标准登记的
-     * 已知路径直接发 GetParameterValues。
-     *
-     * <p>与 {@link #probeKnownPaths} 的分工：后者只在单棵子树内兜底，这里管的是
-     * 「设备连一句话都不答」的场景，路径不限于业务子树，主要是 DeviceInfo 那几个身份参数。</p>
-     *
-     * @return 是否读到了值
-     */
+    /** 最后一档兜底（整棵树级别）：GetParameterNames 一句都问不出来时，按采集标准登记的 */
     private CompletableFuture<Boolean> probeGlobalPaths(String sn, String root,
                                                         CapabilityProfiles.Profile profile,
                                                         CollectStatus status) {
@@ -1074,9 +944,7 @@ public class DeviceCapabilityService {
         });
     }
 
-    /**
-     * 本次采集采用的采集标准：按设备台账的运营商取，台账没登记就走通用档。
-     */
+    /** 本次采集采用的采集标准：按设备台账的运营商取，台账没登记就走通用档 */
     private CapabilityProfiles.Profile profileFor(String isp) {
         if (capabilityProfiles == null) {
             return new CapabilityProfiles.Profile();
@@ -1084,9 +952,7 @@ public class DeviceCapabilityService {
         return capabilityProfiles.forIsp(Isp.of(isp));
     }
 
-    /**
-     * 设备台账上的运营商，查不到返回 null（由 {@link Isp#of} 归到通用档）。
-     */
+    /** 设备台账上的运营商，查不到返回 null（由 {@link Isp#of} 归到通用档） */
     private String deviceIsp(String sn) {
         try {
             CpeDevice device = deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
@@ -1099,27 +965,8 @@ public class DeviceCapabilityService {
         }
     }
 
-    /**
-     * 用设备的 ConnectionRequestURL 反连唤醒它，让它立刻来上报。
-     *
-     * <p>CWMP 是短连接，ACS 不能主动给设备推数据，只能等设备来建会话。常规下发就排在
-     * 队列里等它下一次周期 Inform，那是成本最低的路；但人在页面上点了「下发/采集」时
-     * 等不起——光猫十几分钟才上报一次。这时按 TR-069 的连接请求（ConnectionRequest）
-     * 反向叫一声，设备收到就立刻 Inform，队列里的指令随即带下去。</p>
-     *
-     * <p>所以只有「人点了就要生效」的场景才调它：手动采集、工单下发、业务模板下发。
-     * 定时任务（LAN 状态刷新、周期采集）仍走周期上报那条路，不无谓叫醒设备。</p>
-     *
-     * <p>唤醒失败一律忽略：URL 没上报过、设备侧端口不通、要求认证都可能，
-     * 这时只是退化成「等它自己上报」，不牵连调用方的流程。</p>
-     */
-    /**
-     * 反向唤醒的结果。
-     *
-     * <p>唤醒失败原本是静默退化的：叫不到就退化成「等它自己上报」，不抛异常也不报错。
-     * 现场只看得到下发超时，分不清是「叫了设备没来」还是「压根没叫出去」。
-     * 把结果回给调用方，让它把原因写进下发日志，一眼就能定位。</p>
-     */
+    /** 用设备的 ConnectionRequestURL 反连唤醒它，让它立刻来上报 */
+    /** 反向唤醒的结果 */
     public enum WakeUpResult {
         /** 已发出连接请求 */
         SENT,
@@ -1141,14 +988,7 @@ public class DeviceCapabilityService {
         return wakeUp(sn, false);
     }
 
-    /**
-     * 反向唤醒设备。
-     *
-     * @param force true 时跳过「会话刚通信过」的判断，无论如何都叫一次。
-     *      <strong>连续下发多条业务时必须为 true</strong>：第一条跑完设备已经把 TCP 断了，
-     *      但会话对象还在 60 秒新鲜窗口里，按常规判断不会去叫它，
-     *      第二条指令就只能在队列里干等下一次周期上报——现场看到的就是「第一条成功、第二条超时」
-     */
+    /** 反向唤醒设备 */
     public WakeUpResult wakeUp(String sn, boolean force) {
         if (!wakeupEnabled) {
             return WakeUpResult.DISABLED;
@@ -1222,24 +1062,10 @@ public class DeviceCapabilityService {
         }
     }
 
-    /** 唤醒后轮询会话是否建立的间隔。 */
+    /** 唤醒后轮询会话是否建立的间隔 */
     private static final long WAKEUP_POLL_INTERVAL_MILLIS = 500L;
 
-    /**
-     * 反向唤醒设备，并等到它真的建链。
-     *
-     * <p>凡是「人点出来的」动作——下发工单、点刷新、点采集——要的都是当下的结果：
-     * 设备在不在线、值是不是最新的。而 CWMP 的指令只能捎带在设备自己发起的那轮会话里，
-     * 不先把它叫上来建立会话，指令进队列后只能干等下一次周期上报（十几分钟），
-     * 看到的就是超时，或者刷新完页面上还是上一次的旧值。</p>
-     *
-     * <p>所以这里不是「发个连接请求就完事」，而是发完之后一直等到会话真的建立：
-     * 判据是设备这会儿有活跃连接，或者它在我们叫完之后有过新的通信。
-     * 只看「会话对象还在」不行——设备报完一轮就把 TCP 断了，会话对象要等扫描才清。</p>
-     *
-     * @param waitSeconds 最多等多少秒
-     * @return true 表示等到会话了；false 表示没等到，调用方自行决定是继续还是放弃
-     */
+    /** 反向唤醒设备，并等到它真的建链 */
     public boolean wakeUpAndAwait(String sn, long waitSeconds) {
         long mark = lastContactOf(sn);
         WakeUpResult result = wakeUp(sn, true);
@@ -1247,6 +1073,11 @@ public class DeviceCapabilityService {
             log.info("已反向唤醒设备，等待它建链: sn={}", sn);
         } else {
             log.warn("未发出反向唤醒: sn={}, 原因={}（只能等设备周期上报）", sn, result);
+            // 连接请求根本没发出去（开关关着、没地址、退避期内），等多久都不会因我们而建链：
+            // 再干等几十秒只会让调用方白等，直接返回让它走兜底
+            if (result != WakeUpResult.FAILED) {
+                return false;
+            }
         }
         long start = System.currentTimeMillis();
         long deadline = start + waitSeconds * 1000L;
@@ -1272,24 +1103,28 @@ public class DeviceCapabilityService {
         return wakeUpAndAwait(sn, wakeupWaitSeconds);
     }
 
+    /** 这台设备现在能不能被反向唤醒：唤醒开关开着、台账里有它、且登记了连接请求地址 */
+    public boolean canWakeUp(String sn) {
+        if (!wakeupEnabled) {
+            return false;
+        }
+        CpeDevice device = findDevice(sn);
+        return device != null && device.getConnectionRequestUrl() != null
+                && !device.getConnectionRequestUrl().isBlank();
+    }
+
     private long lastContactOf(String sn) {
         CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
         return session == null ? 0L : session.getLastContactTime();
     }
 
-    /** 设备这会儿是否有一条活跃的 TCP 连接：连接断开时会话对象还在，连接标识会被清掉。 */
+    /** 设备这会儿是否有一条活跃的 TCP 连接：连接断开时会话对象还在，连接标识会被清掉 */
     private boolean isSessionActive(String sn) {
         CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
         return session != null && session.isOnline() && session.getConnectionId() != null;
     }
 
-    /**
-     * 发连接请求；设备要认证就带上凭据重发一次。
-     *
-     * <p>TR-069 的连接请求认证普遍是 HTTP Digest，而 JDK 自带的 {@link HttpClient}
-     * 只支持 Basic，Digest 得自己算（HA1 / HA2 / response）。设备回 401 时不重试，
-     * 就只能眼看着唤醒失败。</p>
-     */
+    /** 发连接请求；设备要认证就带上凭据重发一次 */
     private HttpResponse<String> sendConnectionRequest(String url, String user, String password)
             throws Exception {
         HttpClient client = HttpClient.newBuilder()
@@ -1316,7 +1151,7 @@ public class DeviceCapabilityService {
                 HttpResponse.BodyHandlers.ofString());
     }
 
-    /** 按设备的 WWW-Authenticate 构造 Authorization 头，支持 Digest 与 Basic。 */
+    /** 按设备的 WWW-Authenticate 构造 Authorization 头，支持 Digest 与 Basic */
     private static String authorizationHeader(String challenge, String user, String password,
                                               URI uri, String method) {
         if (challenge == null || challenge.isBlank()) {
@@ -1361,7 +1196,7 @@ public class DeviceCapabilityService {
         return header.toString();
     }
 
-    /** 解析 {@code realm="x", nonce="y"} 这类认证参数。 */
+    /** 解析 {@code realm="x", nonce="y"} 这类认证参数 */
     private static Map<String, String> parseAuthParams(String raw) {
         Map<String, String> params = new LinkedHashMap<>();
         for (String part : raw.split(",")) {
@@ -1393,7 +1228,7 @@ public class DeviceCapabilityService {
         }
     }
 
-    /** 凭据未配置（配置里写 auto 或留空 = 设备侧免认证）。 */
+    /** 凭据未配置（配置里写 auto 或留空 = 设备侧免认证） */
     private static boolean authDisabled(String user) {
         return user == null || user.isBlank() || AUTH_AUTO.equalsIgnoreCase(user.trim());
     }
@@ -1402,7 +1237,7 @@ public class DeviceCapabilityService {
         return preferred != null && !preferred.isBlank() ? preferred : fallback;
     }
 
-    /** 从已采集到的参数里取某个路径的值，取不到返回 null。 */
+    /** 从已采集到的参数里取某个路径的值，取不到返回 null */
     private String paramValue(String sn, String pathSuffix) {
         if (parameterMapper == null) {
             return null;
@@ -1419,7 +1254,7 @@ public class DeviceCapabilityService {
         }
     }
 
-    /** 台账上的设备记录，查不到返回 null。 */
+    /** 台账上的设备记录，查不到返回 null */
     private CpeDevice findDevice(String sn) {
         try {
             return deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
@@ -1431,12 +1266,7 @@ public class DeviceCapabilityService {
         }
     }
 
-    /**
-     * 按能力树里的厂商私有前缀认运营商，并回写台账。
-     *
-     * <p>只补「台账还没运营商」的设备：人工适配申报过的以申报为准，自动识别不去覆盖，
-     * 同型号硬件卖给多家运营商时以人的判断为准。</p>
-     */
+    /** 按能力树里的厂商私有前缀认运营商，并回写台账 */
     private void detectAndWriteIsp(String sn, List<String> paths) {
         Isp detected = Isp.detect(paths);
         if (detected == null || detected == Isp.STANDARD) {
@@ -1476,9 +1306,7 @@ public class DeviceCapabilityService {
                 ? "内置默认" : profile.getName().trim();
     }
 
-    /**
-     * 待采集的子树绝对路径：把采集标准的子树拼到设备的数据模型根节点下。
-     */
+    /** 待采集的子树绝对路径：把采集标准的子树拼到设备的数据模型根节点下 */
     private static List<String> resolveSubtrees(String root) {
         return resolveSubtrees(root, null);
     }
@@ -1500,9 +1328,7 @@ public class DeviceCapabilityService {
         return paths;
     }
 
-    /**
-     * 路径所属的数据模型根：{@code InternetGatewayDevice.} 或 {@code Device.}。
-     */
+    /** 路径所属的数据模型根：{@code InternetGatewayDevice.} 或 {@code Device.} */
     private static String rootOf(String path) {
         if (path == null || path.isEmpty()) {
             return DEFAULT_ROOT;
@@ -1519,9 +1345,7 @@ public class DeviceCapabilityService {
         return paths;
     }
 
-    /**
-     * 逐层展开：对 path 做 NextLevel=true 的 GetParameterNames，把命中的对象继续往下展开。
-     */
+    /** 逐层展开：对 path 做 NextLevel=true 的 GetParameterNames，把命中的对象继续往下展开 */
     private CompletableFuture<List<Node>> expandLevel(String sn, String path, List<Node> sink,
                                                       AtomicInteger rounds, CollectStatus status,
                                                       CapabilityProfiles.Profile profile) {
@@ -1567,9 +1391,7 @@ public class DeviceCapabilityService {
         }, executor());
     }
 
-    /**
-     * 分批读取参数值。批次之间串行：一个会话同时只允许一条未回应的下发。
-     */
+    /** 分批读取参数值。批次之间串行：一个会话同时只允许一条未回应的下发 */
     private CompletableFuture<Void> readValues(String sn, List<String> paths, CollectStatus status) {
         List<List<String>> batches = partition(paths, Math.max(1, valueBatchSize));
         status.setTotalBatches(batches.size());
@@ -1588,20 +1410,7 @@ public class DeviceCapabilityService {
         return chain;
     }
 
-    /**
-     * 读一批参数值，整批被设备拒绝时二分拆开重试，把失效路径单独剔掉。
-     *
-     * <p>GetParameterValues 是整批事务：批里只要有一条路径设备不认（实例删了、
-     * 或另一种数据模型没有这个节点），整批回 9005，这一批的值一个都落不了库。
-     * 快照路径又来自上次采集——设备侧删过连接，清单里就留着一批僵尸路径，
-     * 于是每次采集 WAN 那段都刷不回来，前端一直显示旧的那几条。</p>
-     *
-     * <p>所以失败后二分：拆到单条还失败，才认定这条路径设备确实没有，
-     * 丢掉它并记进 errors，其余照常落库。会话级故障（离线、超时）不拆——
-     * 那时拆也没用，直接中止，跟原来的行为一致。</p>
-     *
-     * @param counted 这次重试是否已计入「已完成批次」，避免拆批时把进度算重
-     */
+    /** 读一批参数值，整批被设备拒绝时二分拆开重试，把失效路径单独剔掉 */
     private CompletableFuture<Void> readValuesBatch(String sn, List<String> batch, CollectStatus status,
                                                     int index, int total) {
         return getParameterValues(sn, batch).thenComposeAsync(resp -> {
@@ -1648,26 +1457,15 @@ public class DeviceCapabilityService {
         return submit(sn, "GetParameterValues", args);
     }
 
-    /**
-     * 提交一条采集指令。
-     *
-     * <p>队列开启时走 Redis；关闭时退回会话的内存 outbox，
-     * 保证关掉队列后能力采集依然可用。</p>
-     */
+    /** 提交一条采集指令 */
 
-    /** 当前这台设备正在进行的采集批次号，用于给指令打标。 */
+    /** 当前这台设备正在进行的采集批次号，用于给指令打标 */
     private String currentBatch(String sn) {
         CollectStatus status = statuses.get(sn);
         return status == null ? null : status.getBatch();
     }
 
-    /**
-     * 开新采集前先丢掉上一轮没发完的指令。
-     *
-     * <p>设备掉线、采集中断都会让指令留在队列里；不清的话新一轮会把它们逐条消费，
-     * 于是同一条 {@code GetParameterNames} 被反复下发，队列还可能被占满
-     * （每条设备有上限），导致这一轮的新指令根本入不了队。工单指令不属采集批次，不动。</p>
-     */
+    /** 开新采集前先丢掉上一轮没发完的指令 */
     private void dropStaleRpc(String sn, String batch) {
         if (!queueProperties.isEnabled()) {
             return;
@@ -1719,12 +1517,7 @@ public class DeviceCapabilityService {
                 });
     }
 
-    /**
-     * 会话级故障：设备离线、下发超时、连接断开。
-     *
-     * <p>与设备返回的 CWMP 故障要区分开——前者重试也没有意义，
-     * 设备已经不在了，继续往下问只会拖出一长串超时。</p>
-     */
+    /** 会话级故障：设备离线、下发超时、连接断开 */
     private static boolean isSessionFault(SoapMessage resp) {
         if (resp == null || resp.getFault() == null) {
             return false;
@@ -1733,12 +1526,7 @@ public class DeviceCapabilityService {
         return FAULT_SESSION.equals(code) || FAULT_ENQUEUE.equals(code);
     }
 
-    /**
-     * 会话级故障里的「超时」类：设备忙、单条响应慢，设备本体还在。
-     *
-     * <p>这类故障换个子树/换个时机就能成，不该中止整次采集；
-     * 连接断开、会话关闭（"connection lost"、"device reconnected" 等）才是真不在了。</p>
-     */
+    /** 会话级故障里的「超时」类：设备忙、单条响应慢，设备本体还在 */
     private static boolean isTimeoutFault(SoapMessage resp) {
         if (resp == null || resp.getFault() == null) {
             return false;
@@ -1758,15 +1546,7 @@ public class DeviceCapabilityService {
 
     // ==================== 业务参数读取 ====================
 
-    /**
-     * 按给定路径批量读取参数值，并回填能力树，供业务信息采集复用。
-     *
-     * <p>与内部 {@link #readValues} 的区别：不挂采集进度、不受采集开关约束——
-     * 业务信息是用户主动查询的场景，设备在线就应当能读。</p>
-     *
-     * @return 路径 -> 参数值，只包含成功读到的路径；某批失败不影响其它批，
-     *         失败批次的路径不会出现在结果里
-     */
+    /** 按给定路径批量读取参数值，并回填能力树，供业务信息采集复用 */
     public CompletableFuture<Map<String, String>> readPathValues(String sn, List<String> paths) {
         Map<String, String> result = new ConcurrentHashMap<>();
         if (paths == null || paths.isEmpty()) {
@@ -1780,14 +1560,7 @@ public class DeviceCapabilityService {
         return chain.thenApply(v -> result);
     }
 
-    /**
-     * 读一批参数；整批失败就二分拆批重读。
-     *
-     * <p>GetParameterValues 对参数名是「全对才成功」的语义：一批里只要有一条路径在该
-     * 型号上不存在，设备直接回 9005，其余本来读得到的值一起丢。MSG2100E 这类固件尤其
-     * 明显——猜的 {@code X_CT-COM-UpLineStatus} 四种拼法只要有一条不对，整批网口状态
-     * 就全空了。拆到单条为止，坏路径自己失败，好的照常回填。</p>
-     */
+    /** 读一批参数；整批失败就二分拆批重读 */
     private CompletableFuture<Void> readBatch(String sn, List<String> batch,
                                               Map<String, String> result) {
         return getParameterValues(sn, batch).thenCompose(resp -> {
@@ -1812,9 +1585,7 @@ public class DeviceCapabilityService {
 
     // ==================== 解析 ====================
 
-    /**
-     * 解析 GetParameterNamesResponse：路径以句点结尾即为对象。
-     */
+    /** 解析 GetParameterNamesResponse：路径以句点结尾即为对象 */
     private List<Node> parseNodes(SoapMessage resp) {
         List<Node> nodes = new ArrayList<>();
         for (Map<String, Object> item : resp.listValue("ParameterList")) {
@@ -1827,10 +1598,8 @@ public class DeviceCapabilityService {
         return nodes;
     }
 
-    /**
-     * 解析 GetParameterValuesResponse 为待回填的行。
-     */
-    /** 可写性未知：参数存在（GPV 读到了），但设备没告诉我们能不能写。 */
+    /** 解析 GetParameterValuesResponse 为待回填的行 */
+    /** 可写性未知：参数存在（GPV 读到了），但设备没告诉我们能不能写 */
     public static final int WRITABLE_UNKNOWN = -1;
 
     private List<CpeParameter> parseValues(String sn, SoapMessage resp) {
@@ -1854,14 +1623,7 @@ public class DeviceCapabilityService {
         return rows;
     }
 
-    /**
-     * 补全树：根节点与各子树之上的中间层对象节点都由这里补上。
-     *
-     * <p>GetParameterNames 从子树发起时不会把子树自己的祖先带回来——比如
-     * {@code InternetGatewayDevice.Services.VoiceService.} 上面的 {@code Services.}、
-     * 以及根节点自己。少了这几层，型号 XML 导出与能力树浏览按 parent_path 逐级渲染，
-     * 整棵子树会渲染不出来（参数都在表里，但读不到）。</p>
-     */
+    /** 补全树：根节点与各子树之上的中间层对象节点都由这里补上 */
     private List<Node> completeTree(List<Node> nodes, String root) {
         String base = root == null || root.isEmpty() ? DEFAULT_ROOT : root;
         Set<String> seen = new LinkedHashSet<>();
@@ -1913,11 +1675,7 @@ public class DeviceCapabilityService {
 
     // ==================== 落库 ====================
 
-    /**
-     * 整棵替换：先清掉该设备的旧树，再分片写入。
-     *
-     * <p>不清空直接插入会撞唯一键；清理失败就放弃本次写入，保留旧树比留半棵新树好。</p>
-     */
+    /** 整棵替换：先清掉该设备的旧树，再分片写入 */
     private void saveTree(String sn, String batch, List<Node> tree) {
         try {
             parameterMapper.delete(new LambdaQueryWrapper<CpeParameter>()
@@ -1957,13 +1715,7 @@ public class DeviceCapabilityService {
         rememberConnectionRequestCredentials(sn, rows);
     }
 
-    /**
-     * 读到设备的连接请求凭据就记进台账，唤醒设备时用得上。
-     *
-     * <p>ACS 反连设备要做 HTTP 认证，而账号密码是设备侧生成的
-     * （{@code ManagementServer.ConnectionRequestUsername/Password}），全局配一个不一定对得上。
-     * 所以这里把设备自己报的凭据存下来，下次唤醒就能认证通过，不必靠人去猜。</p>
-     */
+    /** 读到设备的连接请求凭据就记进台账，唤醒设备时用得上 */
     private void rememberConnectionRequestCredentials(String sn, List<CpeParameter> rows) {
         String user = null;
         String password = null;
@@ -2013,9 +1765,7 @@ public class DeviceCapabilityService {
 
     // ==================== 触发判定 ====================
 
-    /**
-     * 距上次采集是否已久到需要重采；从没采过也算。
-     */
+    /** 距上次采集是否已久到需要重采；从没采过也算 */
     private boolean isStale(String sn) {
         if (refreshIntervalHours <= 0) {
             return true;
@@ -2044,10 +1794,7 @@ public class DeviceCapabilityService {
         return false;
     }
 
-    /**
-     * 判定根数据模型节点。Inform 处理若走队列则是异步的，会话上的 rootNode 可能还没更新，
-     * 这里直接从 Inform 参数列表里判定，避免采错根节点。
-     */
+    /** 判定根数据模型节点。Inform 处理若走队列则是异步的，会话上的 rootNode 可能还没更新 */
     private String resolveRoot(CpeSession session, InformRequest inform) {
         List<ParameterValueStruct> parameters =
                 inform == null || inform.getParameterList() == null
@@ -2095,27 +1842,21 @@ public class DeviceCapabilityService {
         return result;
     }
 
-    /**
-     * 父对象路径，根节点为空串。包级可见，便于单元测试直接校验层级推导。
-     */
+    /** 父对象路径，根节点为空串。包级可见，便于单元测试直接校验层级推导 */
     static String parentOf(String path) {
         String p = path.endsWith(".") ? path.substring(0, path.length() - 1) : path;
         int idx = p.lastIndexOf('.');
         return idx < 0 ? "" : p.substring(0, idx + 1);
     }
 
-    /**
-     * 路径末段名。包级可见，便于单元测试。
-     */
+    /** 路径末段名。包级可见，便于单元测试 */
     static String nameOf(String path) {
         String p = path.endsWith(".") ? path.substring(0, path.length() - 1) : path;
         int idx = p.lastIndexOf('.');
         return idx < 0 ? p : p.substring(idx + 1);
     }
 
-    /**
-     * 层级深度，根节点为 0。包级可见，便于单元测试。
-     */
+    /** 层级深度，根节点为 0。包级可见，便于单元测试 */
     static int depthOf(String path) {
         String p = path.endsWith(".") ? path.substring(0, path.length() - 1) : path;
         int depth = 0;
@@ -2162,9 +1903,7 @@ public class DeviceCapabilityService {
 
     // ==================== 内部模型 ====================
 
-    /**
-     * 能力树上的一个节点，采集过程中的内存形态。
-     */
+    /** 能力树上的一个节点，采集过程中的内存形态 */
     static class Node {
 
         private String path;
@@ -2179,17 +1918,13 @@ public class DeviceCapabilityService {
             this.writable = writable;
         }
 
-        /**
-         * 当前路径。落库时可能被截断为列宽上限。
-         */
+        /** 当前路径。落库时可能被截断为列宽上限 */
         String getPath() {
             return path;
         }
     }
 
-    /**
-     * 一次采集的进度快照，管理端据此展示采集进度。
-     */
+    /** 一次采集的进度快照，管理端据此展示采集进度 */
     public static class CollectStatus {
 
         private final String sn;
@@ -2365,9 +2100,7 @@ public class DeviceCapabilityService {
             }
         }
 
-        /**
-         * 中止采集：设备已不可达，后续批次不再下发。
-         */
+        /** 中止采集：设备已不可达，后续批次不再下发 */
         public void abort() {
             this.aborted = true;
         }

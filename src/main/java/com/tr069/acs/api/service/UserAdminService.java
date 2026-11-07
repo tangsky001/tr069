@@ -14,23 +14,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 管理端用户的增删改查。
- *
- * <p>密码一律经 {@link PasswordHasher} 落库；历史明文口令在登录成功时自动升级成散列，
- * 所以这里只管新用户，不管老数据。</p>
- */
+/** 管理端用户的增删改查 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserAdminService {
 
-    /**
-     * 初始的系统账号：建库脚本写进去的那个，也与 AdminAccountInitializer 的兜底值一致。
-     *
-     * <p>它删不得——这是库里唯一的种子账号，删完没人能进系统。应用层挡一道，
-     * 数据库触发器再挡一道。</p>
-     */
+    /** 初始的系统账号：建库脚本写进去的那个，也与 AdminAccountInitializer 的兜底值一致 */
     public static final String INITIAL_ADMIN = "admin";
 
     private final SysUserMapper userMapper;
@@ -39,10 +29,21 @@ public class UserAdminService {
 
     private final PasswordHasher passwordHasher;
 
-    /** 用户列表，带上最近登录来源。 */
-    public List<Map<String, Object>> list() {
+    /** 登录来源码 → 中文名（与登录日志同一套口径） */
+    private static final Map<String, String> LOGIN_SOURCE_LABELS = Map.of(
+            "WEB", "网页端",
+            "CLIENT", "客户端",
+            "MOBILE", "移动端");
+
+    /** 最近登录时间的显示格式 */
+    private static final java.time.format.DateTimeFormatter LOGIN_TIME_FORMAT =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /** 用户列表，带上最近登录来源与「这一行能不能删 / 能不能停用」的判定 */
+    public List<Map<String, Object>> list(String operator) {
         List<SysUser> users = userMapper.selectList(
                 new LambdaQueryWrapper<SysUser>().orderByAsc(SysUser::getId));
+        long superAdminCount = countSuperAdmin();
         List<Map<String, Object>> data = new ArrayList<>();
         for (SysUser user : users) {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -52,17 +53,34 @@ public class UserAdminService {
             row.put("role", user.getRole());
             row.put("status", user.getStatus());
             row.put("lastLoginAt", user.getLastLoginAt());
+            // 时间与来源文案都由后端给，页面不再自己把 ISO 串的 T 换成空格、也不维护来源码表
+            row.put("lastLoginAtText", user.getLastLoginAt() == null ? "从未登录"
+                    : user.getLastLoginAt().format(LOGIN_TIME_FORMAT));
             // 没登过的用户来源为空，页面显示「-」
             row.put("lastLoginSource", user.getLastLoginSource());
+            row.put("lastLoginSourceText", user.getLastLoginSource() == null ? ""
+                    : LOGIN_SOURCE_LABELS.getOrDefault(user.getLastLoginSource(), user.getLastLoginSource()));
             row.put("lastLoginIp", user.getLastLoginIp());
-            // 页面靠它把删除按钮按死，别让人点了才知道删不掉
-            row.put("builtin", INITIAL_ADMIN.equalsIgnoreCase(user.getUsername()));
+            boolean builtin = INITIAL_ADMIN.equalsIgnoreCase(user.getUsername());
+            boolean lastSuperAdmin = PermissionCodes.ROLE_SUPER_ADMIN.equals(user.getRole())
+                    && superAdminCount <= 1;
+            boolean self = operator != null && user.getUsername() != null
+                    && user.getUsername().equalsIgnoreCase(operator);
+            row.put("builtin", builtin);
+            row.put("superAdminCount", superAdminCount);
+            // 角色/状态：动到最后一个系统管理员就等于把权限门锁死
+            row.put("canChangeRole", !lastSuperAdmin);
+            row.put("canToggleStatus", !lastSuperAdmin);
+            row.put("canDelete", !builtin && !lastSuperAdmin && !self);
+            row.put("deleteDisabledReason", builtin ? "系统用户禁止删除"
+                    : lastSuperAdmin ? "至少要留一个系统管理员"
+                    : self ? "不能删自己" : "");
             data.add(row);
         }
         return data;
     }
 
-    /** 建用户。角色必须是库里有的角色。 */
+    /** 建用户。角色必须是库里有的角色 */
     public void create(String username, String password, String nickname, String role) {
         String name = normalizeName(username);
         if (name == null) {
@@ -88,12 +106,7 @@ public class UserAdminService {
         log.info("新建用户: username={}, role={}", name, role);
     }
 
-    /**
-     * 改用户：昵称、角色、状态、密码，传 null 的项不动。
-     *
-     * <p>改密码要二次验证：除了新密码，还得拿操作者<b>自己</b>的密码再验一次。
-     * 拿到会话不等于拿到密码——会话被借走的人改不了密码，改不了就等于拿不走账号。</p>
-     */
+    /** 改用户：昵称、角色、状态、密码，传 null 的项不动 */
     public void update(Long id, String nickname, String role, Integer status,
                        String password, String currentPassword, String operator) {
         SysUser user = user(id);
@@ -139,12 +152,7 @@ public class UserAdminService {
         log.info("修改用户: id={}, role={}, status={}", id, role, status);
     }
 
-    /**
-     * 删用户。三条底线，前两条都查库判断：
-     *
-     * <p>① 初始系统账号删不掉；② 系统管理员只剩一个时删不掉；
-     * ③ 自己删不了自己。</p>
-     */
+    /** 删用户。三条底线，前两条都查库判断 */
     public void delete(Long id, String currentUsername) {
         SysUser user = user(id);
         if (INITIAL_ADMIN.equalsIgnoreCase(user.getUsername())) {
@@ -160,7 +168,7 @@ public class UserAdminService {
         log.info("删除用户: id={}, username={}", id, user.getUsername());
     }
 
-    /** 取操作者自己的口令，取不到就当没有——验证时一律不通过。 */
+    /** 取操作者自己的口令，取不到就当没有——验证时一律不通过 */
     private String passwordOf(String username) {
         if (username == null || username.isBlank()) {
             return null;

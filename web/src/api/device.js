@@ -46,6 +46,19 @@ export function fetchDeviceStat() {
 /**
  * 设备业务信息（WAN / WLAN / SIP），只读库里最近一次采集的快照。
  */
+/**
+ * 导出台账 CSV：后端生成表格内容（列、在线文案、时间格式都在后端），
+ * 返回 { fileName, content, count }，页面只负责存成文件。
+ * params: { sns } 勾选导出，或 { sn, isp, deviceType, roomNo } 按筛选导出。
+ */
+export function exportDevices(params) {
+  return request({
+    url: '/device/export',
+    method: 'get',
+    params
+  })
+}
+
 export function fetchDeviceBusiness(sn) {
   return request({
     url: '/device/' + encodeURIComponent(sn) + '/business',
@@ -56,6 +69,46 @@ export function fetchDeviceBusiness(sn) {
 /**
  * 批量业务信息：设备列表页整页一次拉取，sns 为序列号数组。
  */
+/**
+ * 列表页轮询节奏：{ listSeconds, taskSeconds, bizSeconds, rpcSeconds, rpcMaxAttempts }。
+ * 页面按它建定时器，不再写死几秒一刷。
+ */
+export function fetchPollConfig() {
+  return request({ url: '/device/poll-config', method: 'get' })
+}
+
+/**
+ * RPC 行内措辞：{ Reboot: { running, success, fail }, FactoryReset: {...}, default: {...} }。
+ * 页面不再自己做「去掉正在再拼完成」的字符串处理。
+ */
+export function fetchRpcProgressLabels() {
+  return request({ url: '/device/rpc/progress-labels', method: 'get' })
+}
+
+/**
+ * SIP 语音：可编辑的线路清单。
+ * 路数（申报能力与实际采到取大值）、每路当前号码、注册/代理服务器与端口全由后端算，
+ * 端口没配的后端已经按 5060 填好。
+ */
+export function fetchSipLines(sn) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/sip/lines',
+    method: 'get'
+  })
+}
+
+/**
+ * SIP 语音下发：只提交业务字段。
+ * 按路拆单、占位符翻译、幂等键生成都在后端；返回 { lines, submitted, failed, worklists, failures }。
+ */
+export function submitSipEdit(sn, data) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/sip',
+    method: 'post',
+    data
+  })
+}
+
 export function fetchDeviceBusinessBatch(sns) {
   return request({
     url: '/device/business/batch',
@@ -79,8 +132,8 @@ export function fetchDeviceActiveTasks(sns) {
 }
 
 /**
- * 批量机型适配状态：库里有没有该型号的能力树 XML 文件。
- * 返回 sn -> { adapted, configPath, isp, productClass, ... }
+ * 批量机型适配状态：以 SQLite 模板库里的适配结果为准（下发查的也是它）。
+ * 返回 sn -> { adapted, adaptedFrom, templateLibId, configPath, isp, productClass, ... }
  */
 export function fetchAdaptStatus(sns) {
   return request({
@@ -173,23 +226,23 @@ export function updateDeviceRemark(sn, data) {
   })
 }
 
-/** 常用 RPC 方法，与后端 RpcMethod 对应，同时允许手工输入。 */
-export const RPC_METHODS = [
-  'GetRPCMethods',
-  'GetParameterNames',
-  'GetParameterValues',
-  'SetParameterValues',
-  'GetParameterAttributes',
-  'SetParameterAttributes',
-  'AddObject',
-  'DeleteObject',
-  'Reboot',
-  'FactoryReset',
-  'Download',
-  'Upload',
-  'ScheduleInform',
-  'ChangeDUState'
-]
+/**
+ * 可下发方法与快捷操作的「命令 → RPC」映射由后端下发（/device/rpc/methods、
+ * /device/rpc/quick-commands），前端不做任何清单兜底：接口没给就是后端问题。
+ */
+export function fetchRpcMethods() {
+  return request({
+    url: '/device/rpc/methods',
+    method: 'get'
+  })
+}
+
+export function fetchQuickCommands() {
+  return request({
+    url: '/device/rpc/quick-commands',
+    method: 'get'
+  })
+}
 
 /**
  * 下发 IPPing 诊断。

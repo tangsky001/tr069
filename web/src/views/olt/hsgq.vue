@@ -94,7 +94,7 @@
         <el-tab-pane label="ONU 列表" name="onu">
           <!-- show onu-info all 采回来的 ONU：一条一行全平铺出来，按 PON 口排序 -->
           <olt-ont-list
-            :ont-boards="ontBoards"
+            :ont-rows="ontRows"
             sn-label="MAC 地址"
             empty-text="尚未采集到 ONU 数据。点上面的「同步」，采集时会跑 show onu-info all。"
           />

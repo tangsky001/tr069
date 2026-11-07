@@ -91,7 +91,7 @@
       <div v-if="rpcTask" class="rpc-result">
         <div class="rpc-result-title">
           任务号 {{ rpcTask.taskId }}：
-          <el-tag :type="rpcStatusType" size="small">{{ rpcStatusText }}</el-tag>
+          <el-tag :type="rpcTask.statusLevel || 'info'" size="small">{{ rpcTask.statusText || rpcTask.status }}</el-tag>
           <el-button v-if="polling" type="text" size="mini" @click="stopPoll">停止等待</el-button>
         </div>
         <pre>{{ formatJson(rpcTask.resultContent || rpcTask) }}</pre>
@@ -101,7 +101,9 @@
 </template>
 
 <script>
-import { fetchDeviceDetail, fetchDeviceStatus, dispatchRpc, RPC_METHODS } from '@/api/device'
+import {
+  fetchDeviceDetail, fetchDeviceStatus, dispatchRpc, fetchRpcMethods, fetchPollConfig
+} from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 
@@ -116,14 +118,17 @@ export default {
       loadError: '',
       device: {},
       session: {},
-      rpcMethods: RPC_METHODS,
+      // 可下发方法清单，以后端 /device/rpc/methods 为准；空了就是后端没给，前端不兜底
+      rpcMethods: [],
       rpcName: 'GetParameterValues',
       rpcArgs: '{}',
       // 下发是异步的：提交只拿到任务号，结果靠轮询获取
       rpcTask: null,
       polling: false,
       pollTimer: null,
-      pollCount: 0
+      pollCount: 0,
+      // 轮询节奏：后端 /device/poll-config 下发（detailRpcSeconds / detailRpcMaxAttempts）
+      pollConfig: { detailRpcSeconds: 2, detailRpcMaxAttempts: 150 }
     }
   },
   computed: {
@@ -136,18 +141,20 @@ export default {
         '。设备上报过一次 Inform 才会登记到台账；' +
         '如果刚清过该型号的档案，等设备下一次上报后点「重新加载」，' +
         '或核对序列号是否填错。'
-    },
-    rpcStatusText() {
-      const text = { queued: '排队中', running: '执行中', success: '成功', fail: '失败' }
-      return text[this.rpcTask && this.rpcTask.status] || '未知'
-    },
-    rpcStatusType() {
-      const type = { queued: 'info', running: 'warning', success: 'success', fail: 'danger' }
-      return type[this.rpcTask && this.rpcTask.status] || 'info'
     }
   },
   created() {
     this.load()
+    // 可下发方法清单以后端下发为准，前端不兜底
+    fetchRpcMethods().then(res => {
+      this.rpcMethods = res.data || []
+    }).catch(() => {})
+    // 轮询节奏也由后端给；拿不到就用默认值，页面不能因此不轮询
+    fetchPollConfig().then(res => {
+      if (res.data && typeof res.data === 'object') {
+        this.pollConfig = { ...this.pollConfig, ...res.data }
+      }
+    }).catch(() => {})
   },
   beforeDestroy() {
     this.stopPoll()
@@ -209,7 +216,9 @@ export default {
       this.stopPoll()
       this.polling = true
       this.pollCount = 0
-      this.pollTimer = setInterval(() => { this.pollResult(taskId) }, 2000)
+      // 间隔来自后端 /device/poll-config（detailRpcSeconds），页面不写死秒数
+      const seconds = Math.max(1, this.pollConfig.detailRpcSeconds || 2)
+      this.pollTimer = setInterval(() => { this.pollResult(taskId) }, seconds * 1000)
       this.pollResult(taskId)
     },
     async pollResult(taskId) {
@@ -230,8 +239,8 @@ export default {
       } catch (e) {
         /* 单次查询失败不打断，由次数上限兜底 */
       }
-      // 约 5 分钟仍没有结果就停下，避免页面一直转
-      if (this.pollCount >= 150) {
+      // 约 5 分钟仍没有结果就停下，避免页面一直转（上限由后端给）
+      if (this.pollCount >= (this.pollConfig.detailRpcMaxAttempts || 150)) {
         this.stopPoll()
         this.$message.info('指令仍在执行，稍后可再查任务号 ' + taskId)
       }

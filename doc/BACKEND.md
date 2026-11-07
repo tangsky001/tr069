@@ -15,10 +15,10 @@
 | 包 | 职责 | 关键点 |
 | --- | --- | --- |
 | `controller` | `OltController`，`/api/olt/**` 全部接口 | 只做参数转发与异常转 `Result`，不含业务规则 |
-| `service` | `OltService`（编排、校验、落库）、`OltTelnetService`（采集）、`OltAutoRefreshService`（定时刷新） | `OltService` 是最大的类，改之前先看有没有现成私有方法 |
-| `telnet` | `OltCliSession`（会话与命令编排）、`OltInfoParser`（回显解析）、`TelnetClient`（原始连接与续页）、`OltVendor`（厂商枚举） | 只有 `display` / `show` / `enable` / `config` / `quit` 这几种入口 |
+| `service` | `OltService`（编排、校验、落库）、`OltTelnetService`（采集与下发）、`OltAutoRefreshService`（全量定时刷新）、`OltBoardRefreshService`（板卡状态 2 分钟刷新）、`OltOntRegService`（注册模板匹配 + `ont confirm` 下发 + 记录）、`OltOntAutoRegisterService`（自动扫描注册）、`OltQuickSetupConfigService`（开局参数）、`OltSessionPool`（Telnet 长连接池与保活） | `OltService` 是最大的类，改之前先看有没有现成私有方法 |
+| `telnet` | `OltCliSession`（会话与命令编排）、`OltInfoParser`（回显解析）、`TelnetClient`（原始连接与续页）、`OltVendor`（厂商枚举） | 采集入口只有 `display` / `show` / `enable` / `config` / `quit`；写命令走 `OltVendorProfile` 的 `*Command` 方法 |
 | `vendor` | `OltVendorProfile` 接口 + 各厂商实现 + 命令动作目录 | **新增品牌只动这个包** |
-| `entity` | `OltDevice` / `OltBoard` / `OltSyncRecord` 三张表 | `@TableField(exist = false)` 的字段不落库，见 §7.1 |
+| `entity` | `OltDevice` / `OltBoard` / `OltSyncRecord` + `olt_ont_reg_template` / `olt_ont_reg_config` / `olt_ont_reg_record` | `@TableField(exist = false)` 的字段不落库，见 §7.1 |
 | `model` | 对外出参入参、表单元数据（`*Form`）、快照（`OltVlanInfo`、`OltTemplateInfo`） | 会被序列化进 JSON 缓存的用 `@Data` 类，不用 record |
 
 ### 1.2 数据落在哪
@@ -28,8 +28,11 @@
 | 设备台账、连接信息、型号、状态 | `olt_device` 行 | |
 | VLAN 快照 | `olt_device.vlan_json` | 整体覆盖 |
 | DBA / 线路模板快照 | `olt_device.template_json` | 整体覆盖 |
-| 板卡（槽位、型号、状态、温度、端口 JSON） | `olt_board` 行 | 每次同步**先删后插** |
+| 板卡（槽位、型号、状态、温度、端口 JSON） | `olt_board` 行 | 每次同步**先删后插**；写库前按 SN 回填 MAC / 管理 IP / 模板号，见 §7.6 |
 | 采集记录 | `olt_sync_record` | 成功失败、耗时、原始回显 |
+| ONT 注册模板 | `olt_ont_reg_template` | 按优先级匹配；`olt_id` 为 NULL 表示所有设备通用 |
+| 自动注册参数 | `olt_ont_reg_config` | 一台 OLT 一条：开关、扫描间隔、并发、自动移机、满表清离线 |
+| 注册记录 | `olt_ont_reg_record` | 每台光猫一次注册：模板名快照、命令、结果、来源（AUTO / MANUAL）、操作人 |
 
 **板卡表只存设备上真有的列。** `OltBoard` 里的 `ports`、`panelKind`、`controlBoard`、`statusText`、`statusLevel`、`frontPanel` 全是 `@TableField(exist = false)`，读出来必须在 `OltService#fillPorts` / `fillBoardProfile` 里现算。见 §7.1。
 
@@ -65,6 +68,14 @@ GET /api/olt/{id}
 | `supportsQuickSetup()` / `quickSetupCommands(...)` | 一键开局 | 不支持 |
 | `actions()` | 这家设备能执行的命令动作目录 | 空 |
 | `slotCount(boardText, boards)` | 机框槽位数 | 解析槽位表 |
+| `addPortVlanCommands(...)` / `removePortVlanCommands(...)` | 上行口放通 / 解除 VLAN | 空 |
+| `lineTcontAddCommands(...)` / `lineGemportAddCommands(...)` / `lineGemMappingAddCommands(...)` | 线路模板加 T-CONT / GEM Port / GEM 映射 | 空 |
+| `supportsOntAutofind()` / `ontAutofindCommands()` | 采待注册 ONT（`display ont autofind all`） | 不支持 |
+| `supportsOntConfirm()` / `ontConfirmCommand(port, authMode, authValue, lineProfileId, srvProfileId)` | `ont confirm` 把一条待注册 ONT 转正 | 不支持 |
+| `supportsOntDescription()` / `ontDescriptionCommand(port, ontId, desc)` | 注册成功后把型号写进 ONT 描述 | 不支持 |
+| `supportsOntAutoFind()` / `ontAutoFindQueryCommand(port)` / `parseOntAutoFindState(text)` / `ontAutoFindEnableCommands(fspList)` | PON 口自动发现查询与开启 | 不支持 |
+| `supportsServicePorts()` / `servicePortCommand(...)` / `servicePortDeleteCommand(index)` | 注册后建业务虚口 / 删旧虚口 | 不支持 |
+| `boardConfirmCommand()` | 确认待确认板卡（`board confirm 0`） | `null` |
 
 **识别只认回显里的厂商关键字**，不拿命令风格猜厂商——早年"有 `display` 回显就是华为"，把一批也用 `display` 的第三方设备全存成了 HUAWEI，页面一律出华为界面，命令全是 `Unknown command`。
 
@@ -182,8 +193,18 @@ HSGQ-E16 / E08 / E04  16/8/4×EPON 4×GE CONSOLE
 | --- | --- | --- |
 | `POST /{id}/sync` | `sync` | 全量采集后写库 |
 | `POST /{id}/quick-sync` | `quickSync` | 只采板卡立即返回；端口 / ONT / VLAN / 模板交给后台线程池补采 |
+| `POST /{id}/sync-section` | `syncSection` | 按页签只采 `boards` / `ont` / `vlan` / `template` 中的一段，`force` 可跳过新鲜度判断 |
 | `POST /{id}/refresh` | `refresh` | 直连采最新，写库后返回 |
+| `POST /{id}/boards/confirm` | `confirmBoards` | 下发 `board confirm 0` 再重采板卡 |
 | （内部） | `startDeepSync(id, operator)` | 异步补采，`deepSyncing` 去重；`detail` 用 `deepSyncing` 字段告诉页面"还在采"，页面据此轮询 |
+
+三个后台调度（周期写死在类里，不开放配置）：
+
+| 类 | 周期 | 做什么 |
+| --- | --- | --- |
+| `OltAutoRefreshService` | 启动后 5 秒首轮，之后 30 小时一轮 | 全量采集；设备间并行（上限 20），连续失败退避最多 6 倍 |
+| `OltBoardRefreshService` | 2 分钟 | 只发 `display board 0` 刷板卡状态，设备忙则跳过（人工操作优先） |
+| `OltOntAutoRegisterService` | 按 `olt_ont_reg_config.scanSeconds` | 扫待注册 ONT 并按模板自动注册 |
 
 采集链路：`OltTelnetService.collectBoards` / `collectFull` → `OltCliSession` → `TelnetClient`。
 
@@ -205,11 +226,14 @@ HSGQ-E16 / E08 / E04  16/8/4×EPON 4×GE CONSOLE
 | POST | `/save` | 新增或更新 |
 | POST | `/delete` | 删除 |
 | POST | `/test`、`/{id}/test` | 连通性测试 |
-| POST | `/{id}/sync`、`/{id}/quick-sync`、`/{id}/refresh` | 三种同步 |
-| POST | `/{id}/ont-query` | 查 ONT 详情 |
+| POST | `/{id}/sync`、`/{id}/quick-sync`、`/{id}/sync-section`、`/{id}/refresh` | 全量 / 只采板卡 / 按页签 / 实时刷新 |
+| POST | `/{id}/boards/confirm` | 确认待确认板卡（`board confirm 0`） |
+| POST | `/{id}/ont-query` | 查 ONT 详情（光信息 / 版本 / 注册历史） |
+| POST | `/{id}/port-optics` | 端口光模块按需查询 |
 | GET | `/options` | 码表与阈值 |
 | GET | `/web-accounts` | 允许访问的 Web 登录账号 |
 | GET | `/{id}/records?limit=` | 采集记录 |
+| GET / POST | `/session-pool`、`/session-pool/keepalive` | 会话池状态 / 保活开关 |
 
 ### 下发与预览
 
@@ -217,18 +241,43 @@ HSGQ-E16 / E08 / E04  16/8/4×EPON 4×GE CONSOLE
 | --- | --- | --- |
 | GET | `/{id}/actions` | 这台设备能执行的命令目录 |
 | POST | `/{id}/exec` | 执行一个动作 |
-| POST | `/{id}/actions/preview` | 动作命令预览 |
+| POST | `/{id}/actions/preview`、`/{id}/actions/previews` | 单条 / 整页批量命令预览 |
 | GET | `/{id}/vlan/form` | 新建 VLAN 的约束 |
 | POST | `/{id}/vlan/preview` | VLAN 命令预览 |
 | POST / DELETE | `/{id}/vlan` | 新建 / 删除 VLAN |
+| POST / DELETE | `/{id}/vlan/port-vlan` | 上行口放通 / 解除 VLAN |
 | GET | `/{id}/dba-profile/form` | DBA 表单约束 |
 | POST | `/{id}/dba-profile/preview` | DBA 命令预览 |
 | POST / DELETE | `/{id}/dba-profile` | 新增 / 删除 DBA 模板 |
+| GET | `/{id}/line-profile/form` | 线路模板三个弹窗的约束与默认值 |
+| POST | `/{id}/line-profile/preview` | 线路模板命令预览 |
+| POST | `/{id}/line-profile/tcont`、`/gemport`、`/gem-mapping` | 加 T-CONT / GEM Port / GEM 映射 |
 | GET | `/{id}/tr069/form`、`/{id}/tr069-profiles` | TR-069 约束与列表 |
 | POST | `/{id}/tr069-profiles` | 新增 TR-069 模板 |
-| GET | `/{id}/quick-setup/form` | 开局表单约束 |
+| GET / POST | `/{id}/quick-setup/form`、`/{id}/quick-setup/config` | 开局表单约束 / 已保存的开局参数 |
 | POST | `/{id}/quick-setup/preview` | 开局命令预览 |
 | POST | `/{id}/quick-setup` | 一键开局 |
+| POST | `/{id}/terminal-user` | 在 OLT 上建本地用户 |
+| GET | `/{id}/ont-auto-find` | 各 PON 口自动发现开关状态 |
+| POST | `/{id}/ont-auto-find/enable` | 一键开启全部 PON 口自动发现 |
+| POST | `/{id}/ont/delete-all` | 删除业务板上的全部 ONT（逐口 `ont delete <端口> all`） |
+
+### ONT 注册
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/{id}/ont-autofind` | 待注册 ONT（`display ont autofind all`，实时） |
+| GET / POST / DELETE | `/{id}/ont-reg/templates`、`/{id}/ont-reg/template`、`/{id}/ont-reg/template/default` | 模板列表 / 新增更新 / 删除 / 新建默认值 |
+| GET / POST | `/{id}/ont-reg/config` | 自动注册参数 |
+| POST | `/{id}/ont-reg/scan` | 立刻跑一轮自动注册 |
+| GET | `/{id}/ont-reg/records` | 注册记录 |
+| POST | `/{id}/ont-reg/preview`、`/{id}/ont-reg/register` | 注册命令预览 / 下发注册 |
+
+注册链路：`ont-autofind` 采待注册 → `match(templates)` 按优先级匹配 → 命令块
+`interface gpon 0/<槽位>` → `ont confirm <端口> <认证串> omci [ont-lineprofile-id] [ont-srvprofile-id]`
+→（成功）`ont modify … desc "<型号>"` + `service-port …` → `quit`。
+失败按回显关键字分支：`exist/duplicate/already` 走自动移机（需开 `autoMove`），
+`exceed/full/no more` 走清离线重试（需开 `autoDeleteOffline`），其余原样记入 `message`。
 
 ---
 
@@ -260,7 +309,32 @@ if (board.getFrontPanel() == null) {
 
 统一走 `VlanIdExpression`（`41,45-46` ↔ `[41,45,46]`），不允许在别处手写 `split(',')` + `indexOf('-')`。设备侧才是最终裁决，本地只做"提前提醒"。
 
-### 7.5 只起一个实例
+### 7.5 配置回显被 `#` 分隔行截断
+
+`SHELL_PROMPT` 最初写成 `(?m)[^\r\n]{0,80}[>#\]]\s*$`——多行 `$` 让**任意一行**的 `#` 都能算提示符。
+`display current-configuration` 的输出里有大段 `#` 分段符，设备恰好在某块板卡行停顿时，
+120ms 静默一到就判定「命令结束」，回显被截在 1563 字符，后面的 `ont add … ont-lineprofile-id`
+全丢了，表现是模板号一台都补不上、库里仍缺几十台。
+
+修法：提示符只匹配**回显最末尾**（`…\s*\z`），中途停顿交给分页看门狗推进。
+
+```java
+private static final Pattern SHELL_PROMPT = Pattern.compile("[^\\r\\n]{0,80}[>#\\]]\\s*\\z");
+```
+
+排障特征：采集记录里 `display current-configuration` 的回显长度明显偏短、结尾停在 `board add …`。
+
+### 7.6 ONT 明细「只覆盖不删除」
+
+整板表 `display ont info 0 <槽位> all` 不带 MAC 和模板号，点一次页签同步就会把补采到的值覆盖成空。
+现在统一在 `writeBoards` 的端口合并里回填（`mergeUnsyncedPortData` → `mergeOntDetails`）：
+
+- 按 SN 对齐，SN 变了按槽位 + 端口 + ONT ID 兜底；
+- 新值为空（`null`）保留库里的旧值，采到新值才覆盖；
+- 设备回 `-` / `0000-0000-0000` 视为没采到，`macUnavailable` / `profileUnavailable` 标记随之沿用；
+- 全量采集（`mergeOld=false`）那条路径另行 `seedOntDetails` 兜底，因为它是整轮覆盖写。
+
+### 7.7 只起一个实例
 
 本地跑 jar 时容易同时起两个（端口冲突或数据对不上）。打包前先确认：
 
@@ -296,21 +370,20 @@ Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
 
 ## 9. 测试
 
+**仓库当前不带单元测试**（`src/test` 为空），改动靠真机回显验证：
+
 ```bash
-mvn -o test                      # 全量
-mvn -o test -Dtest=HsgqModelCatalogTest
+mvn -o -DskipTests compile        # 编译
+mvn -o -DskipTests package        # 打包
 ```
 
-测试分布在：
+验证方式：
 
-| 目录 | 覆盖 |
+| 改动类型 | 怎么验 |
 | --- | --- |
-| `olt/telnet` | 会话编排、回显解析（板卡 / VLAN / 模板 / ONT / 业务流） |
-| `olt/vendor` | 厂商识别、型号规格、命令动作目录、VLAN / TR-069 / 一键开局命令 |
-| `olt/model` | `VlanIdExpression` 表达式解析 |
-| `olt/service` | 动作渲染、定时刷新 |
-
-改命令生成规则时，**对应命令序列的断言要一起改**——`HsgqQuickSetupTest`、`HsgqVlanProvisionTest`、`HsgqTr069ProfileTest` 里断言的是完整命令文本。
+| 命令生成（VLAN / DBA / 线路模板 / TR-069 / 注册） | 先调 `*/preview` 看命令文本，再在真机上执行一次，对照采集记录里的回显 |
+| 回显解析（板卡 / ONT / VLAN / 模板 / 业务流） | 采集记录页签拿 `rawPreview`，或临时把 `acs.olt.log-echo` 改成 `true` 看完整回显 |
+| 定时任务（全量 / 板卡 / 自动注册） | 启动日志里有一行「已就绪：N 分钟一轮」，再等一轮看采集记录的操作人字段 |
 
 ---
 
