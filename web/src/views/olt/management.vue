@@ -5,7 +5,7 @@
       <div slot="header" class="olt-top-head">
         <span class="olt-title">OLT/ONU 管理</span>
         <div>
-          <el-button v-if="$has('olt:manage')" type="primary" size="mini" icon="el-icon-plus" @click="openCreate">添加 OLT</el-button>
+          <el-button v-if="$has('olt:update')" type="primary" size="mini" icon="el-icon-plus" @click="openCreate">添加 OLT</el-button>
           <el-button type="success" size="mini" icon="el-icon-refresh" :loading="loading" @click="loadList">刷新</el-button>
         </div>
       </div>
@@ -28,9 +28,9 @@
             <el-option v-for="r in resources" :key="r.id" :label="r.name" :value="r.id" />
           </el-select>
           <el-input :value="selected.host" size="small" style="width:170px" disabled />
-          <el-button v-if="$has('olt:manage')" type="primary" size="small" icon="el-icon-edit" :disabled="!selectedId" @click="openEdit">编辑</el-button>
+          <el-button v-if="$has('olt:update')" type="primary" size="small" icon="el-icon-edit" :disabled="!selectedId" @click="openEdit">编辑</el-button>
           <el-button
-            v-if="$has('olt:manage')"
+            v-if="$has('olt:update')"
             type="primary"
             size="small"
             icon="el-icon-refresh-right"
@@ -39,7 +39,7 @@
             @click="handleSync"
           >同步</el-button>
           <el-button
-            v-if="$has('olt:manage')"
+            v-if="$has('olt:update')"
             type="warning"
             size="small"
             icon="el-icon-cpu"
@@ -47,7 +47,7 @@
             :disabled="!selectedId"
             @click="handleTest"
           >诊断测试</el-button>
-          <el-button v-if="$has('olt:manage')" type="danger" size="small" icon="el-icon-delete" :disabled="!selectedId" @click="handleDelete">删除</el-button>
+          <el-button v-if="$has('olt:delete')" type="danger" size="small" icon="el-icon-delete" :disabled="!selectedId" @click="handleDelete">删除</el-button>
           <span class="olt-auto">
             <el-switch v-model="autoRefresh" />
             <span class="olt-auto-label">自动刷新</span>

@@ -54,7 +54,7 @@
 
         <el-form-item>
           <!-- 下发业务要工单的写权限：只有查看权的人在这里不该有这个按钮 -->
-          <el-button v-if="$has('worklist:manage')" type="primary" :loading="submitting" @click="submit">提交下发</el-button>
+          <el-button v-if="$has('worklist:update')" type="primary" :loading="submitting" @click="submit">提交下发</el-button>
           <el-button @click="reset">重置</el-button>
         </el-form-item>
       </el-form>
