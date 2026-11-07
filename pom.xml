@@ -13,7 +13,7 @@
 
     <groupId>com.tr069</groupId>
     <artifactId>pilotacs-server</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <name>pilotacs-server</name>
     <description>TR069 ACS Server</description>
 
