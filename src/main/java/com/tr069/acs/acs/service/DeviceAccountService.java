@@ -1,6 +1,8 @@
 package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tr069.acs.acs.adaptation.AdaptationManager;
+import com.tr069.acs.acs.adaptation.IspAdaptation;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.SessionManager;
@@ -17,7 +19,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
@@ -58,6 +59,7 @@ public class DeviceAccountService {
     private final CpeDeviceMapper deviceMapper;
     private final DeviceCapabilityService capabilityService;
     private final SessionManager sessionManager;
+    private final AdaptationManager adaptationManager;
 
     /** 等设备回参数的最长时间（秒） */
     @Value("${acs.device.account.read-timeout-seconds:30}")
@@ -191,12 +193,6 @@ public class DeviceAccountService {
         return data;
     }
 
-    /** 运营商定制固件的超管节点：叶子名与标准 User 实例一致 */
-    private static final Map<String, String> ADMIN_NODE_BY_ISP = Map.of(
-            "CT", "DeviceInfo.X_CT-COM_TeleComAccount.",    // 电信定制
-            "CMCC", "DeviceInfo.X_CMCC_TeleComAccount.",    // 移动定制
-            "CU", "DeviceInfo.X_CU_TeleComAccount.");       // 联通定制
-
     /** 华为公开版（未做运营商定制）固件的 Web 管理账号节点 */
     private static final String HUAWEI_WEB_USER_NODE = "UserInterface.X_HW_WebUserInfo.";
 
@@ -224,25 +220,28 @@ public class DeviceAccountService {
         return new ArrayList<>(paths);
     }
 
-    /** 运营商定制固件的超管节点；未登记运营商返回空 */
-    private static List<String> ispPaths(String root, String isp) {
-        String adminNode = ADMIN_NODE_BY_ISP.get(isp == null ? "" : isp.toUpperCase(Locale.ROOT));
-        if (adminNode == null) {
-            return List.of();
+    /** 运营商定制固件的超管节点，按识别出的运营商走对应适配类；未登记运营商返回空 */
+    private List<String> ispPaths(String root, String isp) {
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
+        for (String node : adaptationManager.of(isp).adminAccountNodes()) {
+            paths.add(root + node + LEAF_USERNAME);
+            paths.add(root + node + LEAF_PASSWORD);
         }
-        return List.of(root + adminNode + LEAF_USERNAME, root + adminNode + LEAF_PASSWORD);
+        return new ArrayList<>(paths);
     }
 
     /** 除已登记运营商以外的定制超管节点 */
-    private static List<String> otherIspPaths(String root, String isp) {
-        String registered = isp == null ? "" : isp.toUpperCase(Locale.ROOT);
+    private List<String> otherIspPaths(String root, String isp) {
+        IspAdaptation registered = adaptationManager.of(isp);
         LinkedHashSet<String> paths = new LinkedHashSet<>();
-        for (Map.Entry<String, String> e : ADMIN_NODE_BY_ISP.entrySet()) {
-            if (e.getKey().equals(registered)) {
+        for (IspAdaptation a : adaptationManager.all()) {
+            if (a.isp() == registered.isp()) {
                 continue;
             }
-            paths.add(root + e.getValue() + LEAF_USERNAME);
-            paths.add(root + e.getValue() + LEAF_PASSWORD);
+            for (String node : a.adminAccountNodes()) {
+                paths.add(root + node + LEAF_USERNAME);
+                paths.add(root + node + LEAF_PASSWORD);
+            }
         }
         return new ArrayList<>(paths);
     }

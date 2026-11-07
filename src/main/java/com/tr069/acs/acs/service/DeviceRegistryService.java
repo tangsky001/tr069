@@ -1,7 +1,8 @@
 package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.tr069.acs.acs.model.Isp;
+import com.tr069.acs.acs.adaptation.AdaptationManager;
+import com.tr069.acs.acs.adaptation.IspAdaptation;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
@@ -36,6 +37,8 @@ public class DeviceRegistryService implements ApplicationRunner {
     private final ModelMappingService modelMappingService;
 
     private final AcsCoreLog coreLog;
+
+    private final AdaptationManager adaptationManager;
 
     /** 启动后重算在线标记 */
     @Override
@@ -83,17 +86,18 @@ public class DeviceRegistryService implements ApplicationRunner {
         }
     }
 
-    /** 按 Inform 上报的私有参数前缀认运营商，只补台账上还没有运营商的设备 */
+    /** 设备上线时按 Inform 私有前缀认运营商，再交给对应运营商的适配类；只补台账上还没有的 */
     private String detectIsp(String sn, List<String> informPaths, String current) {
         if (current != null && !current.isBlank()) {
             return null;
         }
-        Isp detected = Isp.detect(informPaths);
-        if (detected == null || detected == Isp.STANDARD) {
+        IspAdaptation adaptation = adaptationManager.detect(informPaths);
+        if (adaptation == null) {
             return null;
         }
-        log.info("按 Inform 私有前缀登记设备运营商: sn={}, isp={}", sn, detected.getCode());
-        return detected.getCode();
+        log.info("按 Inform 私有前缀识别运营商: sn={}, isp={}, 适配类={}",
+                sn, adaptation.code(), adaptation.getClass().getSimpleName());
+        return adaptation.code();
     }
 
     /** 按上报窗口清扫：超过窗口还没再上报的设备才置离线 */
