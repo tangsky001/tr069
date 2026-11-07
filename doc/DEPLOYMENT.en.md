@@ -237,6 +237,11 @@ If you do not need northbound integration, set `acs.openapi.port` to `0`; `/open
 | `acs.worklist.root-path` | `./configuration` | External configuration root (`models/`); falls back to `configuration/` next to the jar when empty |
 | `acs.queue.enabled` | `true` | Disable to fall back to in-process synchronous handling, the degraded option without Redis |
 | `acs.biz.auto-create-table` | `true` | Auto-creates business template tables |
+| `acs.session.online-window-seconds` | `900` | Online window (seconds): a device whose last inform falls inside it counts as online; expired devices are swept to offline every 60 seconds |
+| `acs.olt.command-timeout-ms` | `20000` | How long one OLT command waits for the prompt (ms) |
+| `acs.olt.log-echo` | `false` | Whether the full output of every OLT command is written to the log (set `true` temporarily when troubleshooting; the command timing line is always printed) |
+| `acs.olt.max-raw-output-chars` | `60000` | Character cap for the raw output archived by a collection run |
+| `acs.olt.connect-timeout-ms` / `login-timeout-ms` | `8000` / `15000` | OLT connect and login timeouts (ms); login includes waiting for the account/password prompts |
 | `acs.database.fail-on-missing-table` | `false` | Whether startup aborts when tables are missing |
 | `admin.jwt.expire-hours` | `12` | Admin token lifetime (hours) |
 
@@ -317,6 +322,9 @@ Normal interaction flow:
 | Connection string reports `Unsupported character encoding` | `characterEncoding` was set to `utf8mb4` | Change it to `UTF-8` |
 | Database connection failure right at startup | Database not created / wrong credentials / network unreachable | First verify manually with `mysql -h ... -u ... -p tr_acs` |
 | Redis unreachable | Redis is not deployed | Install Redis, or set `acs.queue.enabled=false` to degrade (failed enqueue is handled locally) |
+| OLT sync "succeeds" but MAC / profile IDs are mostly `-` | The board-wide table carries no details and the background backfill has not finished (or its output was truncated) | Check the length of the `display current-configuration` output in the collection records; set `acs.olt.log-echo=true` temporarily to see the full output |
+| OLT registration keeps failing | No template matched / registration table full / SN already registered elsewhere | Read the `message` column in the registration records: check the template's PON type, port and model; enable "auto delete offline" when the table is full, or "auto move" for duplicate SNs |
+| Optical values empty, Rx shows `-` | The firmware does not support `display port state`, or no module is inserted | Run `display port state <port>` in the interface view manually; an empty value is expected when the device does not support it |
 
 ---
 

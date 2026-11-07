@@ -2,7 +2,6 @@ package com.tr069.acs.report;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tr069.acs.report.model.StatisticsInfo;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -24,7 +23,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.Properties;
 
 /** 定时把本实例的信息上报到 服务端统计有多少ACS */
-@Slf4j
 @Component
 public class StatisticsReportTask {
 
@@ -65,8 +63,8 @@ public class StatisticsReportTask {
     public void scheduledSendStatistics() {
         try {
             sendPost(collect());
-        } catch (Exception e) {
-            log.warn("[上报失败] 等待下个周期重试: {}", e.getMessage());
+        } catch (Exception ignored) {
+            // 上报失败不记日志，等下个周期自然重试
         }
     }
 
@@ -128,13 +126,6 @@ public class StatisticsReportTask {
                 .header("Content-Type", "application/json;charset=UTF-8")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                 .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        int status = response.statusCode();
-        if (status >= 200 && status < 300) {
-            log.info("[实例上报] 成功 deviceId={}, version={}, serverId={}",
-                    info.getDeviceId(), info.getVersion(), info.getServerId());
-        } else {
-            log.warn("[实例上报] 失败 status={}, body={}", status, response.body());
-        }
+        httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     }
 }

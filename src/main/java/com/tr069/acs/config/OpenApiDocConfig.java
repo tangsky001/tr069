@@ -102,6 +102,17 @@ public class OpenApiDocConfig {
                 "只采板卡就立即返回，端口状态 / ONT / VLAN / 模板交给后台线程补采。\n"
                         + "返回 `deepSyncing=true` 时轮询 `GET /api/olt/{id}` 直到变 false。");
         doc("POST /api/olt/{id}/refresh", "实时刷新", "不改台账，直连采最新数据写库后返回。");
+        doc("POST /api/olt/{id}/sync-section", "按页签同步",
+                "`scope` 只能是 boards / ont / vlan / template，只采这个页签要用的那一段，别的数据不动。\n"
+                        + "`force=true` 跳过新鲜度判断强制重采；不传时刚采过的数据直接返回，不重复占设备。\n"
+                        + "板卡明细按 SN 回填，不会被这次只采一段而抹空。");
+        doc("POST /api/olt/{id}/boards/confirm", "确认待确认板卡",
+                "下发 `board confirm 0`（华为），把已插入但还停在待确认状态的业务板转正，随后重采板卡。\n"
+                        + "没有待确认板卡时命令会被设备忽略，接口仍返回成功。");
+        doc("POST /api/olt/{id}/port-optics", "端口光模块按需查询",
+                "`slotNo` / `portNo` 必填。进 `interface gpon 0/<槽位>` 发 `display port state <口>`，\n"
+                        + "返回这个口的 Tx 发光 / 收光 / 温度 / 偏置电流 / 电压。\n"
+                        + "设备不支持这条命令时字段为空，不是错误。");
         doc("POST /api/olt/{id}/ont-query", "单条 ONT 按需查询",
                 "`action` 取 optical（光信息）/ version（版本）/ register（注册历史）/ config（授权信息 + 业务流）/ info（管理 IP）。\n"
                         + "配合 `frameNo` / `slotNo` / `portNo` / `ontId` 定位到具体那台 ONT。");
@@ -121,6 +132,13 @@ public class OpenApiDocConfig {
         doc("DELETE /api/olt/{id}/vlan", "删除 VLAN",
                 "请求体是 VLAN ID 数组，如 `[100, 200]`；连续的会合并成一条 `no vlan <start> <end>`。\n"
                         + "成功后自动重采并返回最新详情。");
+        doc("POST /api/olt/{id}/vlan/port-vlan", "上行口放通 VLAN",
+                "`iface` 必须写到端口，如 `0/7/0`；只写框和槽会被拒（不知道该放通到哪个口）。\n"
+                        + "`vlanIds` 支持 `41,45-46`；`nativeVlan=true` 下发 native 关键字（不打标签）。\n"
+                        + "下发 `port vlan …`，成功后只重读 VLAN 段。");
+        doc("DELETE /api/olt/{id}/vlan/port-vlan", "上行口解除 VLAN 绑定",
+                "同一个表单，下发 `no port vlan …`。`nativeVlan` 在这条上没有意义，传不传都一样。\n"
+                        + "成功后同样只重读 VLAN 段。");
 
         // OLT DBA
         doc("GET /api/olt/{id}/dba-profile/form", "DBA 模板表单约束",
@@ -131,6 +149,24 @@ public class OpenApiDocConfig {
                         + "`type` 决定要填哪几个带宽：type1 固定、type2 保证、type3 保证+最大、type4 最大、type5 固定+保证+最大。");
         doc("DELETE /api/olt/{id}/dba-profile", "删除 DBA 模板", "请求体是模板 ID 数组，如 `[10, 11]`。");
 
+        // OLT 线路模板
+        doc("GET /api/olt/{id}/line-profile/form", "线路模板表单元数据",
+                "三个弹窗（加 T-CONT / 加 GEM Port / 加 GEM 映射）的默认值与约束：\n"
+                        + "`profileId` 必填，指定是哪条线路模板；`gemportId` 可选，加映射时用它定位 GEM Port。\n"
+                        + "返回已占用的 T-CONT / GEM 索引、可用区间与提示文字，页面直接按它填。");
+        doc("POST /api/olt/{id}/line-profile/preview", "线路模板命令预览（不下发）",
+                "请求体里 `action` 区分 tcont / gemport / gem-mapping，其余字段与对应下发接口一致。\n"
+                        + "返回 `commands` 与 `warnings`，与下发走同一段拼装代码。");
+        doc("POST /api/olt/{id}/line-profile/tcont", "线路模板加一条 T-CONT",
+                "下发 `tcont <tcontId> dba-profile-id <dbaProfileId>`（进对应线路模板视图）。\n"
+                        + "`ponType` 留空按 gpon；`tcontId` 华为 0-127，重复会被拒。成功后重采模板。");
+        doc("POST /api/olt/{id}/line-profile/gemport", "线路模板加一个 GEM Port",
+                "下发 `gem add <gemportId> eth tcont <tcontId> encrypt on`。\n"
+                        + "`gemportId` 华为 0-1023，必须挂到已存在的 T-CONT 上；成功后重采模板。");
+        doc("POST /api/olt/{id}/line-profile/gem-mapping", "给 GEM Port 加映射",
+                "下发 `gem mapping <mappingId> <序号> vlan <VLAN>`，可一次多条。\n"
+                        + "`mappingIds` 与 `vlans` 逗号分隔且一一对应；`mappingIds` 留空时从 0 顺延。成功后重采模板。");
+
         // OLT TR-069
         doc("GET /api/olt/{id}/tr069/form", "TR-069 模板表单约束",
                 "给出模板 ID 范围、连接端口范围、模板名 / ACS 地址 / 账号密码的最大长度、ACS 地址正则、以及默认填什么。");
@@ -138,6 +174,13 @@ public class OpenApiDocConfig {
         doc("POST /api/olt/{id}/tr069-profiles", "新增 TR-069（ACS）模板",
                 "`profileId` 1-32；`url` 是 ACS 地址；`informEnable` + `informInterval` 控制定期通知；\n"
                         + "`username` / `password` / `port` 是连接请求凭据。成功后返回最新模板列表。");
+        doc("POST /api/olt/{id}/terminal-user", "在 OLT 上建本地用户",
+                "`username` / `password` 都必填，设备要求 6~15 位；\n"
+                        + "`level` 取 1（Common User，只能看）或 2（Operator，能改配置）；\n"
+                        + "`profile` 留空走设备默认值（一般是 root），`reenter` 0~4，`appendedInfo` 不超过 30 字符。");
+        doc("POST /api/olt/{id}/actions/previews", "整页动作批量预览（不下发）",
+                "请求体是动作数组 `[{code, params}, …]`（可为空），一次把整页表单的参数都送上来。\n"
+                        + "返回 `{动作编号: 命令文本}`，页面逐格显示，点「执行」前先让用户看清要发什么。");
 
         // OLT 一键开局
         doc("GET /api/olt/{id}/quick-setup/form", "一键开局表单约束",
@@ -152,6 +195,12 @@ public class OpenApiDocConfig {
                         + "`createVlanIds` + `addCreatedToPorts=true` 表示新建的 VLAN 顺带把 `ports` 加成 tagged 成员。\n"
                         + "`portModeEnabled=false` 表示完全不动端口，`ports` 里的内容也会被忽略。\n"
                         + "成功后自动重采并返回最新详情。");
+        doc("GET /api/olt/{id}/quick-setup/config", "读已保存的开局参数",
+                "页面打开时问后端要，默认值只有后端这一份，页面不自己准备。\n"
+                        + "`defaults=true` 表示忽略已保存的值、按默认值返回（「恢复默认」按钮用）。");
+        doc("POST /api/olt/{id}/quick-setup/config", "保存开局参数",
+                "按设备存库，之后谁打开这台设备都是同一套参数。只存参数，不下发任何命令。\n"
+                        + "保存后返回最新的那一份，页面直接回填。");
 
         // OLT 命令动作
         doc("GET /api/olt/{id}/actions", "这台设备能执行的命令动作目录",
@@ -161,6 +210,63 @@ public class OpenApiDocConfig {
                 "`code` 取动作目录里的编号，`params` 是 `{占位符: 值}`，如 `{\"vlanId\":\"100\"}`。\n"
                         + "查询类返回设备回显 `outputs`；配置类下发后重采，`detail` 是最新详情。");
         doc("POST /api/olt/{id}/actions/preview", "动作命令预览（不下发）", "把这次动作会执行的完整命令（含进视图与 exit）算出来。");
+
+        // OLT 会话池
+        doc("GET /api/olt/session-pool", "Telnet 会话池状态",
+                "返回保活开关、探活周期与每台设备当前空闲的会话数，用来判断是不是会话被占满导致排队。\n"
+                        + "会话是长连接，采集与下发共用同一个池。");
+        doc("POST /api/olt/session-pool/keepalive", "开关会话保活",
+                "`enabled` 必填；`intervalMs` 可选，不传按当前周期。\n"
+                        + "关掉后空闲会话会在超时后被回收，设备侧登录数不够时可以先关掉。");
+
+        // OLT ONT 自动发现与整板清理
+        doc("GET /api/olt/{id}/ont-autofind", "待注册 ONT（实时）",
+                "实时登设备执行 `display ont autofind all`，不读库。\n"
+                        + "返回每条的 `id`（回显行号，`ont confirm` 用的就是它）、`fsp`、`sn` / `loid`、\n"
+                        + "`vendorId`、`model`、`ponType`；设备不支持时返回空数组。");
+        doc("GET /api/olt/{id}/ont-auto-find", "PON 口自动发现开关状态",
+                "逐口问设备 `display ont-auto-find`，返回 `supported` / `totalPorts` / `enabledPorts` /\n"
+                        + "`allEnabled` / `disabledPorts`；查不出来时 `supported=false`，`message` 写原因。");
+        doc("POST /api/olt/{id}/ont-auto-find/enable", "一键开启 PON 口自动发现",
+                "对所有已装 GPON 业务板的 PON 口下发 `port <口> ont-auto-find enable`，下发后回读确认。\n"
+                        + "已经开着的口会跳过；没有 GPON 业务板时返回失败并说明原因。");
+        doc("POST /api/olt/{id}/ont/delete-all", "删除业务板上的全部 ONT",
+                "`slots` 指定只清哪几块业务板，留空表示所有业务板。\n"
+                        + "逐口下发 `ont delete <端口> all`，属于破坏性操作，页面必须二次确认；成功后整机重采。");
+
+        // OLT ONT 注册
+        doc("GET /api/olt/{id}/ont-reg/templates", "注册模板列表",
+                "`onlyCurrent=true` 只看本设备 + 通用模板（`oltId` 为空的那批）；不传返回全部。\n"
+                        + "命中规则：启用 + PON 类型 / 限定端口 / 限定型号都匹配，`priority` 小的先命中。");
+        doc("GET /api/olt/{id}/ont-reg/template/default", "新建注册模板的默认值",
+                "默认值只有后端这一份，页面不自己准备。`oltIp` 可选，传了就按这台设备预填绑定地址。");
+        doc("POST /api/olt/{id}/ont-reg/template", "新增或更新注册模板",
+                "`id` 为空是新增，非空是更新。关键字段：`authMode`（SN / MAC / LOID / PASSWORD）、\n"
+                        + "`ponType`（GPON / EPON）、`lineProfileId` / `srvProfileId`、`bindPorts` / `ontModels`（空表示不限）、\n"
+                        + "`workMode`（HGU / SFU / MIX / MDU）、`serviceVlanMap` / `tr069Vlan` / `iptvVlan` / `multicastVlan`。\n"
+                        + "`oltId` 留空表示所有 OLT 通用。");
+        doc("DELETE /api/olt/{id}/ont-reg/templates", "批量删除注册模板",
+                "请求体是模板 ID 数组，如 `[1, 2]`；逻辑删除，历史注册记录里的模板名是快照，不受影响。");
+        doc("GET /api/olt/{id}/ont-reg/config", "读自动注册参数",
+                "没存过时返回一份默认参数。返回里带 `lastScanAt` / `lastRegisterAt` / `lastSaveAt`，\n"
+                        + "以及便于直接展示的 `lastScanText` / `lastRegisterText` / `lastSaveText`。");
+        doc("POST /api/olt/{id}/ont-reg/config", "保存自动注册参数",
+                "`enabled=1` 后后台按 `scanSeconds` 定时扫描并注册；`concurrency` 限制一轮最多注册几台；\n"
+                        + "`autoMove=1` 时 ONT 换 PON 口上线自动迁移注册位置；`autoDeleteOffline=1` 时注册表满先删离线 ONT。\n"
+                        + "保存即生效，不用重启。");
+        doc("POST /api/olt/{id}/ont-reg/scan", "立刻跑一轮自动注册",
+                "同步执行一轮「扫描 → 按模板注册」，返回本轮注册成功的台数。\n"
+                        + "待注册光猫多时耗时会长，页面应提示等待；逐台结果到注册记录里看。");
+        doc("GET /api/olt/{id}/ont-reg/records", "注册记录",
+                "`limit` 默认 50。每条含模板名快照、`fsp`、`ontSn`、`authMode`、`success`、\n"
+                        + "`source`（AUTO 自动 / MANUAL 手动）、`command`、失败原因 `message` 与操作人。");
+        doc("POST /api/olt/{id}/ont-reg/preview", "注册命令预览（不下发）",
+                "只编命令不碰设备，返回命令数组。`rows` 留空表示按设备上当前所有待注册的算。\n"
+                        + "和 `ont-reg/register` 走同一段拼装代码，看到的就是将要下发的。");
+        doc("POST /api/olt/{id}/ont-reg/register", "注册选中的 ONT",
+                "逐台下发 `ont confirm … omci [ont-lineprofile-id] [ont-srvprofile-id]`，成功后补业务虚口并把型号写进描述。\n"
+                        + "`templateId` 留空按优先级自动匹配；逐台返回 `OltOntRegisterResult`，部分失败时看每条自己的\n"
+                        + "`success` 与 `message`，不会因为一台失败中断整批。");
 
         // 文件台账
         doc("GET /api/files", "文件清单", "固件与配置，新的在前。");
@@ -338,12 +444,16 @@ public class OpenApiDocConfig {
     @Bean
     public OperationCustomizer docCustomizer() {
         return (Operation operation, HandlerMethod handlerMethod) -> {
-            // 分组名默认是类名（olt-controller 这种），换成中文
-            String tag = CLASS_TAG.get(handlerMethod.getMethod().getDeclaringClass().getSimpleName());
+            String key = pathOf(handlerMethod);
+            // 分组名默认是类名（olt-controller 这种），换成中文；OLT 接口太多，再按功能拆三组
+            String simpleName = handlerMethod.getMethod().getDeclaringClass().getSimpleName();
+            String tag = CLASS_TAG.get(simpleName);
+            if ("OltController".equals(simpleName) && key != null) {
+                tag = oltTag(key);
+            }
             if (tag != null) {
                 operation.setTags(List.of(tag));
             }
-            String key = pathOf(handlerMethod);
             if (key == null) {
                 return operation;
             }
@@ -434,6 +544,20 @@ public class OpenApiDocConfig {
             }
             fillSchema(name, property, depth + 1);
         }
+    }
+
+    /** OLT 一个类挂了五十多个接口，按功能再分三组，否则侧栏一长条翻不到底 */
+    private static String oltTag(String key) {
+        if (key.contains("/ont-reg/") || key.contains("/ont-autofind")
+                || key.contains("/ont-auto-find") || key.contains("/ont/delete-all")) {
+            return "OLT · ONT 注册与发现";
+        }
+        if (key.contains("/vlan") || key.contains("/dba-profile") || key.contains("/line-profile")
+                || key.contains("/tr069") || key.contains("/quick-setup") || key.contains("/terminal-user")
+                || key.contains("/exec") || key.contains("/actions") || key.contains("/boards/confirm")) {
+            return "OLT · 配置下发";
+        }
+        return "OLT · 采集与台账";
     }
 
     /** 从 Controller 与方法上的 @*Mapping 拼出 `方法 路径`，如 `GET /api/olt/{id}` */
