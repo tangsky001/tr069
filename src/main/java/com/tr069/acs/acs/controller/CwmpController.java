@@ -248,16 +248,9 @@ public class CwmpController {
         try {
             PendingRpc rpc = null;
             if (queueProperties.isEnabled()) {
+                // poll 已内置跳过退避期未到的指令（放回队尾），不会阻塞后续指令
                 RpcTaskQueue.RpcTask task = rpcTaskQueue.poll(sn);
                 if (task != null) {
-                    if (task.getNotBefore() > System.currentTimeMillis()) {
-                        // 退避期未结束：放回队首，本跳不发给它
-                        rpcTaskQueue.pushBack(task);
-                        log.debug("指令尚在退避期: sn={}, rpc={}, 还需等待={}ms",
-                                sn, task.getRpcName(),
-                                task.getNotBefore() - System.currentTimeMillis());
-                        return false;
-                    }
                     Map<String, Object> args = rpcTaskQueue.parseArgs(task.getArgsJson());
                     rpc = new PendingRpc(task.getTaskId(), task.getRpcName(), args, task.getWorklistId());
                     // 批次与重试轮次要带回，超时重排队列时用得上

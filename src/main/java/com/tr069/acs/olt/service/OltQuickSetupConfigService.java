@@ -9,7 +9,9 @@ import com.tr069.acs.olt.model.OltHuaweiSetupForm;
 import com.tr069.acs.olt.vendor.hw.HuaweiQuickSetupPlanner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -32,15 +34,18 @@ public class OltQuickSetupConfigService {
 
     private static final String DEFAULT_PON_TYPE = "GPON";
 
-    private static final String DEFAULT_ACS_URL = "http://10.172.10.1:9090/";
-
-    private static final String DEFAULT_ACS_USERNAME = "acs";
-
-    private static final String DEFAULT_ACS_PASSWORD = "acs";
-
     private static final int DEFAULT_DBA_BANDWIDTH_MBPS = 1000;
 
     private static final String DEFAULT_UPLINK_PORTS = "0/17/0,0/17/1,0/7/0,0/7/1,0/7/2,0/7/3";
+
+    @Value("${acs.olt.quick-setup.acs-url:http://10.172.10.1:9090/}")
+    private String defaultAcsUrl;
+
+    @Value("${acs.olt.quick-setup.acs-username:acs}")
+    private String defaultAcsUsername;
+
+    @Value("${acs.olt.quick-setup.acs-password:acs}")
+    private String defaultAcsPassword;
 
     private final OltQuickSetupConfigMapper configMapper;
 
@@ -69,7 +74,8 @@ public class OltQuickSetupConfigService {
         }
     }
 
-    /** 存一份开局参数，一台 OLT 一条 */
+    /** 存一份开局参数，一台 OLT 一条（事务保证 upsert 原子性） */
+    @Transactional(rollbackFor = Exception.class)
     public HuaweiQuickSetupRequest save(Long oltId, HuaweiQuickSetupRequest form) {
         if (form == null) {
             throw new IllegalArgumentException("开局参数不能为空");
@@ -97,7 +103,7 @@ public class OltQuickSetupConfigService {
     }
 
     /** 现场默认值：页面上「默认设置」就是回到这一套 */
-    public static HuaweiQuickSetupRequest defaults() {
+    public HuaweiQuickSetupRequest defaults() {
         HuaweiQuickSetupRequest request = new HuaweiQuickSetupRequest();
         request.setManageVlan(DEFAULT_MANAGE_VLAN);
         request.setManageVlanIp(DEFAULT_MANAGE_VLAN_IP);
@@ -105,9 +111,9 @@ public class OltQuickSetupConfigService {
         request.setTr069Vlan(DEFAULT_TR069_VLAN);
         request.setServiceVlan(DEFAULT_SERVICE_VLAN);
         request.setPonType(DEFAULT_PON_TYPE);
-        request.setAcsUrl(DEFAULT_ACS_URL);
-        request.setAcsUsername(DEFAULT_ACS_USERNAME);
-        request.setAcsPassword(DEFAULT_ACS_PASSWORD);
+        request.setAcsUrl(defaultAcsUrl);
+        request.setAcsUsername(defaultAcsUsername);
+        request.setAcsPassword(defaultAcsPassword);
         request.setDbaBandwidthMbps(DEFAULT_DBA_BANDWIDTH_MBPS);
         // 模板 ID 默认统一用一个号：现场对着设备看配置时一眼能认出是同一套。
         // 区间由设备定（10~512 / 1~32），这里不重复写死，取 planner 的默认与下限

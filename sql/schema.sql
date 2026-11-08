@@ -681,3 +681,21 @@ INSERT IGNORE INTO `sys_role_permission` (`role_code`, `permission`)
 SELECT `role_code`, CONCAT(SUBSTRING(`permission`, 1, CHAR_LENGTH(`permission`) - 7), ':delete')
 FROM `sys_role_permission` WHERE `permission` LIKE '%:manage';
 DELETE FROM `sys_role_permission` WHERE `permission` LIKE '%:manage';
+
+-- ---------------------------- 远程运维配置（装维 APP 扫码登录）----------------------------
+CREATE TABLE IF NOT EXISTS `ops_remote_config` (
+    `id`               BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `token`            VARCHAR(128) DEFAULT NULL COMMENT '装维 APP 登录 Token',
+    `permissions`      VARCHAR(255) DEFAULT NULL COMMENT '操作权限，逗号分隔：ticket/config/reboot',
+    `device_scope`     VARCHAR(32)  DEFAULT 'all' COMMENT '可见设备范围：all/online/5m/10m/15m/1h/2h/24h',
+    `subdomain`        VARCHAR(64)  DEFAULT NULL COMMENT '内网穿透分配的随机二级域名前缀（10位[a-z0-9]）',
+    `instance_id`      VARCHAR(64)  DEFAULT NULL COMMENT 'ACS 实例唯一标识（UUID）',
+    `remote_enabled`   TINYINT      DEFAULT 0 COMMENT '是否启用内网穿透：0否 1是',
+    `lan_qr_content`   VARCHAR(512) DEFAULT NULL COMMENT '内网本地登录二维码内容',
+    `cloud_qr_content` VARCHAR(512) DEFAULT NULL COMMENT '外网云登录二维码内容',
+    `apk_qr_content`   VARCHAR(512) DEFAULT NULL COMMENT 'APK 下载二维码内容',
+    `token_created_at` DATETIME     DEFAULT NULL COMMENT 'Token 生成时间',
+    `created_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '远程运维配置（装维 APP）';

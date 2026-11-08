@@ -3,6 +3,7 @@ package com.tr069.acs.acs.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.tr069.acs.acs.config.CapabilityProfiles;
+import com.tr069.acs.acs.adaptation.IspAdaptation;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.model.Isp;
 import com.tr069.acs.acs.session.CpeSession;
@@ -947,12 +948,35 @@ public class DeviceCapabilityService {
         });
     }
 
-    /** 本次采集采用的采集标准：按设备台账的运营商取，台账没登记就走通用档 */
+    /**
+     * 本次采集采用的采集标准：按设备台账的运营商取，台账没登记就走通用档。
+     * yml 里配了用配的，没配用 builtin 里写死的那份，最后用 IspAdaptation 的采集策略覆盖。
+     */
     private CapabilityProfiles.Profile profileFor(String isp) {
         if (capabilityProfiles == null) {
             return new CapabilityProfiles.Profile();
         }
-        return capabilityProfiles.forIsp(Isp.of(isp));
+        CapabilityProfiles.Profile profile = capabilityProfiles.forIsp(Isp.of(isp));
+        // 用运营商适配实现覆盖采集策略：skipPrefixes / extraProbePaths /
+        // capabilitySubtrees / gpnStrategy——这些差异收在 IspAdaptation 实现类里，
+        // 不再硬编码在 CapabilityProfiles.builtin 的 if 分支中
+        IspAdaptation adaptation = adaptationManager.of(isp);
+        if (!adaptation.skipPrefixes().isEmpty()) {
+            profile.setSkipPrefixes(adaptation.skipPrefixes());
+        }
+        if (!adaptation.extraProbePaths().isEmpty()) {
+            List<String> probePaths = new ArrayList<>(profile.getProbePaths());
+            probePaths.addAll(adaptation.extraProbePaths());
+            profile.setProbePaths(probePaths);
+        }
+        if (!adaptation.capabilitySubtrees().isEmpty()) {
+            profile.setSubtrees(adaptation.capabilitySubtrees());
+        }
+        String strategy = adaptation.gpnStrategy();
+        if (strategy != null && !strategy.isBlank()) {
+            profile.setGpnStrategy(strategy);
+        }
+        return profile;
     }
 
     /** 设备台账上的运营商，查不到返回 null（由 {@link Isp#of} 归到通用档） */

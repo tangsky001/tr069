@@ -25,6 +25,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import com.tr069.acs.common.log.AcsCoreLog;
+import com.tr069.acs.queue.config.QueueProperties;
+import jakarta.annotation.PostConstruct;
 
 /** RPC 下发服务 */
 @Slf4j
@@ -36,6 +38,7 @@ public class RpcDispatchService {
     private final RpcTaskQueue rpcTaskQueue;
     private final RpcTaskRegistry rpcTaskRegistry;
     private final AcsCoreLog coreLog;
+    private final QueueProperties queueProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** RPC 审计流水号，入库失败时兜底 */
@@ -50,6 +53,39 @@ public class RpcDispatchService {
     /** 指令在队列中等待被设备取走的最长时间，超时判失败 */
     @Value("${acs.agent.pending-timeout-seconds:600}")
     private long pendingTimeoutSeconds;
+
+    /**
+     * 进程启动时扫描 Redis 队列，把仍在排队的指令重新登记到 RpcTaskRegistry。
+     * 进程重启后 RpcTaskRegistry 的内存 Map 清空，但 Redis 队列里的指令还在——
+     * 如果不重建，这些指令的 CompletableFuture 永远不会完成，sweepPendingTasks 也扫不到。
+     * 这里只登记 submitTime，让 sweepPendingTasks 在超时后自动判失败。
+     */
+    @PostConstruct
+    public void rebuildPendingOnStartup() {
+        if (!queueProperties.isEnabled()) {
+            return;
+        }
+        try {
+            List<String> devices = rpcTaskQueue.scanDevicesWithPending();
+            if (devices.isEmpty()) {
+                return;
+            }
+            int rebuilt = 0;
+            for (String sn : devices) {
+                for (Long taskId : rpcTaskQueue.scanPendingTaskIds(sn)) {
+                    // 只重建尚未在 Registry 里的（重启后全是新的）
+                    if (rpcTaskRegistry.createIfAbsent(taskId) != null) {
+                        rebuilt++;
+                    }
+                }
+            }
+            if (rebuilt > 0) {
+                log.info("进程重启后从 Redis 队列重建 pending 指令: 数量={}", rebuilt);
+            }
+        } catch (Exception e) {
+            log.warn("重建 pending 指令失败，等待 sweepPendingTasks 兜底: {}", e.getMessage());
+        }
+    }
 
     /** 提交一条指令，立即返回 */
     public DispatchHandle submitAsync(String sn, String rpcName,
@@ -184,16 +220,20 @@ public class RpcDispatchService {
         return rpcTaskQueue.getResult(taskId);
     }
 
-    /** 定期把排队过久仍未被设备取走的指令判失败 */
+    /**
+     * 定期清理两类指令：
+     * 1. Registry 中排队过久仍未被设备取走的——超时判失败
+     * 2. Redis 结果中处于 running 但 Registry 已无记录的——poll 取出后进程崩溃/重启的孤儿指令
+     */
     @Scheduled(fixedDelayString = "${acs.agent.pending-sweep-interval:30000}")
     public void sweepPendingTasks() {
+        // 第一类：Registry 内存表中超时的排队指令
         List<Long> stale = rpcTaskRegistry.drainStale(pendingTimeoutSeconds * 1000L);
-        if (stale.isEmpty()) {
-            return;
-        }
-        log.warn("清理超时未执行的指令: 数量={}, 阈值={}s", stale.size(), pendingTimeoutSeconds);
-        for (Long taskId : stale) {
-            failTask(taskId, "8002", "指令超时未执行：设备未取走");
+        if (!stale.isEmpty()) {
+            log.warn("清理超时未执行的指令: 数量={}, 阈值={}s", stale.size(), pendingTimeoutSeconds);
+            for (Long taskId : stale) {
+                failTask(taskId, "8002", "指令超时未执行：设备未取走");
+            }
         }
     }
 

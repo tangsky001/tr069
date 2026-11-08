@@ -11,7 +11,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 public class SchedulingConfig {
 
     /** 定时任务线程数 */
-    private static final int POOL_SIZE = 4;
+    private static final int POOL_SIZE = 8;
 
     @Bean(name = "taskScheduler")
     public ThreadPoolTaskScheduler taskScheduler() {

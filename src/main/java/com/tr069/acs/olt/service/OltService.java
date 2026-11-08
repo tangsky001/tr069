@@ -78,7 +78,9 @@ import com.tr069.acs.olt.vendor.OltVendorProfile;
 import com.tr069.acs.olt.vendor.OltVendorProfiles;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -135,9 +137,12 @@ public class OltService {
 
     private static final AtomicInteger DEEP_THREAD_SEQ = new AtomicInteger();
 
+    /** saveRecord 连续失败计数：超过阈值升级到 warn 级别日志 */
+    private final AtomicInteger recordFailStreak = new AtomicInteger();
+
     private static ThreadPoolExecutor deepPool() {
         ThreadPoolExecutor pool = new ThreadPoolExecutor(DEEP_POOL_MAX, DEEP_POOL_MAX,
-                60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), r -> {
+                60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(1000), r -> {
             Thread thread = new Thread(r, "olt-deep-sync-" + DEEP_THREAD_SEQ.incrementAndGet());
             thread.setDaemon(true);
             return thread;
@@ -175,6 +180,11 @@ public class OltService {
     private final OltTelnetService telnetService;
 
     private final ObjectMapper objectMapper;
+
+    /** 延迟注入避免循环依赖（OltOntRegService 注入了 OltService） */
+    @org.springframework.beans.factory.annotation.Autowired
+    @Lazy
+    private com.tr069.acs.olt.service.OltOntRegService ontRegService;
 
     // ---------------------------------------------------------------- 查询
 
@@ -381,7 +391,7 @@ public class OltService {
             device.setHost(host);
             device.setProtocol(protocol);
             device.setUsername(username);
-            device.setPassword(trimToNull(request.getPassword()));
+            device.setPassword(com.tr069.acs.olt.util.OltCrypto.encrypt(trimToNull(request.getPassword())));
             device.setPort(port);
             device.setCharset(charset);
             device.setBindLocalIp(bindLocalIp);
@@ -410,7 +420,7 @@ public class OltService {
                 .set(OltDevice::getRemark, remark);
         String password = request.getPassword();
         if (password != null && !password.isEmpty()) {
-            update.set(OltDevice::getPassword, password);
+            update.set(OltDevice::getPassword, com.tr069.acs.olt.util.OltCrypto.encrypt(password));
         }
         // 连接参数变了，之前采集到的型号/板卡已经不代表这台设备
         boolean endpointChanged = !host.equals(existing.getHost())
@@ -450,10 +460,19 @@ public class OltService {
         }
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         requireDevice(id);
         boardMapper.delete(new LambdaQueryWrapper<OltBoard>().eq(OltBoard::getOltId, id));
         deviceMapper.deleteById(id);
+        // 清理关联表数据，避免孤儿记录
+        recordMapper.delete(new LambdaQueryWrapper<OltSyncRecord>().eq(OltSyncRecord::getOltId, id));
+        // 清理 ONT 注册关联数据（模板、参数、记录）
+        ontRegService.deleteByOltId(id);
+        // 清理内存中的锁和节流记录，避免内存泄漏
+        syncLocks.remove(id);
+        sectionSyncAt.keySet().removeIf(key -> key != null && key.startsWith(id + ":"));
+        deepSyncing.remove(id);
     }
 
     // ---------------------------------------------------------------- 测试与同步
@@ -497,8 +516,13 @@ public class OltService {
             log.warn("OLT 诊断测试失败 host={}: {}", probe.getHost(), message);
             saveRecord(stored == null ? null : stored.getId(), OltSyncRecord.ACTION_TEST,
                     false, message, null, cost, operator);
-            if (stored != null) {
+            if (stored != null && isConnectionFailure(e)) {
                 markOffline(stored.getId(), message);
+            } else if (stored != null) {
+                // 非连接类故障（如认证失败、超时）：只记 lastError，不标离线
+                deviceMapper.update(null, new LambdaUpdateWrapper<OltDevice>()
+                        .eq(OltDevice::getId, stored.getId())
+                        .set(OltDevice::getLastError, cut(message, 480)));
             }
             OltTestResult result = OltTestResult.fail("连接失败：" + message);
             result.setCostMs(cost);
@@ -742,6 +766,22 @@ public class OltService {
         try {
             return body.get();
         } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 暴露给 ONT 注册服务用的 per-device 锁：不等待，拿不到就抛异常 */
+    public void lockDeviceOrThrow(Long id, String action) {
+        ReentrantLock lock = syncLocks.computeIfAbsent(id, key -> new ReentrantLock());
+        if (!lock.tryLock()) {
+            throw new IllegalStateException(action + "：这台 OLT 正在执行其它操作，请稍后重试");
+        }
+    }
+
+    /** 配对 unlock */
+    public void unlockDevice(Long id) {
+        ReentrantLock lock = syncLocks.get(id);
+        if (lock != null && lock.isHeldByCurrentThread()) {
             lock.unlock();
         }
     }
@@ -1162,6 +1202,7 @@ public class OltService {
         }
     }
 
+    @Transactional(rollbackFor = Exception.class)
     private int writeBoards(Long id, List<OltBoard> boards, LocalDateTime now, boolean mergeOld,
                             Set<OltCliSession.Section> sections) {
         Map<Integer, OltBoard> previous = new HashMap<>();
@@ -3314,7 +3355,8 @@ public class OltService {
         }
         // 配置类才重采：查看 CPU 这种命令不该顺带把整机重采一遍
         if (!action.query()) {
-            result.setDetail(collectAndPersist(id, operator, action.label() + "后重采"));
+            result.setDetail(underDeviceSyncLock(id, action.label() + "后重采",
+                    () -> collectAndPersist(id, operator, action.label() + "后重采")));
         }
         return result;
     }
@@ -3577,7 +3619,15 @@ public class OltService {
                     label + "：" + String.join("；", commands), transcript,
                     System.currentTimeMillis() - start, operator);
             // 采集到的最新数据既写库又直接返回，页面不用再拉一次
-            return collectAndPersist(id, operator, label + "后重采");
+            try {
+                return collectAndPersist(id, operator, label + "后重采");
+            } catch (Exception re) {
+                // 配置已下发成功，重采失败不应掩盖成功状态
+                log.warn("OLT {} 配置下发成功但重采失败: {}", id, re.getMessage());
+                OltDetail detail = new OltDetail();
+                detail.setDevice(OltDeviceView.from(deviceMapper.selectById(id)));
+                return detail;
+            }
         } catch (Exception e) {
             String message = rootMessage(e);
             saveRecord(id, actionType, false,
@@ -3632,7 +3682,7 @@ public class OltService {
             probe.setHost(stored.getHost());
             probe.setProtocol(stored.getProtocol());
             probe.setUsername(stored.getUsername());
-            probe.setPassword(stored.getPassword());
+            probe.setPassword(com.tr069.acs.olt.util.OltCrypto.decrypt(stored.getPassword()));
             probe.setPort(stored.getPort());
             probe.setCharset(stored.getCharset());
             probe.setBindLocalIp(stored.getBindLocalIp());
@@ -3735,9 +3785,14 @@ public class OltService {
             record.setCostMs((int) Math.min(costMs, Integer.MAX_VALUE));
             record.setOperator(cut(operator, 64));
             recordMapper.insert(record);
+            recordFailStreak.set(0);
         } catch (Exception e) {
-            // 记录失败不影响主流程
-            log.warn("OLT 采集记录写入失败: {}", e.getMessage());
+            int streak = recordFailStreak.incrementAndGet();
+            if (streak >= 10) {
+                log.error("OLT 采集记录连续写入失败 {} 次: {}", streak, e.getMessage());
+            } else {
+                log.warn("OLT 采集记录写入失败: {}", e.getMessage());
+            }
         }
     }
 
@@ -4485,6 +4540,24 @@ public class OltService {
         }
         String message = current.getMessage();
         return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+    }
+
+    /** 判断异常是否为连接级故障（只有这类故障才标记设备离线） */
+    private static boolean isConnectionFailure(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            String msg = current.getMessage();
+            String type = current.getClass().getSimpleName();
+            if (type.contains("Timeout") || type.contains("ConnectException")
+                    || type.contains("ConnectionRefused") || type.contains("SocketException")
+                    || type.contains("ClosedChannelException")
+                    || (msg != null && (msg.contains("connect") || msg.contains("timed out")
+                            || msg.contains("connection") || msg.contains("refused")))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private String cut(String value, int max) {

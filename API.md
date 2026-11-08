@@ -147,6 +147,7 @@ HTTP 状态码只在缺令牌与缺权限时和业务码一起跟着变（HTTP 4
 | 设备预设（引擎内部） | 无接口 | §4.11 |
 | 文件与固件 | `/api/files` | §4.12 |
 | 系统管理（用户与角色权限） | `/api/system` | §4.13 |
+| 在线更新 | `/api/upgrade` | §4.14 |
 
 ---
 
@@ -1068,19 +1069,19 @@ ACS 会回 `TransferCompleteResponse`——不回的话设备会以为 ACS 没�
 | 请求 | 要的权限点 |
 | --- | --- |
 | `GET /api/device/**` | `device:view` |
-| `POST` / `PUT` / `DELETE /api/device/**` | `device:manage` |
+| `POST` / `PUT` / `DELETE /api/device/**` | `device:update`（写）/ `device:delete`（删） |
 
 认不出模块的路径（如 `/api/user/info`）不拦——登进来就能看自己是谁，没必要再配权限。
 
-模块一共十个：dashboard / device / template / biz / model / worklist / olt / file / tag / system，
-每个一读一写，共 20 个权限点。
+模块一共十个：dashboard / device / template / biz / model / worklist / olt / file / ops / system，
+每个三级（查看 / 修改 / 删除），共 30 个权限点。
 
 ### 4.13.2 两个默认角色
 
 | 角色 | 说明 |
 | --- | --- |
 | `SUPER_ADMIN` 系统管理员 | 内置。**拥有全部权限**，不可删除，改它的权限会被拒 |
-| `OPS_ADMIN` 运维管理员 | 默认能看全部、能改设备与工单，权限可调整 |
+| `OPS_ADMIN` 运维管理员 | 默认能看全部、能改设备与工单、**能在线更新**（`ops:update`），权限可调整 |
 
 系统管理员的「全权限」是在代码里短路的，**权限表里没有它的行**——
 存一份就要操心「表里那行和代码里那句不一致时谁说了算」。
@@ -1136,8 +1137,8 @@ IP 取自 `X-Forwarded-For` 的第一段（前面挂反代时，那才是真正�
 
 ### 4.13.6 权限不止菜单
 
-页面上的按钮也按权限摆：没有 `device:manage` 的人，设备台账上"重启""恢复出厂""批量下发模版"
-这些按钮根本不出现；没有 `olt:manage` 就看不到 OLT 的增删改。
+页面上的按钮也按权限摆：没有 `device:update` 的人，设备台账上"重启""恢复出厂""批量下发模版"
+这些按钮根本不出现；没有 `olt:update` 就看不到 OLT 的增删改。
 
 但按钮只是让人别点到不该点的，**真正挡人的是后端**：
 
@@ -1165,6 +1166,10 @@ IP 取自 `X-Forwarded-For` 的第一段（前面挂反代时，那才是真正�
 **不迁的话老账号会因为角色不存在而一个权限都没有**，等于被锁在门外——
 所以迁移放在每次都走得到的路径上（`RoleService.migrateLegacyRoles`），不指望人工跑脚本。
 
+旧库存的 `:manage` 权限点会自动按「修改 + 删除」展开（`migrateLegacyPermissions`），
+同样不需要手工跑脚本。后续新增的默认权限点（如 `ops:update`，在线更新用）由
+`ensureOpsAdminPermissions` 自动补齐——只补库里没有的，不覆盖运维管理员手动改过的权限。
+
 ### 4.13.9 例子
 
 ```bash
@@ -1181,6 +1186,160 @@ curl -X PUT 'http://127.0.0.1:8888/api/system/roles/VIEWER/permissions' \
 curl -X POST 'http://127.0.0.1:8888/api/system/users' -H 'X-Token: <token>' \
   -H 'Content-Type: application/json' \
   -d '{"username":"wang","password":"123456","nickname":"老王","role":"VIEWER"}'
+```
+
+---
+
+## 4.14 在线更新
+
+基础路径 `/api/upgrade`。权限归 `ops` 模块：GET 要 `ops:view`，POST 要 `ops:update`。
+
+从升级服务器（hserver，`total.i-ddns.com:11236`）查最新版本，多线程下载 JAR，
+确认后退出进程由守护程序重启。升级包文件名固定为 `pilotacs-server.jar`（与 pom.xml finalName 一致）。
+
+### 4.14.1 接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/upgrade/check` | 检查是否有可升级版本 |
+| POST | `/api/upgrade/download` | 触发后台多线程下载 |
+| GET | `/api/upgrade/progress` | 查询下载进度 |
+| POST | `/api/upgrade/upload` | 手动上传 JAR 包 |
+| POST | `/api/upgrade/cancel` | 取消升级并回滚备份 |
+| POST | `/api/upgrade/restart` | 确认升级并退出进程 |
+
+### 4.14.2 检查更新
+
+```bash
+curl 'http://127.0.0.1:8888/api/upgrade/check' -H 'X-Token: <token>'
+```
+
+返回：
+
+```json
+{
+  "code": 200,
+  "data": {
+    "currentVersion": "1.0.1",
+    "serverVersion": "1.0.2",
+    "hasUpdate": true,
+    "fileSize": 89128960,
+    "versionId": 12,
+    "downloadUrl": "http://total.i-ddns.com:11236/api/version/download/12",
+    "description": "修复OLT采集分页问题"
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `currentVersion` | 当前版本，取 `git.properties` 的 `git.build.version`（打包时写入） |
+| `serverVersion` | 升级服务器的最新版本 |
+| `hasUpdate` | `serverVersion` 比 `currentVersion` 新时为 `true` |
+| `fileSize` | 升级包大小（字节），用于多线程分片 |
+| `downloadUrl` | 下载地址，传给 `/download` 用 |
+| `description` | 版本说明 |
+
+hserver 不可达时 `hasUpdate=false`，`message` 带失败原因，不报错。
+
+### 4.14.3 触发下载
+
+```bash
+curl -X POST 'http://127.0.0.1:8888/api/upgrade/download' \
+  -H 'X-Token: <token>' \
+  -d 'downloadUrl=http://total.i-ddns.com:11236/api/version/download/12&fileSize=89128960'
+```
+
+后台异步执行，旧 jar 先备份为 `pilotacs-server.jar.bak`，然后 4 线程 Range 分片下载。
+同时只允许一个下载任务，重复触发返回 `success=false`。
+
+### 4.14.4 查询进度
+
+```bash
+curl 'http://127.0.0.1:8888/api/upgrade/progress' -H 'X-Token: <token>'
+```
+
+返回：
+
+```json
+{
+  "code": 200,
+  "data": {
+    "status": "running",
+    "loaded": 45678912,
+    "total": 89128960,
+    "percent": 51
+  }
+}
+```
+
+| `status` | 含义 |
+| --- | --- |
+| `idle` | 没有下载任务 |
+| `running` | 下载中 |
+| `done` | 下载完成，可以确认升级或取消 |
+| `error` | 下载失败，`error` 字段带失败原因（已自动回滚备份） |
+
+前端每秒轮询一次即可。
+
+### 4.14.5 手动上传
+
+```bash
+curl -X POST 'http://127.0.0.1:8888/api/upgrade/upload' \
+  -H 'X-Token: <token>' \
+  -F 'file=@/path/to/pilotacs-server.jar'
+```
+
+适用于 hserver 不可达、或内网离线升级的场景。同样先备份旧 jar 为 `.bak`，
+上传成功后 `status` 置为 `done`，可直接走 `/restart`。
+
+### 4.14.6 取消并回滚
+
+```bash
+curl -X POST 'http://127.0.0.1:8888/api/upgrade/cancel' -H 'X-Token: <token>'
+```
+
+删除新下载的 jar，把 `.bak` 恢复回原名。返回 `restored=true` 表示成功恢复了备份，
+`restored=false` 表示没有备份文件需要恢复（首次安装时）。
+
+### 4.14.7 确认升级并退出
+
+```bash
+curl -X POST 'http://127.0.0.1:8888/api/upgrade/restart' -H 'X-Token: <token>'
+```
+
+流程：
+1. 检查 `pilotacs-server.jar` 存在（不存在返回失败）
+2. 返回成功响应
+3. 延迟 2 秒（让响应发出去）后删除 `.bak` 备份
+4. `System.exit(0)` 退出进程
+
+进程退出后由**外部守护程序**（systemd / supervisor / `start.sh`）用新 jar 重启服务。
+
+> 没有守护程序的裸 `java -jar` 部署方式，进程退出后不会自动重启，需要手工启动。
+
+### 4.14.8 完整升级流程
+
+```
+前端进入页面
+  → GET /api/upgrade/check          自动检查更新
+  → hasUpdate=true                  有新版本
+
+前端点"立即升级"
+  → POST /api/upgrade/download      触发后台下载
+  → GET /api/upgrade/progress       每秒轮询进度
+  → status=done                     下载完成
+
+前端点"确认升级并退出"
+  → POST /api/upgrade/restart       删备份，退出进程
+  → 守护程序用新 jar 重启           服务恢复
+```
+
+如果下载中途想放弃：
+```
+前端点"取消"
+  → POST /api/upgrade/cancel        删新 jar，恢复 .bak
+  → status 回到 idle
 ```
 
 ---
@@ -1455,6 +1614,10 @@ CWMP 是短连接：光猫报完一轮就把 TCP 断了。**连接断开不等�
 
 **文件**：`GET /api/files`、`GET /api/files/{id}`、`GET /api/files/{id}/url`、`POST /api/files`、
 `POST /api/files/{id}/deliver`、`DELETE /api/files/{id}`
+
+**在线更新**：`GET /api/upgrade/check`、`POST /api/upgrade/download`、
+`GET /api/upgrade/progress`、`POST /api/upgrade/upload`、
+`POST /api/upgrade/cancel`、`POST /api/upgrade/restart`
 
 **OLT**：`GET /api/olt/list`、`GET /api/olt/{id}`、`GET /api/olt/options`、`POST /api/olt/save`、
 `POST /api/olt/delete`、`POST /api/olt/test`、`POST /api/olt/{id}/test`、`POST /api/olt/{id}/sync`、

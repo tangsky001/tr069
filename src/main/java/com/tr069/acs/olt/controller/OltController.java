@@ -832,7 +832,7 @@ public class OltController {
     @DeleteMapping("/{id}/ont-reg/templates")
     public Result<Boolean> deleteOntRegTemplates(@PathVariable Long id, @RequestBody List<Long> ids) {
         try {
-            ontRegService.deleteTemplates(ids);
+            ontRegService.deleteTemplates(id, ids);
             return Result.success(true);
         } catch (Exception e) {
             log.error("删除 ONT 注册模板异常 id={}", id, e);

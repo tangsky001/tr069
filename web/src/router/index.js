@@ -204,7 +204,7 @@ export const constantRoutes = [
         path: 'upgrade',
         name: 'SystemUpgrade',
         component: () => import('@/views/system/upgrade'),
-        meta: { title: '在线更新', icon: 'el-icon-refresh', permission: 'ops:view' }
+        meta: { title: '在线更新', icon: 'el-icon-refresh', permission: 'ops:update' }
       }
     ]
   },

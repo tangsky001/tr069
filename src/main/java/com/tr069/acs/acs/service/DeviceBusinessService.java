@@ -1,6 +1,8 @@
 package com.tr069.acs.acs.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tr069.acs.acs.adaptation.AdaptationManager;
+import com.tr069.acs.acs.adaptation.IspAdaptation;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.cwmp.WanServiceClassifier;
 import com.tr069.acs.domain.entity.CpeDevice;
@@ -54,6 +56,8 @@ public class DeviceBusinessService {
     private final CpeParameterMapper parameterMapper;
     private final CpeDeviceMapper deviceMapper;
     private final DeviceCapabilityService capabilityService;
+    /** 按设备运营商取定制参数名，替代硬编码 X_CMCC_/X_CT-COM_ 常量 */
+    private final AdaptationManager adaptationManager;
 
     /** 业务采集等待设备的超时（秒），超过就返回已刷到库里的部分结果 */
     @Value("${acs.device.business.collect-timeout-seconds:45}")
@@ -61,9 +65,20 @@ public class DeviceBusinessService {
 
     // ==================== 查询 ====================
 
+    /** 按设备运营商取适配实现 */
+    private IspAdaptation adaptationOf(String sn) {
+        CpeDevice device = deviceMapper.selectOne(new LambdaQueryWrapper<CpeDevice>()
+                .eq(CpeDevice::getSn, sn)
+                .last("LIMIT 1"));
+        String isp = device == null || device.getIsp() == null || device.getIsp().isBlank()
+                ? "standard" : device.getIsp();
+        return adaptationManager.of(isp);
+    }
+
     /** 从库里的能力快照解析业务信息，不与设备交互 */
     public Map<String, Object> summary(String sn) {
         String root = resolveRoot(sn);
+        IspAdaptation adaptation = adaptationOf(sn);
         List<CpeParameter> params = selectBusinessParams(sn);
         Map<String, Object> data = baseInfo(sn, root);
         for (Section section : SECTIONS) {
@@ -71,7 +86,7 @@ public class DeviceBusinessService {
         }
         data.put("pon", ponParams(sn));
         enrichDevice(data);
-        enrichWan(data);
+        enrichWan(data, adaptation);
         enrichWifi(data);
         enrichLan(data);
         enrichSip(data);
@@ -219,15 +234,9 @@ public class DeviceBusinessService {
 
     // ==================== LAN 网口状态 ====================
 
-    /** LAN 网口要重读的状态叶子：插线状态优先看厂商扩展，再看标准 Status */
-    private static final List<String> LAN_STATUS_LEAVES = List.of(
-            "Enable", "Status",
-            "X_CT-COM-UpLineStatus", "X_CT-COM_UpLineStatus",
-            "X_CT-COM-LineStatus", "X_CT-COM_LineStatus",
-            "MACAddress", "MaxBitRate", "DuplexMode");
-
     /** 列出该设备 LAN 网口需要重读的状态参数路径，供定时自动刷新复用 */
     public List<String> lanStatusPaths(String sn) {
+        IspAdaptation adaptation = adaptationOf(sn);
         Section lan = SECTIONS.stream()
                 .filter(s -> LAN_KEY.equals(s.key()))
                 .findFirst()
@@ -254,7 +263,7 @@ public class DeviceBusinessService {
         }
         List<String> paths = new ArrayList<>();
         for (String parent : parents) {
-            for (String leaf : LAN_STATUS_LEAVES) {
+            for (String leaf : adaptation.lanStatusLeaves()) {
                 paths.add(parent + leaf);
             }
         }
@@ -293,7 +302,7 @@ public class DeviceBusinessService {
 
     /** 给 WAN 连接补业务语义，并算出设备的管理地址 */
     @SuppressWarnings("unchecked")
-    private void enrichWan(Map<String, Object> data) {
+    private void enrichWan(Map<String, Object> data, IspAdaptation adaptation) {
         Object wanObj = data.get(WAN_KEY);
         if (!(wanObj instanceof List<?> list)) {
             return;
@@ -314,9 +323,9 @@ public class DeviceBusinessService {
             item.put("statusText", wanStatusText(params));
             item.put("title", wanTitle(params, path));
             item.put("connMode", connModeOf(params));
-            item.put("bindPorts", bindPortsOf(params));
+            item.put("bindPorts", bindPortsOf(params, adaptation));
             item.put("natEnabled", boolOf(params.get("NATEnabled"), false));
-            item.put("ipProtocol", ipProtocolOf(params));
+            item.put("ipProtocol", ipProtocolOf(params, adaptation));
             item.put("mtu", mtuOf(params));
             item.put("uptimeText", uptimeText(firstNonBlank(params, "Uptime", "UpTime")));
             item.put("shortName", wanShortName(path));
@@ -347,10 +356,10 @@ public class DeviceBusinessService {
     }
 
     /** 地址协议类型：{@code IPv4} / {@code IPv6} / {@code IPv4+IPv6}，空串表示判不出来 */
-    private static String ipProtocolOf(Map<String, String> params) {
+    private static String ipProtocolOf(Map<String, String> params, IspAdaptation adaptation) {
         // 桥接也有地址族：真机页面上这条能改（IPv4 / IPv6 / IPv4+IPv6），
-        // 别替设备决定，X_CMCC_IPMode 是多少就显示多少
-        String mode = firstNonBlank(params, "X_CMCC_IPMode", "IPMode");
+        // 别替设备决定，IPMode 是多少就显示多少
+        String mode = firstNonBlank(params, adaptation.ipModeNames().toArray(String[]::new));
         switch (mode) {
             case "1":
                 return "IPv4";
@@ -362,7 +371,7 @@ public class DeviceBusinessService {
                 break;
         }
         boolean v4 = hasIpv4(params);
-        boolean v6 = hasIpv6(params);
+        boolean v6 = hasIpv6(params, adaptation);
         if (v4 && v6) {
             return "IPv4+IPv6";
         }
@@ -379,13 +388,12 @@ public class DeviceBusinessService {
     }
 
     /** IPv6 侧是否已起来：连接状态为 Connected，或已分配到 IPv6 地址 */
-    private static boolean hasIpv6(Map<String, String> params) {
-        String status = firstNonBlank(params, "X_CMCC_IPv6ConnStatus", "IPv6ConnectionStatus");
+    private static boolean hasIpv6(Map<String, String> params, IspAdaptation adaptation) {
+        String status = firstNonBlank(params, adaptation.ipv6StatusNames().toArray(String[]::new));
         if ("connected".equalsIgnoreCase(status) || "up".equalsIgnoreCase(status)) {
             return true;
         }
-        String addr = firstNonBlank(params, "X_CMCC_IPv6Address", "IPv6Address",
-                "X_CMCC_IPv6IPAddress");
+        String addr = firstNonBlank(params, adaptation.ipv6AddressNames().toArray(String[]::new));
         return !addr.isEmpty() && !"::".equals(addr);
     }
 
@@ -409,9 +417,9 @@ public class DeviceBusinessService {
         return "路由 / " + addr;
     }
 
-    /** 绑定端口：设备存的是 LAN 口参数路径（{@code X_CMCC_LanInterface}） */
-    private static String bindPortsOf(Map<String, String> params) {
-        String raw = firstNonBlank(params, "LanInterface", "BindLANPort");
+    /** 绑定端口：设备存的是 LAN 口参数路径（移动为 X_CMCC_LanInterface） */
+    private static String bindPortsOf(Map<String, String> params, IspAdaptation adaptation) {
+        String raw = firstNonBlank(params, adaptation.bindPortNames().toArray(String[]::new));
         if (raw.isBlank()) {
             return "";
         }

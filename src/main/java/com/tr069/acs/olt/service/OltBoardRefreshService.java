@@ -20,6 +20,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** 板卡状态刷新：每 2 分钟一轮，只发 display board 0，设备忙则跳过（人工优先） */
 @Slf4j
@@ -61,7 +62,7 @@ public class OltBoardRefreshService {
     public void start() {
         roundRunner = Executors.newSingleThreadExecutor(daemon("olt-board-round"));
         devicePool = new ThreadPoolExecutor(MAX_CONCURRENCY, MAX_CONCURRENCY,
-                60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), daemon("olt-board-refresh"));
+                60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(MAX_CONCURRENCY * 2), daemon("olt-board-refresh"));
         devicePool.allowCoreThreadTimeOut(true);
         log.info("OLT 板卡状态刷新已就绪：{} 分钟一轮，上限 {} 路并行，人工操作优先",
                 INTERVAL_MILLIS / 60000, MAX_CONCURRENCY);
@@ -87,6 +88,9 @@ public class OltBoardRefreshService {
         } catch (RejectedExecutionException e) {
             running.set(false);
             log.warn("OLT 板卡状态刷新：线程已关闭，本轮放弃");
+        } catch (Exception e) {
+            running.set(false);
+            log.warn("OLT 板卡状态刷新：提交异常: {}", e.getMessage());
         }
     }
 
@@ -98,25 +102,37 @@ public class OltBoardRefreshService {
                 return;
             }
             boolean probeOffline = rounds.incrementAndGet() % OFFLINE_PROBE_ROUNDS == 0;
-            List<Future<Boolean>> futures = new ArrayList<>(devices.size());
+            List<OltDevice> queue = new ArrayList<>();
             for (OltDevice device : devices) {
                 // 离线设备每 30 分钟探一次就够了：每轮都连会让 connect 超时把整轮拖长
                 if (!probeOffline && "OFFLINE".equals(device.getStatus())) {
                     continue;
                 }
-                futures.add(devicePool.submit(() -> oltService.refreshBoardsAuto(device.getId(), OPERATOR)));
+                queue.add(device);
             }
             int updated = 0;
             int skipped = 0;
-            for (Future<Boolean> future : futures) {
-                try {
-                    if (Boolean.TRUE.equals(future.get())) {
-                        updated++;
-                    } else {
+            // 分批提交：每批 MAX_CONCURRENCY 台，等这批完成再提交下一批
+            for (int from = 0; from < queue.size(); from += MAX_CONCURRENCY) {
+                List<OltDevice> chunk = queue.subList(from, Math.min(from + MAX_CONCURRENCY, queue.size()));
+                List<Future<Boolean>> futures = new ArrayList<>(chunk.size());
+                for (OltDevice device : chunk) {
+                    try {
+                        futures.add(devicePool.submit(() -> oltService.refreshBoardsAuto(device.getId(), OPERATOR)));
+                    } catch (RejectedExecutionException e) {
                         skipped++;
                     }
-                } catch (Exception e) {
-                    skipped++;
+                }
+                for (Future<Boolean> future : futures) {
+                    try {
+                        if (Boolean.TRUE.equals(future.get())) {
+                            updated++;
+                        } else {
+                            skipped++;
+                        }
+                    } catch (Exception e) {
+                        skipped++;
+                    }
                 }
             }
             // 2 分钟一轮，成功不打 info，免得日志被刷满；只有状态变化时才值得看
@@ -128,9 +144,10 @@ public class OltBoardRefreshService {
         }
     }
 
-    private static java.util.concurrent.ThreadFactory daemon(String name) {
+    private static java.util.concurrent.ThreadFactory daemon(String prefix) {
+        AtomicInteger seq = new AtomicInteger();
         return runnable -> {
-            Thread thread = new Thread(runnable, name);
+            Thread thread = new Thread(runnable, prefix + "-" + seq.incrementAndGet());
             thread.setDaemon(true);
             return thread;
         };

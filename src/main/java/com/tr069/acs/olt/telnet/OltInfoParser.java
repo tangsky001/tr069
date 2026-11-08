@@ -28,6 +28,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -317,8 +319,19 @@ public final class OltInfoParser {
         if (TEMPERATURE_SENSOR_HEADER.matcher(text).find()) {
             Matcher sensor = TEMPERATURE_SENSOR_ROW.matcher(text);
             while (sensor.find()) {
-                int slot = Integer.parseInt(sensor.group(1));
-                int temperature = Integer.parseInt(sensor.group(5));
+                String slotRaw = sensor.group(1);
+                String tempRaw = sensor.group(5);
+                if (slotRaw == null || tempRaw == null) {
+                    continue;
+                }
+                int slot;
+                int temperature;
+                try {
+                    slot = Integer.parseInt(slotRaw);
+                    temperature = Integer.parseInt(tempRaw);
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
                 if (sane(temperature)) {
                     temperatures.merge(slot, temperature, Math::max);
                 }
@@ -821,6 +834,53 @@ public final class OltInfoParser {
         return any ? optics : null;
     }
 
+    /** {@code display port state all} 里每个口块的开头，形如 {@code Port 0} 或 {@code Port:0} */
+    private static final Pattern PORT_STATE_ALL_PORT = Pattern.compile(
+            "(?i)^\\s*Port\\s*[:：]?\\s*(\\d+)\\b");
+
+    /**
+     * 解析 {@code display port state all}（接口视图）的多口合并回显。
+     * 每个口的字段块以 "Port N" 行开头连续输出，按此分割后逐块复用
+     * {@link #parsePortStateOptics} 解析。
+     *
+     * @return 端口号 → 光模块数值 的映射，空回显返回空 Map
+     */
+    public static Map<Integer, OltPort> parsePortStateOpticsAll(String text) {
+        Map<Integer, OltPort> result = new LinkedHashMap<>();
+        if (text == null || text.isBlank()) {
+            return result;
+        }
+        String[] lines = text.split("\\R");
+        StringBuilder block = new StringBuilder();
+        Integer currentPort = null;
+        for (String line : lines) {
+            Matcher m = PORT_STATE_ALL_PORT.matcher(line);
+            if (m.find()) {
+                // 前一个口块结束，先解析
+                if (currentPort != null && block.length() > 0) {
+                    OltPort optics = parsePortStateOptics(block.toString());
+                    if (optics != null) {
+                        result.put(currentPort, optics);
+                    }
+                }
+                currentPort = Integer.parseInt(m.group(1));
+                block.setLength(0);
+                continue;
+            }
+            if (currentPort != null) {
+                block.append(line).append('\n');
+            }
+        }
+        // 最后一个口块
+        if (currentPort != null && block.length() > 0) {
+            OltPort optics = parsePortStateOptics(block.toString());
+            if (optics != null) {
+                result.put(currentPort, optics);
+            }
+        }
+        return result;
+    }
+
     // ------------------------------------------------------------ VLAN
 
     /** {@code display vlan all} 的数据行 */
@@ -894,7 +954,12 @@ public final class OltInfoParser {
                 if (token.isEmpty()) {
                     continue;
                 }
-                int vlanId = Integer.parseInt(token);
+                int vlanId;
+                try {
+                    vlanId = Integer.parseInt(token);
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
                 if (vlanId >= 1 && vlanId <= 4094 && !portVlan.getVlans().contains(vlanId)) {
                     portVlan.getVlans().add(vlanId);
                 }
@@ -905,6 +970,84 @@ public final class OltInfoParser {
         }
         portVlan.getVlans().sort(Comparator.naturalOrder());
         return portVlan;
+    }
+
+    // ---- 配置脚本解析（display current-configuration） ----
+
+    /** 配置脚本里 {@code vlan N smart} / {@code vlan N to M smart}：VLAN 定义行 */
+    private static final Pattern VLAN_CONFIG_DEF = Pattern.compile(
+            "(?im)^\\s*vlan\\s+(\\d{1,4})(?:\\s+to\\s+(\\d{1,4}))?\\s+(?:smart|common)\\s*$");
+
+    /** 配置脚本里 {@code port vlan 10 0/8 0}：端口放通行 */
+    private static final Pattern PORT_VLAN_CONFIG = Pattern.compile(
+            "(?im)^\\s*port\\s+vlan\\s+(\\d{1,4})(?:\\s+to\\s+(\\d{1,4}))?\\s+0/(\\d{1,2})/(\\d{1,2})\\s*$");
+
+    /**
+     * 从配置脚本解析 VLAN 定义列表。
+     * 配置脚本 {@code [vlan-config]} 段的 {@code vlan N smart} / {@code vlan N to M smart} 行。
+     */
+    public static List<OltVlan> parseVlansFromConfig(String text) {
+        List<OltVlan> vlans = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return vlans;
+        }
+        Set<Integer> seen = new TreeSet<>();
+        Matcher m = VLAN_CONFIG_DEF.matcher(text);
+        while (m.find()) {
+            int start = Integer.parseInt(m.group(1));
+            int end = m.group(2) != null ? Integer.parseInt(m.group(2)) : start;
+            for (int vid = start; vid <= end && vid <= 4094; vid++) {
+                if (vid >= 1 && seen.add(vid)) {
+                    OltVlan vlan = new OltVlan();
+                    vlan.setVlanId(vid);
+                    vlan.setType("smart");
+                    vlans.add(vlan);
+                }
+            }
+        }
+        return vlans;
+    }
+
+    /**
+     * 从配置脚本解析端口 VLAN 放通。
+     * 配置脚本 {@code [vlan-config]} 段的 {@code port vlan N 0/slot/port} 行，
+     * 按 (slot, port) 聚合成 {@link OltPortVlan}，返回的列表每个端口一条。
+     */
+    public static List<OltPortVlan> parsePortVlansFromConfig(String text) {
+        List<OltPortVlan> result = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return result;
+        }
+        // key: slot/port
+        Map<String, OltPortVlan> byIface = new LinkedHashMap<>();
+        Matcher m = PORT_VLAN_CONFIG.matcher(text);
+        while (m.find()) {
+            int vlanStart = Integer.parseInt(m.group(1));
+            int vlanEnd = m.group(2) != null ? Integer.parseInt(m.group(2)) : vlanStart;
+            int slot = Integer.parseInt(m.group(3));
+            int port = Integer.parseInt(m.group(4));
+            String key = slot + "/" + port;
+            OltPortVlan pv = byIface.computeIfAbsent(key, k -> {
+                OltPortVlan v = new OltPortVlan();
+                v.setFrameNo(0);
+                v.setSlotNo(slot);
+                v.setPortNo(port);
+                v.setIface("0/" + slot + "/" + port);
+                return v;
+            });
+            for (int vid = vlanStart; vid <= vlanEnd && vid <= 4094; vid++) {
+                if (vid >= 1 && !pv.getVlans().contains(vid)) {
+                    pv.getVlans().add(vid);
+                }
+            }
+        }
+        for (OltPortVlan pv : byIface.values()) {
+            pv.getVlans().sort(Comparator.naturalOrder());
+            if (!pv.getVlans().isEmpty()) {
+                result.add(pv);
+            }
+        }
+        return result;
     }
 
     /** {@code display ip interface brief} 里的 vlanif 行 */
@@ -1292,6 +1435,8 @@ public final class OltInfoParser {
                 }
             }
         }
+        // 过滤掉 profileId 为 null 的空壳模板
+        profiles.removeIf(profile -> profile.getProfileId() == null);
         return profiles;
     }
 
@@ -1760,7 +1905,8 @@ public final class OltInfoParser {
             return;
         }
         String lastKey = lastKeyOf(current);
-        if (current.get(lastKey).isEmpty()) {
+        String lastVal = current.get(lastKey);
+        if (lastVal != null && lastVal.isEmpty()) {
             current.put(lastKey, carry.toString().trim());
         }
         carry.setLength(0);

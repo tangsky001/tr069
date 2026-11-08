@@ -58,6 +58,8 @@ public final class PermissionCodes {
             new String[]{"/api/olt", "olt"},
             new String[]{"/api/files", "file"},
             new String[]{"/api/ops", "ops"},
+            // 在线更新：前端菜单挂在运维管理下（ops:view），所以归到 ops 模块
+            new String[]{"/api/upgrade", "ops"},
             new String[]{"/api/system", "system"});
 
     private PermissionCodes() {

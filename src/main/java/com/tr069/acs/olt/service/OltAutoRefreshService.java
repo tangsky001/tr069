@@ -7,6 +7,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -38,8 +39,12 @@ public class OltAutoRefreshService {
     /** 连续失败后间隔的最大倍数 */
     private static final int MAX_BACKOFF = 6;
 
-    /** 全量采集间隔：30 小时（板卡状态另有 2 分钟调度） */
-    private static final long INTERVAL_MILLIS = 30 * 60 * 60 * 1000L;
+    /** 退避最长分钟数上限：不管连续失败多少次，退避都不超过这个值 */
+    private static final long MAX_BACKOFF_MINUTES = 120;
+
+    /** 全量采集间隔（可配置，默认 30 分钟） */
+    @Value("${acs.olt.auto-refresh.interval-millis:1800000}")
+    private long intervalMillis;
 
     /** 启动后多久跑第一轮(毫秒) */
     private static final long INITIAL_DELAY_MILLIS = 5 * 1000L;
@@ -88,7 +93,7 @@ public class OltAutoRefreshService {
     }
 
     /** 触发一轮自动采集，本轮在独立线程上跑 */
-    @Scheduled(fixedDelay = INTERVAL_MILLIS, initialDelay = INITIAL_DELAY_MILLIS)
+    @Scheduled(fixedDelayString = "${acs.olt.auto-refresh.interval-millis:1800000}", initialDelay = INITIAL_DELAY_MILLIS)
     public void refreshAll() {
         if (!running.compareAndSet(false, true)) {
             log.info("OLT 自动刷新：上一轮还没跑完，本轮跳过");
@@ -99,6 +104,9 @@ public class OltAutoRefreshService {
         } catch (RejectedExecutionException e) {
             running.set(false);
             log.warn("OLT 自动刷新：采集线程已关闭，本轮放弃");
+        } catch (Exception e) {
+            running.set(false);
+            log.warn("OLT 自动刷新：提交采集任务异常: {}", e.getMessage());
         }
     }
 
@@ -161,9 +169,10 @@ public class OltAutoRefreshService {
             return true;
         } catch (Exception e) {
             int streak = Math.min(MAX_BACKOFF, failures.merge(device.getId(), 1, Integer::sum));
-            retryAt.put(device.getId(), System.currentTimeMillis() + INTERVAL_MILLIS * streak);
+            long backoffMs = Math.min(intervalMillis * streak, MAX_BACKOFF_MINUTES * 60_000L);
+            retryAt.put(device.getId(), System.currentTimeMillis() + backoffMs);
             log.info("OLT 自动刷新失败 id={}, 下次退避 {} 分钟: {}", device.getId(),
-                    INTERVAL_MILLIS * streak / 60000, e.getMessage());
+                    backoffMs / 60000, e.getMessage());
             return false;
         }
     }
