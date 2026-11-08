@@ -250,8 +250,8 @@ VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN �
 
 系统版本与 Git 信息、操作系统 / Java / JVM 内存 / 启动时间、数据库（MySQL 业务库 + SQLite 模板库）/ Redis 版本，
 全部由后端采集、前端只渲染；底部「远程运维」区块是**占位**——三个二维码（内网本地登录 / 外网云登录 / APK 下载安装）、
-Token 可重新生成 / 复制、操作权限与可见设备范围可勾选保存，但内网穿透通道、装维 APP 扫码登录鉴权、
-真实运维人员与会话管理均未实现，当前只是表单框架。
+Token 可重新生成 / 复制、操作权限与可见设备范围可勾选保存，但装维 APP 扫码登录鉴权、
+真实运维人员与会话管理均未实现，当前只是表单框架。「在线更新」页面已接通：检查更新 / 多线程下载 / 手动上传 JAR / 确认升级并退出 / 取消回滚。
 
 ![运维管理](doc/Display/143916_516.png)
 
@@ -298,6 +298,9 @@ Token 可重新生成 / 复制、操作权限与可见设备范围可勾选保�
 | **角色权限** | `sys_role` + `sys_role_permission`：30 个权限点（10 个模块 × 查看/修改/删除）由代码清单给出、**不落库**；角色勾权限，改完**立即生效**（每次请求查库判权限，不缓存在令牌里）；系统管理员在代码里短路放行全部权限，库里没有它的行，也改不了 | `api/auth/PermissionCodes`、`api/service/RoleService`、`api/controller/SystemController` |
 | **用户管理** | `/api/system` 九个接口：用户的增删改查、改角色、改口令（**改别人的口令要先验证操作者自己的口令**）、启停；自己删不了自己 | `api/service/UserAdminService` |
 | **登录日志** | 每次尝试落到 `sys_login_log`：成败与失败原因、**真实 IP**（取 `X-Forwarded-For` 首段，内网地址不用）、**登录标识**（网页端 / 客户端 / 移动端，按 `X-Client-Type` 或 UA 认）、UA；按用户各留最近 50 条 | `api/service/LoginLogService`、`api/auth/ClientIpResolver`、`api/auth/LoginSourceResolver` |
+| **在线更新** | `UpgradeController` 六个接口：`GET /api/upgrade/check`（从 服务器 `/api/version/latest?serverId=acs` 拉最新版本，比对 `git.properties` 里的 `git.build.version`）；`POST /api/upgrade/download`（后台 4 线程 Range 分片下载 JAR，先备份旧包为 `pilotacs-server.jar.bak`）；`GET /api/upgrade/progress`（轮询下载进度：loaded / total / percent / status）；`POST /api/upgrade/upload`（手动上传 JAR 包，同样先备份）；`POST /api/upgrade/cancel`（取消升级，删新文件恢复 `.bak` 备份）；`POST /api/upgrade/restart`（确认升级，删备份后 `System.exit(0)`，由外部守护进程如 systemd/supervisor/start.sh 用新 JAR 重启）。JSON 解析用 JDK HttpClient + Jackson（不依赖 okhttp/fastjson）。权限点 `/api/upgrade` 归 `ops` 模块：GET 要 `ops:view`，POST 要 `ops:update` | `api/controller/UpgradeController`、`web/src/api/upgrade.js`、`web/src/views/system/upgrade.vue` |
+| **内网穿透客户端** | `TunnelClient`：启动时连 服务器（`total.i-ddns.com:7000`）建立 Socket 长连接，握手发送 `instanceId` + 10 位随机子域名；服务器 收到后调腾讯云 DNSPod API 建 A 记录 `subdomain.i-ddns.com → 公网IP`；每 30 秒发心跳保活；接收 服务器 转发来的 HTTP 请求字节流，转发给本地 Tomcat（`127.0.0.1:8080`），响应原路回传。装维 APP 访问 `https://subdomain.i-ddns.com` → DNS 到 服务器 → 服务器 按 Host 路由 → ACS Socket → 本地 Tomcat | `api/service/TunnelClient` |
+| **统计上报** | 每 15 分钟向 服务器（`total.i-ddns.com:11236`）上报实例信息：实例 ID、版本号、设备总数 / 在线数、OLT 数、品牌分布、License 信息；服务器 侧有版本管理接口，在线更新从同一地址拉取最新版本 | `report/StatisticsReportTask`、`report/StatisticsInfo`、`report/GitInfo` |
 | 启动自检 | 各业务表补建/初始化、可选只读表存在性校验 | `common/startup/*` |
 
 ### 1.2 前端（`web/`）
@@ -317,8 +320,8 @@ Token 可重新生成 / 复制、操作权限与可见设备范围可勾选保�
 | **用户管理** | `/system/users` | 已实现（增删改用户、改角色即时生效、改密码、启停；列表带**最近登录 / 登录地址 / 登录标识**；初始 `admin` 账号的删除按钮按死） |
 | **角色权限** | `/system/roles` | 已实现（按模块勾选「查看 / 修改 / 删除」；**系统管理员那排是禁用的**；还有人在用的角色删不掉） |
 | **登录日志** | `/system/login-logs` | 已实现（成功与失败都记；可按**登录地址 / 登录时间 / 登录标识**筛选） |
-| **运维管理** | `/system/ops` | 已实现（数据全由后端采集、前端只渲染：系统版本（取 pom 打包版本）/ Git 分支·提交·仓库地址（http 链接可点击）/ 操作系统 / Java / JVM 内存 / 启动时间 / 数据库（MySQL 业务库 + SQLite 模板库）/ Redis 版本，紧凑两列网格；底部「远程运维」区块为**占位**：三个二维码、Token 生成/复制、权限勾选、设备范围下拉，内网穿透与装维 APP 登录鉴权未实现；权限点 `ops:view`） |
-| **在线更新** | `/system/upgrade` | **未完成**（菜单与页面框架已搭好，同样用 `ops:view` 权限；升级包下载 / 校验 / 替换重启待接，见第 2 节 #20） |
+| **运维管理** | `/system/ops` | 已实现（数据全由后端采集、前端只渲染：系统版本（取 pom 打包版本）/ Git 分支·提交·仓库地址（http 链接可点击）/ 操作系统 / Java / JVM 内存 / 启动时间 / 数据库（MySQL 业务库 + SQLite 模板库）/ Redis 版本，紧凑两列网格；底部「远程运维」区块为**占位**：三个二维码、Token 生成/复制、权限勾选、设备范围下拉，内网穿透隧道已实现（TunnelClient → 服务器 TunnelServer），装维 APP 扫码登录鉴权未实现；权限点 `ops:view`） |
+| **在线更新** | `/system/upgrade` | 已实现（检查更新 / 多线程下载 / 手动上传 JAR / 确认升级并退出 / 取消回滚；从 服务器 拉取最新版本，后台 4 线程分片下载，权限点 `ops:update`） |
 
 设备列表右下角工具条（`web/src/views/device/list.vue`，需先勾选设备）：
 
@@ -512,7 +515,7 @@ POST / PUT 要 `device:update`，DELETE 要 `device:delete`。认不出模块的
 | 角色 | 说明 |
 | --- | --- |
 | `SUPER_ADMIN` 系统管理员 | 内置，**拥有全部权限**，不可删除、权限不可改 |
-| `OPS_ADMIN` 运维管理员 | 默认能看全部、能改设备与工单，权限可调整 |
+| `OPS_ADMIN` 运维管理员 | 默认能看全部、能改设备与工单、**能在线更新**（`ops:update`），权限可调整 |
 
 系统管理员的「全权限」在代码里短路，**权限表里没有它的行**——存一份就要操心
 「表里那行和代码里那句不一致时谁说了算」。
@@ -526,7 +529,8 @@ POST / PUT 要 `device:update`，DELETE 要 `device:delete`。认不出模块的
 > 升级说明：旧版本的 `sys_user.role` 存的是 `admin` / `operator` / `viewer`，
 > 首次用到角色时由 `RoleService` 自动迁移（`admin` → `SUPER_ADMIN`，其余 → `OPS_ADMIN`）；
 > 旧库存的 `:manage` 权限点读取时自动按「修改 + 删除」展开（应用侧与 `sql/schema.sql` 各有一条迁移），
-> 不用手工跑脚本。接口细节见 [API.md §4.14](./API.md)。
+> 不用手工跑脚本。后续新增的默认权限点（如 `ops:update`，在线更新用）由 `ensureOpsAdminPermissions`
+> 自动补齐——只补库里没有的，不覆盖运维管理员手动改过的权限。接口细节见 [API.md §4.14](./API.md)。
 
 ## 2. 待实现 / 进行中
 
@@ -551,8 +555,8 @@ POST / PUT 要 `device:update`，DELETE 要 `device:delete`。认不出模块的
 | 17 | **业务流操作按钮**（查询GMP 组播状态 / 查询未知组播策略 / 删除业务流 / 新增业务流） | **占位** | 业务流弹窗里的四个按钮点击均提示"暂未开放"。前两个是读命令、后两个是写命令，需分别接 #15：写操作先落白名单与审计，读操作可直接补解析 |
 | 18 | ~~**MAC 列取值**~~ | **已实现** | GPON 的 SN 认证也从 OLT 取 MAC：后台补采对缺 MAC 的在线 ONT 逐台发 `display ont ipconfig <端口> <ONT ID>`，取 `ONT MAC` 归一成 `AA:BB:CC:DD:EE:FF`（华为 4-4-4 写法也认）；设备回 `0000-0000-0000` 的才留 `-` 并打标记不再重试。采到过的 MAC 后续采集不会再抹掉 |
 | 19 | 回显文案大小写兜底 | 已处理 | 设备不同版本回显的英文标签大小写不稳定（如 `Traffic Schedulers` / `traffic Schedulers`），翻译表改为先精确匹配、再忽略大小写兜底；标签/值折行也能拼回一条 |
-| 20 | **在线更新**（系统自升级） | **未完成** | 页面 `/system/upgrade` 已挂好（`ops:view` 权限）。待接：升级包上传/下载与 sha256 校验、版本比对（当前版本取 pom 打包版本）、停服-替换-重启与失败回滚 |
-| 21 | **内网穿透 · 移动端下发光猫数据** | **未完成** | 运维管理页「远程运维」区块已占位：三个二维码（内网本地登录 / 外网云登录 / APK 下载安装）、Token 生成与重新生成、操作权限与可见设备范围可勾选保存——但只是前端与后端表单占位，**内网穿透通道、装维 APP 端扫码登录鉴权、真实运维人员与会话管理、工单数据对接均未实现**。通道选型（frp / 自建隧道）、鉴权与北向 `/openapi/v1` 的对接方式待定 |
+| 20 | ~~**在线更新**（系统自升级）~~ | **已实现** | `UpgradeController` 六个接口：`GET /api/upgrade/check`（从 服务器 `/api/version/latest?serverId=acs` 拉最新版本，比对版本号）、`POST /api/upgrade/download`（后台 4 线程分片下载 JAR，备份旧包为 `.bak`）、`GET /api/upgrade/progress`（轮询下载进度）、`POST /api/upgrade/upload`（手动上传 JAR）、`POST /api/upgrade/cancel`（取消并回滚备份）、`POST /api/upgrade/restart`（确认升级，删备份后 `System.exit(0)`，由守护进程用新 JAR 重启）。JAR 包名 `pilotacs-server.jar`，版本号取 `git.properties` 的 `git.build.version`；权限点 `ops:update`（GET 接口要 `ops:view`）。前端页面 `/system/upgrade` 进入即自动检查更新，下载进度实时显示，确认升级弹窗二次确认防误操作 |
+| 21 | **内网穿透 · 移动端下发光猫数据** | **部分实现** | 运维管理页「远程运维」区块已占位：三个二维码、Token 管理、操作权限与设备范围可勾选保存。**隧道通道已实现**：ACS 侧 `TunnelClient`（Socket 长连接到 服务器 `total.i-ddns.com:7000`，握手发 instanceId + subdomain，30 秒心跳）；服务器 侧 `TunnelServer`（监听 7000 接 ACS 连接、调腾讯云 DNSPod API 自动建二级域名 A 记录、维护路由表）+ `TunnelHttpHandler`（监听 443 接装维 APP 请求，按 Host 头转发给对应 ACS）+ `TunnelController`（管理面板：查看所有隧道实例、释放域名）。完整链路：装维 APP → `https://subdomain.i-ddns.com` → 服务器 443 → 按 Host 路由 → ACS Socket → ACS 本地 Tomcat。**仍待接**：装维 APP 端扫码登录鉴权、真实运维人员与会话管理、工单数据对接 |
 
 ---
 
@@ -573,6 +577,10 @@ POST / PUT 要 `device:update`，DELETE 要 `device:delete`。认不出模块的
 | 8899 | **北向接口** `/openapi/v1/**`（上层系统对接），与管理端端口隔离 | `acs.openapi.port` |
 | 9090 / 8012 / 8080 / 8082 / 8172 / 5481 | 光猫上报监听（华为 / 中兴 / 烽火 / 通用），另有 6060 | `acs.cwmp.listen-ports` |
 | 9528 | 前端开发服务器（代理 `/dev-api` → `http://127.0.0.1:8888/api`） | `web/vue.config.js` |
+
+> ACS 内网穿透隧道客户端连接 服务器 的 7000 端口（`total.i-ddns.com:7000`），
+> 装维 APP 通过 443 端口访问 `https://subdomain.i-ddns.com`，由 服务器 转发回 ACS 本地 8080。
+> 这两个端口在 服务器 侧，不在 ACS 侧。
 
 ## 5. 目录结构
 
@@ -631,9 +639,10 @@ configuration/
 | `biz` | 业务模板：编排实体、成员视图、执行记录、下发前自检 |
 | `worklist` | 光猫档案（`loader`/`registry`/`model`）、型号语义映射（`ModelMappingService`）、能力树导出（`ModelTreeStore`）、机型适配（`ModelAdaptationService`）、工单建单与查询（`WorklistDeliveryService`、`controller/WorklistExecuteController`） |
 | `olt` | **OLT 管理（采集 + 下发）**：Telnet 会话与命令编排（`telnet/OltCliSession`，只发 `display` / `show` / `enable` / `config` / `quit`）、回显解析（`telnet/OltInfoParser`，板卡 / VLAN / ONT / DBA / 线路模板 / 业务与 TR069 模板 / 流量模板 / 业务流）、厂商命令差异（`vendor/OltVendorProfile` 及各家实现、命令动作目录 `vendor/Hsgq*ActionCatalog`）、设备知识（`vendor/HsgqModelCatalog` 整机型号规格、`vendor/OltBoardCatalog` 板卡型号档案与状态翻译）、原始连接（`telnet/TelnetClient`，分页提示与续页）、模板与采集数据模型（`model/*`）、台账与同步（`service/OltService`）、定时刷新（`service/OltAutoRefreshService`）、Controller 与模型。开发约定见 [doc/BACKEND.md](doc/BACKEND.md) |
-| `api` | 管理端接口：设备、能力、业务、RPC 任务、统计、登录，以及**系统管理**（用户 / 角色权限 / 登录日志）及其 Service；`auth` 子包放权限点清单、登录来源识别、真实 IP 识别 |
+| `api` | 管理端接口：设备、能力、业务、RPC 任务、统计、登录，以及**系统管理**（用户 / 角色权限 / 登录日志）及其 Service；`auth` 子包放权限点清单、登录来源识别、真实 IP 识别；`controller/UpgradeController` 在线升级（检查更新 / 多线程下载 / 手动上传 / 确认重启 / 取消回滚） |
 | `exec` | **意图下发执行器**：下发计划渲染（`IntentPlanRenderer`）、执行与任务表（`IntentDeliveryService`、`DeviceTask`）、任务结束事件 |
 | `openapi` | **北向接口**：端口与路径隔离（`config`）、查询/下发/事件订阅三个 Controller、Webhook 推送与事件投递、设备上下线侦测（`watch`） |
+| `report` | **统计上报与隧道**：`StatisticsReportTask`（每 15 分钟向 服务器 上报实例信息）、`StatisticsInfo`（上报数据模型）、`GitInfo`（读 `git.properties` 取版本号）；`api/service/TunnelClient` 内网穿透客户端（Socket 长连接到 服务器 7000 端口，握手 / 心跳 / HTTP 转发） |
 | `domain` / `mapper` | 主库实体与 Mapper |
 | `common` | 统一响应 `Result`、分页、全局异常、启动自检、Web 配置（多端口、路径分发） |
 | `config` | JWT 拦截器、跨域、MyBatis-Plus、SPA 路由回退 |
@@ -642,7 +651,7 @@ configuration/
 
 ```
 web/src/
-├── api/            device / rpc / configTemplate / bizTemplate / dashboard / worklist / user / system
+├── api/            device / rpc / configTemplate / bizTemplate / dashboard / worklist / user / system / upgrade
 ├── views/
 │   ├── dashboard/  首页概览
 │   ├── device/     设备列表 list.vue、设备详情 detail.vue
@@ -664,7 +673,7 @@ web/src/
 │   │   │                       OltServicePanel（业务 / TR069 / 流量模板 + 业务流明细）、
 │   │   │                       OltVlanPanel（VLAN）、OltRecords（采集记录）
 │   │   └── 板卡型号档案已移到后端 vendor/OltBoardCatalog，随板卡返回，前端不再保存
-│   ├── system/      用户管理 users.vue、角色权限 roles.vue、登录日志 login-logs.vue
+│   ├── system/      用户管理 users.vue、角色权限 roles.vue、登录日志 login-logs.vue、运维管理 ops.vue、在线更新 upgrade.vue
 │   └── login/ 404.vue
 ├── components/     DeviceBusinessPanel（业务面板）、DeviceIdentityCell（终端信息列）、DeviceRuntimeCell（运行信息列）等
 └── router/         菜单与路由

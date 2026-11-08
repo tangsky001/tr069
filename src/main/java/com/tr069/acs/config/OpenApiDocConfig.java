@@ -44,6 +44,7 @@ public class OpenApiDocConfig {
         CLASS_TAG.put("FileManageController", "文件台账");
         CLASS_TAG.put("SystemController", "系统管理");
         CLASS_TAG.put("OpsController", "运维管理");
+        CLASS_TAG.put("UpgradeController", "在线更新");
         CLASS_TAG.put("DeviceController", "设备台账");
         CLASS_TAG.put("DeviceCapabilityController", "设备能力树");
         CLASS_TAG.put("DeviceBusinessController", "设备业务快照");
@@ -342,6 +343,28 @@ public class OpenApiDocConfig {
                         "`content` 是要编码的文本（通常是 `GET /api/ops/remote` 返回的某个 `*QrContent`），\n"
                         + "`size` 默认 240、范围 80~512。直接用 `<img src>` 引用，返回 `image/png`。\n"
                         + "内网本地登录 / 外网云登录 / APK 下载三个二维码都用这一个接口出图。");
+
+        // 在线更新
+        doc("GET /api/upgrade/check", "检查是否有可升级版本",
+                "当前版本取 `git.properties` 的 `git.build.version`（打包时写入）。\n"
+                        + "向升级服务器（hserver）`GET /api/version/latest?serverId=acs` 查最新版本，\n"
+                        + "比对版本号后返回 `hasUpdate`。hserver 不可达时 `hasUpdate=false`，不报错。");
+        doc("POST /api/upgrade/download", "触发后台多线程下载升级包",
+                "传 `downloadUrl`（`check` 返回的那个）和 `fileSize`（也来自 `check`）。\n"
+                        + "后台 4 线程 Range 分片下载，旧 jar 先备份为 `.bak`。同时只允许一个下载任务。\n"
+                        + "用 `GET /api/upgrade/progress` 轮询进度。");
+        doc("GET /api/upgrade/progress", "查询下载进度",
+                "`status`：idle / running / done / error；`loaded`、`total`（字节）、`percent`。\n"
+                        + "`status=error` 时额外带 `error`（失败原因）。");
+        doc("POST /api/upgrade/upload", "手动上传 JAR 升级包",
+                "`multipart/form-data`，字段名 `file`，只接受 `.jar`。\n"
+                        + "旧 jar 同样备份为 `.bak`。上传成功后 `status` 置为 `done`，可直接走重启。");
+        doc("POST /api/upgrade/cancel", "取消升级并回滚",
+                        "删除新下载的 jar，把 `.bak` 恢复回原名。没有备份则只清状态。");
+        doc("POST /api/upgrade/restart", "确认升级并退出进程",
+                        "删掉 `.bak` 备份，延迟 2 秒后 `System.exit(0)`。\n"
+                        + "由外部守护进程（systemd / supervisor / start.sh）用新 jar 重启服务。\n"
+                        + "**必须在下载或上传成功后调用**，否则返回失败。");
 
         // 设备台账
         doc("GET /api/device/stat", "设备统计", "总数、在线数、离线数。");

@@ -16,6 +16,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * 装维 APP 远程运维配置服务。
@@ -52,6 +53,12 @@ public class OpsRemoteService {
     @Value("${server.port:8080}")
     private int serverPort;
 
+    /** 内网穿透域名后缀（写死，不可配置） */
+    private static final String DOMAIN_SUFFIX = "i-ddns.com";
+
+    /** 内网穿透公网端口（写死，不可配置） */
+    private static final int PUBLIC_PORT = 443;
+
     private final SecureRandom random = new SecureRandom();
 
     private static Map<String, String> scope(String value, String label) {
@@ -71,6 +78,7 @@ public class OpsRemoteService {
             config.setToken(newToken());
             config.setPermissions(String.join(",", PERMISSIONS));
             config.setDeviceScope("all");
+            config.setInstanceId(UUID.randomUUID().toString());
             config.setTokenCreatedAt(LocalDateTime.now());
             config.setCreatedAt(LocalDateTime.now());
             config.setUpdatedAt(LocalDateTime.now());
@@ -88,12 +96,14 @@ public class OpsRemoteService {
                 : config.getTokenCreatedAt().withNano(0).toString().replace('T', ' '));
         view.setPermissions(splitPermissions(config.getPermissions()));
         view.setDeviceScope(config.getDeviceScope() == null ? "all" : config.getDeviceScope());
+        view.setSubdomain(config.getSubdomain());
+        view.setRemoteEnabled(config.getRemoteEnabled() != null && config.getRemoteEnabled() == 1);
         view.setPermissionOptions(permissionOptions());
         view.setDeviceScopeOptions(DEVICE_SCOPES);
         // 内网：public-host + 管理端端口
         view.setLanQrContent(loginUrl(lanBaseUrl(), config.getToken()));
-        // 外网云登录：占位，后续接真实云地址再改
-        view.setCloudQrContent(loginUrl("https://acs.example.com", config.getToken()));
+        // 外网云登录：有子域名就用真实穿透地址，没有就占位
+        view.setCloudQrContent(loginUrl(cloudBaseUrl(config.getSubdomain()), config.getToken()));
         // APK 下载：占位，后续接真实下载地址再改
         view.setApkQrContent("https://acs.example.com/download/app.apk");
         return view;
@@ -140,6 +150,60 @@ public class OpsRemoteService {
             return host;
         }
         return "http://" + host + ":" + serverPort;
+    }
+
+    /** 外网穿透地址：有子域名拼 https://{subdomain}.{DOMAIN_SUFFIX}:{PUBLIC_PORT}，没有返回占位 */
+    private String cloudBaseUrl(String subdomain) {
+        if (subdomain == null || subdomain.isBlank()) {
+            return "https://acs.example.com";
+        }
+        return "https://" + subdomain.trim() + "." + DOMAIN_SUFFIX + ":" + PUBLIC_PORT;
+    }
+
+    /** 生成 10 位随机子域名 [a-z0-9] */
+    public String newSubdomain() {
+        String chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+        StringBuilder sb = new StringBuilder(10);
+        for (int i = 0; i < 10; i++) {
+            sb.append(chars.charAt(random.nextInt(chars.length())));
+        }
+        return sb.toString();
+    }
+
+    /** 分配子域名：有就用，没有就生成一个并存库 */
+    public String ensureSubdomain() {
+        OpsRemoteConfig config = current();
+        if (config.getSubdomain() != null && !config.getSubdomain().isBlank()) {
+            return config.getSubdomain();
+        }
+        config.setSubdomain(newSubdomain());
+        config.setUpdatedAt(LocalDateTime.now());
+        mapper.updateById(config);
+        log.info("远程运维子域名已分配: {}", config.getSubdomain());
+        return config.getSubdomain();
+    }
+
+    /** 重新生成子域名（冲突时调） */
+    public String regenerateSubdomain() {
+        OpsRemoteConfig config = current();
+        config.setSubdomain(newSubdomain());
+        config.setUpdatedAt(LocalDateTime.now());
+        mapper.updateById(config);
+        log.info("远程运维子域名已重新生成: {}", config.getSubdomain());
+        return config.getSubdomain();
+    }
+
+    /** 确保有实例 ID：有就用，没有就生成 UUID 存库 */
+    public String ensureInstanceId() {
+        OpsRemoteConfig config = current();
+        if (config.getInstanceId() != null && !config.getInstanceId().isBlank()) {
+            return config.getInstanceId();
+        }
+        config.setInstanceId(UUID.randomUUID().toString());
+        config.setUpdatedAt(LocalDateTime.now());
+        mapper.updateById(config);
+        log.info("ACS 实例 ID 已生成: {}", config.getInstanceId());
+        return config.getInstanceId();
     }
 
     /** 扫码登录链接：地址 + token 查询参数 */

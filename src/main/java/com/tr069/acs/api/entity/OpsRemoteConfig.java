@@ -32,6 +32,18 @@ public class OpsRemoteConfig {
     @TableField("device_scope")
     private String deviceScope;
 
+    /** 内网穿透分配的随机二级域名前缀（10 位 [a-z0-9]），如 a3f7k9m2x1 */
+    @TableField("subdomain")
+    private String subdomain;
+
+    /** ACS 实例唯一标识（UUID），首次启动生成，用于公网服务器路由管理 */
+    @TableField("instance_id")
+    private String instanceId;
+
+    /** 是否启用内网穿透：0 否 1 是 */
+    @TableField("remote_enabled")
+    private Integer remoteEnabled;
+
     /** 内网本地登录二维码的内容 */
     @TableField("lan_qr_content")
     private String lanQrContent;

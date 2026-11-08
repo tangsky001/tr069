@@ -21,6 +21,12 @@ public class OpsRemoteView {
     /** 可见设备范围 */
     private String deviceScope;
 
+    /** 内网穿透分配的随机二级域名前缀 */
+    private String subdomain;
+
+    /** 是否启用内网穿透 */
+    private Boolean remoteEnabled;
+
     /** 可选权限项：{value, label} */
     private List<Map<String, String>> permissionOptions;
 
