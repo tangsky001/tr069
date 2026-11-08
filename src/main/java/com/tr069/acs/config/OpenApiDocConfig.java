@@ -325,6 +325,23 @@ public class OpenApiDocConfig {
                 "按分组返回展示行，每组是 `{label, value}` 数组，前端原样渲染即可：\n"
                         + "`system` 系统版本 / Git 分支与提交、`server` 操作系统 / Java / JVM 内存 / 启动时间、\n"
                         + "`database` 业务库（MySQL）与模板库（SQLite）版本、`redis` 版本。");
+        doc("GET /api/ops/remote", "远程运维配置",
+                "装维 APP 扫码登录的完整视图：`token`（登录令牌）、`tokenCreatedAt`（生成时间）、\n"
+                        + "`permissions`（已勾选的操作权限：ticket / config / reboot）、`deviceScope`（可见设备范围）、\n"
+                        + "`permissionOptions` / `deviceScopeOptions`（下拉与复选的可选项）、\n"
+                        + "`lanQrContent` / `cloudQrContent` / `apkQrContent`（三个二维码的原始内容，\n"
+                        + "内网地址由 `acs.public-host` + 管理端端口拼出）。当前为占位，后续接真实登录鉴权再扩展。");
+        doc("POST /api/ops/remote", "保存远程运维设置",
+                        "请求体 `{\"permissions\":[\"ticket\",\"config\"],\"deviceScope\":\"online\"}`。\n"
+                        + "`permissions` 是勾选的权限项数组，`deviceScope` 取 all / online / 5m / 10m / 15m / 1h / 2h / 24h。\n"
+                        + "保存后返回最新视图，与 `GET /api/ops/remote` 结构一致。");
+        doc("POST /api/ops/remote/token/regenerate", "重新生成 Token",
+                        "旧 Token 立即失效，二维码内容随之变化。返回最新视图。\n"
+                        + "页面调用前应二次确认，因为已扫码登录的 APP 会掉线。");
+        doc("GET /api/ops/remote/qrcode", "二维码图片（PNG）",
+                        "`content` 是要编码的文本（通常是 `GET /api/ops/remote` 返回的某个 `*QrContent`），\n"
+                        + "`size` 默认 240、范围 80~512。直接用 `<img src>` 引用，返回 `image/png`。\n"
+                        + "内网本地登录 / 外网云登录 / APK 下载三个二维码都用这一个接口出图。");
 
         // 设备台账
         doc("GET /api/device/stat", "设备统计", "总数、在线数、离线数。");

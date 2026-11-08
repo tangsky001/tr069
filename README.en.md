@@ -245,6 +245,17 @@ smart VLAN), static route (`0.0.0.0/0 → 10.172.10.1`).
 
 ![OLT management - VLAN (L3 interfaces / uplink pass-through / L2 interworking / static routes)](doc/Display/203941_898.png)
 
+### Operations management
+
+System version and Git info, OS / Java / JVM memory / start time, databases (MySQL business DB +
+SQLite template DB) / Redis version — all collected by the backend, the frontend only renders.
+The "Remote operations" section at the bottom is a **placeholder** — three QR codes (LAN login /
+cloud login / APK download), token regeneration / copy, permission checkboxes and device-scope
+dropdown are wired as a form, but intranet penetration, the installer-app scan-to-login flow, real
+operator sessions and work-order data are all **not implemented** yet.
+
+![Operations management](doc/Display/143916_516.png)
+
 #### Screenshot inventory
 
 Screenshots are **not moved or renamed** — they all live in the root of
@@ -268,6 +279,7 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | `162116_423.png` | Device detail business panel | Screenshots · Device detail | In use |
 | `180849_848.png` | Super admin account / password dialog (read live) | Screenshots · Super admin account | In use |
 | `013724_056.png` | ONT admin UI platform server config | 1.4 Device provisioning | In use |
+| `143916_516.png` | Operations management (environment overview + remote ops QR codes) | Screenshots · Operations management | In use |
 | `162046_560.png` | Device list (**older** version, used before `013530_034`) | — | Unused (kept) |
 | `025159_916.png` | Device list (**older** version, used early on) | — | Unused (kept) |
 
@@ -347,6 +359,8 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | **User management** | `/system/users` | Done (create/edit/delete users, role changes take effect immediately, password change, enable/disable; the list carries **last login / login IP / login source**; the delete button of the initial `admin` is disabled) |
 | **Role permissions** | `/system/roles` | Done (tick **view / manage** per module; the **system administrator row is disabled**; a role still in use cannot be deleted) |
 | **Login log** | `/system/login-logs` | Done (successes and failures; filterable by **login IP / login time / login source**) |
+| **Operations management** | `/system/ops` | Done (all data collected by the backend, frontend only renders: system version (from pom build version) / Git branch·commit·repo (http links clickable) / OS / Java / JVM memory / start time / databases (MySQL business DB + SQLite template DB) / Redis version, compact two-column grid; the "Remote operations" section at the bottom is a **placeholder**: three QR codes, token generate/copy, permission checkboxes, device-scope dropdown — intranet penetration and installer-app login auth are not implemented; permission `ops:view`) |
+| **Online upgrade** | `/system/upgrade` | **Not done** (menu and page skeleton are up, also using `ops:view`; upgrade package download / verify / replace-restart pending, see section 2 #20) |
 
 Bottom-right toolbar of the device list (`web/src/views/device/list.vue`, select devices first):
 
@@ -553,6 +567,8 @@ session cannot be used to rewrite passwords in bulk.
 | 17 | **Service flow operation buttons** (query GMP multicast status / query unknown multicast policy / delete service flow / add service flow) | **Placeholder** | All four buttons in the service flow dialog report "not open yet". The first two are read commands, the last two are writes: wire them separately behind #15 — writes need the allowlist and auditing first, reads can be parsed directly |
 | 18 | ~~**MAC column value**~~ | **Done** | GPON SN-authenticated ONTs get their MAC from the OLT too: the background backfill sends `display ont ipconfig <port> <ONT ID>` to online ONTs without a MAC and normalises `ONT MAC` to `AA:BB:CC:DD:EE:FF` (Huawei's 4-4-4 form is accepted); only `0000-0000-0000` keeps the `-` and is flagged so it is not retried. A collected MAC is never wiped by later collection |
 | 19 | Output label case fallback | Handled | English labels are not case-stable across firmware versions (e.g. `Traffic Schedulers` / `traffic Schedulers`), so the translation table tries an exact match first and falls back to a case-insensitive one; labels/values wrapped onto the next line are stitched back together |
+| 20 | **Online upgrade** (system self-update) | **Not done** | Page `/system/upgrade` is mounted (`ops:view` permission). Pending: upgrade package upload/download with sha256 verify, version comparison (current version from pom build version), stop-replace-restart with rollback on failure |
+| 21 | **Intranet penetration · mobile delivery of ONT data** | **Not done** | The "Remote operations" section on the ops page is a placeholder: three QR codes (LAN login / cloud login / APK download), token generation and regeneration, permission checkboxes and device-scope dropdown are wired as a form — but this is only a frontend and backend form shell. **Intranet penetration, installer-app scan-to-login auth, real operator sessions, and work-order data integration are all not implemented.** Tunnel selection (frp / self-hosted), auth and northbound `/openapi/v1` integration are TBD |
 
 ---
 

@@ -8,8 +8,9 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 /** TR069 ACS 服务端入口 */
 @EnableScheduling
-@MapperScan({"com.tr069.acs.mapper", "com.tr069.acs.biz.mapper", "com.tr069.acs.template.mapper",
-        "com.tr069.acs.exec.mapper", "com.tr069.acs.openapi.mapper", "com.tr069.acs.olt.mapper"})
+@MapperScan({"com.tr069.acs.mapper", "com.tr069.acs.api.mapper", "com.tr069.acs.biz.mapper",
+        "com.tr069.acs.template.mapper", "com.tr069.acs.exec.mapper", "com.tr069.acs.openapi.mapper",
+        "com.tr069.acs.olt.mapper"})
 @ConfigurationPropertiesScan("com.tr069.acs")
 @SpringBootApplication
 public class PilotAcsApplication {
