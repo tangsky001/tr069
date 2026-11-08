@@ -483,6 +483,28 @@ public class CwmpController {
             return;
         }
 
+        // 设备换新连接回来发 Inform 时，旧会话上可能还有一条已下发但未回应的 RPC。
+        // 典型场景：SetParameterValues 写回 ManagementServer.URL 后设备立即断连重连，
+        // 旧 awaiting 不会被设备回应，却会卡住 handleEmptyPost（line 150-155）使其
+        // 一直回 204 不取新指令，直到 60 秒超时。
+        //
+        // 设备既然换了新连接，说明它已经处理完上一条 RPC（否则不会断连），所以这里
+        // 直接清除旧 awaiting，既不重排也不判失败——重排 SPV 只会让设备再次执行、
+        // 再次断连，形成循环；判失败则误报（设备其实已执行成功）。
+        if (session.hasPendingAwaiting()) {
+            PendingRpc stale = session.failAwaiting("设备换新连接，旧 RPC 未被回应");
+            if (stale != null) {
+                log.info("设备换新连接，清理旧 RPC: sn={}, rpc={}", sn, stale.getRpcName());
+                // GetParameterNames 等查询类指令重排后下一轮还能取到结果，重排无副作用
+                RpcMethod method = RpcMethod.of(stale.getRpcName());
+                if (method != null && method.isRetriable() && stale.getRpcId() > 0) {
+                    settleUndelivered(session, stale, "设备换新连接，旧 RPC 未被回应");
+                }
+                // SetParameterValues 等写操作：设备已执行过，不重排不判失败，
+                // 下一轮预设机制会在需要时重新下发
+            }
+        }
+
         // 采集指令必须在回响应之前入队，紧接着的空 POST 才取得到
         deviceCapabilityService.onInform(session, inform);
         // 纳管同样要抢这个窗口：把 ACS 地址与上报间隔写回设备，否则设备下轮还报去原厂平台

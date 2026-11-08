@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ModelTree sn="001681S17513S0080" isp="standard" modelKey="MSG2100E-UPON-8V-AC_V0200-0101190724" productClass="MSG2100E-UPON-8V-AC" softwareVersion="V0200-0101190724" manufacturer="RC" objectCount="28" paramCount="17" exportTime="2026-11-08 21:57:59">
+  <Object name="InternetGatewayDevice" path="InternetGatewayDevice.">
+    <Object name="LANDevice" path="InternetGatewayDevice.LANDevice.">
+      <Object name="1" path="InternetGatewayDevice.LANDevice.1.">
+        <Object name="LANEthernetInterfaceConfig" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.">
+          <Object name="1" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.">
+            <Param name="Enable" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Enable" writable="true" type="boolean" value="true"/>
+            <Param name="MaxBitRate" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate" writable="true" type="string" value="1000M"/>
+            <Param name="Status" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status" writable="true" type="string" value="NoLink"/>
+          </Object>
+        </Object>
+        <Param name="LANEthernetInterfaceNumberOfEntries" path="InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceNumberOfEntries" writable="true" type="string" value="4"/>
+        <Object name="LANHostConfigManagement" path="InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.">
+          <Param name="DHCPServerEnable" path="InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.DHCPServerEnable" writable="true" type="boolean" value="1"/>
+          <Object name="IPInterface" path="InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.">
+            <Object name="1" path="InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.">
+              <Param name="IPInterfaceIPAddress" path="InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceIPAddress" writable="true" type="string" value="192.168.1.1"/>
+              <Param name="IPInterfaceSubnetMask" path="InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceSubnetMask" writable="true" type="string" value="255.255.255.0"/>
+            </Object>
+          </Object>
+        </Object>
+        <Object name="WLANConfiguration" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.">
+          <Object name="1" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.">
+            <Param name="Enable" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Enable" writable="true" type="boolean" value="1"/>
+            <Object name="PreSharedKey" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.">
+              <Object name="1" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.">
+                <Param name="KeyPassphrase" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase" writable="true" type="string" value="00000000"/>
+              </Object>
+            </Object>
+            <Param name="SSID" path="InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID" writable="true" type="string" value="1234"/>
+          </Object>
+        </Object>
+      </Object>
+    </Object>
+    <Object name="Services" path="InternetGatewayDevice.Services.">
+      <Object name="VoiceService" path="InternetGatewayDevice.Services.VoiceService.">
+        <Object name="1" path="InternetGatewayDevice.Services.VoiceService.1.">
+          <Object name="VoiceProfile" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.">
+            <Object name="1" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.">
+              <Object name="Line" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.">
+                <Object name="1" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.">
+                  <Param name="DirectoryNumber" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.DirectoryNumber" writable="true" type="string" value=""/>
+                  <Param name="Enable" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.Line.1.Enable" writable="true" type="string" value="Disabled"/>
+                </Object>
+              </Object>
+              <Object name="SIP" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.">
+                <Param name="ProxyServer" path="InternetGatewayDevice.Services.VoiceService.1.VoiceProfile.1.SIP.ProxyServer" writable="true" type="string" value=""/>
+              </Object>
+            </Object>
+          </Object>
+        </Object>
+      </Object>
+    </Object>
+    <Object name="WANDevice" path="InternetGatewayDevice.WANDevice.">
+      <Object name="1" path="InternetGatewayDevice.WANDevice.1.">
+        <Object name="WANCommonInterfaceConfig" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.">
+          <Param name="WANAccessType" path="InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.WANAccessType" writable="true" type="string" value="GPON"/>
+        </Object>
+        <Object name="WANConnectionDevice" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.">
+          <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.">
+            <Object name="WANIPConnection" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.">
+              <Object name="1" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.">
+                <Param name="ExternalIPAddress" path="InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress" writable="true" type="string" value="10.172.10.4"/>
+              </Object>
+            </Object>
+          </Object>
+        </Object>
+      </Object>
+    </Object>
+    <Object name="X_CT-COM_UserInfo" path="InternetGatewayDevice.X_CT-COM_UserInfo.">
+      <Param name="UserId" path="InternetGatewayDevice.X_CT-COM_UserInfo.UserId" writable="true" type="string" value=""/>
+      <Param name="UserName" path="InternetGatewayDevice.X_CT-COM_UserInfo.UserName" writable="true" type="string" value="5775SN200906971"/>
+    </Object>
+  </Object>
+</ModelTree>

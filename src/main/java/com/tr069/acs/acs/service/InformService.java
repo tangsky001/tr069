@@ -5,6 +5,8 @@ import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.cwmp.model.EventStruct;
 import com.tr069.acs.cwmp.model.InformRequest;
 import com.tr069.acs.cwmp.model.ParameterValueStruct;
+import com.tr069.acs.domain.entity.CpeParameter;
+import com.tr069.acs.mapper.CpeParameterMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,6 +38,14 @@ public class InformService {
     private final DeviceRegistryService deviceRegistry;
 
     private final AcsCoreLog coreLog;
+
+    private final CpeParameterMapper parameterMapper;
+
+    /** Inform 上报批次号前缀 */
+    private static final String INFORM_BATCH_PREFIX = "inform-";
+
+    /** 单批 upsert 的最大条目数，防止 SQL 包过长 */
+    private static final int UPSERT_CHUNK = 200;
 
     /** 处理一次 Inform：更新会话属性并返回排序后的事件码列表 */
     public List<String> handle(CpeSession session, InformRequest inform, String rawXml) {
@@ -85,6 +95,12 @@ public class InformService {
                 session.getSn(), eventCodes, session.getSoftwareVersion(), session.getHardwareVersion());
         // 核心日志：设备上报单独记一行到 log/ACS_LOG.LOG
         coreLog.inform(session.getSn(), eventCodes, session.getConnectionId());
+
+        // Inform 上报的参数值写入 cpe_parameter：设备首次上报就带了 WAN / LAN 等业务参数，
+        // 不写的话业务面板要等能力采集（GPN+GPV）完成后才有数据。
+        // 用 upsert：能力树已有同路径就更新值，没有就插入——不破坏后续能力采集的结构。
+        saveInformParameters(session.getSn(), parameters);
+
         return eventCodes;
     }
 
@@ -102,5 +118,81 @@ public class InformService {
             }
         }
         return codes;
+    }
+
+    /**
+     * 把 Inform 上报的参数值写入 cpe_parameter 表。
+     * <p>
+     * 设备 Inform 时自带了当前运行参数（WAN 连接状态、IP 地址、SSID 等），
+     * 这些值在能力采集（GPN+GPV）完成前就能让业务面板展示。
+     * 用 ON DUPLICATE KEY UPDATE：已有能力树行只更新值，没有的插入为 param 类型行。
+     */
+    private void saveInformParameters(String sn, List<ParameterValueStruct> parameters) {
+        if (parameters == null || parameters.isEmpty()) {
+            return;
+        }
+        String batch = INFORM_BATCH_PREFIX + System.currentTimeMillis();
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        List<CpeParameter> rows = new ArrayList<>();
+        for (ParameterValueStruct p : parameters) {
+            String path = p.getName();
+            if (path == null || path.isBlank()) {
+                continue;
+            }
+            // 跳过对象节点（以句点结尾），只写叶子参数值
+            if (path.endsWith(".")) {
+                continue;
+            }
+            CpeParameter row = new CpeParameter();
+            row.setSn(sn);
+            row.setParamPath(path);
+            row.setParentPath(parentOf(path));
+            row.setNodeName(nameOf(path));
+            row.setNodeType(CpeParameter.TYPE_PARAM);
+            row.setWritable(0);
+            row.setDepth(depthOf(path));
+            row.setParamValue(p.getValue());
+            row.setValueType(p.getValueType() != null ? p.getValueType() : "string");
+            row.setCollectBatch(batch);
+            row.setCollectTime(now);
+            rows.add(row);
+        }
+        if (rows.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < rows.size(); i += UPSERT_CHUNK) {
+            List<CpeParameter> chunk = rows.subList(i, Math.min(i + UPSERT_CHUNK, rows.size()));
+            try {
+                parameterMapper.upsertInformValues(chunk);
+            } catch (Exception e) {
+                log.warn("Inform 参数落库失败: sn={}, size={}, err={}", sn, chunk.size(), e.getMessage());
+            }
+        }
+    }
+
+    /** 父对象路径，根节点为空串 */
+    private static String parentOf(String path) {
+        String p = path.endsWith(".") ? path.substring(0, path.length() - 1) : path;
+        int idx = p.lastIndexOf('.');
+        return idx < 0 ? "" : p.substring(0, idx + 1);
+    }
+
+    /** 路径末段名 */
+    private static String nameOf(String path) {
+        String p = path.endsWith(".") ? path.substring(0, path.length() - 1) : path;
+        int idx = p.lastIndexOf('.');
+        return idx < 0 ? p : p.substring(idx + 1);
+    }
+
+    /** 层级深度，根节点为 0 */
+    private static int depthOf(String path) {
+        String p = path.endsWith(".") ? path.substring(0, path.length() - 1) : path;
+        int depth = 0;
+        for (int i = 0; i < p.length(); i++) {
+            if (p.charAt(i) == '.') {
+                depth++;
+            }
+        }
+        return depth;
     }
 }

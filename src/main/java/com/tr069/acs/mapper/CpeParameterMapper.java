@@ -40,4 +40,23 @@ public interface CpeParameterMapper extends BaseMapper<CpeParameter> {
             + "<foreach collection='list' item='p' open='(' separator=',' close=')'>"
             + "#{p.paramPath}</foreach></script>")
     int updateValues(@Param("sn") String sn, @Param("list") List<CpeParameter> list);
+
+    /**
+     * Inform 上报参数 upsert：路径已存在就更新值，不存在就插入。
+     * 利用 (sn, param_path) 唯一索引做 ON DUPLICATE KEY UPDATE。
+     * 仅写参数值，不触碰能力树结构（node_type / writable / depth 等保持原值或合理默认）。
+     */
+    @Insert("<script>INSERT INTO cpe_parameter "
+            + "(sn, param_path, parent_path, node_name, node_type, writable, depth, "
+            + "param_value, value_type, collect_batch, collect_time, created_at, updated_at) VALUES "
+            + "<foreach collection='list' item='p' separator=','>"
+            + "(#{p.sn}, #{p.paramPath}, #{p.parentPath}, #{p.nodeName}, "
+            + "#{p.nodeType}, #{p.writable}, #{p.depth}, "
+            + "#{p.paramValue}, #{p.valueType}, #{p.collectBatch}, #{p.collectTime}, NOW(), NOW())"
+            + "</foreach>"
+            + " ON DUPLICATE KEY UPDATE "
+            + "param_value = VALUES(param_value), "
+            + "value_type = VALUES(value_type), "
+            + "updated_at = NOW()</script>")
+    int upsertInformValues(@Param("list") List<CpeParameter> list);
 }

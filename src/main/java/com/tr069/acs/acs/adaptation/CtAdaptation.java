@@ -9,7 +9,7 @@ import java.util.List;
  * 中国电信（CT）适配：电信天翼网关的差异参数收在这里。
  * <p>
  * 电信定制固件使用 {@code X_CT-COM_} / {@code X_CTC_} 两套私有前缀。
- * 天翼网关的能力树遍历策略与移动不同（自适应而非递归优先），
+ * 天翼网关的能力树遍历策略与移动一致（递归优先），
  * 且 LAN 网口有私有的插线状态叶子。
  */
 @Component
@@ -68,10 +68,18 @@ public class CtAdaptation implements IspAdaptation {
         return List.of("X_CTC_");
     }
 
-    /** 天翼网关的业务标识挂在 X_CT-COM_UserInfo 下（随 Inform 上报过） */
+    /**
+     * 天翼网关的业务子树：与移动一致，先全量递归扫参数树。
+     * <p>
+     * 之前用 adaptive 策略——GPN 撞 9002 就降级为只读 probePaths，
+     * 但 probePaths 里 WAN 路径太少，导致光猫拿不到完整 WAN 信息。
+     * 现在改为默认 recursive-first，第一次就全量递归，和移动一个流程。
+     * X_CT-COM_UserInfo 是电信私有的业务标识子树，一并扫进来。
+     */
     @Override
     public List<String> capabilitySubtrees() {
         return List.of(
+                "DeviceInfo.",
                 "WANDevice.",
                 "LANDevice.",
                 "Services.VoiceService.",
@@ -91,11 +99,5 @@ public class CtAdaptation implements IspAdaptation {
                 "WANDevice.1.WANCommonInterfaceConfig.WANAccessType",
                 "X_CT-COM_UserInfo.UserId",
                 "X_CT-COM_UserInfo.UserName");
-    }
-
-    /** 天翼网关：先试参数树，撞 9002 再降级为只读关键字段 */
-    @Override
-    public String gpnStrategy() {
-        return "adaptive";
     }
 }
