@@ -125,13 +125,13 @@ public class OltCliSession implements Closeable {
     /** 登录横幅，版本命令没回显时靠它识别厂商和型号 */
     private final StringBuilder banner = new StringBuilder();
 
-    private String prompt;
+    private volatile String prompt;
 
     /**
      * 会话当前停留的视图。长连接不退出登录，所以必须自己记住停在哪一层：
      * 下次要用 config 就直接发命令，已经在 config 里就连 enable/config 都不发。
      */
-    private CliView view = CliView.ROOT;
+    private volatile CliView view = CliView.ROOT;
 
     /** 视图层级：根视图（用户/特权）、配置视图、接口/模板等子视图、位置不明 */
     public enum CliView {
@@ -192,7 +192,10 @@ public class OltCliSession implements Closeable {
 
     public static String passwordOf(OltDevice device) {
         String password = device.getPassword();
-        return password == null || password.isBlank() ? DEFAULT_PASSWORD : password;
+        if (password == null || password.isBlank()) {
+            return DEFAULT_PASSWORD;
+        }
+        return com.tr069.acs.olt.util.OltCrypto.decrypt(password);
     }
 
     /** 采集信息 */
@@ -2127,6 +2130,12 @@ public class OltCliSession implements Closeable {
                     .append(partial).append('\n');
             // 超时往往意味着设备还在慢慢吐回显：先排空，否则这批旧文本会被下一条命令当成自己的输出
             drain();
+            // 超时后会话视图不确定：标记视图为 UNKNOWN，下次复用前会先 probeView 校准
+            view = CliView.UNKNOWN;
+            // 如果排空后发现已经退到登录界面，直接标记会话失效
+            if (partial != null && (USERNAME_PROMPT.matcher(partial).find() || PASSWORD_PROMPT.matcher(partial).find())) {
+                sessionLost = true;
+            }
             return partial;
         }
     }

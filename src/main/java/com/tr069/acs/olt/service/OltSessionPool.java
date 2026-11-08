@@ -4,6 +4,7 @@ import com.tr069.acs.olt.entity.OltDevice;
 import com.tr069.acs.olt.telnet.OltCliSession;
 import com.tr069.acs.olt.telnet.OltTelnetException;
 import com.tr069.acs.olt.telnet.OltVendor;
+import com.tr069.acs.olt.telnet.TelnetClient;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -100,13 +101,26 @@ public class OltSessionPool {
         }
         for (DeviceChannel channel : devices.values()) {
             for (SessionSlot slot : channel.slots) {
-                slot.executor.shutdownNow();
-                if (slot.session != null) {
-                    closeQuietly(slot.session);
+                // 先优雅关闭，给正在执行的命令 5 秒收尾，避免写 flash 被中断
+                slot.executor.shutdown();
+                try {
+                    if (!slot.executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                        slot.executor.shutdownNow();
+                    }
+                } catch (InterruptedException e) {
+                    slot.executor.shutdownNow();
+                    Thread.currentThread().interrupt();
+                }
+                OltCliSession session = slot.session;
+                if (session != null) {
+                    slot.session = null;
+                    closeQuietly(session);
                 }
             }
         }
         devices.clear();
+        // 关闭 Netty 共享事件循环组，避免热部署时线程/文件描述符泄漏
+        TelnetClient.shutdownGroup();
     }
 
     /** 在设备的常驻会话上执行任务：挑空闲会话跑，全忙才排队 */
@@ -146,10 +160,13 @@ public class OltSessionPool {
         }
     }
 
-    /** 等自己的任务跑完 */
+    /** 等自己的任务跑完：不再无限等，最多等 SESSION_WAIT_MS × 5 */
     private <T> T awaitOwn(Future<T> future, OltDevice device) throws IOException {
         try {
-            return future.get();
+            return future.get(SESSION_WAIT_MS * 5, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw new OltTelnetException("OLT " + device.getHost() + " 会话任务执行超时，已取消");
         } catch (InterruptedException e) {
             future.cancel(false);
             Thread.currentThread().interrupt();
@@ -258,9 +275,12 @@ public class OltSessionPool {
         }
     }
 
-    /** 复用前核对会话身份 */
+    /** 复用前核对会话身份（null 安全） */
     private static boolean matches(SessionSlot slot, OltDevice device, Charset charset, boolean charsetStrict) {
-        if (charsetStrict && !slot.charset.equals(charset)) {
+        if (charsetStrict && (slot.charset == null || !slot.charset.equals(charset))) {
+            return false;
+        }
+        if (slot.username == null || slot.password == null || slot.vendor == null) {
             return false;
         }
         return slot.username.equals(OltCliSession.usernameOf(device))

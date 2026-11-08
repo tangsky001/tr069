@@ -317,8 +317,19 @@ public final class OltInfoParser {
         if (TEMPERATURE_SENSOR_HEADER.matcher(text).find()) {
             Matcher sensor = TEMPERATURE_SENSOR_ROW.matcher(text);
             while (sensor.find()) {
-                int slot = Integer.parseInt(sensor.group(1));
-                int temperature = Integer.parseInt(sensor.group(5));
+                String slotRaw = sensor.group(1);
+                String tempRaw = sensor.group(5);
+                if (slotRaw == null || tempRaw == null) {
+                    continue;
+                }
+                int slot;
+                int temperature;
+                try {
+                    slot = Integer.parseInt(slotRaw);
+                    temperature = Integer.parseInt(tempRaw);
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
                 if (sane(temperature)) {
                     temperatures.merge(slot, temperature, Math::max);
                 }
@@ -894,7 +905,12 @@ public final class OltInfoParser {
                 if (token.isEmpty()) {
                     continue;
                 }
-                int vlanId = Integer.parseInt(token);
+                int vlanId;
+                try {
+                    vlanId = Integer.parseInt(token);
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
                 if (vlanId >= 1 && vlanId <= 4094 && !portVlan.getVlans().contains(vlanId)) {
                     portVlan.getVlans().add(vlanId);
                 }
@@ -1292,6 +1308,8 @@ public final class OltInfoParser {
                 }
             }
         }
+        // 过滤掉 profileId 为 null 的空壳模板
+        profiles.removeIf(profile -> profile.getProfileId() == null);
         return profiles;
     }
 
@@ -1760,7 +1778,8 @@ public final class OltInfoParser {
             return;
         }
         String lastKey = lastKeyOf(current);
-        if (current.get(lastKey).isEmpty()) {
+        String lastVal = current.get(lastKey);
+        if (lastVal != null && lastVal.isEmpty()) {
             current.put(lastKey, carry.toString().trim());
         }
         carry.setLength(0);

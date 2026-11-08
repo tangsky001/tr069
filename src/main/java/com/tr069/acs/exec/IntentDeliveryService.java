@@ -18,6 +18,8 @@ import com.tr069.acs.exec.model.DeliveryRequest;
 import com.tr069.acs.exec.model.IntentPlan;
 import com.tr069.acs.exec.model.PlanItem;
 import com.tr069.acs.mapper.CpeDeviceMapper;
+import com.tr069.acs.acs.adaptation.AdaptationManager;
+import com.tr069.acs.acs.adaptation.IspAdaptation;
 import com.tr069.acs.template.service.ConfigTemplateService;
 import com.tr069.acs.worklist.service.ModelMappingService;
 import com.tr069.acs.worklist.service.ModelTreeStore;
@@ -99,6 +101,8 @@ public class IntentDeliveryService {
     private final ModelTreeStore modelTreeStore;
     /** 下发后补采一次能力树，让新建的实例即时出现在设备列表里 */
     private final com.tr069.acs.acs.service.DeviceCapabilityService capabilityService;
+    /** 按设备运营商取定制参数名，替代硬编码 X_CMCC_/X_CT-COM_ 常量 */
+    private final AdaptationManager adaptationManager;
 
     /** 路径里的 WAN 挂载位置，形如 {@code WANConnectionDevice.2.} */
     private static final Pattern WAN_DEVICE = Pattern.compile("WANConnectionDevice\\.(\\d+)\\.");
@@ -294,11 +298,15 @@ public class IntentDeliveryService {
         // 数据模型对不上时宁可不发：把 IGD 的路径写进 TR-181 设备，设备只会回 9005
         checkDataModel(model, device);
 
+        // 按设备运营商取适配实现，替代硬编码的 X_CMCC_/X_CT-COM_ 常量
+        IspAdaptation adaptation = adaptationManager.of(
+                device.getIsp() == null || device.getIsp().isBlank() ? "standard" : device.getIsp());
+
         IntentPlan plan = renderer.render(bizObject, request.category(), model,
                 values, resolveInstance(values), overrides);
-        plan = alignParameterNames(request.sn(), plan);
-        plan = ensureServiceBinding(request.sn(), plan, values, overrides);
-        plan = ensureVlanMode(request.sn(), plan);
+        plan = alignParameterNames(request.sn(), plan, adaptation);
+        plan = ensureServiceBinding(request.sn(), plan, values, overrides, adaptation);
+        plan = ensureVlanMode(request.sn(), plan, adaptation);
         task.setIntentFields(writeJson(merge(intentFields, values)));
         task.setPlan(writeJson(planView(plan)));
         if (!plan.deliverable()) {
@@ -315,7 +323,7 @@ public class IntentDeliveryService {
     }
 
     /** 把渲染出的参数名校正为该型号真实存在的那套，并剔掉设备上根本没有的参数 */
-    private IntentPlan alignParameterNames(String sn, IntentPlan plan) {
+    private IntentPlan alignParameterNames(String sn, IntentPlan plan, IspAdaptation adaptation) {
         if (plan.parameters().isEmpty()) {
             return plan;
         }
@@ -325,6 +333,8 @@ public class IntentDeliveryService {
                 && resolved.getTypes().isEmpty() && resolved.getReadOnly().isEmpty()) {
             return plan;
         }
+        // 该运营商定制机上的绑定端口节点名（移动为 X_CMCC_LanInterface，其他为 LanInterface）
+        String lanInterfaceNode = adaptation.lanInterfaceNode();
         List<PlanItem> items = new ArrayList<>();
         for (PlanItem item : plan.parameters()) {
             if (resolved.getUnsupported().contains(item.path())) {
@@ -342,8 +352,8 @@ public class IntentDeliveryService {
             if ("boolean".equalsIgnoreCase(type)) {
                 value = booleanValue(value);
             }
-            if (LAN_INTERFACE_NODE.equalsIgnoreCase(leafOf(path))) {
-                // 绑定端口落到 X_CMCC_LanInterface 上时，值必须是 LAN 口的完整路径串，
+            if (lanInterfaceNode.equalsIgnoreCase(leafOf(path))) {
+                // 绑定端口落到定制节点上时，值必须是 LAN 口的完整路径串，
                 // 页面给的 LAN1,LAN2 写下去会被整批拒（SPV 按批生效，会连 Enable 一起废掉）
                 String bound = lanInterfaceValue(path, value);
                 if (bound == null) {
@@ -360,9 +370,6 @@ public class IntentDeliveryService {
         }
         return new IntentPlan(plan.bizObject(), plan.instance(), plan.objectsToAdd(), items, errors);
     }
-
-    /** 绑定端口节点：中国移动定制机上真叫这个名字，取值为 LAN 口路径 */
-    private static final String LAN_INTERFACE_NODE = "X_CMCC_LanInterface";
 
     private static String leafOf(String path) {
         if (path == null) {
@@ -412,19 +419,19 @@ public class IntentDeliveryService {
         return root + "LANDevice.1.LANEthernetInterfaceConfig." + no;
     }
 
-    /** WAN 连接补写「业务绑定」参数（这台设备上是 {@code X_CMCC_ServiceList}） */
+    /** WAN 连接补写「业务绑定」参数（移动为 X_CMCC_ServiceList，电信为 X_CT-COM_ServiceList） */
     private IntentPlan ensureServiceBinding(String sn, IntentPlan plan, Map<String, Object> values,
-                                            Map<String, String> overrides) {
+                                            Map<String, String> overrides, IspAdaptation adaptation) {
         if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
             return plan;
         }
-        if (plan.parameters().stream().anyMatch(IntentDeliveryService::isServiceBinding)) {
+        if (plan.parameters().stream().anyMatch(p -> isServiceBinding(p, adaptation))) {
             return plan;
         }
         String service = serviceOf(values, overrides);
         if ("OTHER".equalsIgnoreCase(service)) {
             // 「其他 / Other」不是不绑业务，而是业务绑定就写 OTHER：设备上现存的桥接
-            // 4_OTHER_B_VID_100 的 X_CMCC_ServiceList 正是 OTHER，且它连着。
+            // 4_OTHER_B_VID_100 的 ServiceList 正是 OTHER，且它连着。
             // 以前这里当成"纯二层透传不绑业务"跳过，结果同一批里的 Enable 被设备拒
             // （没绑业务的连接不许启用），整批 9003，桥接一条也建不起来。
             log.info("业务模式为 Other，按 OTHER 补写业务绑定（不绑业务时设备拒绝启用）: sn={}", sn);
@@ -432,7 +439,7 @@ public class IntentDeliveryService {
         String first = plan.parameters().get(0).path();
         int cut = first.lastIndexOf('.');
         String parent = cut < 0 ? first : first.substring(0, cut + 1);
-        for (String candidate : SERVICE_LIST_NAMES) {
+        for (String candidate : adaptation.serviceListNames()) {
             String path = parent + candidate;
             ModelTreeStore.PathResolution resolved = modelTreeStore.resolvePaths(sn, List.of(path));
             if (resolved.getUnsupported().contains(path)) {
@@ -458,8 +465,8 @@ public class IntentDeliveryService {
         return plan;
     }
 
-    /** WAN 连接补写「VLAN 模式」（这台设备上是 {@code X_CMCC_VLANMode}） */
-    IntentPlan ensureVlanMode(String sn, IntentPlan plan) {
+    /** WAN 连接补写「VLAN 模式」（移动为 X_CMCC_VLANMode，电信为 X_CT-COM_VLANMode） */
+    IntentPlan ensureVlanMode(String sn, IntentPlan plan, IspAdaptation adaptation) {
         if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
             return plan;
         }
@@ -478,7 +485,7 @@ public class IntentDeliveryService {
         }
         PlanItem vid = plan.parameters().get(at);
         String parent = vid.path().substring(0, vid.path().lastIndexOf('.') + 1);
-        for (String candidate : VLAN_MODE_NAMES) {
+        for (String candidate : adaptation.vlanModeNames()) {
             String path = parent + candidate;
             ModelTreeStore.PathResolution resolved = modelTreeStore.resolvePaths(sn, List.of(path));
             if (resolved.getUnsupported().contains(path)) {
@@ -703,22 +710,18 @@ public class IntentDeliveryService {
     /** VLAN 模式的取值：2 = 打 802.1Q 标签，路由/桥接带 VLAN 的业务都要它 */
     private static final String VLAN_TAG_MODE = "2";
 
-    /** VLAN 模式参数的候选写法，逐个去能力树上试，谁在树上用谁 */
-    private static final List<String> VLAN_MODE_NAMES =
-            List.of("X_CMCC_VLANMode", "X_CT-COM_VLANMode", "VLANMode");
-
-    /** 业务绑定参数的候选写法，逐个去能力树上试，谁在树上用谁 */
-    private static final List<String> SERVICE_LIST_NAMES =
-            List.of("X_CMCC_ServiceList", "ServiceList", "X_CT-COM_ServiceList");
-
     private static boolean isWanConnection(String bizObject) {
         return "Internet_WAN".equalsIgnoreCase(bizObject) || "Bridge_WAN".equalsIgnoreCase(bizObject);
     }
 
-    private static boolean isServiceBinding(PlanItem item) {
-        return "service_list".equalsIgnoreCase(item.bizField())
-                || "X_CMCC_ServiceList".equalsIgnoreCase(leafOfPath(item.path()))
-                || "ServiceList".equalsIgnoreCase(leafOfPath(item.path()));
+    private boolean isServiceBinding(PlanItem item, IspAdaptation adaptation) {
+        if ("service_list".equalsIgnoreCase(item.bizField())) {
+            return true;
+        }
+        String leaf = leafOfPath(item.path());
+        // 检查是否匹配该运营商的任一业务绑定参数名
+        return adaptation.serviceListNames().stream()
+                .anyMatch(name -> name.equalsIgnoreCase(leaf));
     }
 
     /** 布尔型参数统一按 xsd:boolean 的标准词法 {@code true/false} 下发 */
@@ -944,7 +947,7 @@ public class IntentDeliveryService {
                 trailing.add(item);
             } else if (isVlan(item)) {
                 leading.add(item);
-            } else if (isServiceBinding(item)) {
+            } else if ("service_list".equalsIgnoreCase(item.bizField())) {
                 binding.add(item);
             } else {
                 middle.add(item);

@@ -25,6 +25,7 @@ import com.tr069.acs.olt.vendor.OltVendorProfiles;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -145,6 +146,10 @@ public class OltOntRegService {
             if (exists == null) {
                 throw new IllegalArgumentException("模板不存在或已删除");
             }
+            // 校验归属：模板的 oltId 必须与路径参数一致（或为全局模板）
+            if (exists.getOltId() != null && !exists.getOltId().equals(oltId)) {
+                throw new IllegalArgumentException("模板不属于这台 OLT，无权修改");
+            }
             // 不能用 updateById：它默认跳过 null 字段，页面上「清空」的字段
             // （业务 VLAN、绑定端口这类可空文本）传上来是 null，原样留在库里，
             // 清了等于没清。这里把这些列显式 set，空值才写得进去。
@@ -161,11 +166,32 @@ public class OltOntRegService {
         return templateMapper.selectById(template.getId());
     }
 
-    public void deleteTemplates(List<Long> ids) {
+    public void deleteTemplates(Long oltId, List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             return;
         }
+        // 校验归属：每条模板必须属于这台 OLT 或为全局模板
+        for (Long id : ids) {
+            OltOntRegTemplate template = templateMapper.selectById(id);
+            if (template == null) {
+                continue;
+            }
+            if (template.getOltId() != null && !template.getOltId().equals(oltId)) {
+                throw new IllegalArgumentException("模板 " + id + " 不属于这台 OLT，无权删除");
+            }
+        }
         templateMapper.deleteByIds(ids);
+    }
+
+    /** 删除 OLT 时清理这台设备的全部 ONT 注册关联数据 */
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteByOltId(Long oltId) {
+        if (oltId == null) {
+            return;
+        }
+        templateMapper.delete(new LambdaQueryWrapper<OltOntRegTemplate>().eq(OltOntRegTemplate::getOltId, oltId));
+        configMapper.delete(new LambdaQueryWrapper<OltOntRegConfig>().eq(OltOntRegConfig::getOltId, oltId));
+        recordMapper.delete(new LambdaQueryWrapper<OltOntRegRecord>().eq(OltOntRegRecord::getOltId, oltId));
     }
 
     // ---------------------------------------------------------------- 自动注册参数
@@ -264,6 +290,16 @@ public class OltOntRegService {
     /** 注册一批待注册 ONT */
     public List<OltOntRegisterResult> register(Long oltId, OltOntRegisterRequest request,
                                                String operator, String source) {
+        oltService.lockDeviceOrThrow(oltId, "ONT 注册");
+        try {
+            return doRegister(oltId, request, operator, source);
+        } finally {
+            oltService.unlockDevice(oltId);
+        }
+    }
+
+    private List<OltOntRegisterResult> doRegister(Long oltId, OltOntRegisterRequest request,
+                                                   String operator, String source) {
         OltDevice device = requireDevice(oltId);
         OltVendorProfile profile = profileOf(device);
         if (!profile.supportsOntConfirm()) {
@@ -345,6 +381,15 @@ public class OltOntRegService {
     }
 
     private int runCycle(Long oltId, boolean requireEnabled) {
+        oltService.lockDeviceOrThrow(oltId, "ONT 自动注册");
+        try {
+            return doRunCycle(oltId, requireEnabled);
+        } finally {
+            oltService.unlockDevice(oltId);
+        }
+    }
+
+    private int doRunCycle(Long oltId, boolean requireEnabled) {
         OltOntRegConfig config = config(oltId);
         if (requireEnabled && !isEnabled(config.getEnabled())) {
             return 0;
@@ -377,7 +422,8 @@ public class OltOntRegService {
         int ok = (int) results.stream().filter(OltOntRegisterResult::isSuccess).count();
         // 已经在线的老 ONT 不在自动发现表里，注册流程碰不到它们，单独补一遍业务虚口
         try {
-            int repaired = repairServicePorts(requireDevice(oltId), profileOf(requireDevice(oltId)),
+            OltDevice device = requireDevice(oltId);
+            int repaired = repairServicePorts(device, profileOf(device),
                     templates(oltId, true));
             if (repaired > 0) {
                 log.info("ONT 自动注册：补发业务虚口 {} 台 id={}", repaired, oltId);
@@ -448,6 +494,10 @@ public class OltOntRegService {
                         result.setMessage("已自动移机到 " + row.getFsp() + " 并注册（原 " + old.fsp + " 已删除）"
                                 + applyOntModelRemark(device, profile, fsp, row)
                                 + deliverServicePorts(device, profile, fsp, template, row));
+                        return result;
+                    } else {
+                        result.setSuccess(false);
+                        result.setMessage("自动移机失败：原 " + old.fsp + " 的 ONT 已删除，但新口注册未成功，需手动处理");
                         return result;
                     }
                 }
@@ -872,11 +922,23 @@ public class OltOntRegService {
         }
     }
 
+    /** 存盘连续失败次数：超过阈值暂停自动注册 */
+    private final java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.atomic.AtomicInteger> saveFailStreaks
+            = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final int MAX_SAVE_FAIL_STREAK = 3;
+
     /** 到点把配置存盘：华为只写运行配置，不 save 掉电就回到注册前 */
     private void maybeSave(Long oltId, OltOntRegConfig config) {
         int saveSeconds = config.getSaveSeconds() == null ? 28800 : config.getSaveSeconds();
         LocalDateTime base = config.getLastSaveAt() != null ? config.getLastSaveAt() : config.getLastRegisterAt();
         if (base == null || Duration.between(base, LocalDateTime.now()).getSeconds() < saveSeconds) {
+            return;
+        }
+        // 连续失败超过阈值则暂停存盘（不暂停注册，但持续告警）
+        java.util.concurrent.atomic.AtomicInteger streak = saveFailStreaks.computeIfAbsent(oltId, k -> new java.util.concurrent.atomic.AtomicInteger());
+        if (streak.get() >= MAX_SAVE_FAIL_STREAK) {
+            log.error("ONT 自动注册存盘连续失败 {} 次，已暂停存盘 id={}，需人工检查设备", streak.get(), oltId);
             return;
         }
         OltDevice device = deviceMapper.selectById(oltId);
@@ -887,9 +949,11 @@ public class OltOntRegService {
             telnetService.sendConfig(device, List.of(profileOf(device).saveCommand()));
             config.setLastSaveAt(LocalDateTime.now());
             configMapper.updateById(config);
+            streak.set(0);
             log.info("自动注册后已存盘 id={}", oltId);
         } catch (Exception e) {
-            log.warn("自动注册后存盘失败 id={}: {}", oltId, e.getMessage());
+            int count = streak.incrementAndGet();
+            log.warn("自动注册后存盘失败 id={} 第 {} 次: {}", oltId, count, e.getMessage());
         }
     }
 

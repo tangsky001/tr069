@@ -33,6 +33,8 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.util.concurrent.DefaultThreadFactory;
 
+import java.util.concurrent.TimeUnit;
+
 /** 极简 Telnet 客户端（Netty NIO 版） */
 @Slf4j
 public class TelnetClient implements Closeable {
@@ -40,6 +42,11 @@ public class TelnetClient implements Closeable {
     /** 全部 Telnet 连接共享的事件循环组：连接数上百也只占这几条线程 */
     private static final EventLoopGroup GROUP =
             new NioEventLoopGroup(0, new DefaultThreadFactory("olt-telnet-netty", true));
+
+    /** 关闭共享的事件循环组（应用关闭时调用） */
+    public static void shutdownGroup() {
+        GROUP.shutdownGracefully(0, 5, TimeUnit.SECONDS);
+    }
 
     private static final int IAC = 255;
     private static final int DONT = 254;
