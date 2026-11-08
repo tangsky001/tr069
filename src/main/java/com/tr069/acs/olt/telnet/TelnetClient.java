@@ -114,7 +114,14 @@ public class TelnetClient implements Closeable {
     private static final int PAGE_PRESS_LIMIT = 60;
 
     /** 匹配到「提示符」后还要静默这么久才算真的结束 */
-    private static final int PROMPT_SETTLE_MS = 120;
+    /** 提示符匹配到后的静默确认：50ms 覆盖局域网 TCP 包间间隔（OLT 回显流式到达，提示符是末尾包） */
+    private static final int PROMPT_SETTLE_MS = 50;
+
+    /** 未匹配提示符时的轮询间隙上限：onData 的 notifyAll 即时唤醒，50ms 只是提示符分包到达的兜底 */
+    private static final int POLL_WAIT_MS = 50;
+
+    /** 分页已被关闭（screen-length 0 / undo smart）：为 true 时跳过翻页检测和卡顿按键推进 */
+    private volatile boolean pagingDisabled;
 
     private volatile Channel channel;
     private final Charset charset;
@@ -245,14 +252,15 @@ public class TelnetClient implements Closeable {
                 }
                 handlePagination();
                 // 还没等到提示符、回显又停住了：十有八九卡在分页上，主动按键推进
-                if (pageAssist && !matched) {
+                // 分页已被 screen-length 0 关闭时跳过：此时不可能卡在 More 提示
+                if (pageAssist && !matched && !pagingDisabled) {
                     pressPageIfStalled();
                 }
                 long remaining = deadline - System.currentTimeMillis();
                 if (remaining <= 0) {
                     throw new OltTelnetException("等待设备回显超时(" + timeoutMs + "ms)，已收到：" + tail(180));
                 }
-                long waitMs = Math.min(remaining, 200);
+                long waitMs = Math.min(remaining, POLL_WAIT_MS);
                 if (matched) {
                     // 提示符已经到齐，只差静默确认：按剩余确认时间睡，别整轮 200ms 白等
                     long settleLeft = PROMPT_SETTLE_MS - (System.currentTimeMillis() - matchedAt);
@@ -325,6 +333,11 @@ public class TelnetClient implements Closeable {
             lastByteAt = System.currentTimeMillis();
             firstByteAt = 0;
         }
+    }
+
+    /** 标记分页已被关闭（screen-length 0 等）：后续 readUntilAny 跳过翻页检测和卡顿按键推进 */
+    public void setPagingDisabled(boolean disabled) {
+        pagingDisabled = disabled;
     }
 
     /** 本次命令收到第一个回显字节的时间戳，0 表示还没收到任何字节 */
@@ -495,6 +508,9 @@ public class TelnetClient implements Closeable {
     // ---------------------------------------------------------------- 分页
 
     private void handlePagination() throws IOException {
+        if (pagingDisabled) {
+            return;
+        }
         for (int guard = 0; guard < 200; guard++) {
             // 尾窗用零拷贝 CharSequence 视图匹配：不再每轮 substring 复制几百字符
             int from = Math.max(0, text.length() - 400);
