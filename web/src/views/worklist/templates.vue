@@ -8,7 +8,7 @@
       <div class="create-bar">
         <span class="create-label">新增模板：</span>
         <!-- 建模板、改模板、删模板：没有配置模板的写权限就只剩看 -->
-        <template v-if="$has('template:manage')">
+        <template v-if="$has('template:update')">
           <el-button
             v-for="c in categories"
             :key="c.code"
@@ -83,8 +83,8 @@
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template slot-scope="{ row }">
-          <el-button v-if="$has('template:manage')" type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="$has('template:manage')" type="text" size="mini" icon="el-icon-delete" class="danger-text" @click="handleDelete(row)">删除</el-button>
+          <el-button v-if="$has('template:update')" type="text" size="mini" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="$has('template:delete')" type="text" size="mini" icon="el-icon-delete" class="danger-text" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -190,7 +190,7 @@
 
       <span slot="footer">
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button v-if="$has('template:manage')" type="primary" :loading="saving" @click="submit">保存</el-button>
+        <el-button v-if="$has('template:update')" type="primary" :loading="saving" @click="submit">保存</el-button>
       </span>
     </el-dialog>
   </div>

@@ -123,6 +123,8 @@ public class DeviceCapabilityService {
     /** 按运营商的能力采集标准 */
     private final CapabilityProfiles capabilityProfiles;
 
+    private final com.tr069.acs.acs.adaptation.AdaptationManager adaptationManager;
+
     /** 采集总开关 */
     @Value("${acs.device.capability.enabled:true}")
     private boolean enabled;
@@ -265,12 +267,13 @@ public class DeviceCapabilityService {
                 paths.add(p.getName());
             }
         }
-        Isp detected = Isp.detect(paths);
-        if (detected == null || detected == Isp.STANDARD) {
+        com.tr069.acs.acs.adaptation.IspAdaptation adaptation = adaptationManager.detect(paths);
+        if (adaptation == null) {
             return;
         }
-        informIsp.put(sn, detected.getCode());
-        log.info("按 Inform 私有前缀预判采集标准: sn={}, isp={}", sn, detected.getCode());
+        informIsp.put(sn, adaptation.code());
+        log.info("按 Inform 私有前缀预判采集标准: sn={}, isp={}, 适配类={}",
+                sn, adaptation.code(), adaptation.getClass().getSimpleName());
     }
 
     /** 手动触发一次采集，供管理端调用 */
@@ -1268,8 +1271,8 @@ public class DeviceCapabilityService {
 
     /** 按能力树里的厂商私有前缀认运营商，并回写台账 */
     private void detectAndWriteIsp(String sn, List<String> paths) {
-        Isp detected = Isp.detect(paths);
-        if (detected == null || detected == Isp.STANDARD) {
+        com.tr069.acs.acs.adaptation.IspAdaptation adaptation = adaptationManager.detect(paths);
+        if (adaptation == null) {
             return;
         }
         if (Isp.of(deviceIsp(sn)) != Isp.STANDARD) {
@@ -1278,10 +1281,11 @@ public class DeviceCapabilityService {
         try {
             deviceMapper.update(null, new LambdaUpdateWrapper<CpeDevice>()
                     .eq(CpeDevice::getSn, sn)
-                    .set(CpeDevice::getIsp, detected.getCode()));
-            log.info("按能力树私有前缀登记设备运营商: sn={}, isp={}", sn, detected.getCode());
+                    .set(CpeDevice::getIsp, adaptation.code()));
+            log.info("按能力树私有前缀登记设备运营商: sn={}, isp={}, 适配类={}",
+                    sn, adaptation.code(), adaptation.getClass().getSimpleName());
         } catch (Exception e) {
-            log.warn("回写设备运营商失败: sn={}, isp={}, err={}", sn, detected.getCode(), e.getMessage());
+            log.warn("回写设备运营商失败: sn={}, isp={}, err={}", sn, adaptation.code(), e.getMessage());
         }
     }
 

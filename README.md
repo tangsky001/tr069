@@ -284,8 +284,9 @@ VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN �
 | **ONT 明细只覆盖不删除** | 所有写库路径（全量采集 / 页签同步 / 快速同步 / 板卡刷新 / 后台补采）统一在 `writeBoards` 合并：按 SN 对齐（SN 变了按槽位+端口+ONT 号兜底），新值为空保留库里的旧 MAC / 管理IP / 线路模板 / 业务模板，采到新值才覆盖；设备回 `-` / `0000-0000-0000` 视为没采到，不覆盖已有值 | `olt/service/OltService#mergeUnsyncedPortData`、`#mergeOntDetails`、`#applyOntDetail` |
 | **OLT 命令行健壮性** | ① 华为续页提示 `( Press 'Q' to break ) ----` 纳入分页识别，提示与正文挤同一行时只清提示不送空格，避免误触发翻页卡死；② 关分页按设备来：华为发 `scroll`（`screen-length` 是 VRP 交换机的，OLT 不认），进 config 视图后重发一次；③ 参数补全提示（含无 `<cr>` 的 `{ all<K>\|bound-info<K> }:`）识别后自动补回车取默认/执行，不再干等 8 秒超时 | `olt/telnet/TelnetClient#handlePagination`、`olt/telnet/OltVendor#getPagingCommands`、`olt/telnet/OltCliSession#readToPrompt` |
 | **在线接口文档** | springdoc 扫接口 + Knife4j 中文界面：启动后浏览器打开 `http://127.0.0.1:8888/doc.html` 查看全部接口的用途、请求参数与返回结构，可在线调试；`http://127.0.0.1:8888/v3/api-docs` 是 OpenAPI 3.0 JSON，可导入 Apifox / Postman。接口清单从 Controller 签名自动扫出，中文说明集中在 `config/OpenApiDocConfig` 的 `DOC` 表，请求参数与响应字段的中文在 `config/OpenApiParamDoc` 按名字查表（模型不用加 `@Schema`） | `config/OpenApiDocConfig`、`config/OpenApiParamDoc`、`pom.xml`（`springdoc-openapi-starter-webmvc-ui` + `knife4j-openapi3-jakarta-spring-boot-starter`） |
-| 管理端鉴权 | JWT 登录、`sys_user` 查库、首次启动写入初始管理员；JWT 拦截器除了验令牌，**还按请求 URL 与方法算出需要的权限点再验权限**（`GET` 要 `xxx:view`，写方法要 `xxx:manage`），够不着返回 403 | `api/controller/AuthController`、`config/AdminAuthInterceptor`、`api/auth/PermissionCodes` |
-| **角色权限** | `sys_role` + `sys_role_permission`：20 个权限点（10 个模块 × 读/写）由代码清单给出、**不落库**；角色勾权限，改完**立即生效**（每次请求查库判权限，不缓存在令牌里）；系统管理员在代码里短路放行全部权限，库里没有它的行，也改不了 | `api/auth/PermissionCodes`、`api/service/RoleService`、`api/controller/SystemController` |
+| **运维环境总览** | `GET /api/ops/environment`：按分组返回展示行，前端原样渲染——系统版本（打包时由 git-commit-id-plugin 把 pom `<version>` 写进 `git.properties`，读它）、Git 分支 / 提交 / 仓库地址（打包生成优先，否则现场执行 `git` 命令兜底）、操作系统 / Java / JVM 内存 / 启动时间、业务库（MySQL）与模板库（SQLite）版本、Redis 版本 | `api/controller/OpsController`、`api/service/OpsEnvironmentService` |
+| 管理端鉴权 | JWT 登录、`sys_user` 查库、首次启动写入初始管理员；JWT 拦截器除了验令牌，**还按请求 URL 与方法算出需要的权限点再验权限**（`GET` 要 `xxx:view`，POST / PUT 要 `xxx:update`，`DELETE` 要 `xxx:delete`），够不着返回 403 | `api/controller/AuthController`、`config/AdminAuthInterceptor`、`api/auth/PermissionCodes` |
+| **角色权限** | `sys_role` + `sys_role_permission`：30 个权限点（10 个模块 × 查看/修改/删除）由代码清单给出、**不落库**；角色勾权限，改完**立即生效**（每次请求查库判权限，不缓存在令牌里）；系统管理员在代码里短路放行全部权限，库里没有它的行，也改不了 | `api/auth/PermissionCodes`、`api/service/RoleService`、`api/controller/SystemController` |
 | **用户管理** | `/api/system` 九个接口：用户的增删改查、改角色、改口令（**改别人的口令要先验证操作者自己的口令**）、启停；自己删不了自己 | `api/service/UserAdminService` |
 | **登录日志** | 每次尝试落到 `sys_login_log`：成败与失败原因、**真实 IP**（取 `X-Forwarded-For` 首段，内网地址不用）、**登录标识**（网页端 / 客户端 / 移动端，按 `X-Client-Type` 或 UA 认）、UA；按用户各留最近 50 条 | `api/service/LoginLogService`、`api/auth/ClientIpResolver`、`api/auth/LoginSourceResolver` |
 | 启动自检 | 各业务表补建/初始化、可选只读表存在性校验 | `common/startup/*` |
@@ -305,8 +306,10 @@ VLAN 页：三层 VLAN 接口（`vlanif46  10.172.10.254/24`）、上行 VLAN �
 | OLT 详情 · 鸿升光 | `/olt/hsgq/:id` | 已实现（**整机前面板**：按型号画出 PON 口 + 上联 GE / XGE + NMS / CONSOLE，顶部显示规格 `8 × GPON + 4 × GE + 4 × XGE`；PON 口状态、**ONU 列表**（真实数据）、配置信息、VLAN（可增删）、**TR-069 模板**（可新增）、一键开局、**设备配置**（命令中心：升级 / 链路聚合 / ONT 管理等逐条下发）、采集记录；ONU 列表行内「配置」下拉仍为占位） |
 | OLT 详情 · 通用 | `/olt/generic/:id` | 已实现（未识别厂商、中兴、烽火走这里：板卡、ONT、VLAN、配置信息、采集记录；**只读**，识别出来后可编辑重测并自动分流到对应厂商页） |
 | **用户管理** | `/system/users` | 已实现（增删改用户、改角色即时生效、改密码、启停；列表带**最近登录 / 登录地址 / 登录标识**；初始 `admin` 账号的删除按钮按死） |
-| **角色权限** | `/system/roles` | 已实现（按模块勾选「查看 / 管理」；**系统管理员那排是禁用的**；还有人在用的角色删不掉） |
+| **角色权限** | `/system/roles` | 已实现（按模块勾选「查看 / 修改 / 删除」；**系统管理员那排是禁用的**；还有人在用的角色删不掉） |
 | **登录日志** | `/system/login-logs` | 已实现（成功与失败都记；可按**登录地址 / 登录时间 / 登录标识**筛选） |
+| **运维管理** | `/system/ops` | 已实现（数据全由后端采集、前端只渲染：系统版本（取 pom 打包版本）/ Git 分支·提交·仓库地址（http 链接可点击）/ 操作系统 / Java / JVM 内存 / 启动时间 / 数据库（MySQL 业务库 + SQLite 模板库）/ Redis 版本，紧凑两列网格；权限点 `ops:view`） |
+| **在线更新** | `/system/upgrade` | **未完成**（菜单与页面框架已搭好，同样用 `ops:view` 权限；升级包下载 / 校验 / 替换重启待接，见第 2 节 #20） |
 
 设备列表右下角工具条（`web/src/views/device/list.vue`，需先勾选设备）：
 
@@ -487,12 +490,12 @@ DBA 模板增删、**线路模板加 T-CONT / GEM Port / GEM 映射**、TR-069 �
 那个功能就变成谁也点不动的死按钮。清单由 `GET /api/system/permissions` 给出，页面按它勾选，
 勾的结果才落到 `sys_role_permission` 里。
 
-| 模块 | 查看 | 管理 |
-| --- | --- | --- |
-| dashboard / device / template / biz / model / worklist / olt / file / tag / system | `xxx:view` | `xxx:manage` |
+| 模块 | 权限点（每模块三级） |
+| --- | --- |
+| dashboard / device / template / biz / model / worklist / olt / file / ops / system | 查看 `xxx:view` ｜ 修改 `xxx:update` ｜ 删除 `xxx:delete` |
 
-判定按 URL 自动映射，**不给每个接口加注解**：`GET /api/device/**` 要 `device:view`，写方法要
-`device:manage`。认不出模块的路径（如 `/api/user/info`）不拦——登进来就能看自己是谁，没必要再配权限。
+判定按 URL 自动映射，**不给每个接口加注解**：`GET /api/device/**` 要 `device:view`，
+POST / PUT 要 `device:update`，DELETE 要 `device:delete`。认不出模块的路径（如 `/api/user/info`）不拦——登进来就能看自己是谁，没必要再配权限。
 
 **两个默认角色**：
 
@@ -511,7 +514,8 @@ DBA 模板增删、**线路模板加 T-CONT / GEM Port / GEM 映射**、TR-069 �
 改别人的口令要先验证操作者**自己**的口令，这是为了防止会话被借用后批量改口令扩大战果。
 
 > 升级说明：旧版本的 `sys_user.role` 存的是 `admin` / `operator` / `viewer`，
-> 首次用到角色时由 `RoleService` 自动迁移（`admin` → `SUPER_ADMIN`，其余 → `OPS_ADMIN`），
+> 首次用到角色时由 `RoleService` 自动迁移（`admin` → `SUPER_ADMIN`，其余 → `OPS_ADMIN`）；
+> 旧库存的 `:manage` 权限点读取时自动按「修改 + 删除」展开（应用侧与 `sql/schema.sql` 各有一条迁移），
 > 不用手工跑脚本。接口细节见 [API.md §4.14](./API.md)。
 
 ## 2. 待实现 / 进行中
@@ -537,6 +541,8 @@ DBA 模板增删、**线路模板加 T-CONT / GEM Port / GEM 映射**、TR-069 �
 | 17 | **业务流操作按钮**（查询GMP 组播状态 / 查询未知组播策略 / 删除业务流 / 新增业务流） | **占位** | 业务流弹窗里的四个按钮点击均提示"暂未开放"。前两个是读命令、后两个是写命令，需分别接 #15：写操作先落白名单与审计，读操作可直接补解析 |
 | 18 | ~~**MAC 列取值**~~ | **已实现** | GPON 的 SN 认证也从 OLT 取 MAC：后台补采对缺 MAC 的在线 ONT 逐台发 `display ont ipconfig <端口> <ONT ID>`，取 `ONT MAC` 归一成 `AA:BB:CC:DD:EE:FF`（华为 4-4-4 写法也认）；设备回 `0000-0000-0000` 的才留 `-` 并打标记不再重试。采到过的 MAC 后续采集不会再抹掉 |
 | 19 | 回显文案大小写兜底 | 已处理 | 设备不同版本回显的英文标签大小写不稳定（如 `Traffic Schedulers` / `traffic Schedulers`），翻译表改为先精确匹配、再忽略大小写兜底；标签/值折行也能拼回一条 |
+| 20 | **在线更新**（系统自升级） | **未完成** | 页面 `/system/upgrade` 已挂好（`ops:view` 权限）。待接：升级包上传/下载与 sha256 校验、版本比对（当前版本取 pom 打包版本）、停服-替换-重启与失败回滚 |
+| 21 | **内网穿透 · 移动端下发光猫数据** | **未完成** | 计划：ACS 部署在内网时，移动端（手机 App / 小程序）经内网穿透通道接入，远程查看台账并下发光猫开通数据。通道选型（frp / 自建隧道）、鉴权与北向 `/openapi/v1` 的对接方式待定 |
 
 ---
 
@@ -544,9 +550,10 @@ DBA 模板增删、**线路模板加 T-CONT / GEM Port / GEM 映射**、TR-069 �
 
 | 层 | 选型 |
 | --- | --- |
-| 后端 | Spring Boot 3.2.5、Java 21、MyBatis-Plus 3.5.7、MySQL Connector/J、Spring Data Redis（Lettuce）、JJWT 0.12.6、Lombok、Jackson、SnakeYAML（光猫档案） |
+| 后端 | Spring Boot 3.2.5、Java 21、MyBatis-Plus 3.5.7、MySQL Connector/J、SQLite JDBC 3.46.1（模板库，单文件便携）、Spring Data Redis（Lettuce）、Netty 4.1（OLT Telnet 客户端，IAC 协商与回显解析自实现）、JJWT 0.12.6、Knife4j 4.5 + springdoc（在线接口文档）、Lombok、Jackson、SnakeYAML（光猫档案） |
+| 构建 | git-commit-id-plugin（打包时把 pom 版本 / Git 分支 / 提交写进 `git.properties`，运维管理页展示）、spring-boot-maven-plugin |
 | 前端 | Vue 2.6 + vue-router + Vuex + Element UI 2.13 + axios（vue-admin-template） |
-| 存储 | MySQL 8 / MariaDB 10.6+，Redis 6+（可选，关闭则进程内处理） |
+| 存储 | MySQL 8 / MariaDB 10.6+（业务库），SQLite 单文件（模板库 `configuration/tr069_tpl.pack`），Redis 6+（可选，关闭则进程内处理） |
 
 ## 4. 端口
 

@@ -1,6 +1,7 @@
 package com.tr069.acs.api.auth;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -20,6 +21,11 @@ public final class PermissionCodes {
 
     private static final String VIEW = ":view";
 
+    private static final String UPDATE = ":update";
+
+    private static final String DELETE = ":delete";
+
+    /** 老版本的三级合并权限点，库里可能还存着它，读取时按 改+删 展开 */
     private static final String MANAGE = ":manage";
 
     /** 模块名 → 展示名。顺序就是前端勾选页的展示顺序 */
@@ -32,6 +38,7 @@ public final class PermissionCodes {
             new String[]{"worklist", "工单管理"},
             new String[]{"olt", "OLT 管理"},
             new String[]{"file", "文件与固件"},
+            new String[]{"ops", "运维管理"},
             new String[]{"system", "系统管理"});
 
     /** 免检：登进来就是为了用这几个，再问一次权限就成了自己挡自己 */
@@ -50,6 +57,7 @@ public final class PermissionCodes {
             new String[]{"/api/worklist", "worklist"},
             new String[]{"/api/olt", "olt"},
             new String[]{"/api/files", "file"},
+            new String[]{"/api/ops", "ops"},
             new String[]{"/api/system", "system"});
 
     private PermissionCodes() {
@@ -63,7 +71,8 @@ public final class PermissionCodes {
             group.put("module", module[0]);
             group.put("name", module[1]);
             group.put("view", module[0] + VIEW);
-            group.put("manage", module[0] + MANAGE);
+            group.put("update", module[0] + UPDATE);
+            group.put("delete", module[0] + DELETE);
             groups.add(group);
         }
         return groups;
@@ -74,9 +83,32 @@ public final class PermissionCodes {
         List<String> codes = new ArrayList<>();
         for (String[] module : MODULES) {
             codes.add(module[0] + VIEW);
-            codes.add(module[0] + MANAGE);
+            codes.add(module[0] + UPDATE);
+            codes.add(module[0] + DELETE);
         }
         return codes;
+    }
+
+    /** 把库里存的角色权限换成当前的三级权限点，旧的 {@code :manage} 按 改+删 展开 */
+    public static List<String> expand(Collection<String> codes) {
+        if (codes == null || codes.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (String code : codes) {
+            if (code == null || code.isBlank()) {
+                continue;
+            }
+            String v = code.trim().toLowerCase(Locale.ROOT);
+            if (v.endsWith(MANAGE)) {
+                String module = v.substring(0, v.length() - MANAGE.length());
+                out.add(module + UPDATE);
+                out.add(module + DELETE);
+            } else if (known(v)) {
+                out.add(v);
+            }
+        }
+        return out.stream().distinct().toList();
     }
 
     /** 这个权限点是不是清单里的，防止被人塞进一个不存在的权限 */
@@ -109,8 +141,12 @@ public final class PermissionCodes {
             // 免检名单里的放行，其它一律报未登记，让调用方拦掉
             return FREE_PASS.contains(path) ? null : UNMAPPED;
         }
+        // 查：GET / HEAD / OPTIONS；删：DELETE；其余（POST / PUT / PATCH）都算改
+        if ("DELETE".equalsIgnoreCase(method)) {
+            return module + DELETE;
+        }
         boolean read = "GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
                 || "OPTIONS".equalsIgnoreCase(method);
-        return module + (read ? VIEW : MANAGE);
+        return module + (read ? VIEW : UPDATE);
     }
 }

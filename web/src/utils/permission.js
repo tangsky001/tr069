@@ -24,7 +24,12 @@ export function canView(module) {
   return hasPerm(module + ':view')
 }
 
-/** 能改这个模块（写操作按钮）。 */
-export function canManage(module) {
-  return hasPerm(module + ':manage')
+/** 能改这个模块（新建、编辑与下发按钮）。 */
+export function canUpdate(module) {
+  return hasPerm(module + ':update')
+}
+
+/** 能删这个模块（删除按钮）。 */
+export function canDelete(module) {
+  return hasPerm(module + ':delete')
 }
