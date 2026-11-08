@@ -30,7 +30,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 Vue.use(ElementUI, { locale })
-// 模板里直接写 v-if="$has('device:manage')"：按钮按权限摆出来
+// 模板里直接写 v-if="$has('device:update')"：按钮按权限摆出来
 Vue.prototype.$has = hasPerm
 
 Vue.config.productionTip = false

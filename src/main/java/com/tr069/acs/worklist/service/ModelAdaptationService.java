@@ -1,6 +1,8 @@
 package com.tr069.acs.worklist.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tr069.acs.acs.adaptation.AdaptationManager;
+import com.tr069.acs.acs.adaptation.IspAdaptation;
 import com.tr069.acs.acs.service.CwmpRpcService;
 import com.tr069.acs.acs.service.DeviceCapabilityService;
 import com.tr069.acs.cwmp.model.ParameterValueStruct;
@@ -49,6 +51,7 @@ public class ModelAdaptationService {
     private final ModelAdaptationProfileStore profileStore;
     /** SQLite 模板库：适配结果的唯一权威，下发查的就是它，列表判定必须跟它一致 */
     private final DeviceDao deviceDao;
+    private final AdaptationManager adaptationManager;
 
     /** 测试时等待光猫返回参数树的最长时间，秒 */
     @Value("${acs.adapt.test-timeout-seconds:120}")
@@ -159,18 +162,9 @@ public class ModelAdaptationService {
         return data;
     }
 
-    /** 运营商码 → 中文名（台账登记值、适配申报值、适配档里的 isp 三种写法都认） */
-    private static final java.util.Map<String, String> ISP_LABELS = java.util.Map.ofEntries(
-            java.util.Map.entry("CMCC", "中国移动"),
-            java.util.Map.entry("CM", "中国移动"),
-            java.util.Map.entry("CT", "中国电信"),
-            java.util.Map.entry("CU", "中国联通"),
-            java.util.Map.entry("CBN", "中国广电"),
-            java.util.Map.entry("standard", "标准/通用"));
-
-    /** 运营商显示名：适配档里申报的 isp 优先，其次台账/模型上登记的值 */
+    /** 运营商显示名：适配档里申报的 isp 优先，其次台账/模型上登记的值，码表在 AdaptationManager */
     @SuppressWarnings("unchecked")
-    private static String ispTextOf(Map<String, Object> data) {
+    private String ispTextOf(Map<String, Object> data) {
         Object profile = data.get("profile");
         String isp = "";
         if (profile instanceof Map<?, ?> map) {
@@ -182,7 +176,7 @@ public class ModelAdaptationService {
         if (isp.isBlank()) {
             isp = str(data.get("isp"));
         }
-        return isp.isBlank() ? "" : ISP_LABELS.getOrDefault(isp, isp);
+        return isp.isBlank() ? "" : adaptationManager.labels().getOrDefault(isp, isp);
     }
 
     /** 已适配设备的能力串：网口数量/速率、SIP 路数、WiFi 规格、样机 SN */
@@ -694,13 +688,14 @@ public class ModelAdaptationService {
 
     // ==================== 申报比对 ====================
 
-    /** 运营商候选：v 是存库值，t 是展示名 */
-    private static final List<Map<String, String>> ISP_OPTIONS = List.of(
-            isp("CT", "电信"),
-            isp("CU", "联通"),
-            isp("CMCC", "移动"),
-            isp("CBN", "广电"),
-            isp("standard", "标准/通用"));
+    /** 运营商候选来自各运营商适配类：v 是存库值，t 是展示名 */
+    private List<Map<String, String>> ispOptions() {
+        List<Map<String, String>> options = new ArrayList<>();
+        for (IspAdaptation a : adaptationManager.all()) {
+            options.add(Map.of("v", a.code(), "t", a.shortLabel()));
+        }
+        return options;
+    }
 
     /** 网口数量与 SIP 数量共用：两者口径一致，都是「能接几条」 */
     private static final List<String> PORT_OPTIONS = List.of("无", "1", "2", "3", "4", "8");
@@ -712,14 +707,10 @@ public class ModelAdaptationService {
     /** 能力申报的候选值 */
     public Map<String, Object> capabilityOptions() {
         return Map.of(
-                "isp", ISP_OPTIONS,
+                "isp", ispOptions(),
                 "ports", PORT_OPTIONS,
                 "speeds", SPEED_OPTIONS,
                 "wifiSpecs", WIFI_SPEC_OPTIONS);
-    }
-
-    private static Map<String, String> isp(String v, String t) {
-        return Map.of("v", v, "t", t);
     }
 
     /** 逐项比对申报能力与实测能力，返回不满足的原因列表，空列表即全部支持 */

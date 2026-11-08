@@ -43,6 +43,7 @@ public class OpenApiDocConfig {
         CLASS_TAG.put("OltController", "OLT 管理");
         CLASS_TAG.put("FileManageController", "文件台账");
         CLASS_TAG.put("SystemController", "系统管理");
+        CLASS_TAG.put("OpsController", "运维管理");
         CLASS_TAG.put("DeviceController", "设备台账");
         CLASS_TAG.put("DeviceCapabilityController", "设备能力树");
         CLASS_TAG.put("DeviceBusinessController", "设备业务快照");
@@ -287,7 +288,9 @@ public class OpenApiDocConfig {
 
         // 系统管理
         doc("GET /api/system/permissions", "权限点清单",
-                "按模块分组返回全部权限点，页面按它勾选。**权限点不落库，也不允许用户增删**。");
+                "按模块分组返回全部权限点，每个模块三格：查看 / 修改 / 删除。\n"
+                        + "GET 需要 `:view`，POST / PUT 需要 `:update`，DELETE 需要 `:delete`。\n"
+                        + "**权限点不落库，也不允许用户增删**；老库存的 `:manage` 读取时自动按 修改+删除 展开。");
         doc("GET /api/system/roles", "角色列表",
                 "带每个角色的权限点与人数。\n"
                         + "系统管理员的权限是代码里短路出来的全权限，库里没有它的行。");
@@ -316,6 +319,12 @@ public class OpenApiDocConfig {
                 "不能删自己。**初始系统账号 admin 删不掉**，返回「系统用户禁止删除」；\\n"
                         + "最后一个系统管理员也删不掉。这两条在数据库里都有触发器兜底，\\n"
                         + "直接在 MySQL 里 delete 同样会被拦。");
+
+        // 运维管理
+        doc("GET /api/ops/environment", "运维环境总览",
+                "按分组返回展示行，每组是 `{label, value}` 数组，前端原样渲染即可：\n"
+                        + "`system` 系统版本 / Git 分支与提交、`server` 操作系统 / Java / JVM 内存 / 启动时间、\n"
+                        + "`database` 业务库（MySQL）与模板库（SQLite）版本、`redis` 版本。");
 
         // 设备台账
         doc("GET /api/device/stat", "设备统计", "总数、在线数、离线数。");

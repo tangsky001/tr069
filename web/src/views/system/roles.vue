@@ -24,7 +24,7 @@
               v-for="p in row.permissions"
               :key="p"
               size="mini"
-              :type="p.endsWith(':manage') ? 'warning' : 'info'"
+              :type="p.endsWith(':view') ? 'info' : 'warning'"
               class="perm-tag"
             >{{ p }}</el-tag>
           </template>
@@ -46,16 +46,16 @@
       </el-table-column>
     </el-table>
 
-    <!-- 权限勾选：按模块分组，每组「查看 / 管理」两格 -->
+    <!-- 权限勾选：按模块分组，每组「查看 / 修改 / 删除」三格 -->
     <el-dialog
       :title="'权限 - ' + (currentRow ? currentRow.name : '')"
       :visible.sync="permVisible"
-      width="600px"
+      width="640px"
       append-to-body
     >
       <el-table :data="groups" size="small" border max-height="420">
         <el-table-column prop="name" label="模块" width="130" />
-        <el-table-column label="查看" width="90" align="center">
+        <el-table-column label="查看" width="80" align="center">
           <template slot-scope="{ row }">
             <el-checkbox
               :value="has(row.view)"
@@ -64,23 +64,27 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="管理" width="90" align="center">
+        <el-table-column label="修改" width="80" align="center">
           <template slot-scope="{ row }">
             <el-checkbox
-              :value="has(row.manage)"
+              :value="has(row.update)"
               :disabled="currentRow && currentRow.builtin"
-              @change="v => toggle(row.manage, v)"
+              @change="v => toggle(row.update, v)"
             />
           </template>
         </el-table-column>
-        <el-table-column label="说明" min-width="150">
+        <el-table-column label="删除" width="80" align="center">
           <template slot-scope="{ row }">
-            能{{ row.name }}的{{ '查看 / 改动' }}
+            <el-checkbox
+              :value="has(row.delete)"
+              :disabled="currentRow && currentRow.builtin"
+              @change="v => toggle(row.delete, v)"
+            />
           </template>
         </el-table-column>
       </el-table>
       <div class="tip">
-        查看 = 打开页面与查询，管理 = 建、改、删与下发。没有查看权的话，管理权也是空的。
+        查看 = 打开页面与查询；修改 = 新建、编辑与下发；删除 = 删除。没有查看权的话，修改和删除也是空的。
       </div>
       <span slot="footer">
         <el-button @click="permVisible = false">取消</el-button>
@@ -132,10 +136,10 @@ export default {
     }
   },
   computed: {
-    // 没有 system:manage 的人只看不改，系统管理员除外
+    // 没有 system:update 的人只看不改，系统管理员除外
     canManage() {
       const perms = this.$store.getters.permissions || []
-      return this.$store.getters.isSuperAdmin || perms.indexOf('system:manage') >= 0
+      return this.$store.getters.isSuperAdmin || perms.indexOf('system:update') >= 0
     }
   },
   created() {

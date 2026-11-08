@@ -62,6 +62,10 @@ public enum Isp {
         return prefix;
     }
 
+    public String getAltPrefix() {
+        return altPrefix;
+    }
+
     /** 归一化：台账里可能有 CM / CTCC / CHINA-UNICOM 之类写法，统一收敛到枚举 */
     public static Isp of(String value) {
         if (value == null || value.isBlank()) {

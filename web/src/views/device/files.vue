@@ -19,7 +19,7 @@
       <el-button slot="trigger" size="small" type="primary">选择文件</el-button>
       <!-- 上传、删除、下发都会动设备上的东西，没有写权限就别摆出来 -->
       <el-button
-        v-if="$has('file:manage')"
+        v-if="$has('file:update')"
         slot="tip"
         size="small"
         type="success"
@@ -66,9 +66,9 @@
       </el-table-column>
       <el-table-column label="操作" width="240">
         <template slot-scope="{ row }">
-          <el-button v-if="$has('file:manage')" type="text" @click="openDeliver(row)">下发</el-button>
+          <el-button v-if="$has('file:update')" type="text" @click="openDeliver(row)">下发</el-button>
           <el-button type="text" @click="onCopyUrl(row)">取地址</el-button>
-          <el-button v-if="$has('file:manage')" type="text" class="danger-text" @click="onDelete(row)">删除</el-button>
+          <el-button v-if="$has('file:delete')" type="text" class="danger-text" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -114,7 +114,7 @@
       </el-form>
       <div slot="footer">
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button v-if="$has('file:manage')" type="primary" :loading="saving" @click="onDeliver">下发</el-button>
+        <el-button v-if="$has('file:update')" type="primary" :loading="saving" @click="onDeliver">下发</el-button>
       </div>
     </el-dialog>
   </div>
