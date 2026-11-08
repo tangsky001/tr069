@@ -26,6 +26,9 @@ public class InformService {
     /** ManagementServer.ConnectionRequestURL 的后缀 */
     private static final String CONN_REQUEST_URL_SUFFIX = "ManagementServer.ConnectionRequestURL";
 
+    /** ManagementServer.UDPConnectionRequestAddress 的后缀（TR-111 NAT 穿越） */
+    private static final String UDP_CONN_REQUEST_SUFFIX = "ManagementServer.UDPConnectionRequestAddress";
+
     private static final String SOFTWARE_VERSION_SUFFIX = "DeviceInfo.SoftwareVersion";
 
     private static final String HARDWARE_VERSION_SUFFIX = "DeviceInfo.HardwareVersion";
@@ -46,6 +49,8 @@ public class InformService {
             }
             if (name.endsWith(CONN_REQUEST_URL_SUFFIX)) {
                 session.setConnectionRequestUrl(p.getValue());
+            } else if (name.endsWith(UDP_CONN_REQUEST_SUFFIX)) {
+                session.setUdpConnectionRequestAddress(p.getValue());
             } else if (name.endsWith(SOFTWARE_VERSION_SUFFIX)) {
                 session.setSoftwareVersion(p.getValue());
             } else if (name.endsWith(HARDWARE_VERSION_SUFFIX)) {

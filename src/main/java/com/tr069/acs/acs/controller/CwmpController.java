@@ -473,6 +473,12 @@ public class CwmpController {
 
         CpeSession session = sessionManager.getOrCreate(oui, sn, connId);
 
+        // 从 Inform 报文的 SOAP 命名空间提取设备声明的 CWMP 版本（cwmp-1-0 ~ cwmp-1-4），
+        // 后续所有 ACS 回复都用设备声明的版本，保证向下兼容
+        if (inform.getCwmpVersion() != null && !inform.getCwmpVersion().isBlank()) {
+            session.setCwmpVersion(inform.getCwmpVersion());
+        }
+
         if (!acquireSession(sn, session.getSessionId(), previousSessionId, response)) {
             return;
         }

@@ -52,6 +52,9 @@ public class CpeSession {
     /** 反向连接地址，取自 ManagementServer.ConnectionRequestURL */
     private volatile String connectionRequestUrl;
 
+    /** UDP 反向连接地址（TR-111），取自 ManagementServer.UDPConnectionRequestAddress */
+    private volatile String udpConnectionRequestAddress;
+
     private volatile String softwareVersion;
 
     private volatile String hardwareVersion;

@@ -95,7 +95,14 @@ public class DeviceCapabilityService {
             "WiFi.",
             // SIP 电话
             "Services.VoiceService.",
-            "VoiceService.");
+            "VoiceService.",
+            // Device:2 核心子树
+            "IP.Interface.",       // IP 接口（Device:2 主要的多实例 WAN 控制对象）
+            "Hosts.",               // 终端设备列表（Device:2 Hosts 对象）
+            "Bridging.",            // 桥接（Device:2 Bridging 对象）
+            "GatewayInfo.",         // 网关信息（Device:2 GatewayInfo 对象）
+            "ManagementServer.",    // 管理服务器（含 ConnectionRequestURL 等）
+            "Diagnostics.");        // 诊断（IPPing / TraceRoute / Download / Upload）
 
     /** 会话级故障码：下发超时、连接断开、指令未入队，由会话层与本服务生成 */
     private static final String FAULT_SESSION = "8002";

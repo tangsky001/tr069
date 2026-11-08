@@ -381,6 +381,12 @@ public class DeviceController {
     /** IPPing 诊断对象在 TR-098 下的挂载位置（直接挂在根节点下，没有 IP.Diagnostics 这一层） */
     private static final String PING_BASE_TR098 = "InternetGatewayDevice.IPPingDiagnostics.";
 
+    /** TraceRoute 诊断对象在 TR-181 下的挂载位置 */
+    private static final String TRACE_BASE_TR181 = "Device.IP.Diagnostics.TraceRoute.";
+
+    /** TraceRoute 诊断对象在 TR-098 下的挂载位置 */
+    private static final String TRACE_BASE_TR098 = "InternetGatewayDevice.TraceRouteDiagnostics.";
+
     /** 下发 IPPing 诊断 */
     @PostMapping("/{sn}/diagnostics/ping")
     public Result<Map<String, Object>> pingDiagnostics(@PathVariable String sn,
@@ -409,6 +415,37 @@ public class DeviceController {
     /** 诊断对象挂载位置，按设备登记的数据模型选 */
     private String pingBase(String sn) {
         return DataModel.TR181 == DataModel.ofRoot(rootNodeOf(sn)) ? PING_BASE_TR181 : PING_BASE_TR098;
+    }
+
+    /** TraceRoute 诊断对象挂载位置 */
+    private String traceBase(String sn) {
+        return DataModel.TR181 == DataModel.ofRoot(rootNodeOf(sn)) ? TRACE_BASE_TR181 : TRACE_BASE_TR098;
+    }
+
+    /** 下发 TraceRoute 诊断（TR-143） */
+    @PostMapping("/{sn}/diagnostics/trace")
+    public Result<Map<String, Object>> traceDiagnostics(@PathVariable String sn,
+                                                         @RequestBody(required = false) PingRequest request) {
+        String host = request == null ? null : request.getHost();
+        if (host == null || host.isBlank()) {
+            return Result.failure("缺少诊断目标地址");
+        }
+        String target = host.trim();
+        String base = traceBase(sn);
+        List<Map<String, String>> params = new ArrayList<>();
+        params.add(paramEntry(base + "Host", target, "string"));
+        params.add(paramEntry(base + "DiagnosticsState", "Requested", "string"));
+        params.add(paramEntry(base + "NumberOfTries", "3", "unsignedInt"));
+        params.add(paramEntry(base + "Timeout", "5000", "unsignedInt"));
+        params.add(paramEntry(base + "DataBlockSize", "32", "unsignedInt"));
+        RpcDispatchService.DispatchHandle handle =
+                rpcDispatchService.submitAsync(sn, "SetParameterValues",
+                        spvArgs("acs-trace", params), null);
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", handle.getTaskId());
+        data.put("target", target);
+        data.put("path", base);
+        return Result.success(data);
     }
 
     private String rootNodeOf(String sn) {

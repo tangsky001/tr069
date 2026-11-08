@@ -7,6 +7,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PreDestroy;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.DataInputStream;
@@ -20,6 +21,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -86,6 +88,11 @@ public class TunnelClient {
     private volatile DataOutputStream out;
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
+    /** 复用单例 HttpClient，避免每个请求都 new */
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .build();
+
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
         if (SERVER_HOST == null || SERVER_HOST.isBlank()) {
@@ -97,6 +104,7 @@ public class TunnelClient {
     }
 
     /** 停止隧道 */
+    @PreDestroy
     public void stop() {
         running.set(false);
         closeQuietly();
@@ -239,11 +247,6 @@ public class TunnelClient {
             String method = requestLine[0];
             String path = requestLine.length > 1 ? requestLine[1] : "/";
 
-            // 构造本地请求：去掉 Host 头（HttpClient 自己加），保留其他头
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(5))
-                    .build();
-
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
                     .uri(URI.create("http://127.0.0.1:" + localPort + path))
                     .timeout(Duration.ofSeconds(30));
@@ -262,7 +265,9 @@ public class TunnelClient {
                 if (colon < 0) continue;
                 String name = line.substring(0, colon).trim();
                 String value = line.substring(colon + 1).trim();
-                if (name.equalsIgnoreCase("Host") || name.equalsIgnoreCase("Content-Length")) {
+                if (name.equalsIgnoreCase("Host")
+                        || name.equalsIgnoreCase("Content-Length")
+                        || name.equalsIgnoreCase("Transfer-Encoding")) {
                     continue;
                 }
                 reqBuilder.header(name, value);
@@ -275,16 +280,27 @@ public class TunnelClient {
                 reqBuilder.method(method, HttpRequest.BodyPublishers.ofByteArray(body));
             }
 
-            HttpResponse<byte[]> resp = client.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofByteArray());
+            HttpResponse<byte[]> resp = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofByteArray());
 
-            // 构造 HTTP 响应字节流
+            // 构造 HTTP 响应字节流——跳过 Content-Length（已有），补状态文案
             StringBuilder respHead = new StringBuilder();
-            respHead.append("HTTP/1.1 ").append(resp.statusCode()).append(" \r\n");
-            resp.headers().map().forEach((k, vs) -> {
-                for (String v : vs) {
-                    respHead.append(k).append(": ").append(v).append("\r\n");
+            int statusCode = resp.statusCode();
+            String statusText = statusText(statusCode);
+            respHead.append("HTTP/1.1 ").append(statusCode).append(" ").append(statusText).append("\r\n");
+            boolean hasContentLength = false;
+            for (Map.Entry<String, java.util.List<String>> entry : resp.headers().map().entrySet()) {
+                String headerName = entry.getKey();
+                if (headerName == null) continue;
+                // Content-Length 由我们自己算，跳过 HttpClient 给的（可能含 transfer-encoding 冲突）
+                if (headerName.equalsIgnoreCase("Content-Length")
+                        || headerName.equalsIgnoreCase("Transfer-Encoding")) {
+                    continue;
                 }
-            });
+                for (String v : entry.getValue()) {
+                    respHead.append(headerName).append(": ").append(v).append("\r\n");
+                }
+            }
+            // 统一用 Content-Length，不用 chunked
             respHead.append("Content-Length: ").append(resp.body().length).append("\r\n");
             respHead.append("\r\n");
 
@@ -303,6 +319,55 @@ public class TunnelClient {
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
             sendHttpResponse(requestId, err);
         }
+    }
+
+    /** HTTP 状态码 → 状态文案 */
+    private static String statusText(int code) {
+        return switch (code / 100) {
+            case 1 -> switch (code) {
+                case 100 -> "Continue";
+                case 101 -> "Switching Protocols";
+                case 102 -> "Processing";
+                default -> "OK";
+            };
+            case 2 -> switch (code) {
+                case 200 -> "OK";
+                case 201 -> "Created";
+                case 202 -> "Accepted";
+                case 204 -> "No Content";
+                case 206 -> "Partial Content";
+                default -> "OK";
+            };
+            case 3 -> switch (code) {
+                case 301 -> "Moved Permanently";
+                case 302 -> "Found";
+                case 304 -> "Not Modified";
+                case 307 -> "Temporary Redirect";
+                case 308 -> "Permanent Redirect";
+                default -> "Redirect";
+            };
+            case 4 -> switch (code) {
+                case 400 -> "Bad Request";
+                case 401 -> "Unauthorized";
+                case 403 -> "Forbidden";
+                case 404 -> "Not Found";
+                case 405 -> "Method Not Allowed";
+                case 408 -> "Request Timeout";
+                case 409 -> "Conflict";
+                case 413 -> "Payload Too Large";
+                case 415 -> "Unsupported Media Type";
+                default -> "Bad Request";
+            };
+            case 5 -> switch (code) {
+                case 500 -> "Internal Server Error";
+                case 501 -> "Not Implemented";
+                case 502 -> "Bad Gateway";
+                case 503 -> "Service Unavailable";
+                case 504 -> "Gateway Timeout";
+                default -> "Internal Server Error";
+            };
+            default -> "Unknown";
+        };
     }
 
     // ==================== 心跳循环 ====================
