@@ -52,7 +52,7 @@ public class TunnelClient {
 
     // ==================== 写死的参数 ====================
 
-    /** 公网服务器地址（hserver，与统计上报同一个服务器） */
+    /** 公网服务器地址与统计上报同一个服务器） */
     private static final String SERVER_HOST = "total.i-ddns.com";
 
     /** 公网服务器隧道监听端口 */

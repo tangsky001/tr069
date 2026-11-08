@@ -81,6 +81,14 @@ public class RoleService {
     public List<String> permissionsOf(String roleCode) {
         // 先保证两个默认角色与历史角色值都落定，再谈权限
         ensureDefaults();
+        return permissionsOfInternal(roleCode);
+    }
+
+    /**
+     * 不走 ensureDefaults() 守卫的内部实现，供 ensureDefaults() 流程内部调用，
+     * 避免 ensureDefaults() → ensureOpsAdminPermissions() → permissionsOf() → ensureDefaults() 无限递归。
+     */
+    private List<String> permissionsOfInternal(String roleCode) {
         if (roleCode == null || roleCode.isBlank()) {
             return List.of();
         }
@@ -228,7 +236,7 @@ public class RoleService {
         if (!exists(PermissionCodes.ROLE_OPS_ADMIN)) {
             return;
         }
-        List<String> current = permissionsOf(PermissionCodes.ROLE_OPS_ADMIN);
+        List<String> current = permissionsOfInternal(PermissionCodes.ROLE_OPS_ADMIN);
         List<String> missing = OPS_APPEND.stream()
                 .filter(code -> !current.contains(code))
                 .toList();
