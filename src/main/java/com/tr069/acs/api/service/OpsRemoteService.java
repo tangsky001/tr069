@@ -57,7 +57,7 @@ public class OpsRemoteService {
     private static final String DOMAIN_SUFFIX = "i-ddns.com";
 
     /** 内网穿透公网端口（写死，不可配置） */
-    private static final int PUBLIC_PORT = 443;
+    private static final int PUBLIC_PORT = 9443;
 
     private final SecureRandom random = new SecureRandom();
 
