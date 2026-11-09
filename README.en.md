@@ -10,6 +10,7 @@ built with Spring Boot 3 + Vue 2.
 - Adapted ONT models: **[doc/ADAPTED_MODELS.en.md](./doc/ADAPTED_MODELS.en.md)**
 - Frontend project: [web/](./web)
 - Screenshots: [doc/Display/](./doc/Display) (see "Screenshots" below)
+- **Installer APP (Android client)** is live: login, dashboard, device management, device detail (WAN / WLAN / SIP), work order creation, diagnostics, system settings — reaches the ACS through an intranet penetration tunnel; screenshots in "Screenshots · Installer APP (mobile)" below
 - Want to help? See **[section 11 Repository and contributing](#11-repository-and-contributing)**
 
 > The configuration delivery chain has been **largely reworked**: templates moved from
@@ -256,6 +257,54 @@ operator sessions and work-order data are all **not implemented** yet.
 
 ![Operations management](doc/Display/143916_516.png)
 
+### Installer APP (mobile)
+
+The installer APP is an Android client for field engineers. It **does not connect to ONTs directly** —
+it goes through an intranet penetration tunnel back to the ACS:
+installer APP → `https://subdomain.i-ddns.com` (443) → server routes by Host → ACS Socket → ACS local Tomcat.
+
+Dark theme, same backend APIs as the web client.
+
+#### Login
+
+Account + password login (ACS address / username / password). Login source is recorded as
+"mobile" on the ACS side (`LoginSourceResolver` detects it by UA).
+
+![Installer APP - login](doc/Display/215250_790.png)
+
+#### Dashboard
+
+Device statistics (total / online / offline / delivered / not delivered), work order statistics
+(total / success / failure / running), template statistics (total / enabled), vendor distribution
+bar chart; bottom tab bar: home / devices / new work order / diagnostics / settings.
+
+![Installer APP - dashboard](doc/Display/215604_604.png)
+
+#### Device management
+
+Card-style device list, one card per device: SN (large text), online/offline badge, model / vendor /
+ISP / room / firmware version / last inform; SN search at the top. Long-press a card for a quick
+operations menu: **query super admin**, **deep factory reset**, **mark and replace ONT**.
+
+![Installer APP - device management](doc/Display/220731_618.png)
+
+![Installer APP - quick operations menu](doc/Display/221938_909.png)
+
+#### Device detail (business panel)
+
+Same business snapshot as the web client, laid out for a vertical phone screen:
+
+- **WAN connections**: per-connection service type (TR069 / INTERNET / VOIP), connection mode,
+  IP protocol, IP address, NAT, MTU, bound ports, uptime;
+- **WLAN**: split by 2.4G / 5.8G, one row per SSID, showing encryption mode
+  (`AESEncryption` / `TKIPandAESEncryption`) and status (enabled / disabled);
+- **SIP voice**: only real line instances (e.g. `0000`), with registration status, server,
+  registrar and auth account.
+
+![Installer APP - device detail · WAN connections](doc/Display/221703_511.png)
+
+![Installer APP - device detail · WLAN / SIP](doc/Display/221726_875.png)
+
 #### Screenshot inventory
 
 Screenshots are **not moved or renamed** — they all live in the root of
@@ -282,6 +331,17 @@ them into the **ACS side** (ACS service / ONT device management) and the **OLT s
 | `143916_516.png` | Operations management (environment overview + remote ops QR codes) | Screenshots · Operations management | In use |
 | `162046_560.png` | Device list (**older** version, used before `013530_034`) | — | Unused (kept) |
 | `025159_916.png` | Device list (**older** version, used early on) | — | Unused (kept) |
+
+**Installer APP (mobile)**
+
+| File | Content | Where it is used | Status |
+| --- | --- | --- | --- |
+| `215250_790.png` | Installer APP login | Screenshots · Installer APP · Login | In use |
+| `215604_604.png` | Dashboard (device / work order / template stats + vendor distribution) | Screenshots · Installer APP · Dashboard | In use |
+| `220731_618.png` | Device management list (card style + SN search) | Screenshots · Installer APP · Device management | In use |
+| `221938_909.png` | Quick operations menu (query super admin / factory reset / mark & replace) | Screenshots · Installer APP · Device management | In use |
+| `221703_511.png` | Device detail · WAN connections (service type / IP / NAT / MTU / uptime) | Screenshots · Installer APP · Device detail | In use |
+| `221726_875.png` | Device detail · WLAN by band / SIP voice | Screenshots · Installer APP · Device detail | In use |
 
 **OLT side (converged OLT management: read-only collection, live config delivery)**
 
@@ -372,6 +432,18 @@ Bottom-right toolbar of the device list (`web/src/views/device/list.vue`, select
 | Advanced… ▲ | Export devices (CSV), deliver custom TR069 parameters (dialog → `SetParameterValues`), debug command (dialog → any RPC), refresh status | Telnet commands, strip SSID prefix, repair SIP/bridge, export/clone config file, force inform |
 | Converged OLT management ▲ | OLT/ONU management (jump to the OLT page) | OLT topology |
 | Reboot | Batch `Reboot` (with confirmation) | — |
+
+**Installer APP (Android client)**:
+
+| Tab | Status | Description |
+| --- | --- | --- |
+| Login | Done | ACS address / username / password; dark theme |
+| Dashboard | Done | Device statistics (total / online / offline / delivered / not delivered), work order statistics (total / success / failure / running), template statistics (total / enabled), vendor distribution bar chart |
+| Device management | Done | Card-style list: SN / online-offline badge / model / vendor / ISP / room / firmware version / last inform; SN search at top; long-press card for quick operations menu: query super admin / deep factory reset / mark and replace ONT |
+| Device detail | Done | **WAN connections**: service type / connection mode / IP protocol / IP address / NAT / MTU / bound ports / uptime; **WLAN**: split by 2.4G / 5.8G, per-SSID encryption mode and status; **SIP voice**: only real line instances with registration status / server / auth account |
+| New work order | Done | Work order creation and execution tracking |
+| Diagnostics | Done | Field troubleshooting |
+| System settings | Done | Local settings |
 
 ### 1.3 Adapted ONT models
 
@@ -568,7 +640,7 @@ session cannot be used to rewrite passwords in bulk.
 | 18 | ~~**MAC column value**~~ | **Done** | GPON SN-authenticated ONTs get their MAC from the OLT too: the background backfill sends `display ont ipconfig <port> <ONT ID>` to online ONTs without a MAC and normalises `ONT MAC` to `AA:BB:CC:DD:EE:FF` (Huawei's 4-4-4 form is accepted); only `0000-0000-0000` keeps the `-` and is flagged so it is not retried. A collected MAC is never wiped by later collection |
 | 19 | Output label case fallback | Handled | English labels are not case-stable across firmware versions (e.g. `Traffic Schedulers` / `traffic Schedulers`), so the translation table tries an exact match first and falls back to a case-insensitive one; labels/values wrapped onto the next line are stitched back together |
 | 20 | **Online upgrade** (system self-update) | **Not done** | Page `/system/upgrade` is mounted (`ops:view` permission). Pending: upgrade package upload/download with sha256 verify, version comparison (current version from pom build version), stop-replace-restart with rollback on failure |
-| 21 | **Intranet penetration · mobile delivery of ONT data** | **Not done** | The "Remote operations" section on the ops page is a placeholder: three QR codes (LAN login / cloud login / APK download), token generation and regeneration, permission checkboxes and device-scope dropdown are wired as a form — but this is only a frontend and backend form shell. **Intranet penetration, installer-app scan-to-login auth, real operator sessions, and work-order data integration are all not implemented.** Tunnel selection (frp / self-hosted), auth and northbound `/openapi/v1` integration are TBD |
+| 21 | **Intranet penetration · mobile delivery of ONT data** | **Partial** | The "Remote operations" section on the ops page is a placeholder: three QR codes (LAN login / cloud login / APK download), token management, permission checkboxes and device-scope dropdown. **Tunnel is implemented**: ACS-side `TunnelClient` (Socket long connection to server `total.i-ddns.com:7000`, handshake sends instanceId + subdomain, 30 s heartbeat); server-side `TunnelServer` (listens on 7000 for ACS connections, calls Tencent Cloud DNSPod API to auto-create subdomain A records, maintains routing table) + `TunnelHttpHandler` (listens on 443 for installer APP requests, routes by Host header to the matching ACS) + `TunnelController` (management panel: view all tunnel instances, release domains; frontend page `/tunnel`). Full chain: installer APP → `https://subdomain.i-ddns.com` → server 443 → route by Host → ACS Socket → ACS local Tomcat. **Installer APP client is implemented**: Android dark theme, login page, dashboard (device / work order / template stats + vendor distribution), device management list (card style + SN search), device detail (WAN connections / WLAN by band / SIP voice), quick operations menu (query super admin / deep factory reset / mark & replace ONT), new work order, diagnostics, system settings — five tabs. **Still pending**: installer APP scan-to-login auth (currently account/password login), real operator sessions and management, work-order data integration |
 
 ---
 
@@ -610,6 +682,10 @@ PilotACS/
 │   └── application.yml                  Default configuration
 └── web/                      Frontend project (build output dist/ not committed)
 ```
+
+> The installer APP (Android client) is a **separate project**; its source code is not in this
+> repository. Its interface contract with this repo is the admin `/api/**` (reaching the ACS
+> through the intranet penetration tunnel); screenshots in "Screenshots · Installer APP (mobile)".
 
 External configuration directory (default `./configuration`; relative paths resolve against the
 **jar's directory**, independent of the process working directory — see `acs.worklist.root-path`):
