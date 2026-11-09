@@ -11,10 +11,18 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** ONT 自动注册：后台按每台 OLT 自己的扫描间隔去设备上扫待注册光猫，命中模板就注册掉 */
 @Slf4j
@@ -31,6 +39,9 @@ public class OltOntAutoRegisterService {
     /** 一轮里最多花多久，超了剩下的留到下一轮 */
     private static final long MAX_ROUND_MILLIS = 5 * 60 * 1000L;
 
+    /** 并行处理多台 OLT 的上限 */
+    private static final int MAX_CONCURRENCY = 8;
+
     private final OltDeviceMapper deviceMapper;
 
     private final OltOntRegService ontRegService;
@@ -39,6 +50,28 @@ public class OltOntAutoRegisterService {
 
     /** 已经提示过「没开自动注册」的设备：只在状态变化时打一条日志，不刷屏 */
     private final Set<Long> reportedOff = ConcurrentHashMap.newKeySet();
+
+    /** 并行处理池 */
+    private ThreadPoolExecutor devicePool;
+
+    @jakarta.annotation.PostConstruct
+    public void start() {
+        AtomicInteger seq = new AtomicInteger();
+        devicePool = new ThreadPoolExecutor(MAX_CONCURRENCY, MAX_CONCURRENCY,
+                60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(MAX_CONCURRENCY * 2), r -> {
+            Thread thread = new Thread(r, "ont-auto-reg-" + seq.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        });
+        devicePool.allowCoreThreadTimeOut(true);
+    }
+
+    @jakarta.annotation.PreDestroy
+    public void stop() {
+        if (devicePool != null) {
+            devicePool.shutdownNow();
+        }
+    }
 
     @Scheduled(fixedDelay = TICK_MILLIS, initialDelay = INITIAL_DELAY_MILLIS)
     public void scanAndRegister() {
@@ -49,34 +82,53 @@ public class OltOntAutoRegisterService {
         try {
             List<OltDevice> devices = deviceMapper.selectList(
                     new LambdaQueryWrapper<OltDevice>().orderByAsc(OltDevice::getId));
+            cleanupReportedOff(devices);
             long deadline = System.currentTimeMillis() + MAX_ROUND_MILLIS;
-            int scanned = 0;
-            int registered = 0;
+            // 先筛出到点的设备，减少线程池提交量
+            List<OltDevice> queue = new ArrayList<>();
             for (OltDevice device : devices) {
                 if (System.currentTimeMillis() > deadline) {
-                    log.warn("ONT 自动注册超出单轮上限，剩余设备下一轮处理");
                     break;
                 }
                 OltOntRegConfig config = ontRegService.config(device.getId());
                 if (config.getEnabled() == null || config.getEnabled() != 1) {
-                    // 静默跳过最难排查：「自动注册不生效」和「根本没开」在日志里长得一样。
-                    // 只在状态变化时提示一次，不会每 10 秒刷屏
                     if (reportedOff.add(device.getId())) {
                         log.info("ONT 自动注册未开启，跳过 id={}（页面上打开开关并点「保存设置」后才会跑）",
                                 device.getId());
                     }
-                    continue; // 这台没开自动注册
-                }
-                reportedOff.remove(device.getId());
-                if (!due(config)) {
                     continue;
                 }
-                scanned++;
-                try {
-                    registered += ontRegService.autoRegister(device.getId());
-                } catch (Exception e) {
-                    // 单台出问题不能让整轮停住：剩下的设备照扫
-                    log.info("ONT 自动注册失败 id={}: {}", device.getId(), e.getMessage());
+                reportedOff.remove(device.getId());
+                if (due(config)) {
+                    queue.add(device);
+                }
+            }
+            if (queue.isEmpty()) {
+                return;
+            }
+            int scanned = queue.size();
+            int registered = 0;
+            // 并行处理多台 OLT
+            for (int from = 0; from < queue.size(); from += MAX_CONCURRENCY) {
+                if (System.currentTimeMillis() > deadline) {
+                    log.warn("ONT 自动注册超出单轮上限，剩余 {} 台下一轮处理", queue.size() - from);
+                    break;
+                }
+                List<OltDevice> chunk = queue.subList(from, Math.min(from + MAX_CONCURRENCY, queue.size()));
+                List<Future<Integer>> futures = new ArrayList<>(chunk.size());
+                for (OltDevice device : chunk) {
+                    try {
+                        futures.add(devicePool.submit(() -> ontRegService.autoRegister(device.getId())));
+                    } catch (java.util.concurrent.RejectedExecutionException e) {
+                        log.info("ONT 自动注册提交被拒 id={}", device.getId());
+                    }
+                }
+                for (Future<Integer> future : futures) {
+                    try {
+                        registered += future.get();
+                    } catch (Exception e) {
+                        log.info("ONT 自动注册失败: {}", e.getMessage());
+                    }
                 }
             }
             if (scanned > 0) {
@@ -85,6 +137,12 @@ public class OltOntAutoRegisterService {
         } finally {
             running.set(false);
         }
+    }
+
+    /** 清理已删除设备的 reportedOff 记录 */
+    private void cleanupReportedOff(List<OltDevice> devices) {
+        Set<Long> alive = devices.stream().map(OltDevice::getId).collect(java.util.stream.Collectors.toSet());
+        reportedOff.removeIf(id -> id == null || !alive.contains(id));
     }
 
     /** 距上次扫描够不够一个间隔；没扫过就现在扫 */

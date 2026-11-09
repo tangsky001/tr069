@@ -28,6 +28,24 @@ public class RpcTaskRegistry {
         return future;
     }
 
+    /**
+     * 仅在 taskId 尚未登记时创建结果凭据，返回新建的 Future；
+     * 已存在则返回原 Future。用于进程重启后从 Redis 队列重建 pending 表。
+     */
+    public CompletableFuture<SoapMessage> createIfAbsent(long taskId) {
+        CompletableFuture<SoapMessage> existing = futures.get(taskId);
+        if (existing != null) {
+            return existing;
+        }
+        CompletableFuture<SoapMessage> future = new CompletableFuture<>();
+        CompletableFuture<SoapMessage> prev = futures.putIfAbsent(taskId, future);
+        if (prev != null) {
+            return prev;
+        }
+        submitTimes.putIfAbsent(taskId, System.currentTimeMillis());
+        return future;
+    }
+
     /** 用设备响应完成指令 */
     public void complete(long taskId, SoapMessage message) {
         submitTimes.remove(taskId);

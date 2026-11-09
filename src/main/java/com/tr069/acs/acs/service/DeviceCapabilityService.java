@@ -3,6 +3,7 @@ package com.tr069.acs.acs.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.tr069.acs.acs.config.CapabilityProfiles;
+import com.tr069.acs.acs.adaptation.IspAdaptation;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.model.Isp;
 import com.tr069.acs.acs.session.CpeSession;
@@ -94,7 +95,14 @@ public class DeviceCapabilityService {
             "WiFi.",
             // SIP 电话
             "Services.VoiceService.",
-            "VoiceService.");
+            "VoiceService.",
+            // Device:2 核心子树
+            "IP.Interface.",       // IP 接口（Device:2 主要的多实例 WAN 控制对象）
+            "Hosts.",               // 终端设备列表（Device:2 Hosts 对象）
+            "Bridging.",            // 桥接（Device:2 Bridging 对象）
+            "GatewayInfo.",         // 网关信息（Device:2 GatewayInfo 对象）
+            "ManagementServer.",    // 管理服务器（含 ConnectionRequestURL 等）
+            "Diagnostics.");        // 诊断（IPPing / TraceRoute / Download / Upload）
 
     /** 会话级故障码：下发超时、连接断开、指令未入队，由会话层与本服务生成 */
     private static final String FAULT_SESSION = "8002";
@@ -122,6 +130,8 @@ public class DeviceCapabilityService {
     private final CpeDeviceMapper deviceMapper;
     /** 按运营商的能力采集标准 */
     private final CapabilityProfiles capabilityProfiles;
+
+    private final com.tr069.acs.acs.adaptation.AdaptationManager adaptationManager;
 
     /** 采集总开关 */
     @Value("${acs.device.capability.enabled:true}")
@@ -265,12 +275,13 @@ public class DeviceCapabilityService {
                 paths.add(p.getName());
             }
         }
-        Isp detected = Isp.detect(paths);
-        if (detected == null || detected == Isp.STANDARD) {
+        com.tr069.acs.acs.adaptation.IspAdaptation adaptation = adaptationManager.detect(paths);
+        if (adaptation == null) {
             return;
         }
-        informIsp.put(sn, detected.getCode());
-        log.info("按 Inform 私有前缀预判采集标准: sn={}, isp={}", sn, detected.getCode());
+        informIsp.put(sn, adaptation.code());
+        log.info("按 Inform 私有前缀预判采集标准: sn={}, isp={}, 适配类={}",
+                sn, adaptation.code(), adaptation.getClass().getSimpleName());
     }
 
     /** 手动触发一次采集，供管理端调用 */
@@ -944,12 +955,35 @@ public class DeviceCapabilityService {
         });
     }
 
-    /** 本次采集采用的采集标准：按设备台账的运营商取，台账没登记就走通用档 */
+    /**
+     * 本次采集采用的采集标准：按设备台账的运营商取，台账没登记就走通用档。
+     * yml 里配了用配的，没配用 builtin 里写死的那份，最后用 IspAdaptation 的采集策略覆盖。
+     */
     private CapabilityProfiles.Profile profileFor(String isp) {
         if (capabilityProfiles == null) {
             return new CapabilityProfiles.Profile();
         }
-        return capabilityProfiles.forIsp(Isp.of(isp));
+        CapabilityProfiles.Profile profile = capabilityProfiles.forIsp(Isp.of(isp));
+        // 用运营商适配实现覆盖采集策略：skipPrefixes / extraProbePaths /
+        // capabilitySubtrees / gpnStrategy——这些差异收在 IspAdaptation 实现类里，
+        // 不再硬编码在 CapabilityProfiles.builtin 的 if 分支中
+        IspAdaptation adaptation = adaptationManager.of(isp);
+        if (!adaptation.skipPrefixes().isEmpty()) {
+            profile.setSkipPrefixes(adaptation.skipPrefixes());
+        }
+        if (!adaptation.extraProbePaths().isEmpty()) {
+            List<String> probePaths = new ArrayList<>(profile.getProbePaths());
+            probePaths.addAll(adaptation.extraProbePaths());
+            profile.setProbePaths(probePaths);
+        }
+        if (!adaptation.capabilitySubtrees().isEmpty()) {
+            profile.setSubtrees(adaptation.capabilitySubtrees());
+        }
+        String strategy = adaptation.gpnStrategy();
+        if (strategy != null && !strategy.isBlank()) {
+            profile.setGpnStrategy(strategy);
+        }
+        return profile;
     }
 
     /** 设备台账上的运营商，查不到返回 null（由 {@link Isp#of} 归到通用档） */
@@ -1268,8 +1302,8 @@ public class DeviceCapabilityService {
 
     /** 按能力树里的厂商私有前缀认运营商，并回写台账 */
     private void detectAndWriteIsp(String sn, List<String> paths) {
-        Isp detected = Isp.detect(paths);
-        if (detected == null || detected == Isp.STANDARD) {
+        com.tr069.acs.acs.adaptation.IspAdaptation adaptation = adaptationManager.detect(paths);
+        if (adaptation == null) {
             return;
         }
         if (Isp.of(deviceIsp(sn)) != Isp.STANDARD) {
@@ -1278,10 +1312,11 @@ public class DeviceCapabilityService {
         try {
             deviceMapper.update(null, new LambdaUpdateWrapper<CpeDevice>()
                     .eq(CpeDevice::getSn, sn)
-                    .set(CpeDevice::getIsp, detected.getCode()));
-            log.info("按能力树私有前缀登记设备运营商: sn={}, isp={}", sn, detected.getCode());
+                    .set(CpeDevice::getIsp, adaptation.code()));
+            log.info("按能力树私有前缀登记设备运营商: sn={}, isp={}, 适配类={}",
+                    sn, adaptation.code(), adaptation.getClass().getSimpleName());
         } catch (Exception e) {
-            log.warn("回写设备运营商失败: sn={}, isp={}, err={}", sn, detected.getCode(), e.getMessage());
+            log.warn("回写设备运营商失败: sn={}, isp={}, err={}", sn, adaptation.code(), e.getMessage());
         }
     }
 

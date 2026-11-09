@@ -193,6 +193,18 @@ export const constantRoutes = [
         name: 'SystemLoginLogs',
         component: () => import('@/views/system/login-logs'),
         meta: { title: '登录日志', icon: 'el-icon-time', permission: 'system:view' }
+      },
+      {
+        path: 'ops',
+        name: 'SystemOps',
+        component: () => import('@/views/system/ops'),
+        meta: { title: '运维管理', icon: 'el-icon-s-tools', permission: 'ops:view' }
+      },
+      {
+        path: 'upgrade',
+        name: 'SystemUpgrade',
+        component: () => import('@/views/system/upgrade'),
+        meta: { title: '在线更新', icon: 'el-icon-refresh', permission: 'ops:update' }
       }
     ]
   },

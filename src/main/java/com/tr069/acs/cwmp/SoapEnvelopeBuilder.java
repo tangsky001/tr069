@@ -354,7 +354,8 @@ public final class SoapEnvelopeBuilder {
                 str(args, "FailureURL"));
     }
 
-    /** Upload：CommandKey FileType URL Username(nil) Password(nil) DelaySeconds */
+    /** Upload：CommandKey FileType URL Username(nil) Password(nil) DelaySeconds
+     *  后三个是 Amd5+ 新增字段，空值不写，旧设备忽略 */
     private static void buildUpload(Document doc, Element body, String cwmpNs,
                                     Map<String, Object> args) {
         Element root = appendCwmpRoot(doc, body, cwmpNs, RpcMethod.UPLOAD.getValue());
@@ -369,6 +370,22 @@ public final class SoapEnvelopeBuilder {
                 str(args, "Password"));
         XmlUtils.appendText(doc, root, cwmpNs, SoapNamespace.PREFIX_CWMP, "DelaySeconds",
                 str(args, "DelaySeconds"));
+        // Amd5+ 新增：TransferType / FileSize / IsDelayEnabled（空则不写，旧设备忽略）
+        String transferType = str(args, "TransferType");
+        if (!transferType.isEmpty()) {
+            XmlUtils.appendText(doc, root, cwmpNs, SoapNamespace.PREFIX_CWMP, "TransferType",
+                    transferType);
+        }
+        String fileSize = str(args, "FileSize");
+        if (!fileSize.isEmpty()) {
+            XmlUtils.appendText(doc, root, cwmpNs, SoapNamespace.PREFIX_CWMP, "FileSize",
+                    fileSize);
+        }
+        String isDelayEnabled = str(args, "IsDelayEnabled");
+        if (!isDelayEnabled.isEmpty()) {
+            XmlUtils.appendText(doc, root, cwmpNs, SoapNamespace.PREFIX_CWMP, "IsDelayEnabled",
+                    isDelayEnabled);
+        }
     }
 
     /** Reboot / CancelTransfer：仅 CommandKey（空则 nil） */

@@ -125,13 +125,13 @@ public class OltCliSession implements Closeable {
     /** 登录横幅，版本命令没回显时靠它识别厂商和型号 */
     private final StringBuilder banner = new StringBuilder();
 
-    private String prompt;
+    private volatile String prompt;
 
     /**
      * 会话当前停留的视图。长连接不退出登录，所以必须自己记住停在哪一层：
      * 下次要用 config 就直接发命令，已经在 config 里就连 enable/config 都不发。
      */
-    private CliView view = CliView.ROOT;
+    private volatile CliView view = CliView.ROOT;
 
     /** 视图层级：根视图（用户/特权）、配置视图、接口/模板等子视图、位置不明 */
     public enum CliView {
@@ -192,7 +192,10 @@ public class OltCliSession implements Closeable {
 
     public static String passwordOf(OltDevice device) {
         String password = device.getPassword();
-        return password == null || password.isBlank() ? DEFAULT_PASSWORD : password;
+        if (password == null || password.isBlank()) {
+            return DEFAULT_PASSWORD;
+        }
+        return com.tr069.acs.olt.util.OltCrypto.decrypt(password);
     }
 
     /** 采集信息 */
@@ -446,6 +449,11 @@ public class OltCliSession implements Closeable {
             collectBoardPortStates(boards, timeout);
         }
         boolean ontOk = !sections.contains(Section.ONTS) || collectOnts(boards, timeout, notes, enrichOntDetails);
+        // ONT 采到后批量补模板号：拉一次 display current-configuration，从 ont add 行按位置对回。
+        // 一次命令搞定所有 ONT 的模板号，替代原来逐台 display ont ipconfig（一台一条、设备侧秒级）
+        if (ontOk && sections.contains(Section.ONTS)) {
+            fillOntProfilesFromConfig(boards, notes);
+        }
         // 光模块数值（发光/收光/温度/偏置/电压）：端口建好之后再逐口问
         if (sections.contains(Section.OPTICS)) {
             collectPortOptics(boards, timeout);
@@ -569,11 +577,25 @@ public class OltCliSession implements Closeable {
                 continue;
             }
             try {
-                int missed = 0;
-                // 逐口光模块是秒回命令：给它 3 秒就够。空口 / 不认这条命令的口
-                // 等满 8 秒纯属白等，8 口就是一分多钟
+                // 优先用 display port state all 一条拿全部口（MA5683T 支持），
+                // 不支持时退回逐口——但只查在位的口，空口直接跳过
                 int portTimeout = Math.min(timeout, 3000);
+                String allText = runCommand("display port state all", portTimeout);
+                Map<Integer, OltPort> allOptics = OltInfoParser.parsePortStateOpticsAll(allText);
+                if (!allOptics.isEmpty()) {
+                    allOptics.forEach((portNo, optics) -> applyPortOptics(board, portNo, optics));
+                    continue;
+                }
+                // fallback：逐口查询，但只对在位口发命令
+                int missed = 0;
+                List<OltPort> existingPorts = board.getPorts() != null ? board.getPorts() : List.of();
                 for (int portNo = 0; portNo < count; portNo++) {
+                    // 端口已解析过状态且不在位的口跳过，省掉空口 3 秒超时
+                    OltPort existing = findPort(existingPorts, portNo);
+                    if (existing != null && existing.getOpticalPresent() != null
+                            && !existing.getOpticalPresent()) {
+                        continue;
+                    }
                     OltPort optics = OltInfoParser.parsePortStateOptics(
                             runCommand("display port state " + portNo, portTimeout));
                     if (optics == null) {
@@ -648,41 +670,66 @@ public class OltCliSession implements Closeable {
         }
     }
 
-    /** VLAN：{@code display vlan all} 一条拿 VLAN 列表，再对上行口/主控口逐个 */
+    /** VLAN：优先从配置脚本一次拿到 VLAN 定义和端口放通，fallback 到 display vlan all + 逐口 */
     private void collectVlans(List<OltBoard> boards, OltSnapshot snapshot, int timeout) {
         OltVlanInfo info = new OltVlanInfo();
-        String vlanText = runCommand("display vlan all", timeout);
-        List<OltVlan> vlans = OltInfoParser.parseVlans(vlanText);
+        // 优先用配置脚本：display current-configuration 的 [vlan-config] 段一次拿全 VLAN 定义和端口放通
+        // 不支持分段写法时退回全量配置；都拿不到再退回 display vlan all + 逐口
+        String configText = runCommand("display current-configuration section vlan-config", timeout);
+        if (configText == null || OltInfoParser.looksUnsupported(configText) || !configText.contains("vlan")) {
+            configText = runCommand("display current-configuration", timeout);
+        }
+        List<OltVlan> vlans;
+        List<OltPortVlan> portVlans;
+        if (configText != null && !configText.isBlank() && configText.contains("vlan")) {
+            vlans = OltInfoParser.parseVlansFromConfig(configText);
+            portVlans = OltInfoParser.parsePortVlansFromConfig(configText);
+        } else {
+            vlans = List.of();
+            portVlans = List.of();
+        }
+        // 配置脚本没拿到 VLAN 定义时 fallback 到 display vlan all
+        if (vlans.isEmpty()) {
+            String vlanText = runCommand("display vlan all", timeout);
+            vlans = OltInfoParser.parseVlans(vlanText);
+            if (!vlans.isEmpty()) {
+                int total = OltInfoParser.parseVlanTotal(vlanText);
+                info.setTotal(total > 0 ? total : vlans.size());
+            }
+        } else {
+            info.setTotal(vlans.size());
+        }
         if (!vlans.isEmpty()) {
             info.setVlans(vlans);
-            int total = OltInfoParser.parseVlanTotal(vlanText);
-            info.setTotal(total > 0 ? total : vlans.size());
         }
-        for (OltBoard board : boards) {
-            if (board.getSlotNo() == null || !isUplinkKind(board.getBoardKind())) {
-                continue;
-            }
-            int count = portCount(board);
-            int failed = 0;
-            // 逐口 VLAN 也是秒回命令，同样不占用 8 秒超时
-            int portTimeout = Math.min(timeout, 3000);
-            for (int portNo = 0; portNo < count; portNo++) {
-                String text = runCommand("display port vlan 0/" + board.getSlotNo() + "/" + portNo, portTimeout);
-                OltPortVlan portVlan = OltInfoParser.parsePortVlan(text);
-                if (portVlan == null) {
-                    // 连着两个口都没回显就别再问了，多半是这版设备不认这条命令
-                    if (++failed >= 2) {
-                        break;
-                    }
+        // 配置脚本没拿到端口放通时 fallback 到逐口 display port vlan
+        if (portVlans.isEmpty()) {
+            for (OltBoard board : boards) {
+                if (board.getSlotNo() == null || !isUplinkKind(board.getBoardKind())) {
                     continue;
                 }
-                failed = 0;
-                portVlan.setFrameNo(0);
-                portVlan.setSlotNo(board.getSlotNo());
-                portVlan.setPortNo(portNo);
-                portVlan.setIface("0/" + board.getSlotNo() + "/" + portNo);
-                info.getPortVlans().add(portVlan);
+                int count = portCount(board);
+                int failed = 0;
+                int portTimeout = Math.min(timeout, 3000);
+                for (int portNo = 0; portNo < count; portNo++) {
+                    String text = runCommand("display port vlan 0/" + board.getSlotNo() + "/" + portNo, portTimeout);
+                    OltPortVlan portVlan = OltInfoParser.parsePortVlan(text);
+                    if (portVlan == null) {
+                        if (++failed >= 2) {
+                            break;
+                        }
+                        continue;
+                    }
+                    failed = 0;
+                    portVlan.setFrameNo(0);
+                    portVlan.setSlotNo(board.getSlotNo());
+                    portVlan.setPortNo(portNo);
+                    portVlan.setIface("0/" + board.getSlotNo() + "/" + portNo);
+                    info.getPortVlans().add(portVlan);
+                }
             }
+        } else {
+            info.getPortVlans().addAll(portVlans);
         }
         // 三层接口和路由表各一条，开销很小，顺手就采了
         info.setIpInterfaces(OltInfoParser.parseIpInterfaces(runCommand("display ip interface brief", timeout)));
@@ -2061,6 +2108,8 @@ public class OltCliSession implements Closeable {
     private void prepareTerminal(OltVendor vendor, boolean firstOnly) {
         // 长连接下关分页的效果是持续的：同一厂商已关过就不再重发，省掉每条任务的开场命令
         if (vendor != null && vendor != OltVendor.GENERIC && pagingPrepared == vendor) {
+            // 会话可能被重建（TelnetClient 换了新实例）：确保新 client 也标记分页已关
+            client.setPagingDisabled(true);
             return;
         }
         int timeout = Math.min(commandTimeoutMs, 4000);
@@ -2068,6 +2117,7 @@ public class OltCliSession implements Closeable {
             List<String> commands = OltVendorProfiles.of(vendor).pagingCommands();
             if (runPaging(firstOnly && !commands.isEmpty() ? commands.subList(0, 1) : commands, timeout)) {
                 pagingPrepared = vendor;
+                client.setPagingDisabled(true);
             }
             return;
         }
@@ -2109,6 +2159,10 @@ public class OltCliSession implements Closeable {
     }
 
     private String runCommand(String command, int timeoutMs) {
+        return runCommand(command, timeoutMs, false);
+    }
+
+    private String runCommand(String command, int timeoutMs, boolean silent) {
         long start = System.currentTimeMillis();
         try {
             client.resetBuffer();
@@ -2127,25 +2181,19 @@ public class OltCliSession implements Closeable {
                     .append(partial).append('\n');
             // 超时往往意味着设备还在慢慢吐回显：先排空，否则这批旧文本会被下一条命令当成自己的输出
             drain();
+            // 超时后会话视图不确定：标记视图为 UNKNOWN，下次复用前会先 probeView 校准
+            view = CliView.UNKNOWN;
+            // 如果排空后发现已经退到登录界面，直接标记会话失效
+            if (partial != null && (USERNAME_PROMPT.matcher(partial).find() || PASSWORD_PROMPT.matcher(partial).find())) {
+                sessionLost = true;
+            }
             return partial;
         }
     }
 
-    /** 命令耗时打点：发送 → 首字节（设备处理）→ 完成（收完回显），用来定位慢在哪一环；logEcho 时连回显一起打 */
+    /** 命令耗时打点：日志已移除，完整命令与回显仍记录在 transcript（采集记录）里 */
     private void logCommand(String command, long start, String echo, String error) {
-        long firstByte = client.firstByteAt();
-        String firstByteText = firstByte > 0 ? (firstByte - start) + "ms" : "无回显";
-        int echoChars = echo == null ? 0 : echo.length();
-        if (error == null) {
-            log.info("OLT 命令耗时 [{}] 首字节 {} / 完成 {}ms / 回显 {} 字符",
-                    command, firstByteText, System.currentTimeMillis() - start, echoChars);
-        } else {
-            log.info("OLT 命令耗时 [{}] 首字节 {} / 失败于 {}ms / 已收 {} 字符: {}",
-                    command, firstByteText, System.currentTimeMillis() - start, echoChars, error);
-        }
-        if (logEcho && echoChars > 0) {
-            log.info("OLT 回显 [{}] {} 字符:\n{}", command, echoChars, capEcho(echo));
-        }
+        // 不打印采集耗时日志，避免大量 INFO 刷屏
     }
 
     /** 日志里的回显超长截断，完整内容仍在采集记录里 */

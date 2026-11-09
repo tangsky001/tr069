@@ -4,7 +4,6 @@ import com.tr069.acs.acs.model.Isp;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -92,35 +91,9 @@ public class CapabilityProfiles {
                 "Services.VoiceService.1.VoiceProfile.1.SIP.Enable",
                 "Services.VoiceService.1.VoiceProfile.1.SIP.AuthUserName",
                 "Services.VoiceService.1.VoiceProfile.1.SIP.ProxyServer"));
-        // 天翼那套私有分支，遍历进去必抛 9002：逐层展开到此为止
-        profile.setSkipPrefixes(List.of("X_CTC_"));
-        if (target == Isp.CT) {
-            // 电信天翼网关：不是每台都扫不动（HS8145C5 能递归拉全树，B866 连「只列下一层」
-            // 都 9002），所以先试一次参数树，撞 9002 再降级为只读关键字段并记住这台
-            profile.setGpnStrategy(Profile.STRATEGY_ADAPTIVE);
-            // 天翼网关自带一份清单，不共用「按移动验证过」的内置默认：
-            // 标准三棵之外，天翼的业务标识挂在 X_CT-COM_UserInfo 下（随 Inform 上报过）
-            profile.setSubtrees(List.of(
-                    "WANDevice.",
-                    "LANDevice.",
-                    "Services.VoiceService.",
-                    "X_CT-COM_UserInfo."));
-            // 这台设备唯一能拿到的东西：设备身份 + 天翼业务标识 + 几个常用入口参数。
-            // 清单刻意保持短——多一条无效路径就多一轮拆批，每轮要等设备一个上报周期；
-            // 读不到的路径会被二分拆批剔除，不影响其余
-            List<String> probePaths = new ArrayList<>(profile.getProbePaths());
-            probePaths.addAll(List.of(
-                    "DeviceInfo.ModelName",
-                    "DeviceInfo.OUI",
-                    "DeviceInfo.SerialNumber",
-                    "DeviceInfo.ProvisioningCode",
-                    "ManagementServer.ConnectionRequestURL",
-                    "WANDeviceNumberOfEntries",
-                    "WANDevice.1.WANCommonInterfaceConfig.WANAccessType",
-                    "X_CT-COM_UserInfo.UserId",
-                    "X_CT-COM_UserInfo.UserName"));
-            profile.setProbePaths(probePaths);
-        }
+        // 天翼那套私有分支、采集策略、子树、额外探测路径的差异
+        // 已移到 CtAdaptation 里，由 DeviceCapabilityService.profileFor 覆盖，
+        // 这里不再按运营商写 if 分支——每家的差异收在各自的 IspAdaptation 实现类中
         return profile;
     }
 

@@ -27,16 +27,24 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class RoleService {
 
-    /** 运维管理员的默认权限：能看全部，能改设备、工单、文件、OLT，不能动系统管理 */
+    /** 运维管理员的默认权限：能看全部，能改能删设备、工单、文件、OLT，不能动系统管理 */
     private static final List<String> OPS_DEFAULT = List.of(
             "dashboard:view",
-            "device:view", "device:manage",
+            "device:view", "device:update", "device:delete",
             "template:view",
             "biz:view",
             "model:view",
-            "worklist:view", "worklist:manage",
-            "olt:view", "olt:manage",
-            "file:view", "file:manage");
+            "worklist:view", "worklist:update", "worklist:delete",
+            "olt:view", "olt:update", "olt:delete",
+            "file:view", "file:update", "file:delete",
+            "ops:view", "ops:update");
+
+    /**
+     * 后来追加的默认权限点：只补「还没有的」，不碰运维管理员手动勾掉的老权限。
+     * 用一个独立的清单，避免把用户自己取消掉的权限又塞回去。
+     */
+    private static final List<String> OPS_APPEND = List.of(
+            "ops:update");
 
     private final SysRoleMapper roleMapper;
 
@@ -73,6 +81,14 @@ public class RoleService {
     public List<String> permissionsOf(String roleCode) {
         // 先保证两个默认角色与历史角色值都落定，再谈权限
         ensureDefaults();
+        return permissionsOfInternal(roleCode);
+    }
+
+    /**
+     * 不走 ensureDefaults() 守卫的内部实现，供 ensureDefaults() 流程内部调用，
+     * 避免 ensureDefaults() → ensureOpsAdminPermissions() → permissionsOf() → ensureDefaults() 无限递归。
+     */
+    private List<String> permissionsOfInternal(String roleCode) {
         if (roleCode == null || roleCode.isBlank()) {
             return List.of();
         }
@@ -83,14 +99,12 @@ public class RoleService {
         if (cached != null) {
             return cached;
         }
-        List<String> codes = permissionMapper.selectList(
-                        new LambdaQueryWrapper<SysRolePermission>()
-                                .eq(SysRolePermission::getRoleCode, roleCode))
+        List<String> codes = PermissionCodes.expand(permissionMapper.selectList(
+                new LambdaQueryWrapper<SysRolePermission>()
+                        .eq(SysRolePermission::getRoleCode, roleCode))
                 .stream()
                 .map(SysRolePermission::getPermission)
-                .filter(PermissionCodes::known)
-                .distinct()
-                .toList();
+                .toList());
         cache.put(roleCode, codes);
         return codes;
     }
@@ -186,6 +200,59 @@ public class RoleService {
         userMapper.update(toOps, new LambdaUpdateWrapper<SysUser>().isNull(SysUser::getRole));
     }
 
+    /** 把 :manage 权限点拆成 :update 与 :delete 两条写回数据库，幂等 */
+    private void migrateLegacyPermissions() {
+        List<SysRolePermission> legacy = permissionMapper.selectList(null).stream()
+                .filter(r -> r.getPermission() != null && r.getPermission().endsWith(":manage"))
+                .toList();
+        if (legacy.isEmpty()) {
+            return;
+        }
+        for (SysRolePermission row : legacy) {
+            List<String> expanded = PermissionCodes.expand(List.of(row.getPermission()));
+            if (expanded.isEmpty()) {
+                permissionMapper.deleteById(row.getId());
+                continue;
+            }
+            permissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>()
+                    .eq(SysRolePermission::getRoleCode, row.getRoleCode())
+                    .eq(SysRolePermission::getPermission, row.getPermission()));
+            for (String code : expanded) {
+                SysRolePermission insert = new SysRolePermission();
+                insert.setRoleCode(row.getRoleCode());
+                insert.setPermission(code);
+                permissionMapper.insert(insert);
+            }
+        }
+        cache.clear();
+        log.info("已把旧的 :manage 权限点拆成 :update / :delete，共 {} 行", legacy.size());
+    }
+
+    /**
+     * 给运维管理员补齐后来新增的默认权限点。
+     * 只补库里没有的，不覆盖运维管理员自己改过的权限集合。
+     */
+    private void ensureOpsAdminPermissions() {
+        if (!exists(PermissionCodes.ROLE_OPS_ADMIN)) {
+            return;
+        }
+        List<String> current = permissionsOfInternal(PermissionCodes.ROLE_OPS_ADMIN);
+        List<String> missing = OPS_APPEND.stream()
+                .filter(code -> !current.contains(code))
+                .toList();
+        if (missing.isEmpty()) {
+            return;
+        }
+        for (String code : missing) {
+            SysRolePermission row = new SysRolePermission();
+            row.setRoleCode(PermissionCodes.ROLE_OPS_ADMIN);
+            row.setPermission(code);
+            permissionMapper.insert(row);
+        }
+        cache.remove(PermissionCodes.ROLE_OPS_ADMIN);
+        log.info("已给运维管理员补齐默认权限点: {}", String.join(", ", missing));
+    }
+
     private SysRole role(String code) {
         SysRole role = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>()
                 .eq(SysRole::getCode, code));
@@ -244,7 +311,9 @@ public class RoleService {
                     }
                     log.info("已初始化默认角色: 系统管理员 / 运维管理员");
                 }
+                ensureOpsAdminPermissions();
                 migrateLegacyRoles();
+                migrateLegacyPermissions();
                 defaultsReady = true;
             } catch (Exception e) {
                 log.warn("初始化默认角色失败: {}", e.getMessage());

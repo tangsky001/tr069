@@ -33,4 +33,7 @@ public class InformRequest implements Serializable {
     /** Inform 消息体携带的参数列表 */
     @Builder.Default
     private List<ParameterValueStruct> parameterList = new ArrayList<>();
+
+    /** 设备声明的 CWMP 版本，从 SOAP Envelope 的 xmlns:cwmp 命名空间提取，如 cwmp-1-0 / cwmp-1-4 */
+    private String cwmpVersion;
 }

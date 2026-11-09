@@ -959,16 +959,16 @@ export default {
   computed: {
     // 页面上的写操作按模块分权限摆，系统管理员这些全是真
     canDeviceManage() {
-      return this.$has('device:manage')
+      return this.$has('device:update')
     },
     canModelManage() {
-      return this.$has('model:manage')
+      return this.$has('model:update')
     },
     canWorklistManage() {
-      return this.$has('worklist:manage')
+      return this.$has('worklist:update')
     },
     canOltManage() {
-      return this.$has('olt:manage')
+      return this.$has('olt:update')
     },
     // 自定义参数/调试指令弹窗里的目标设备描述
     customParamScope() {

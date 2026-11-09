@@ -25,20 +25,38 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** OLT 命令行采集入口 */
 @Slf4j
 @Service
 public class OltTelnetService {
 
-    /** 回显等待的并行线程池，线程按需创建、空闲回收 */
-    private static final ExecutorService SECTION_POOL = Executors.newCachedThreadPool(r -> {
-        Thread thread = new Thread(r, "olt-collect-split");
-        thread.setDaemon(true);
-        return thread;
-    });
+    /** 分段采集并行线程池：有界，避免大量设备并发时线程爆炸 */
+    private static final int SECTION_POOL_MAX = 60;
+
+    private static final ExecutorService SECTION_POOL = createSectionPool();
+
+    private static ExecutorService createSectionPool() {
+        AtomicInteger seq = new AtomicInteger();
+        ThreadPoolExecutor pool = new ThreadPoolExecutor(SECTION_POOL_MAX, SECTION_POOL_MAX,
+                60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(200), r -> {
+            Thread thread = new Thread(r, "olt-collect-split-" + seq.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        });
+        pool.allowCoreThreadTimeOut(true);
+        return pool;
+    }
+
+    @jakarta.annotation.PreDestroy
+    public void shutdown() {
+        SECTION_POOL.shutdown();
+    }
 
     private final OltSessionPool sessionPool;
 
@@ -368,7 +386,11 @@ public class OltTelnetService {
         List<OltOntDeleteResult> results = doDeleteBoardOnts(device, charset, slots);
         if (OltCharset.isAuto(device.getCharset()) && garbledDelete(results)) {
             log.debug("OLT {} 删除 ONT 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
-            results = doDeleteBoardOnts(device, OltCharset.fallback(), slots);
+            try {
+                results = doDeleteBoardOnts(device, OltCharset.fallback(), slots);
+            } catch (IOException e) {
+                log.debug("GBK 重试删除 ONT 失败，保留首次结果: {}", e.getMessage());
+            }
         }
         return results;
     }
@@ -393,7 +415,11 @@ public class OltTelnetService {
         OltVlanInfo info = doCollectVlans(device, charset, boards);
         if (OltCharset.isAuto(device.getCharset()) && garbledVlans(info)) {
             log.debug("OLT {} VLAN 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
-            info = doCollectVlans(device, OltCharset.fallback(), boards);
+            try {
+                info = doCollectVlans(device, OltCharset.fallback(), boards);
+            } catch (IOException e) {
+                log.debug("GBK 重试采 VLAN 失败，保留首次结果: {}", e.getMessage());
+            }
         }
         return info;
     }
@@ -451,7 +477,7 @@ public class OltTelnetService {
         Charset charset = OltCharset.resolve(device.getCharset());
         String out = doQueryOnt(device, charset, slot, port, ontId, subcommand);
         // 「自动」编码：回显里出现替换符说明按 UTF-8 解错了，用 GBK 再连一次
-        if (OltCharset.isAuto(device.getCharset()) && out.indexOf('\uFFFD') >= 0) {
+        if (OltCharset.isAuto(device.getCharset()) && out != null && out.indexOf('\uFFFD') >= 0) {
             return doQueryOnt(device, OltCharset.fallback(), slot, port, ontId, subcommand);
         }
         return out;
@@ -485,7 +511,7 @@ public class OltTelnetService {
     public String queryOntServicePorts(OltDevice device, int slot, int port, int ontId) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         String out = doQueryOntServicePorts(device, charset, slot, port, ontId);
-        if (OltCharset.isAuto(device.getCharset()) && out.indexOf('\uFFFD') >= 0) {
+        if (OltCharset.isAuto(device.getCharset()) && out != null && out.indexOf('\uFFFD') >= 0) {
             return doQueryOntServicePorts(device, OltCharset.fallback(), slot, port, ontId);
         }
         return out;

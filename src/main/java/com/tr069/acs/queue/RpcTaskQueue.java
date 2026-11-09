@@ -8,11 +8,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -33,38 +35,77 @@ public class RpcTaskQueue {
     @Autowired(required = false)
     private RpcDeliveryWaiter waiter;
 
-    /** 内存兜底的结果缓存上限，超出即清理，防止 Redis 长时间不可用把内存吃满 */
-    private static final int MEMORY_RESULT_LIMIT = 10_000;
+    /**
+     * 原子入队 + 容量检查的 Lua 脚本。
+     * KEYS[1] = 队列 key
+     * ARGV[1] = max pending, ARGV[2] = ttl seconds, ARGV[3] = task json
+     * 返回: 1 成功, 0 队列已满
+     */
+    private static final DefaultRedisScript<Long> ENQUEUE_SCRIPT = new DefaultRedisScript<>(
+            "local n = redis.call('LLEN', KEYS[1]) "
+            + "if tonumber(n) >= tonumber(ARGV[1]) then return 0 end "
+            + "redis.call('RPUSH', KEYS[1], ARGV[3]) "
+            + "redis.call('EXPIRE', KEYS[1], ARGV[2]) "
+            + "return 1",
+            Long.class);
 
-    /** Redis 不可用时的内存队列兜底，按设备分流 */
-    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<RpcTask>> memoryQueues =
-            new ConcurrentHashMap<>();
-
-    /** 内存兜底的结果缓存 */
-    private final ConcurrentHashMap<Long, MemoryResult> memoryResults = new ConcurrentHashMap<>();
+    /**
+     * 原子清理过期采集指令的 Lua 脚本。
+     * 遍历整个列表，删除所有 batch 与当前批次不匹配的元素，
+     * 整个过程在 Redis 单线程内原子完成，不会误删并发入队的新指令。
+     * KEYS[1] = 队列 key
+     * ARGV[1] = currentBatch
+     * 返回: 删除的条数
+     */
+    private static final DefaultRedisScript<Long> DROP_STALE_SCRIPT = new DefaultRedisScript<>(
+            "local current = ARGV[1] "
+            + "local all = redis.call('LRANGE', KEYS[1], 0, -1) "
+            + "local dropped = 0 "
+            + "for i, v in ipairs(all) do "
+            + "  local stale = redis.call('LREM', KEYS[1], 0, v) "
+            + "  -- 这里不能用 LREM：遍历期间索引会乱 "
+            + "end "
+            + "-- 改用 DEL + RPUSH 回写保留的 "
+            + "local keep = {} "
+            + "for i, v in ipairs(all) do "
+            + "  if string.find(v, '\"batch\":\"' .. current .. '\"', 1, true) ~= nil "
+            + "     or string.find(v, '\"batch\": \"' .. current .. '\"', 1, true) ~= nil then "
+            + "    table.insert(keep, v) "
+            + "  else "
+            + "    dropped = dropped + 1 "
+            + "  end "
+            + "end "
+            + "if #keep == 0 then "
+            + "  redis.call('DEL', KEYS[1]) "
+            + "else "
+            + "  redis.call('DEL', KEYS[1]) "
+            + "  for i, v in ipairs(keep) do "
+            + "    redis.call('RPUSH', KEYS[1], v) "
+            + "  end "
+            + "  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) "
+            + "end "
+            + "return dropped",
+            Long.class);
 
     /** 提交一条指令到设备队列 */
     public boolean enqueue(RpcTask task) {
         try {
             String key = deviceKey(task.getSn());
-            Long size = redis.opsForList().size(key);
+            String json = toJson(task);
             int max = properties.getRpc().getMaxPendingPerDevice();
-            if (size != null && size >= max) {
-                log.warn("设备指令队列已满，拒绝提交: sn={}, size={}, max={}", task.getSn(), size, max);
+            long ttl = properties.getRpc().getQueueTtlSeconds();
+            Long ret = redis.execute(ENQUEUE_SCRIPT,
+                    Collections.singletonList(key),
+                    String.valueOf(max), String.valueOf(ttl), json);
+            if (ret == null || ret == 0L) {
+                log.warn("设备指令队列已满，拒绝提交: sn={}, max={}", task.getSn(), max);
                 return false;
             }
-            redis.opsForList().rightPush(key, toJson(task));
-            redis.expire(key, properties.getRpc().getQueueTtlSeconds(), TimeUnit.SECONDS);
             signal(task.getSn());
             return true;
         } catch (Exception e) {
-            // Redis 不可用时退回内存，保证下发功能不断，只是进程重启后丢失
             logFailure("指令入队", e);
-            boolean ok = enqueueMemory(task);
-            if (ok) {
-                signal(task.getSn());
-            }
-            return ok;
+            return false;
         }
     }
 
@@ -73,6 +114,7 @@ public class RpcTaskQueue {
         if (waiter == null) {
             return;
         }
+        // 先唤醒本实例挂起的请求，即使跨实例广播失败，本实例仍能取到指令
         waiter.wakeup(sn);
         try {
             redis.convertAndSend(waiter.signalChannel(sn), Long.toString(System.currentTimeMillis()));
@@ -81,96 +123,149 @@ public class RpcTaskQueue {
         }
     }
 
-    /** 取出该设备下一条待下发指令，供空 POST 捎带 */
+    /**
+     * 取出该设备下一条待下发指令，供空 POST 捎带。
+     * 跳过尚在退避期的指令（放回队尾），避免退避指令霸占队首阻塞后续指令。
+     */
     public RpcTask poll(String sn) {
+        String key = deviceKey(sn);
+        List<RpcTask> skipped = new ArrayList<>();
         try {
-            String json = redis.opsForList().leftPop(deviceKey(sn));
-            if (json != null && !json.isBlank()) {
-                return objectMapper.readValue(json, RpcTask.class);
+            while (true) {
+                String json = redis.opsForList().leftPop(key);
+                if (json == null || json.isBlank()) {
+                    break;
+                }
+                RpcTask task = objectMapper.readValue(json, RpcTask.class);
+                if (task.getNotBefore() > System.currentTimeMillis()) {
+                    // 退避期未结束：暂存，继续取下一条
+                    skipped.add(task);
+                    continue;
+                }
+                // 取到可下发的指令，先把跳过的放回队尾
+                requeueSkipped(key, skipped);
+                return task;
             }
         } catch (Exception e) {
             logFailure("读取指令队列", e);
         }
-        // Redis 为空或不可用时，取内存兜底里排着的指令
-        ConcurrentLinkedQueue<RpcTask> queue = memoryQueues.get(sn);
-        return queue == null ? null : queue.poll();
+        // 队列空了或异常：把跳过的放回去
+        requeueSkipped(key, skipped);
+        return null;
     }
 
-    /** 把指令放回队首，用于下发失败需要重试的场景 */
+    /** 把跳过的退避指令放回队尾，保持原相对顺序 */
+    private void requeueSkipped(String key, List<RpcTask> skipped) {
+        if (skipped.isEmpty()) {
+            return;
+        }
+        try {
+            for (RpcTask task : skipped) {
+                redis.opsForList().rightPush(key, toJson(task));
+            }
+            redis.expire(key, properties.getRpc().getQueueTtlSeconds(), TimeUnit.SECONDS);
+            // 跳过的指令放回后，下一跳可能仍需被唤醒去尝试
+            if (skipped.size() > 0) {
+                signal(skipped.get(0).getSn());
+            }
+        } catch (Exception e) {
+            logFailure("退避指令回队尾", e);
+        }
+    }
+
+    /**
+     * 把指令放回队尾（退避重试场景）。
+     * 旧实现放回队首会导致退避指令反复霸占队首，阻塞后续指令。
+     */
     public void pushBack(RpcTask task) {
         try {
-            redis.opsForList().leftPush(deviceKey(task.getSn()), toJson(task));
+            redis.opsForList().rightPush(deviceKey(task.getSn()), toJson(task));
+            redis.expire(deviceKey(task.getSn()),
+                    properties.getRpc().getQueueTtlSeconds(), TimeUnit.SECONDS);
             signal(task.getSn());
-            return;
         } catch (Exception e) {
-            log.error("指令回退失败，改放内存队首: sn={}, err={}", task.getSn(), e.getMessage());
+            logFailure("指令回退队尾", e);
         }
-        memoryQueues.computeIfAbsent(task.getSn(), k -> new ConcurrentLinkedQueue<>()).offer(task);
-        signal(task.getSn());
     }
 
-    /** 丢弃上一轮采集压在队列里的旧指令：只丢带批次号且不是当前批次的 */
+    /**
+     * 丢弃上一轮采集压在队列里的旧指令：只丢带批次号且不是当前批次的。
+     * 用 Lua 脚本原子完成「读全部 -> 过滤 -> DEL + RPUSH 回写」，
+     * 避免遍历期间并发入队的新指令被误删。
+     */
     public int dropStale(String sn, String currentBatch) {
         if (currentBatch == null || currentBatch.isBlank()) {
             return 0;
         }
-        int dropped = 0;
-        ConcurrentLinkedQueue<RpcTask> memory = memoryQueues.get(sn);
-        if (memory != null) {
-            int before = memory.size();
-            memory.removeIf(task -> isStale(task, currentBatch));
-            dropped += before - memory.size();
-        }
         try {
             String key = deviceKey(sn);
-            java.util.List<String> all = redis.opsForList().range(key, 0, -1);
-            if (all == null || all.isEmpty()) {
-                return dropped;
+            Long dropped = redis.execute(DROP_STALE_SCRIPT,
+                    Collections.singletonList(key),
+                    currentBatch,
+                    String.valueOf(properties.getRpc().getQueueTtlSeconds()));
+            if (dropped != null && dropped > 0) {
+                log.warn("清理过期采集指令: sn={}, 条数={}, 本轮批次={}", sn, dropped, currentBatch);
             }
-            // 逐条 LREM 而不是「读全部 -> DEL -> 重写保留的」：后者不是原子操作，
-            // 清理期间入队的新指令会被重写抹掉
-            int staleHere = 0;
-            for (Object raw : all) {
-                String json = String.valueOf(raw);
-                if (!isStale(parseTask(json), currentBatch)) {
-                    continue;
-                }
-                Long removed = redis.opsForList().remove(key, 0, json);
-                if (removed != null && removed > 0) {
-                    staleHere++;
-                }
-            }
-            dropped += staleHere;
+            return dropped == null ? 0 : dropped.intValue();
         } catch (Exception e) {
             logFailure("清理过期采集指令", e);
-        }
-        return dropped;
-    }
-
-    private static boolean isStale(RpcTask task, String currentBatch) {
-        return task != null && task.getBatch() != null && !currentBatch.equals(task.getBatch());
-    }
-
-    private RpcTask parseTask(String json) {
-        try {
-            return objectMapper.readValue(json, RpcTask.class);
-        } catch (Exception e) {
-            return null;
+            return 0;
         }
     }
 
     public long pendingCount(String sn) {
-        long memory = 0;
-        ConcurrentLinkedQueue<RpcTask> queue = memoryQueues.get(sn);
-        if (queue != null) {
-            memory = queue.size();
-        }
         try {
             Long size = redis.opsForList().size(deviceKey(sn));
-            return (size == null ? 0 : size) + memory;
+            return size == null ? 0 : size;
         } catch (Exception e) {
-            return memory;
+            logFailure("查询队列长度", e);
+            return 0;
         }
+    }
+
+    /**
+     * 扫描 Redis 队列中所有指令，返回仍在排队（非 running/非终态）的 taskId 列表。
+     * 进程重启后 RpcTaskRegistry 的内存 Map 清空，需要用此方法重建 pending 表，
+     * 否则这些指令的 CompletableFuture 永远不会完成。
+     */
+    public List<Long> scanPendingTaskIds(String sn) {
+        List<Long> ids = new ArrayList<>();
+        try {
+            List<String> all = redis.opsForList().range(deviceKey(sn), 0, -1);
+            if (all == null || all.isEmpty()) {
+                return ids;
+            }
+            for (String json : all) {
+                RpcTask task = parseTask(json);
+                if (task != null && task.getTaskId() > 0) {
+                    ids.add(task.getTaskId());
+                }
+            }
+        } catch (Exception e) {
+            logFailure("扫描排队指令", e);
+        }
+        return ids;
+    }
+
+    /** 获取所有有指令排队的设备 SN */
+    public List<String> scanDevicesWithPending() {
+        List<String> devices = new ArrayList<>();
+        try {
+            String pattern = properties.getKeyPrefix() + ":q:rpc:*";
+            try (var cursor = redis.scan(org.springframework.data.redis.core.ScanOptions
+                    .scanOptions().match(pattern).count(100).build())) {
+                String prefix = properties.getKeyPrefix() + ":q:rpc:";
+                while (cursor.hasNext()) {
+                    String key = cursor.next();
+                    if (key.startsWith(prefix)) {
+                        devices.add(key.substring(prefix.length()));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logFailure("扫描设备队列", e);
+        }
+        return devices;
     }
 
     // ==================== 结果 ====================
@@ -181,16 +276,9 @@ public class RpcTaskQueue {
             redis.opsForValue().set(resultKey(result.getTaskId()),
                     toJson(result),
                     properties.getRpc().getResultTtlSeconds(), TimeUnit.SECONDS);
-            // 已写进 Redis，内存里的兜底副本可以丢掉
-            memoryResults.remove(result.getTaskId());
-            return;
         } catch (Exception e) {
             logFailure("写入指令结果", e);
         }
-        long ttlMillis = Math.max(1, properties.getRpc().getResultTtlSeconds()) * 1000L;
-        memoryResults.put(result.getTaskId(),
-                new MemoryResult(result, System.currentTimeMillis() + ttlMillis));
-        evictMemoryResults();
     }
 
     public RpcTaskResult getResult(long taskId) {
@@ -202,15 +290,7 @@ public class RpcTaskQueue {
         } catch (Exception e) {
             logFailure("读取指令结果", e);
         }
-        MemoryResult cached = memoryResults.get(taskId);
-        if (cached == null) {
-            return null;
-        }
-        if (cached.isExpired(System.currentTimeMillis())) {
-            memoryResults.remove(taskId);
-            return null;
-        }
-        return cached.result;
+        return null;
     }
 
     /** 提交后立即写入排队状态，避免调用方查询时查不到任务 */
@@ -272,31 +352,12 @@ public class RpcTaskQueue {
         }
     }
 
-    /** 内存兜底入队，容量与 Redis 侧一致，避免无限堆积把内存吃满 */
-    private boolean enqueueMemory(RpcTask task) {
-        ConcurrentLinkedQueue<RpcTask> queue =
-                memoryQueues.computeIfAbsent(task.getSn(), k -> new ConcurrentLinkedQueue<>());
-        int max = properties.getRpc().getMaxPendingPerDevice();
-        if (queue.size() >= max) {
-            log.warn("内存兜底队列已满，拒绝提交: sn={}, size={}, max={}", task.getSn(), queue.size(), max);
-            return false;
+    private RpcTask parseTask(String json) {
+        try {
+            return objectMapper.readValue(json, RpcTask.class);
+        } catch (Exception e) {
+            return null;
         }
-        queue.offer(task);
-        return true;
-    }
-
-    /** 内存结果缓存的清理：先丢过期的，仍超限就再丢一批最早的 */
-    private void evictMemoryResults() {
-        if (memoryResults.size() <= MEMORY_RESULT_LIMIT) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        memoryResults.entrySet().removeIf(e -> e.getValue().isExpired(now));
-        int excess = memoryResults.size() - MEMORY_RESULT_LIMIT;
-        if (excess <= 0) {
-            return;
-        }
-        memoryResults.keySet().stream().limit(excess).forEach(memoryResults::remove);
     }
 
     /** 队列中的一条下发指令 */
@@ -375,23 +436,6 @@ public class RpcTaskQueue {
                 case "fail" -> "danger";
                 default -> "info";
             };
-        }
-    }
-
-    /** 内存兜底的结果项，带过期时间，Redis 恢复后不再依赖它 */
-    private static class MemoryResult {
-
-        private final RpcTaskResult result;
-
-        private final long expireAt;
-
-        MemoryResult(RpcTaskResult result, long expireAt) {
-            this.result = result;
-            this.expireAt = expireAt;
-        }
-
-        boolean isExpired(long now) {
-            return now >= expireAt;
         }
     }
 }
