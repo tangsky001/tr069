@@ -19,13 +19,6 @@ export function fetchInstance(worklistId) {
   })
 }
 
-export function fetchDeviceInstances(sn) {
-  return request({
-    url: '/worklist/instances/device/' + encodeURIComponent(sn),
-    method: 'get'
-  })
-}
-
 export function fetchSteps(worklistId) {
   return request({
     url: '/worklist/instances/' + worklistId + '/steps',
@@ -51,6 +44,26 @@ export function createWorklist(data) {
     url: '/worklist/instances',
     method: 'post',
     data
+  })
+}
+
+/**
+ * 修改工单：房间号/备注/扩展属性随时可改，
+ * 设备标识与工单类型仅未执行（构建中/等待执行/预约中）的单可改。
+ */
+export function updateWorklist(id, data) {
+  return request({
+    url: '/worklist/instances/' + id,
+    method: 'put',
+    data
+  })
+}
+
+/** 删除工单：执行中的单后端会拒删，其余逻辑删除 */
+export function deleteWorklist(id) {
+  return request({
+    url: '/worklist/instances/' + id,
+    method: 'delete'
   })
 }
 

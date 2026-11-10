@@ -91,7 +91,8 @@ public class BizTemplateController {
             return Result.failure("业务模板 id 不能为空");
         }
         return Result.success(executionService.execute(
-                request.getTemplateId(), request.getSn(), request.getParams(), request.getUsername()));
+                request.getTemplateId(), request.getSn(), request.getParams(), request.getUsername(),
+                request.getRoomNo()));
     }
 
     /** 仅含 id 的请求体 */
@@ -111,6 +112,8 @@ public class BizTemplateController {
         private Map<String, String> params;
         /** 操作人 */
         private String username;
+        /** 房间号：填了就同步设备台账 */
+        private String roomNo;
     }
 
 }

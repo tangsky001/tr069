@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.service.DeviceAccountService;
 import com.tr069.acs.acs.service.DeviceBusinessService;
+import com.tr069.acs.acs.service.DirectDispatchService;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.agent.RpcDispatchService;
@@ -13,11 +14,13 @@ import com.tr069.acs.common.PageResult;
 import com.tr069.acs.common.Result;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.exec.DeviceTaskProgressService;
+import com.tr069.acs.exec.entity.DeviceTask;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.queue.RpcTaskQueue;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.api.service.DeviceListService;
+import com.tr069.acs.worklist.model.WifiEdit;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +53,71 @@ public class DeviceController {
     private final DeviceAccountService accountService;
     private final DeviceTaskProgressService taskProgressService;
     private final DeviceListService deviceListService;
+    private final DirectDispatchService directDispatchService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    /**
+     * 设备页直接下发：逐台受理即发，不建工单，进度看下发任务本身。
+     * 入参：sns（数组或逗号分隔）、category、values（业务变量）、templateId、
+     * wifi（WLAN 编辑业务字段，可选）、username。
+     */
+    @PostMapping("/dispatch")
+    public Result<Map<String, Object>> dispatch(@RequestBody Map<String, Object> body) {
+        List<String> sns = new ArrayList<>();
+        Object snsRaw = body.get("sns");
+        if (snsRaw instanceof List) {
+            for (Object s : (List<?>) snsRaw) {
+                if (s != null && !s.toString().isBlank()) {
+                    sns.add(s.toString().trim());
+                }
+            }
+        } else if (snsRaw != null) {
+            for (String s : snsRaw.toString().split("[,;\\s]+")) {
+                if (!s.isBlank()) {
+                    sns.add(s.trim());
+                }
+            }
+        }
+        if (sns.isEmpty()) {
+            return Result.failure("缺少设备序列号");
+        }
+        String category = body.get("category") == null ? "" : body.get("category").toString();
+        Long templateId = body.get("templateId") == null ? null
+                : Long.valueOf(String.valueOf(body.get("templateId")));
+        String username = body.get("username") == null ? "admin" : body.get("username").toString();
+        Map<String, String> values = new LinkedHashMap<>();
+        if (body.get("values") instanceof Map) {
+            // lambda 捕获要求事实终值，先落到局部变量再填
+            final Map<String, String> captured = values;
+            ((Map<?, ?>) body.get("values")).forEach((k, v) ->
+                    captured.put(String.valueOf(k), v == null ? null : String.valueOf(v)));
+        }
+        // WLAN 编辑的业务字段：翻译成业务类型与意图键，与工单通道同款
+        if (body.get("wifi") instanceof Map) {
+            WifiEdit wifi = objectMapper.convertValue(body.get("wifi"), WifiEdit.class);
+            if (wifi.getSsid() == null || wifi.getSsid().isBlank()) {
+                return Result.failure("SSID 名称不能为空");
+            }
+            category = wifi.toCategory();
+            values = wifi.toValues();
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        int failed = 0;
+        for (String sn : sns) {
+            Map<String, Object> row = directDispatchService.dispatchOne(sn, category, templateId,
+                    values, username);
+            Object status = row.get("status");
+            if (DeviceTask.STATUS_REJECTED.equals(status) || "fail".equals(status)) {
+                failed++;
+            }
+            rows.add(row);
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("submitted", rows.size() - failed);
+        data.put("failed", failed);
+        data.put("rows", rows);
+        return Result.success(data);
+    }
 
     /** 一批设备当前正在进行的下发任务，列表页每行用它显示「正在下发 xxx」 */
     @GetMapping("/tasks/active")

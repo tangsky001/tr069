@@ -10,7 +10,7 @@ TR069 ACS（Java 版）—— 基于 CWMP/TR069 协议的光猫远程管理平�
 - 已适配光猫型号见 **[doc/ADAPTED_MODELS.md](./doc/ADAPTED_MODELS.md)**
 - 前端工程见 [web/](./web)
 - 界面截图见 [doc/Display/](./doc/Display)（见下文「效果展示」）
-- **装维 APP（Android 客户端）**已上线：登录、首页概览、设备管理、设备详情（WAN / WLAN / SIP）、新建工单、诊断工具、系统设置，通过内网穿透隧道回连 ACS，截图见下文「效果展示 · 装维 APP（移动端）」
+- **装维 APP（Android 客户端）**已上线：登录、首页概览、设备管理、设备详情（WAN / WLAN / SIP）、新建工单、诊断工具、系统设置，通过内网穿透隧道回连 ACS，源码仓库 **[Gitee · tr069_apk传送门](https://gitee.com/kangweft/tr069_apk)**，截图见下文「效果展示 · 装维 APP（移动端）」
 - 想一起开发？见 **[第 11 节 仓库与共建](#11-仓库与共建)**
 
 > 配置下发链路重构已**基本落地**：模板从「文件 + 步骤编排」改为**入库的意图模板**，
@@ -681,7 +681,9 @@ PilotACS/
 └── web/                      前端工程（构建产物 dist/ 不入库）
 ```
 
-> 装维 APP（Android 客户端）为**独立工程**，源码不在本仓库；
+> 装维 APP（Android 客户端）为**独立工程**，源码仓库：**https://gitee.com/kangweft/tr069_apk**
+> （Java 原生 Android，扫码登录、平台概览、设备台账、WAN / WLAN / SIP 业务信息，
+> 长按菜单执行超管查询、恢复出厂、标记置换等现场操作）；
 > 它与本仓库的接口契约就是管理端 `/api/**`（经内网穿透隧道回连 ACS），截图见「效果展示 · 装维 APP（移动端）」。
 
 外部配置目录（默认 `./configuration`；相对路径按 **jar 所在目录**解析，与进程工作目录无关，
