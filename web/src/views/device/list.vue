@@ -290,11 +290,11 @@
       >批量下发模版</el-button>
 
       <el-dropdown v-if="canWorklistManage" trigger="click" @command="cmd => handleBatchCommand(cmd)">
-        <el-button size="small">一键工单<i class="el-icon-caret-top el-icon--right" /></el-button>
+        <el-button size="small">一键下发<i class="el-icon-caret-top el-icon--right" /></el-button>
         <el-dropdown-menu slot="dropdown">
           <el-dropdown-item command="worklist-record" icon="el-icon-tickets">工单记录</el-dropdown-item>
-          <el-dropdown-item command="worklist-batch" icon="el-icon-s-order" divided>批量开通工单</el-dropdown-item>
-          <el-dropdown-item command="worklist-repair" icon="el-icon-s-tools">批量检修工单</el-dropdown-item>
+          <el-dropdown-item command="worklist-batch" icon="el-icon-s-order" divided>批量开通业务</el-dropdown-item>
+          <el-dropdown-item command="worklist-repair" icon="el-icon-s-tools">批量检修任务</el-dropdown-item>
         </el-dropdown-menu>
       </el-dropdown>
 
@@ -545,7 +545,7 @@
       width="520px"
       top="8vh"
     >
-      <div class="snapshot-tip-block">打开此窗口不会唤醒设备，点「下发到设备」才会建单并写入</div>
+      <div class="snapshot-tip-block">打开此窗口不会唤醒设备，点「下发到设备」才会写入</div>
       <el-form label-width="118px" size="small">
         <el-form-item label="下发线路">
           <!-- 设备上只有一路语音时不再摆勾选框：选来选去还是那一路，只会多一步操作 -->
@@ -643,7 +643,7 @@
         <el-tag size="mini" type="info">{{ wifiEditForm.band }}</el-tag>
         <span class="wifi-edit-path">{{ wifiEditForm.path }}</span>
       </div>
-      <!-- 打开弹窗只读快照，不碰设备；只有点「保存」创建工单才会下发 -->
+      <!-- 打开弹窗只读快照，不碰设备；只有点「提交下发」才真正写入 -->
       <div class="snapshot-tip-block">打开此窗口不会唤醒设备，保存并下发时才会向设备写入</div>
       <el-form label-width="100px" size="small">
         <el-form-item label="SSID 名称">
@@ -830,13 +830,12 @@ import {
   fetchAdaptStatus, testAdaptation, saveAdaptation, updateDeviceRemark,
   fetchAdminAccounts, fetchDeviceStat, fetchCapabilityOptions, setDeviceParams,
   fetchDeviceActiveTasks, fetchRpcMethods, fetchQuickCommands,
-  fetchSipLines, submitSipEdit, exportDevices as exportDevicesApi,
+  fetchSipLines, submitSipEdit, dispatchDevices, exportDevices as exportDevicesApi,
   fetchPollConfig, fetchRpcProgressLabels
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
 import { fetchBizTemplates, executeBizTemplate } from '@/api/bizTemplate'
-import { createWorklist } from '@/api/worklist'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
 import DeviceRuntimeCell from '@/components/DeviceRuntimeCell.vue'
@@ -1305,10 +1304,10 @@ export default {
       }
       this.wifiSubmitting = true
       try {
-        // 直接提交业务字段：业务类型（WIFI_24G / WIFI_58G）与意图键
-        // （wpa_mode / wpa_key / enable）都由后端翻译，页面不必知道下发引擎认哪些键
-        await createWorklist({
-          sn: form.sn,
+        // 直接下发：业务类型（WIFI_24G / WIFI_58G）与意图键（wpa_mode / wpa_key / enable）
+        // 都由后端翻译，页面不必知道下发引擎认哪些键；不建工单，受理即发
+        const res = await dispatchDevices({
+          sns: [form.sn],
           wifi: {
             instance: form.instance,
             ssid: form.ssid,
@@ -1319,8 +1318,13 @@ export default {
           },
           username: this.$store.getters.name || 'admin'
         })
-        this.$message.success('WLAN 修改工单已提交')
-        this.wifiEditVisible = false
+        const row = ((res.data || {}).rows || [])[0] || {}
+        if (row.errorMsg) {
+          this.$message.error('下发失败：' + row.errorMsg)
+        } else {
+          this.$message.success('WLAN 修改任务已提交')
+          this.wifiEditVisible = false
+        }
       } catch (e) {
         this.$message.error('提交失败：' + ((e && e.message) || ''))
       } finally {
@@ -1456,7 +1460,7 @@ export default {
         })
         const data = res.data || {}
         if (data.submitted) {
-          this.$message.success('SIP 语音下发工单已提交 ' + data.submitted + ' 张（第 ' +
+          this.$message.success('SIP 语音下发任务已提交 ' + data.submitted + ' 张（第 ' +
             (data.lines || []).join('、') + ' 路）')
         }
         const failures = data.failures || []
@@ -1808,8 +1812,8 @@ export default {
         return
       }
       const tpl = this.templates.find(t => t.id === id) || {}
-      // 模板的 category 即业务类型，落到工单的业务类型上；取不到就留空由下发侧推导
-      this.batchCreateWorklist(sns, (tpl.category || '').toUpperCase(), tpl.name || '模版下发')
+      // 模板的 category 即业务类型，直接下发；取不到就留空由下发侧推导
+      this.batchDispatch(sns, (tpl.category || '').toUpperCase(), tpl.name || '模版下发', id)
     },
 
     /**
@@ -1849,28 +1853,32 @@ export default {
     },
 
     /**
-     * 给多台设备逐台创建下发工单。
+     * 给多台设备逐台直接下发：不建工单，受理即发，进度看下发任务本身。
      *
-     * <p>每台一个独立流水号，互不影响；单台失败记录下来但继续其余设备，
-     * 最后汇总失败清单——不能因为某一台有问题就把整批吞掉。</p>
+     * <p>单台失败记录下来但继续其余设备，最后汇总失败清单——
+     * 不能因为某一台有问题就把整批吞掉。</p>
      */
-    batchCreateWorklist(sns, category, label) {
+    batchDispatch(sns, category, label, templateId) {
       this.$confirm(
-        `将对已勾选的 ${sns.length} 台设备创建「${label || '下发'}」工单，确认提交？`,
+        `将对已勾选的 ${sns.length} 台设备下发「${label || '业务'}」，确认提交？`,
         '批量下发',
         { type: 'warning' }
-      ).then(() => {
-        const username = this.$store.getters.name || 'admin'
-        const tasks = sns.map(sn => {
-          // 流水号不传：后端发号自带自增段与随机段，多台的工单不会互相被幂等掉
-          return createWorklist({
-            sn,
+      ).then(async() => {
+        try {
+          const res = await dispatchDevices({
+            sns,
             category: category || '',
+            templateId: templateId || null,
             values: {},
-            username
-          }).then(() => null).catch(err => ({ sn, err: (err && err.message) || '创建失败' }))
-        })
-        Promise.all(tasks).then(results => this.reportBatchResult(results, sns.length))
+            username: this.$store.getters.name || 'admin'
+          })
+          const rows = ((res.data || {}).rows) || []
+          // 失败行转成 { sn, err } 复用统一的批量结果汇总
+          const results = rows.map(r => (r.errorMsg ? { sn: r.sn, err: r.errorMsg } : null))
+          this.reportBatchResult(results, sns.length)
+        } catch (e) {
+          /* 拦截器已提示 */
+        }
       }).catch(() => {})
     },
 
@@ -1922,13 +1930,13 @@ export default {
       if (cmd === 'worklist-batch') {
         const sns = this.requireSelection()
         if (!sns) return
-        this.batchCreateWorklist(sns, '', '开通工单')
+        this.batchDispatch(sns, '', '开通业务')
         return
       }
       if (cmd === 'worklist-repair') {
         const sns = this.requireSelection()
         if (!sns) return
-        this.batchCreateWorklist(sns, '', '检修工单')
+        this.batchDispatch(sns, '', '检修任务')
         return
       }
       // 查询超管密码：对勾选设备逐台实时读，结果在弹窗里明文展示

@@ -99,11 +99,24 @@ export function fetchSipLines(sn) {
 
 /**
  * SIP 语音下发：只提交业务字段。
- * 按路拆单、占位符翻译、幂等键生成都在后端；返回 { lines, submitted, failed, worklists, failures }。
+ * 按路拆单、占位符翻译都在后端；直接下发不建工单，返回 { lines, submitted, failed, tasks, failures }。
  */
 export function submitSipEdit(sn, data) {
   return request({
     url: '/device/' + encodeURIComponent(sn) + '/sip',
+    method: 'post',
+    data
+  })
+}
+
+/**
+ * 设备页直接下发：逐台受理即发，不建工单，进度看下发任务本身。
+ * data: { sns(数组), category, values, templateId, wifi(可选 WLAN 业务字段), username }。
+ * 返回 { submitted, failed, rows: [{ sn, taskId, status, errorMsg }] }。
+ */
+export function dispatchDevices(data) {
+  return request({
+    url: '/device/dispatch',
     method: 'post',
     data
   })

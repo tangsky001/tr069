@@ -1,9 +1,7 @@
 package com.tr069.acs.acs.service;
 
-import com.tr069.acs.domain.entity.Worklist;
 import com.tr069.acs.worklist.model.SipEdit;
 import com.tr069.acs.worklist.service.ModelAdaptationService;
-import com.tr069.acs.worklist.service.WorklistDeliveryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,7 +21,7 @@ public class DeviceSipService {
 
     private final DeviceBusinessService businessService;
     private final ModelAdaptationService adaptationService;
-    private final WorklistDeliveryService deliveryService;
+    private final DirectDispatchService directDispatchService;
 
     /** 申报能力里的数字：{@code 1} / {@code 4-8} / {@code 无} → 8 / 1 / 0（取最大值） */
     private static final Pattern DIGITS = Pattern.compile("\\d+");
@@ -90,29 +88,28 @@ public class DeviceSipService {
         List<Map<String, Object>> submitted = new ArrayList<>();
         List<Map<String, Object>> failures = new ArrayList<>();
         for (Integer line : edit.normalizedLines()) {
-            try {
-                // 幂等键交给下发服务发号：前端用时间戳生成时，同秒的多路会撞号被幂等掉
-                Worklist worklist = deliveryService.create(sn, SipEdit.CATEGORY, null,
-                        edit.toValues(line), user, null);
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("line", line);
-                row.put("id", worklist == null ? null : worklist.getId());
-                row.put("desc", worklist == null ? null : worklist.getWorklistDesc());
-                row.put("status", worklist == null ? null : worklist.getStatus());
-                submitted.add(row);
-            } catch (Exception e) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("line", line);
-                row.put("message", e.getMessage());
-                failures.add(row);
-                log.warn("SIP 下发失败 sn={} line={}: {}", sn, line, e.getMessage());
+            // 直接下发：受理即发，不建工单；单路失败记录原因后继续其余线路
+            Map<String, Object> row = directDispatchService.dispatchOne(
+                    sn, SipEdit.CATEGORY, null, edit.toValues(line), user);
+            if (row.get("errorMsg") != null) {
+                Map<String, Object> fail = new LinkedHashMap<>();
+                fail.put("line", line);
+                fail.put("message", row.get("errorMsg"));
+                failures.add(fail);
+                log.warn("SIP 下发失败 sn={} line={}: {}", sn, line, row.get("errorMsg"));
+                continue;
             }
+            Map<String, Object> ok = new LinkedHashMap<>();
+            ok.put("line", line);
+            ok.put("taskId", row.get("taskId"));
+            ok.put("status", row.get("status"));
+            submitted.add(ok);
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("lines", edit.normalizedLines());
         result.put("submitted", submitted.size());
         result.put("failed", failures.size());
-        result.put("worklists", submitted);
+        result.put("tasks", submitted);
         result.put("failures", failures);
         return result;
     }

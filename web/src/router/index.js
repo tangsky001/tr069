@@ -117,10 +117,10 @@ export const constantRoutes = [
     meta: { title: '工单管理', icon: 'el-icon-s-order' },
     children: [
       {
-        path: 'deliver',
-        name: 'WorklistDeliver',
-        component: () => import('@/views/worklist/deliver'),
-        meta: { title: '下发业务', icon: 'el-icon-s-promotion', permission: 'worklist:view' }
+        path: 'orders',
+        name: 'WorklistOrders',
+        component: () => import('@/views/worklist/orders'),
+        meta: { title: '工单', icon: 'el-icon-document-copy', permission: 'worklist:view' }
       },
       {
         path: 'instances',
