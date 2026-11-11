@@ -115,7 +115,7 @@ mybatis-plus:
 # ==================== TR069 ACS 配置 ====================
 acs:
   # ACS 对外通告地址，用于下发给 CPE 的连接请求地址
-  public-host: 10.101.125.100
+  public-host: 192.168.110.191
 
   cwmp:
     # 监听的端口，逗号分隔
@@ -191,7 +191,7 @@ acs:
       # 下发给设备的周期上报间隔(秒)。0 表示不改这一项
       inform-interval-seconds: 300
       # 下发给设备的 ACS 上报地址。留空则按 http://{acs.public-host}:{上报端口}{cpe-path} 拼
-      acs-url: http://10.101.125.100:9090/ACS-server/ACS
+      acs-url: http://192.168.110.191:9090/ACS-server/ACS
       # 一并下发给设备的连接请求凭据，默认跟随 acs.auth.acs-to-cpe-*（即 itms/itms）。
       # 各批次光猫出厂的 CR 密码不一样，ACS 拿不到就唤不醒它，所以纳管时统一改写，
       # 写成功后同步登记进台账。这一项留空或 auto 时同样按 itms 处理

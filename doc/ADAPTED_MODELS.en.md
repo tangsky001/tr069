@@ -15,6 +15,7 @@ Models still in progress (capability tree collected, or under investigation) go 
 | CMCC (China Mobile) | CIOT ZNM802 |
 | CMCC (China Mobile) | MSG2200C-UP-4E4V |
 | CMCC (China Mobile) | CMDC H5-9 |
+| CMCC (China Mobile) | SKYW SK-D849N |
 | CT (China Telecom) | B866-S1-4E1P3W1-Ethernet |
 
 > `B866-S1-4E1P3W1` hardware is **XGPON** uplink. After this unit was switched to **Ethernet uplink**

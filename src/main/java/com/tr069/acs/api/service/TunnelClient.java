@@ -239,9 +239,9 @@ public class TunnelClient {
     /** 把 HTTP 请求字节转发给本地 Tomcat，拿到响应再回传给服务器 */
     private void forwardToLocal(String requestId, byte[] httpBytes) {
         try {
-            // 解析出 HTTP 方法、路径、Host
-            String head = new String(httpBytes, 0, Math.min(httpBytes.length, 4096),
-                    java.nio.charset.StandardCharsets.UTF_8);
+            int headerEnd = indexOf(httpBytes, "\r\n\r\n");
+            int headLen = headerEnd < 0 ? Math.min(httpBytes.length, 65536) : headerEnd;
+            String head = new String(httpBytes, 0, headLen, java.nio.charset.StandardCharsets.UTF_8);
             String[] lines = head.split("\r\n");
             String[] requestLine = lines[0].split(" ", 3);
             String method = requestLine[0];
@@ -251,26 +251,26 @@ public class TunnelClient {
                     .uri(URI.create("http://127.0.0.1:" + localPort + path))
                     .timeout(Duration.ofSeconds(30));
 
-            // 解析 headers 和 body
-            int headerEnd = indexOf(httpBytes, "\r\n\r\n");
             int bodyStart = headerEnd + 4;
-            byte[] body = bodyStart < httpBytes.length
+            byte[] body = bodyStart > 0 && bodyStart < httpBytes.length
                     ? java.util.Arrays.copyOfRange(httpBytes, bodyStart, httpBytes.length)
                     : new byte[0];
 
-            // 转发请求头（跳过 Host、Content-Length，HttpClient 自己管）
+            // 转发请求头：跳过 Host/Content-Length（HttpClient 自己管）和逐跳头（JDK HttpClient 视为受限头会抛异常）
             for (int i = 1; i < lines.length; i++) {
                 String line = lines[i];
                 int colon = line.indexOf(':');
                 if (colon < 0) continue;
                 String name = line.substring(0, colon).trim();
                 String value = line.substring(colon + 1).trim();
-                if (name.equalsIgnoreCase("Host")
-                        || name.equalsIgnoreCase("Content-Length")
-                        || name.equalsIgnoreCase("Transfer-Encoding")) {
+                if (name.isEmpty() || isHopByHopHeader(name)) {
                     continue;
                 }
-                reqBuilder.header(name, value);
+                try {
+                    reqBuilder.header(name, value);
+                } catch (IllegalArgumentException ignored) {
+                    // 其他受限头，丢弃即可，不影响业务
+                }
             }
 
             // 设置 method + body
@@ -430,6 +430,20 @@ public class TunnelClient {
         byte[] b = new byte[len];
         in.readFully(b);
         return new String(b, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** 逐跳头 + HttpClient 受限头：转发给本地 Tomcat 前必须丢掉，否则 build 时抛 IllegalArgumentException */
+    private static boolean isHopByHopHeader(String name) {
+        return name.equalsIgnoreCase("Host")
+                || name.equalsIgnoreCase("Content-Length")
+                || name.equalsIgnoreCase("Transfer-Encoding")
+                || name.equalsIgnoreCase("Connection")
+                || name.equalsIgnoreCase("Keep-Alive")
+                || name.equalsIgnoreCase("Proxy-Connection")
+                || name.equalsIgnoreCase("Upgrade")
+                || name.equalsIgnoreCase("TE")
+                || name.equalsIgnoreCase("Trailer")
+                || name.equalsIgnoreCase("Expect");
     }
 
     private static int indexOf(byte[] data, String sep) {

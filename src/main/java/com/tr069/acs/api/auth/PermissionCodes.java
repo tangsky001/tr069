@@ -58,9 +58,9 @@ public final class PermissionCodes {
             new String[]{"/api/olt", "olt"},
             new String[]{"/api/files", "file"},
             new String[]{"/api/ops", "ops"},
-            // 在线更新：前端菜单挂在运维管理下（ops:view），所以归到 ops 模块
             new String[]{"/api/upgrade", "ops"},
-            new String[]{"/api/system", "system"});
+            new String[]{"/api/system", "system"},
+            new String[]{"/openapi", "device"});
 
     private PermissionCodes() {
     }
@@ -143,12 +143,24 @@ public final class PermissionCodes {
             // 免检名单里的放行，其它一律报未登记，让调用方拦掉
             return FREE_PASS.contains(path) ? null : UNMAPPED;
         }
-        // 查：GET / HEAD / OPTIONS；删：DELETE；其余（POST / PUT / PATCH）都算改
-        if ("DELETE".equalsIgnoreCase(method)) {
+        // 删：DELETE，以及历史上用 POST + /delete、/delete-all 表达的删除接口。
+        // 这几个口子是前端与装维 APP 已经在用的（POST 请求体/路径不能随便改），只能在这里按删除语义校验，
+        // 否则有「修改」权限就能删模板 / 删 OLT / 清空 ONT，删除权限点形同虚设。
+        if ("DELETE".equalsIgnoreCase(method) || (isPost(method) && isDeleteIntent(path))) {
             return module + DELETE;
         }
+        // 查：GET / HEAD / OPTIONS；其余（POST / PUT / PATCH）都算改
         boolean read = "GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
                 || "OPTIONS".equalsIgnoreCase(method);
         return module + (read ? VIEW : UPDATE);
+    }
+
+    private static boolean isPost(String method) {
+        return "POST".equalsIgnoreCase(method);
+    }
+
+    /** 路径以 /delete 或 /delete-all 结尾的老式删除接口 */
+    private static boolean isDeleteIntent(String path) {
+        return path.endsWith("/delete") || path.endsWith("/delete-all");
     }
 }
