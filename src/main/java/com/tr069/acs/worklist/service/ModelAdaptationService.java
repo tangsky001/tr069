@@ -61,6 +61,17 @@ public class ModelAdaptationService {
     @Value("${acs.adapt.probe-timeout-seconds:30}")
     private int probeTimeoutSeconds;
 
+    /**
+     * 算「采到了数据」的采集状态。
+     * <p>
+     * {@code success}：参数树整个扫下来了。
+     * <p>
+     * {@code partial}：参数树扫不动（GPN 对父对象回 9002），退到采集标准登记的
+     * 已知路径用 GetParameterValues 兜底读值。电信定制固件（天翼网关）就是这种，
+     * 它照样读回了真实的网口 / 语音 / 无线参数，拿它判失败等于把电信设备永远挡在门外。
+     */
+    private static final Set<String> COLLECTED_OK = Set.of("success", "partial");
+
     // ==================== 适配状态 ====================
 
     /** 单台设备的适配状态：先查 SQLite 模板库，再退到文件与 MySQL 档案 */
@@ -279,7 +290,7 @@ public class ModelAdaptationService {
     public Map<String, Object> test(String sn, AdaptRequest request) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("requested", request.asMap());
-        CollectResult collect = collectTree(sn);
+        CollectResult collect = collectTree(sn, request.getIsp());
         data.put("collectStatus", collect.status);
         if (collect.error != null) {
             data.put("collectError", collect.error);
@@ -291,8 +302,11 @@ public class ModelAdaptationService {
         Detection detected = detect(params);
         data.put("detected", detected.asMap());
         List<String> reasons = new ArrayList<>(compare(detected, request));
-        // 采集没成功的话，解析结果不可信，也不再做试探下发
-        boolean collected = "success".equals(collect.status);
+        // 采集状态判定：partial 也要算数。
+        // 电信定制固件的 GetParameterNames 对父对象一律回 9002，扫不到参数树，
+        // 只能退到采集标准登记的已知路径用 GetParameterValues 兜底读值——这就是 partial。
+        // 这类设备照样读回了真实的网口/语音/无线参数，拿它判失败等于把电信设备永远挡在门外。
+        boolean collected = COLLECTED_OK.contains(collect.status);
         if (!collected && reasons.isEmpty()) {
             reasons.add("能力采集未成功(" + collect.status + ")"
                     + (collect.error == null ? "" : "：" + collect.error));
@@ -363,6 +377,9 @@ public class ModelAdaptationService {
         modelMappingService.update(model.getId(), pathPatch);
         // 导出能力树 XML 并回写 config_path（能力档案，不代表已适配）
         ModelTreeStore.ExportResult export = modelTreeStore.export(sn, true, isp);
+        // 落库存申报能力。申报是目标，测试通过说明设备确实有这些能力，存申报值。
+        // 实测只是验证手段——没达标就拒绝入库，达标了就按申报存，不要拿实测值
+        // 替换申报值：实测受固件参数树完整度影响，可能偏低，存进库会影响同型号设备。
         CpeModel patch = new CpeModel();
         patch.setCapLanPorts(request.getLanPorts());
         patch.setCapLanSpeed(request.getLanSpeed());
@@ -421,10 +438,21 @@ public class ModelAdaptationService {
 
     /** 强制采集并等待结束，返回采集状态与首条错误 */
     private CollectResult collectTree(String sn) {
+        return collectTree(sn, null);
+    }
+
+    /**
+     * 强制采集并等待结束，可指定采集标准所用的运营商。
+     * <p>
+     * 适配页选了运营商就按这一档采：台账上的运营商可能还是 standard
+     * （首次上报还没登记完），走通用档采不到该运营商的私有参数，
+     * 测出来的能力自然偏低。
+     */
+    private CollectResult collectTree(String sn, String isp) {
         CollectResult result = new CollectResult();
         DeviceCapabilityService.CollectStatus status;
         try {
-            status = capabilityService.collect(sn, true);
+            status = capabilityService.collectWithIsp(sn, isp);
         } catch (Exception e) {
             result.status = "fail";
             result.error = e.getMessage();
@@ -601,14 +629,55 @@ public class ModelAdaptationService {
         if (leaf.isEmpty() || !SPEED_LEAF.matcher(leaf).find()) {
             return -1;
         }
-        double v;
-        try {
-            v = Double.parseDouble(row.getParamValue() == null ? "" : row.getParamValue().trim());
-        } catch (NumberFormatException e) {
+        Double parsed = parseSpeedValue(row.getParamValue());
+        if (parsed == null) {
             return -1;
         }
+        double v = parsed;
         // MaxBitRate 常见单位为 Mbps，个别厂商报 kbps（>=10000 视为 kbps）
         return v >= 10000 ? v / 1000.0 : v;
+    }
+
+    /**
+     * 速率值转数字，认得几种厂商写法：
+     * <ul>
+     *   <li>{@code 1000} —— 纯数字，按 Mbps 走（>=10000 的按 kbps 换算）</li>
+     *   <li>{@code "1000M"} / {@code "1000Mb"} / {@code "1G"} —— 带单位后缀</li>
+     *   <li>{@code "Auto"} / {@code "自动"} —— 自动协商，无速率上限，返回 null</li>
+     * </ul>
+     * 早先只用 {@code Double.parseDouble}，电信固件普遍把 MaxBitRate 报成
+     * {@code "1000M"} 这种带后缀的文本，解析一律失败，速率恒为 null，
+     * 申报 1000M 就永远过不了。
+     */
+    private static Double parseSpeedValue(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String text = raw.trim().toLowerCase(Locale.ROOT);
+        if (text.isEmpty()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(text);
+        } catch (NumberFormatException ignored) {
+            // 不是纯数字，走带单位的解析
+        }
+        // 剥掉单位后缀再试：1000M / 1000Mb / 1000Mbps / 1G / 1Gb
+        String digits = text.replaceAll("[^0-9.]", "");
+        if (digits.isEmpty()) {
+            return null;
+        }
+        double v;
+        try {
+            v = Double.parseDouble(digits);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        // 带 G 后缀的换算成 Mbps；带 M 的就是 Mbps 原样
+        if (text.contains("g") && !text.contains("m")) {
+            return v * 1000.0;
+        }
+        return v;
     }
 
     /** 从频段字段、信道列表或 802.11 制式推断 WIFI 频段，返回这条参数是否给出了频段证据 */
@@ -637,11 +706,27 @@ public class ModelAdaptationService {
             } else if (lower.contains("b") || lower.contains("g")) {
                 bands.add("2.4G");
             }
-        } else if ("SSID".equalsIgnoreCase(leaf)) {
-            // SSID 只有在带频段字样时才作数：CMCC-5G 认得出，CMCC-0002 认不出
+        } else if (isSsidLeaf(leaf)) {
+            // SSID 只有在带频段字样时才作数：CMCC-5G 认得出，CMCC-0002 认不出。
+            // 叶子名按后缀匹配，厂商私有的 X_CT-COM_SSID / X_CMCC_SSID 同样能认出来
             collectBandsFromText(lower, bands);
         }
         return bands.size() > before;
+    }
+
+    /**
+     * SSID 类叶子：标准 {@code SSID}，以及厂商私有的 {@code X_CT-COM_SSID} /
+     * {@code X_CMCC_SSID} 这类变体。
+     * <p>
+     * 早先这里是全等比较，只有标准的 {@code SSID} 认得出来，电信定制机的
+     * {@code X_CT-COM_SSID} 里的频段字样全被漏掉，WiFi 频段一律判不出来。
+     */
+    private static boolean isSsidLeaf(String leaf) {
+        if (leaf == null || leaf.isEmpty()) {
+            return false;
+        }
+        String lower = leaf.toLowerCase(Locale.ROOT);
+        return lower.equals("ssid") || lower.endsWith("_ssid");
     }
 
     /** 从文本里找频段字样。两个频段分开判断，多值字段才能都认出来 */

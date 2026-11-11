@@ -233,6 +233,13 @@ public class DeviceCapabilityService {
     /** 从 Inform 上报参数预判出的运营商（sn → 运营商代码） */
     private final Map<String, String> informIsp = new ConcurrentHashMap<>();
 
+    /**
+     * 本次采集强制使用的运营商（sn → 运营商代码）。
+     * 适配页的「测试」用：用户在弹窗里选了运营商，采集就该按这一档走，
+     * 别让台账上还没登记的 standard 拖后腿。
+     */
+    private final Map<String, String> collectIspOverride = new ConcurrentHashMap<>();
+
     /** 队列关闭时退回会话内存 outbox，此时拿不到 rpc_record 主键 */
     private final AtomicInteger outboxSequence = new AtomicInteger(0);
 
@@ -294,6 +301,41 @@ public class DeviceCapabilityService {
             return status != null ? status : new CollectStatus(sn, "manual");
         }
         return start(sn, root, "manual");
+    }
+
+    /**
+     * 指定采集标准重采一次：强制用某个运营商的采集档，不看台账登记的运营商。
+     * <p>
+     * 适配页的「测试」用这个——用户在弹窗里选了运营商，采集就该按这一档走。
+     * 台账上的运营商可能还是 standard（首次上报还没来得及登记），
+     * 走通用档就采不到该运营商的私有参数（电信的 X_CT-COM_*、移动的 X_CMCC_*），
+     * 能力判定必然偏低，测出来的结果没有参考价值。
+     *
+     * @param sn   设备序列号
+     * @param isp  采集标准所用的运营商代码，null 表示按台账走
+     */
+    public CollectStatus collectWithIsp(String sn, String isp) {
+        if (isp == null || isp.isBlank()) {
+            return collect(sn, true);
+        }
+        // 先强制收尾上一轮：start() 里如果发现上一轮还 running 且没超时（10 分钟内），
+        // 会直接返回旧 status——旧 status 是按别的 ISP 采的，这次覆盖白做了。
+        // 适配测试必须按用户选的 ISP 重新采，不能让上一轮的残轮挡住。
+        CollectStatus current = statuses.get(sn);
+        if (current != null && "running".equals(current.getStatus())) {
+            current.fail("适配测试强制重采，按新 ISP 重开");
+            inFlight.remove(sn);
+            deadlines.remove(sn);
+            log.info("适配测试强制收尾上一轮采集，按新 ISP 重开: sn={}, 旧轮已运行={}ms",
+                    sn, System.currentTimeMillis() - current.getStartTime());
+        }
+        collectIspOverride.put(sn, isp.trim());
+        try {
+            return collect(sn, true);
+        } finally {
+            // runCollect 在 start() 内同步调用，ISP 在 collect() 返回前就定下来了
+            collectIspOverride.remove(sn);
+        }
     }
 
     /** 查询采集状态，从未采集过返回 null */
@@ -455,8 +497,10 @@ public class DeviceCapabilityService {
             executor().execute(() -> {
                 try {
                     // 归档走统一入口：任何运营商的猫都先截到 models/standard/standard/，
-                    // 按运营商分目录是人工适配申报时才做的事
-                    modelTreeStore.exportCollected(sn);
+                    // 按运营商分目录是人工适配申报时才做的事。
+                    // 只写 XML 不往 SQLite 模板库登记型号——采集不等于适配，
+                    // 没适配的型号在模板库里留一条 PENDING 占位没意义
+                    modelTreeStore.exportCollectedOnly(sn);
                 } catch (Exception e) {
                     log.warn("导出型号能力树失败: sn={}, err={}", sn, e.getMessage());
                 }
@@ -473,7 +517,10 @@ public class DeviceCapabilityService {
         status.setPhase("names");
         status.setStartTime(System.currentTimeMillis());
 
-        String isp = deviceIsp(sn);
+        String isp = collectIspOverride.get(sn);
+        if (isp == null || isp.isBlank()) {
+            isp = deviceIsp(sn);
+        }
         if (isp == null || isp.isBlank()) {
             // 台账还没登记（首次上报，入库走队列会比这次采集晚）：用 Inform 认出的那个
             isp = informIsp.get(sn);
@@ -494,6 +541,7 @@ public class DeviceCapabilityService {
                 } else {
                     status.fail("关键字段一个都没读到: " + String.join(", ", status.getErrors()));
                 }
+                flushIfPassed(sn, batch, status);
                 return null;
             });
         }
@@ -525,13 +573,15 @@ public class DeviceCapabilityService {
                                 ? "子树均未返回节点: " + String.join(", ", resolveSubtrees(root, profile))
                                 : String.join("; ", status.getErrors())));
                     }
+                    flushIfPassed(sn, batch, status);
                     return null;
                 });
             }
             // 扫到了就清零：之前的失败只是偶发，别累积到降级阈值
             treeFailures.remove(sn);
             List<Node> tree = completeTree(nodes, root);
-            saveTree(sn, batch, tree);
+            // 先暂存不落库：等值阶段跑完、能力测试通过再统一写入
+            status.stageTree(tree);
             if (autoDetectIsp) {
                 detectAndWriteIsp(sn, pathsOf(tree));
             }
@@ -541,10 +591,19 @@ public class DeviceCapabilityService {
 
             List<String> paths = paramPaths(tree);
             if (paths.isEmpty()) {
+                flushIfPassed(sn, batch, status);
                 return CompletableFuture.completedFuture(null);
             }
             status.setPhase("values");
-            return readValues(sn, paths, status);
+            List<String> probePaths = absoluteProbePaths(root, profile);
+            if (probePaths.isEmpty()) {
+                return readValues(sn, paths, status).thenRun(() -> flushIfPassed(sn, batch, status));
+            }
+            // 私有参数补读：X_CT-COM_WANGponLinkConfig 这类私有对象有的固件不进 GPN 树，
+            // 整棵替换会把 Inform 带进来的私有参数抹掉；按采集标准补读一遍兜住
+            return readValues(sn, paths, status)
+                    .thenCompose(v -> readValues(sn, probePaths, status))
+                    .thenRun(() -> flushIfPassed(sn, batch, status));
         }, executor()).exceptionally(ex -> {
             Throwable cause = ex instanceof java.util.concurrent.CompletionException
                     && ex.getCause() != null ? ex.getCause() : ex;
@@ -807,12 +866,12 @@ public class DeviceCapabilityService {
                     if (rows.isEmpty()) {
                         return;
                     }
-                    saveValues(sn, rows);
+                    status.stageValues(rows);
                     sink.add(new Node(target, false, true));
                 });
             }, executor());
         }
-        return chain.thenComposeAsync(v -> expandInstances(sn, root, sink, status), executor())
+        return chain.thenComposeAsync(v -> expandInstances(sn, root, profile, sink, status), executor())
                 .thenApply(v -> true);
     }
 
@@ -831,30 +890,56 @@ public class DeviceCapabilityService {
         }
     }
 
-    /** 按设备自报的条目数把实例 2..N 补采回来 */
-    private CompletableFuture<Void> expandInstances(String sn, String root, List<Node> sink,
-                                                    CollectStatus status) {
+    /**
+     * 按设备自报的条目数把实例 2..N 补采回来。
+     * <p>
+     * 补采对象：
+     * <ul>
+     *   <li>LAN 网口：按 {@code LANEthernetInterfaceNumberOfEntries} 补实例 2..N</li>
+     *   <li>Voice Line：按 {@code LineNumberOfEntries} 补实例 2..N</li>
+     *   <li>WAN 连接：按 {@code WANConnectionDeviceNumberOfEntries} 和
+     *       {@code WAN(PPP|IP)ConnectionNumberOfEntries} 补实例 2..N，
+     *       叶子路径从 {@code profile.getProbePaths()} 中实例 1 的模板派生</li>
+     * </ul>
+     */
+    private CompletableFuture<Void> expandInstances(String sn, String root,
+                                                    CapabilityProfiles.Profile profile,
+                                                    List<Node> sink, CollectStatus status) {
         if (root == null || root.isEmpty() || !expandedRoots.add(sn + "|" + root)) {
             return CompletableFuture.completedFuture(null);
         }
-        List<String> entries = List.of(
+        List<String> entries = new ArrayList<>(List.of(
                 root + "LANDevice.1.LANEthernetInterfaceNumberOfEntries",
                 root + "Services.VoiceService.1.VoiceProfile.1.LineNumberOfEntries",
-                root + "Services.VoiceService.1.VoiceProfile.1.PhyInterfaceNumberOfEntries");
+                root + "Services.VoiceService.1.VoiceProfile.1.PhyInterfaceNumberOfEntries"));
+        // WAN 连接条目数：ConnectionDevice 层 + IP/PPP 子连接层
+        entries.add(root + "WANDevice.1.WANConnectionDeviceNumberOfEntries");
+        entries.add(root + "WANDevice.1.WANConnectionDevice.1.WANIPConnectionNumberOfEntries");
+        entries.add(root + "WANDevice.1.WANConnectionDevice.1.WANPPPConnectionNumberOfEntries");
         return getParameterValues(sn, entries).thenComposeAsync(resp -> {
             if (resp == null || resp.isFault()) {
-                return CompletableFuture.completedFuture(null);
+                // 条目数整批被拒（电信定制机常见）：NumberOfEntries 靠不住，改盲探实例
+                return probeWanInstances(sn, profile, root, sink, status);
             }
             List<CpeParameter> rows = parseValues(sn, resp);
-            saveValues(sn, rows);
+            status.stageValues(rows);
             int lanPorts = 0;
             int lines = 0;
+            int wanConnDevs = 0;
+            int wanIpConns = 0;
+            int wanPppConns = 0;
             for (CpeParameter row : rows) {
                 String leaf = nameOf(row.getParamPath());
                 if ("LANEthernetInterfaceNumberOfEntries".equals(leaf)) {
                     lanPorts = Math.max(lanPorts, intOf(row.getParamValue()));
                 } else if ("LineNumberOfEntries".equals(leaf)) {
                     lines = Math.max(lines, intOf(row.getParamValue()));
+                } else if ("WANConnectionDeviceNumberOfEntries".equals(leaf)) {
+                    wanConnDevs = Math.max(wanConnDevs, intOf(row.getParamValue()));
+                } else if ("WANIPConnectionNumberOfEntries".equals(leaf)) {
+                    wanIpConns = Math.max(wanIpConns, intOf(row.getParamValue()));
+                } else if ("WANPPPConnectionNumberOfEntries".equals(leaf)) {
+                    wanPppConns = Math.max(wanPppConns, intOf(row.getParamValue()));
                 }
             }
             List<String> targets = new ArrayList<>();
@@ -871,11 +956,19 @@ public class DeviceCapabilityService {
                 targets.add(base + "Enable");
                 targets.add(base + "DirectoryNumber");
             }
+            // WAN 连接多实例补采：从 probePaths 中提取实例 1 的叶子模板，
+            // 把 .1. 替换为 .N. 生成实例 2..N 的路径。
+            // WANConnectionDevice 层：实例 2..wanConnDevs，每个下面都有 IP/PPP 连接
+            targets.addAll(wanInstanceTargets(profile, root, wanConnDevs, wanIpConns, wanPppConns));
             if (targets.isEmpty()) {
+                if (wanConnDevs == 0 && wanIpConns == 0 && wanPppConns == 0) {
+                    // 设备没报任何条目数（多半是拒答）：照样盲探，别让库里只剩实例 1
+                    return probeWanInstances(sn, profile, root, sink, status);
+                }
                 return CompletableFuture.completedFuture(null);
             }
-            log.info("按条目数补采实例: sn={}, LAN 口数={}, Line 数={}, 追加路径 {} 条",
-                    sn, lanPorts, lines, targets.size());
+            log.info("按条目数补采实例: sn={}, LAN 口数={}, Line 数={}, WAN 连接设备数={}, 追加路径 {} 条",
+                    sn, lanPorts, lines, wanConnDevs, targets.size());
             CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
             for (List<String> batch : partition(targets, Math.max(1, valueBatchSize))) {
                 chain = chain.thenComposeAsync(v -> readValuesBatch(sn, batch, status, 0, 1),
@@ -886,6 +979,177 @@ public class DeviceCapabilityService {
                     sink.add(new Node(target, false, true));
                 }
             });
+        }, executor());
+    }
+
+    /** WAN 连接实例 2..N 的叶子路径，从 probePaths 中实例 1 的模板派生 */
+    private static List<String> wanInstanceTargets(CapabilityProfiles.Profile profile,
+                                                   String root,
+                                                   int wanConnDevs, int wanIpConns, int wanPppConns) {
+        List<String> result = new ArrayList<>();
+        if (profile == null || profile.getProbePaths() == null || profile.getProbePaths().isEmpty()) {
+            return result;
+        }
+        WanTemplates tpls = wanTemplates(profile);
+        List<String> ipTemplates = tpls.ip();
+        List<String> pppTemplates = tpls.ppp();
+        // WANConnectionDevice 层实例 2..N：每个 ConnectionDevice 下都有 IP/PPP 连接实例 1
+        // 设备可能只在 ConnectionDevice.1 下建连接，也可能在 2..N 下都建
+        for (int cd = 1; cd <= Math.min(wanConnDevs, 8); cd++) {
+            // 每个 ConnectionDevice 下的 IP 连接实例 1..N
+            int ipMax = (cd == 1) ? Math.min(wanIpConns, 8) : 1;
+            for (int ci = (cd == 1 ? 2 : 1); ci <= Math.max(ipMax, 1); ci++) {
+                if (cd == 1 && ci == 1) {
+                    continue; // 实例 1 已经在 probePaths 里采过了
+                }
+                for (String tpl : ipTemplates) {
+                    result.add(root + tpl
+                            .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + ".")
+                            .replace("WANIPConnection.1.", "WANIPConnection." + ci + "."));
+                }
+            }
+            // 每个 ConnectionDevice 下的 PPP 连接实例 1..N
+            int pppMax = (cd == 1) ? Math.min(wanPppConns, 8) : 1;
+            for (int ci = (cd == 1 ? 2 : 1); ci <= Math.max(pppMax, 1); ci++) {
+                if (cd == 1 && ci == 1) {
+                    continue;
+                }
+                for (String tpl : pppTemplates) {
+                    result.add(root + tpl
+                            .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + ".")
+                            .replace("WANPPPConnection.1.", "WANPPPConnection." + ci + "."));
+                }
+            }
+        }
+        // GPON 链路层参数（VLANIDMark 等）：每个 ConnectionDevice 一份，
+        // 实例 1 已在 probePaths 里，这里补 2..N
+        for (int cd = 2; cd <= Math.min(wanConnDevs, 8); cd++) {
+            for (String tpl : tpls.link()) {
+                result.add(root + tpl
+                        .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + "."));
+            }
+        }
+        return result;
+    }
+
+    /** probePaths 里抽出来的 WAN 连接叶子模板：IP 连接与 PPP 连接各一组 */
+    private record WanTemplates(List<String> ip, List<String> ppp, List<String> link) {
+    }
+
+    /**
+     * 从 probePaths 中提取实例 1 的 WAN 相关叶子路径模板：
+     * IP 连接、PPP 连接各一组，外加 GPON 链路层（X_CT-COM_WANGponLinkConfig，每个
+     * ConnectionDevice 一份，不带连接实例号）一组。
+     */
+    private static WanTemplates wanTemplates(CapabilityProfiles.Profile profile) {
+        List<String> ip = new ArrayList<>();
+        List<String> ppp = new ArrayList<>();
+        List<String> link = new ArrayList<>();
+        if (profile != null && profile.getProbePaths() != null) {
+            for (String path : profile.getProbePaths()) {
+                if (path == null || path.isBlank()) {
+                    continue;
+                }
+                String p = path.trim();
+                if (p.contains("WANConnectionDevice.1.WANIPConnection.1.")) {
+                    ip.add(p);
+                } else if (p.contains("WANConnectionDevice.1.WANPPPConnection.1.")) {
+                    ppp.add(p);
+                } else if (p.contains("WANConnectionDevice.1.X_CT-COM_WANGponLinkConfig.")) {
+                    link.add(p);
+                }
+            }
+        }
+        return new WanTemplates(ip, ppp, link);
+    }
+
+    /**
+     * NumberOfEntries 拿不到时的兜底：逐个 WANConnectionDevice 盲探。
+     *
+     * <p>电信定制机常对 GetParameterNames 扫树拒答、NumberOfEntries 也读不到，
+     * 只靠实例 1 兜底会把 Internet / VoIP / Other 等连接全丢掉。这里按实例号
+     * 逐个 GPV 一条探测叶子，回值说明实例存在，再把该实例的整组叶子补齐。</p>
+     */
+    private CompletableFuture<Void> probeWanInstances(String sn, CapabilityProfiles.Profile profile,
+                                                      String root, List<Node> sink, CollectStatus status) {
+        WanTemplates tpls = wanTemplates(profile);
+        if (tpls.ip().isEmpty() && tpls.ppp().isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        if (!expandedRoots.add(sn + "|wan-probe|" + root)) {
+            return CompletableFuture.completedFuture(null);
+        }
+        log.info("条目数不可用，盲探 WAN 连接实例: sn={}", sn);
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        // 电信机型普遍一个 ConnectionDevice 挂一条连接；实例 1 额外探到 2，
+        // 覆盖少数把多条 IP 连接塞在 ConnectionDevice.1 下的机型
+        for (int cd = 1; cd <= 8; cd++) {
+            for (int ci = 1; ci <= (cd == 1 ? 2 : 1); ci++) {
+                final int fcd = cd;
+                final int fci = ci;
+                chain = chain.thenComposeAsync(
+                        v -> probeWanOne(sn, root, tpls, fcd, fci, sink, status), executor());
+            }
+        }
+        return chain;
+    }
+
+    /** 盲探单个 (ConnectionDevice.cd, 连接.ci)：先探一条叶子，存在则整组补齐 */
+    private CompletableFuture<Void> probeWanOne(String sn, String root, WanTemplates tpls,
+                                                int cd, int ci, List<Node> sink, CollectStatus status) {
+        List<String> probes = new ArrayList<>(3);
+        String ipProbe = tpls.ip().isEmpty() ? null
+                : root + tpls.ip().get(0)
+                        .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + ".")
+                        .replace("WANIPConnection.1.", "WANIPConnection." + ci + ".");
+        String pppProbe = tpls.ppp().isEmpty() ? null
+                : root + tpls.ppp().get(0)
+                        .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + ".")
+                        .replace("WANPPPConnection.1.", "WANPPPConnection." + ci + ".");
+        String linkProbe = tpls.link().isEmpty() ? null
+                : root + tpls.link().get(0)
+                        .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + ".");
+        if (ipProbe != null) {
+            probes.add(ipProbe);
+        }
+        if (pppProbe != null) {
+            probes.add(pppProbe);
+        }
+        if (linkProbe != null && !probes.contains(linkProbe)) {
+            probes.add(linkProbe);
+        }
+        if (probes.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return getParameterValues(sn, probes).thenComposeAsync(resp -> {
+            if (resp == null || resp.isFault()) {
+                // 实例不存在或被拒：静默跳过，正常情况
+                return CompletableFuture.completedFuture(null);
+            }
+            status.stageValues(parseValues(sn, resp));
+            List<String> full = new ArrayList<>();
+            for (String tpl : tpls.ip()) {
+                full.add(root + tpl
+                        .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + ".")
+                        .replace("WANIPConnection.1.", "WANIPConnection." + ci + "."));
+            }
+            for (String tpl : tpls.ppp()) {
+                full.add(root + tpl
+                        .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + ".")
+                        .replace("WANPPPConnection.1.", "WANPPPConnection." + ci + "."));
+            }
+            for (String tpl : tpls.link()) {
+                full.add(root + tpl
+                        .replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + "."));
+            }
+            for (String p : full) {
+                sink.add(new Node(p, false, true));
+            }
+            CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+            for (List<String> batch : partition(full, Math.max(1, valueBatchSize))) {
+                chain = chain.thenComposeAsync(v -> readValuesBatch(sn, batch, status, 0, 1), executor());
+            }
+            return chain;
         }, executor());
     }
 
@@ -904,12 +1168,10 @@ public class DeviceCapabilityService {
         return false;
     }
 
-    /** 最后一档兜底（整棵树级别）：GetParameterNames 一句都问不出来时，按采集标准登记的 */
-    private CompletableFuture<Boolean> probeGlobalPaths(String sn, String root,
-                                                        CapabilityProfiles.Profile profile,
-                                                        CollectStatus status) {
+    /** 采集标准登记的探测路径 → 绝对路径（补根前缀），GPN 兜底与 GPN 成功后的私有参数补读共用 */
+    private List<String> absoluteProbePaths(String root, CapabilityProfiles.Profile profile) {
         if (profile == null || profile.getProbePaths() == null || profile.getProbePaths().isEmpty()) {
-            return CompletableFuture.completedFuture(false);
+            return List.of();
         }
         List<String> paths = new ArrayList<>();
         for (String candidate : profile.getProbePaths()) {
@@ -919,6 +1181,17 @@ public class DeviceCapabilityService {
             String relative = candidate.trim();
             paths.add(relative.startsWith(root) ? relative : root + relative);
         }
+        return paths;
+    }
+
+    /** 最后一档兜底（整棵树级别）：GetParameterNames 一句都问不出来时，按采集标准登记的 */
+    private CompletableFuture<Boolean> probeGlobalPaths(String sn, String root,
+                                                        CapabilityProfiles.Profile profile,
+                                                        CollectStatus status) {
+        if (profile == null || profile.getProbePaths() == null || profile.getProbePaths().isEmpty()) {
+            return CompletableFuture.completedFuture(false);
+        }
+        List<String> paths = absoluteProbePaths(root, profile);
         if (paths.isEmpty()) {
             return CompletableFuture.completedFuture(false);
         }
@@ -928,7 +1201,7 @@ public class DeviceCapabilityService {
             if (resp != null && !resp.isFault()) {
                 List<CpeParameter> rows = parseValues(sn, resp);
                 if (!rows.isEmpty()) {
-                    saveValues(sn, rows);
+                    status.stageValues(rows);
                     status.addValueCount(rows.size());
                     // 读到 X_CT-COM_ / X_CTC_ 这类私有参数就认运营商：
                     // 不走参数树采集这条路的设备，这是唯一的识别来源
@@ -1471,7 +1744,7 @@ public class DeviceCapabilityService {
             }
             List<CpeParameter> rows = parseValues(sn, resp);
             status.addValueCount(rows.size());
-            saveValues(sn, rows);
+            status.stageValues(rows);
             return CompletableFuture.<Void>completedFuture(null);
         }, executor());
     }
@@ -1581,38 +1854,52 @@ public class DeviceCapabilityService {
 
     // ==================== 业务参数读取 ====================
 
-    /** 按给定路径批量读取参数值，并回填能力树，供业务信息采集复用 */
+    /**
+     * 按给定路径批量读取参数值，并回填能力树，供业务信息采集复用。
+     *
+     * <p>落库门禁：读到的值先暂存内存，等全部路径测完（读到值，或被设备明确拒绝后
+     * 二分剔出）才一次性写入——半途超时 / 断会话不会往库里写半成品。
+     * 每条路径的「读到了 / 被拒绝」本身就是一次能力测试。</p>
+     */
     public CompletableFuture<Map<String, String>> readPathValues(String sn, List<String> paths) {
         Map<String, String> result = new ConcurrentHashMap<>();
         if (paths == null || paths.isEmpty()) {
             return CompletableFuture.completedFuture(result);
         }
+        List<CpeParameter> buffer = Collections.synchronizedList(new ArrayList<>());
         List<List<String>> batches = partition(paths, Math.max(1, valueBatchSize));
         CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
         for (List<String> batch : batches) {
-            chain = chain.thenComposeAsync(v -> readBatch(sn, batch, result), executor());
+            chain = chain.thenComposeAsync(v -> readBatch(sn, batch, result, buffer), executor());
         }
-        return chain.thenApply(v -> result);
+        return chain.thenApply(v -> {
+            // 走到这里说明每条路径都有了结论（读到或明确拒答），整批落库
+            if (!buffer.isEmpty()) {
+                saveValues(sn, new ArrayList<>(buffer));
+            }
+            return result;
+        });
     }
 
     /** 读一批参数；整批失败就二分拆批重读 */
     private CompletableFuture<Void> readBatch(String sn, List<String> batch,
-                                              Map<String, String> result) {
+                                              Map<String, String> result,
+                                              List<CpeParameter> buffer) {
         return getParameterValues(sn, batch).thenCompose(resp -> {
             if (resp != null && !resp.isFault()) {
                 List<CpeParameter> rows = parseValues(sn, resp);
                 for (CpeParameter row : rows) {
                     result.put(row.getParamPath(), row.getParamValue());
                 }
-                saveValues(sn, rows);
+                buffer.addAll(rows);
                 return CompletableFuture.completedFuture(null);
             }
             if (batch.size() > 1) {
                 int mid = batch.size() / 2;
-                return readBatch(sn, batch.subList(0, mid), result)
-                        .thenCompose(v -> readBatch(sn, batch.subList(mid, batch.size()), result));
+                return readBatch(sn, batch.subList(0, mid), result, buffer)
+                        .thenCompose(v -> readBatch(sn, batch.subList(mid, batch.size()), result, buffer));
             }
-            log.debug("业务参数读取失败: sn={}, path={}, err={}",
+            log.debug("业务参数读取失败（该路径设备不提供，剔除）: sn={}, path={}, err={}",
                     sn, batch.get(0), faultText(resp));
             return CompletableFuture.completedFuture(null);
         });
@@ -1653,6 +1940,13 @@ public class DeviceCapabilityService {
             // 记成「未知」而不是 0：MSG2100E 这类 GPN 一律 9002 的固件只能靠兜底
             // 路径读参数，一律按只读处理会让适配试探连一个候选都挑不出来
             row.setWritable(WRITABLE_UNKNOWN);
+            // 补全树结构字段：saveValues 改用 upsert 后，GPV 兜底读到的路径
+            // 如果能力树里没有（电信定制机 GPN 全 9002 的典型场景），
+            // 也能作为新行插入，业务面板才能查到 WAN 口数据
+            row.setParentPath(parentOf(row.getParamPath()));
+            row.setNodeName(nameOf(row.getParamPath()));
+            row.setNodeType(CpeParameter.TYPE_PARAM);
+            row.setDepth(depthOf(row.getParamPath()));
             rows.add(row);
         }
         return rows;
@@ -1710,6 +2004,38 @@ public class DeviceCapabilityService {
 
     // ==================== 落库 ====================
 
+    /**
+     * 能力测试通过才落库：整轮采集的参数树与参数值先暂存在内存，
+     * 跑完且测试通过（扫到了完整参数树，或兜底读到了关键字段）才一次性写入；
+     * 会话中止 / 采集失败 / 一个值都没读到的半成品整批丢弃——
+     * 库里永远不出现「半套适配数据」，下发链路拿到的都是测过的能力。
+     */
+    private void flushIfPassed(String sn, String batch, CollectStatus status) {
+        List<Node> tree = status.stagedTree();
+        List<CpeParameter> values = status.stagedValues();
+        if (tree.isEmpty() && values.isEmpty()) {
+            return;
+        }
+        if (status.isAborted()) {
+            log.warn("能力测试未通过（会话中止），暂存结果整批丢弃: sn={}, 树 {} 节点 / 值 {} 条",
+                    sn, tree.size(), values.size());
+            return;
+        }
+        boolean passed = !tree.isEmpty() || status.getValueCount() > 0;
+        if (!passed) {
+            log.warn("能力测试未通过（未采到任何参数），暂存结果整批丢弃: sn={}", sn);
+            return;
+        }
+        if (!tree.isEmpty()) {
+            saveTree(sn, batch, tree);
+        }
+        if (!values.isEmpty()) {
+            saveValues(sn, values);
+        }
+        log.info("能力测试通过，统一落库: sn={}, 参数树 {} 节点, 参数值 {} 条",
+                sn, tree.size(), values.size());
+    }
+
     /** 整棵替换：先清掉该设备的旧树，再分片写入 */
     private void saveTree(String sn, String batch, List<Node> tree) {
         try {
@@ -1742,9 +2068,13 @@ public class DeviceCapabilityService {
     private void saveValues(String sn, List<CpeParameter> rows) {
         for (List<CpeParameter> chunk : partition(rows, UPDATE_CHUNK)) {
             try {
-                parameterMapper.updateValues(sn, chunk);
+                // upsert：路径已存在就只更新值（ON DUPLICATE KEY UPDATE 只碰 param_value /
+                // value_type），不存在就作为新行插入。
+                // 电信定制机 GPN 对父对象路径回 9002，能力树里没有 WAN 参数行，
+                // GPV 兜底读到的值必须靠 upsert 才能落库
+                parameterMapper.upsertInformValues(chunk);
             } catch (Exception e) {
-                log.error("参数值回填失败: sn={}, size={}, err={}", sn, chunk.size(), e.getMessage());
+                log.error("参数值 upsert 失败: sn={}, size={}, err={}", sn, chunk.size(), e.getMessage());
             }
         }
         rememberConnectionRequestCredentials(sn, rows);
@@ -1801,6 +2131,9 @@ public class DeviceCapabilityService {
     // ==================== 触发判定 ====================
 
     /** 距上次采集是否已久到需要重采；从没采过也算 */
+    /** partial 快照的重采冷却：避免 GPN 永久拒答的设备每个 Inform 都重跑一遍采集 */
+    private static final long PARTIAL_RETRY_MINUTES = 30;
+
     private boolean isStale(String sn) {
         if (refreshIntervalHours <= 0) {
             return true;
@@ -1810,7 +2143,18 @@ public class DeviceCapabilityService {
             if (last == null) {
                 return true;
             }
-            return ChronoUnit.HOURS.between(last, LocalDateTime.now()) >= refreshIntervalHours;
+            if (ChronoUnit.HOURS.between(last, LocalDateTime.now()) >= refreshIntervalHours) {
+                return true;
+            }
+            // partial 快照（设备对 GPN 拒答、只按已知路径 GPV，库里没有 object 行）不算新鲜：
+            // 过了短冷却就重采，让兜底采集（盲探 WAN 实例）有机会把残缺的 WAN 参数补全，
+            // 否则设备会顶着一份 WAN 残缺的快照过完整个刷新周期
+            if (parameterMapper.countObjectNodes(sn) == 0
+                    && ChronoUnit.MINUTES.between(last, LocalDateTime.now()) >= PARTIAL_RETRY_MINUTES) {
+                log.info("快照为 partial（无参数树），冷却已过重采: sn={}, last={}", sn, last);
+                return true;
+            }
+            return false;
         } catch (Exception e) {
             log.warn("查询采集时间失败，本次不采集: sn={}, err={}", sn, e.getMessage());
             return false;
@@ -1989,6 +2333,40 @@ public class DeviceCapabilityService {
         private volatile int totalBatches;
 
         private volatile int finishedBatches;
+
+        /** 暂存的参数树节点：整轮采集跑完、能力测试通过才统一落库 */
+        private final List<Node> stagedTree = Collections.synchronizedList(new ArrayList<>());
+
+        /** 暂存的参数值行：整轮采集跑完、能力测试通过才统一落库 */
+        private final List<CpeParameter> stagedValues = Collections.synchronizedList(new ArrayList<>());
+
+        void stageTree(List<Node> tree) {
+            if (tree != null && !tree.isEmpty()) {
+                synchronized (stagedTree) {
+                    stagedTree.addAll(tree);
+                }
+            }
+        }
+
+        void stageValues(List<CpeParameter> rows) {
+            if (rows != null && !rows.isEmpty()) {
+                synchronized (stagedValues) {
+                    stagedValues.addAll(rows);
+                }
+            }
+        }
+
+        List<Node> stagedTree() {
+            synchronized (stagedTree) {
+                return new ArrayList<>(stagedTree);
+            }
+        }
+
+        List<CpeParameter> stagedValues() {
+            synchronized (stagedValues) {
+                return new ArrayList<>(stagedValues);
+            }
+        }
 
         private volatile int failBatches;
 

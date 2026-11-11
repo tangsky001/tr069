@@ -78,6 +78,20 @@ public class ModelTreeStore {
         return export(sn, false, archiveIsp(findDevice(sn)));
     }
 
+    /**
+     * 采集完成后的归档：只写能力树 XML，不往 SQLite 模板库登记型号。
+     * <p>
+     * 采集只是「把这台设备的能力读回来」，还没做适配——没适配的型号往模板库里塞一条
+     * PENDING 占位没意义：它不参与下发，却让库里堆满未适配型号的垃圾行，
+     * 列表上的适配判定也跟着变乱。
+     * <p>
+     * 真正登记型号是「测试通过 → 保存到库」那一步的事：
+     * 那时落库的是实测能力，status=ADAPTED，同型号设备上线直接复用。
+     */
+    public ExportResult exportCollectedOnly(String sn) {
+        return export(sn, false, archiveIsp(findDevice(sn)), false);
+    }
+
     /** 归档运营商：未适配的型号一律 {@code standard}，已适配的维持已适配那一家 */
     String archiveIsp(CpeDevice device) {
         return archiveIspOf(ModelMappingService.buildModelKey(
@@ -92,6 +106,17 @@ public class ModelTreeStore {
 
     /** 可能与设备上报的 isp 不同（同型号卖给多家运营商） */
     public ExportResult export(String sn, boolean force, String ispOverride) {
+        return export(sn, force, ispOverride, true);
+    }
+
+    /**
+     * 导出型号能力树。
+     *
+     * @param registerInLib 是否往 SQLite 模板库登记型号。
+     *                      false 表示只写 XML 不落库——采集自动归档走这条，
+     *                      没适配的型号不必在模板库里占位。
+     */
+    public ExportResult export(String sn, boolean force, String ispOverride, boolean registerInLib) {
         List<CpeParameter> nodes = parameterMapper.selectList(new LambdaQueryWrapper<CpeParameter>()
                 .eq(CpeParameter::getSn, sn)
                 .orderByAsc(CpeParameter::getParamPath));
@@ -105,14 +130,17 @@ public class ModelTreeStore {
                 device == null ? null : device.getProductClass(),
                 device == null ? null : device.getSoftwareVersion());
 
-        Device modelRow = resolveModelRow(isp, modelKey, device, sn);
-        if (modelRow == null) {
+        // 不落库时也要拿到这一行做「能力树已存在就别覆盖」的判断，
+        // 但没有就算了——写文件本身不依赖模板库
+        Device modelRow = registerInLib ? resolveModelRow(isp, modelKey, device, sn) : null;
+        if (registerInLib && modelRow == null) {
             throw new IllegalStateException("型号登记失败: " + modelKey);
         }
         String relative = relativePath(isp, modelKey);
         Path file = resolveFile(relative);
 
-        if (Files.isRegularFile(file) && !force && notBlank(modelRow.getSampleSn())
+        if (Files.isRegularFile(file) && !force && modelRow != null
+                && notBlank(modelRow.getSampleSn())
                 && !sn.equals(modelRow.getSampleSn())) {
             log.info("型号能力树已存在且来自其它样机，本次不覆盖: model={}, file={}, sample={}",
                     modelKey, relative, modelRow.getSampleSn());
@@ -123,15 +151,17 @@ public class ModelTreeStore {
         String xml = buildXml(sn, isp, modelKey, device, nodes);
         writeAtomic(file, xml);
 
-        if (force || !notBlank(modelRow.getSampleSn())) {
-            modelRow.setSampleSn(sn);
+        if (modelRow != null) {
+            if (force || !notBlank(modelRow.getSampleSn())) {
+                modelRow.setSampleSn(sn);
+            }
+            deviceDao.upsert(modelRow);
         }
-        deviceDao.upsert(modelRow);
-        log.info("导出型号能力树: model={}, 对象={}, 参数={}, file={}",
-                modelKey, count(nodes, true), count(nodes, false), file);
+        log.info("导出型号能力树: model={}, 对象={}, 参数={}, file={}, 落库={}",
+                modelKey, count(nodes, true), count(nodes, false), file, registerInLib);
 
         // 能力申报可能刚变过，模板要跟着重推一遍；模板没生成出来不影响导出本身
-        if (templateService != null) {
+        if (templateService != null && modelRow != null) {
             try {
                 templateService.generateAll(modelRow);
             } catch (Exception e) {
