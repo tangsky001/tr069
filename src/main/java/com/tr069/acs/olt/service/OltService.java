@@ -219,8 +219,7 @@ public class OltService {
         completeVlanMemberPorts(boards, vlan);
         detail.setVlan(vlan);
         detail.setTemplate(readTemplate(device.getTemplateJson()));
-        // 派生数据（接口号 / VLAN 文本 / ONT 汇总 / 灯态 / VLAN 分组）统一在后端算，
-        // 页面只渲染；口径只有这一份，面板、列表、汇总不会各算各的
+        // 派生数据（接口号 / VLAN 文本 / ONT 汇总 / 灯态 / VLAN 分组）统一在后端算，口径只有这一份，页面只渲染
         enrichDetail(detail, boards, vlan);
         // 后台正在补采慢数据（端口 / ONT / VLAN / 模板）时告诉页面，页面据此提示并轮询
         detail.setDeepSyncing(deepSyncing.contains(id));
@@ -229,8 +228,7 @@ public class OltService {
 
     /** 按型号档案把板卡补齐：面板样式、是否主控板，端口类型/数量在设备没给时按档案兜底 */
     private static void fillBoardProfile(OltBoard board) {
-        // 整机（鸿升光）：没有板卡插框，面板按型号规格画，不做板卡档案匹配。
-        // 旧快照里没有这块（运行时字段），按型号现补，免得页面整机面板空着。
+        // 整机（鸿升光）没有板卡插框：旧快照缺这块运行时字段，按型号规格现补，免得页面面板空着
         if (board.getFrontPanel() == null) {
             board.setFrontPanel(HsgqModelCatalog.frontPanelOf(board.getBoardType()));
         }
@@ -566,8 +564,7 @@ public class OltService {
 
     private OltDetail doQuickSync(Long id, String operator, String scope) {
         OltDevice device = requireDevice(id);
-        // 打开详情页的自动板卡刷新（scope=boards）：板卡数据刚同步过就不碰设备。
-        // 「要不要占用会话」由后端统一决策，前端只是调 API，F5/来回切设备不会把会话名额打满
+        // 详情页自动板卡刷新（scope=boards）：刚同步过就不碰设备，会话占用由后端统一决策，F5 不会打满名额
         if ("boards".equalsIgnoreCase(scope) && boardsFresh(id, device)) {
             return detail(id);
         }
@@ -673,8 +670,7 @@ public class OltService {
         }
         long start = System.currentTimeMillis();
         try {
-            // 页签同步只采整板表：ONT 明细一张表就回来；逐台的管理IP/MAC/模板是
-            // 一台一条命令的慢活（几十台要几分钟），交给后台补采，页面轮询刷新看到补齐
+            // 页签同步只采整板表（ONT 明细一张表就回来）；逐台的管理IP/MAC/模板是慢活，交后台补采页面轮询看补齐
             OltSnapshot snapshot = telnetService.collectSections(device, boards, sections, false);
             long cost = System.currentTimeMillis() - start;
             boolean boardsTouched = sections.contains(OltCliSession.Section.TEMPERATURES)
@@ -1131,8 +1127,7 @@ public class OltService {
                 port.setLinkStatus(prev.getLinkStatus());
             }
             if (needOnts && port.getOnts() == null) {
-                // 明细没采到但数量还在（>0）：多半是长表超时 / 解析没出来，沿旧别把列表抹成空；
-                // 设备真删光了 onuTotal 是 0，照样落库清空
+                // 明细没采到但数量还在（>0）：多半长表超时/解析没出来，沿旧别抹成空；真删光了 onuTotal 是 0 照样清空
                 if (port.getOnuTotal() == null || port.getOnuTotal() > 0) {
                     port.setOnts(prev.getOnts());
                 }
@@ -1249,8 +1244,7 @@ public class OltService {
             LocalDateTime now = LocalDateTime.now();
 
             List<OltBoard> boards = snapshot.getBoards() == null ? List.of() : snapshot.getBoards();
-            // 稳态省时：上一轮已采到的 ONT 详情（管理 IP/MAC/模板号）按序列号对回来，
-            // 别每轮对全部 ONT 逐台重查（一台一两条命令、设备侧秒级，是同步耗时的大头）
+            // 稳态省时：上一轮已采到的 ONT 详情（管理 IP/MAC/模板号）按序列号对回来，别每轮逐台重查（同步耗时大头）
             seedOntDetails(id, boards);
             if (withOptics) {
                 writeBoards(id, boards, now, false);
@@ -1335,8 +1329,7 @@ public class OltService {
                 String configRaw = outs[0];
                 String portsRaw = outs[1];
                 String infoRaw = outs[2];
-                // 业务流优先表格回显（带 VLAN 属性 / 用户侧 VLAN / 状态），
-                // 表格解不出再退回配置摘录里的 service-port 行；老版本整口查询按 VPI 筛本 ONT
+                // 业务流优先表格回显（带 VLAN 属性/状态），解不出再退回配置摘录的 service-port 行；老版本按 VPI 筛本 ONT
                 List<OltServicePort> servicePorts = new ArrayList<>(OltInfoParser.parseServicePorts(portsRaw));
                 if (servicePorts.isEmpty()) {
                     servicePorts = OltInfoParser.parseServicePortsFromConfig(configRaw);
@@ -1392,8 +1385,7 @@ public class OltService {
                 if (subcommand == null) {
                     throw new IllegalArgumentException("不支持的查询类型：" + action);
                 }
-                // info 用全坐标（display ont info 0 1 0 1）；capability 是 0/<槽位> <端口> <ONT ID>；
-                // 光信息/版本/注册历史现场是在端口视图敲的
+                // info 用全坐标（display ont info 0 1 0 1）；capability 是 0/<槽位> <端口> <ONT ID>；光信息等在端口视图敲
                 String command;
                 if ("info".equals(action)) {
                     command = "display ont info 0 " + request.getSlotNo()
@@ -1714,8 +1706,7 @@ public class OltService {
         List<Integer> tcontUsed = sortedIds(line == null || line.getTconts() == null
                 ? List.of()
                 : line.getTconts().stream().map(OltTcont::getTcontId).toList());
-        // 新增 GEM Port 默认挂的那条：已配的 GEM Port 用哪条就用哪条（表格里那一列），
-        // 快照里排在前面的号可能是设备上残留的，不能拿它当默认
+        // 新增 GEM Port 默认挂已配 GEM Port 在用的那条 T-CONT（表格里那一列），快照排前的号可能是设备残留
         Integer tcontDefault = tcontOfGemports(line);
         if (tcontDefault == null && !tcontUsed.isEmpty()) {
             tcontDefault = tcontUsed.get(0);
@@ -2200,8 +2191,7 @@ public class OltService {
             log.warn("查询待注册 ONT：设备没有回显 id={} 命令={}", id, profile.ontAutofindCommands());
             return List.of();
         }
-        // 没有待注册 ONT 时华为回的是
-        // "Failure: The automatically found ONTs do not exist"：带 Failure 字样，但是正常空结果
+        // 没有待注册 ONT 时华为回 "Failure: The automatically found ONTs do not exist"：带 Failure 字样但是正常空结果
         if (OltInfoParser.autofindIsEmpty(raw)) {
             log.info("查询待注册 ONT：设备回没有待注册 ONT id={}", id);
             return List.of();
@@ -2211,8 +2201,7 @@ public class OltService {
         }
         List<OltOntAutofind> items = profile.parseOntAutofind(raw);
         if (items.isEmpty()) {
-            // 有回显却一条都没解析出来：不是设备没有，是回显格式没认出来。
-            // 不打这条日志的话，页面只会显示「没有待注册光猫」，没法区分这两种情况
+            // 有回显却一条没解析出来：是回显格式没认出来，不是设备没有；不打日志页面没法区分这两种情况
             log.warn("查询待注册 ONT：回显有内容但一条都没解析出来，格式没对上 id={} 回显:\n{}", id, raw);
         }
         return items;
@@ -2461,8 +2450,7 @@ public class OltService {
         if (request == null) {
             throw new IllegalArgumentException("请把开局选项填完整");
         }
-        // 华为开局另有一段参数：要建的是 DBA / 线路 / 业务 / TR-069 四套模板，
-        // 没有「改端口 VLAN 模式」这一步，下面的端口与 VLAN 校验对它不适用
+        // 华为开局只建 DBA/线路/业务/TR-069 四套模板，没有改端口 VLAN 模式这步，下面的端口与 VLAN 校验不适用
         if (request.getHuawei() != null) {
             List<String> commands = profile.quickSetupCommands(request);
             if (commands.isEmpty()) {
@@ -2503,8 +2491,7 @@ public class OltService {
         if (request == null) {
             return new OltQuickSetupPreview(List.of(), List.of("先勾选要做的开局项"));
         }
-        // 同上：华为这四套模板与端口模式无关，命令直接问模板编排器；
-        // 参数不全时编排器抛错，页面预览区会把原因显示出来
+        // 同上：华为四套模板与端口模式无关，命令直接问模板编排器；参数不全时编排器抛错、页面预览区显示原因
         if (request.getHuawei() != null) {
             return new OltQuickSetupPreview(profile.quickSetupCommands(request), List.of());
         }
@@ -3282,8 +3269,7 @@ public class OltService {
 
     /** 这台设备支持的命令动作目录（页面「设备配置」页签按章节渲染） */
     public List<OltAction> actions(Long id) {
-        // 顺手把「进视图 / 退视图」也拼进展示用的命令序列：
-        // 视图语义是设备知识，不该由页面在渲染时自己补 exit
+        // 顺手把「进视图 / 退视图」拼进展示用的命令序列：视图语义是设备知识，不该由页面自己补 exit
         return profileOf(id).actions().stream().map(this::withPreviewCommands).toList();
     }
 
@@ -3723,8 +3709,7 @@ public class OltService {
                 .set(OltDevice::getStatus, STATUS_ONLINE)
                 .set(OltDevice::getLastConnectAt, LocalDateTime.now())
                 .set(OltDevice::getLastError, null);
-        // 只有真认出厂商才改台账：一次没采到版本回显就把已认出的厂商打回「通用」，
-        // 页面会当场从华为/鸿升光界面掉到第三方界面。认不出的那次保持原值等下次再认
+        // 只有真认出厂商才改台账：没采到版本回显就打回「通用」会让页面当场掉到第三方界面，认不出保持原值等下次再认
         if (snapshot.getVendor() != null && snapshot.getVendor() != OltVendor.GENERIC) {
             update.set(OltDevice::getVendor, snapshot.getVendor().name());
         }

@@ -151,12 +151,9 @@ public class IntentDeliveryService {
             eventPublisher.publishEvent(new TaskFinishedEvent(this, task));
             return task;
         }
-        // 计划已定稿，剩下的就是等设备取走指令——不能堵在调用方的 HTTP 线程上，
-        // 丢给后台线程推进状态
+        // 计划已定稿，剩下的就是等设备取走指令——不能堵在调用方的 HTTP 线程上，丢给后台线程推进状态
         if (DeviceTask.STATUS_RUNNING.equals(task.getStatus())) {
-            // 指令只能捎带在设备自己发起的那轮会话里：先反向唤醒，等它上来建链再提交。
-            // 以前是「提交指令」与「发连接请求」并行，会话还没建立指令就进了队列，
-            // 只能干等下一次周期上报（十几分钟），于是每条指令都撞满超时
+            // 指令只能捎带在设备自己发起的会话里：先反向唤醒等它建链再提交；以前并行提交，会话未建立指令就进队列，只能干等下一轮周期上报
             EXECUTOR.execute(() -> {
                 awaitSession(request.sn(), task.getTaskNo());
                 execute(task);
@@ -254,30 +251,22 @@ public class IntentDeliveryService {
             throw new IllegalArgumentException("设备不存在，请确认已注册: " + request.sn());
         }
 
-        // 配置模板字段有两处用途：按字段名覆盖渲染结果，以及给命名不一致的业务补下发变量，
-        // 这里取一次后面复用
+        // 配置模板字段两处用途：按字段名覆盖渲染结果、给命名不一致的业务补下发变量，取一次后面复用
         Map<String, Object> tplFields = request.templateId() == null ? null
                 : configTemplateService.fieldsOf(request.templateId());
 
-        // SIP 配置模板的字段名与下发变量根本不是一套：模板上叫 registrar / proxy /
-        // sip_user_info，下发要的是 %sip_proxy% / %sip_num% / %sip_pwd%。不转换的话
-        // 模板里填的语音参数一个都传不进去，下发只会报「缺业务字段值」。
+        // SIP 配置模板的字段名（registrar/proxy/sip_user_info）与下发变量（%sip_proxy% 等）不是一套，不转换则模板里填的语音参数一个都传不进去
         Map<String, Object> requested = request.values() == null
                 ? new LinkedHashMap<>() : new LinkedHashMap<>(request.values());
         if (tplFields != null && !tplFields.isEmpty()) {
             applySipTemplateVariables(requested, stringValues(tplFields), resolveInstance(requested));
         }
 
-        // 变量兜底放在渲染前这个唯一汇聚点上：工单单台、批量、北向接口都从这里过，
-        // 房间号取设备登记值、口令取约定默认值，调用方一个变量都不传也能渲染出完整计划
+        // 变量兜底放在渲染前这个唯一汇聚点（工单单台/批量/北向都从这里过）：房间号取设备登记值、口令取默认值，调用方不传也能渲染出完整计划
         Map<String, Object> values = TemplateVariables.applyDefaults(
                 request.category(), requested, device.getRoomNo());
 
-        // 字段覆盖优先级：本次下发显式传的值 > 配置模板里保存的字段 > SQLite 默认值。
-        // 必须按这个顺序塞：先放高优先级的 values，再用 putIfAbsent 补模板字段。
-        // 反过来（先模板后 putIfAbsent 补 values）会让模板里存的旧值压住本次要下发的新值，
-        // 表现为「业务模板上填了 0000，设备上下去的还是模板库里的 1111」。
-        // 空串不算显式值——表单把每个变量初始化成空串提交上来，那不代表要清掉模板值。
+        // 字段覆盖优先级：本次显式传的值 > 配置模板字段 > SQLite 默认值；先放 values 再 putIfAbsent 补模板字段，反了会让模板旧值压住新值；空串不算显式值
         Map<String, String> overrides = new LinkedHashMap<>();
         if (values != null) {
             values.forEach((k, v) -> {
@@ -353,8 +342,7 @@ public class IntentDeliveryService {
                 value = booleanValue(value);
             }
             if (lanInterfaceNode.equalsIgnoreCase(leafOf(path))) {
-                // 绑定端口落到定制节点上时，值必须是 LAN 口的完整路径串，
-                // 页面给的 LAN1,LAN2 写下去会被整批拒（SPV 按批生效，会连 Enable 一起废掉）
+                // 绑定端口落到定制节点时值必须是 LAN 口完整路径串，页面给的 LAN1,LAN2 写下去会被整批拒（SPV 按批生效）
                 String bound = lanInterfaceValue(path, value);
                 if (bound == null) {
                     log.warn("绑定端口值无法映射到 LAN 口路径，本次不下发: {} = {}", path, value);
@@ -430,10 +418,7 @@ public class IntentDeliveryService {
         }
         String service = serviceOf(values, overrides);
         if ("OTHER".equalsIgnoreCase(service)) {
-            // 「其他 / Other」不是不绑业务，而是业务绑定就写 OTHER：设备上现存的桥接
-            // 4_OTHER_B_VID_100 的 ServiceList 正是 OTHER，且它连着。
-            // 以前这里当成"纯二层透传不绑业务"跳过，结果同一批里的 Enable 被设备拒
-            // （没绑业务的连接不许启用），整批 9003，桥接一条也建不起来。
+            // 「其他/Other」不是不绑业务，而是绑定就写 OTHER：设备现存桥接的 ServiceList 正是 OTHER 且连着；以前跳过导致同批 Enable 被拒、整批 9003
             log.info("业务模式为 Other，按 OTHER 补写业务绑定（不绑业务时设备拒绝启用）: sn={}", sn);
         }
         String first = plan.parameters().get(0).path();
@@ -445,8 +430,7 @@ public class IntentDeliveryService {
             if (resolved.getUnsupported().contains(path)) {
                 continue;
             }
-            // 树上真有这个节点才写。能力树/型号档案都没有时 resolvePaths 返回空结果
-            //（不是 unsupported），此时这道 ...ServiceList 是猜的，猜错名字会被判 9005
+            // 树上真有这个节点才写：能力树/型号档案都没有时 resolvePaths 返回空结果（不是 unsupported），这道 ...ServiceList 是猜的，猜错名字会被判 9005
             boolean exists = resolved.getTypes().containsKey(path)
                     || resolved.getCurrentValues().containsKey(path)
                     || resolved.getRewritten().containsKey(path);
@@ -491,8 +475,7 @@ public class IntentDeliveryService {
             if (resolved.getUnsupported().contains(path)) {
                 continue;
             }
-            // 与业务绑定同理：树上真有这个节点才写，查不到数据时 resolvePaths 返回空结果，
-            // 此时不猜名字
+            // 与业务绑定同理：树上真有这个节点才写，查不到数据时 resolvePaths 返回空结果，此时不猜名字
             String real = resolved.getRewritten().getOrDefault(path, path);
             if (!resolved.getTypes().containsKey(real)
                     && !resolved.getCurrentValues().containsKey(real)
@@ -590,9 +573,7 @@ public class IntentDeliveryService {
             if (tryWrite(task, v)) {
                 continue;
             }
-            // 设备对同一个参数常只认某一种 xsi:type：VoiceService 的 Line.Enable 按 boolean
-            // 带 true 被拒、按 unsignedInt 带 1 也被拒，换 string 反而收。换写法再试一遍，
-            // 接受哪个就用哪个，省得为了一个开关让整单失败
+            // 设备对同一参数常只认某种 xsi:type（Line.Enable 按 boolean/unsignedInt 都被拒，换 string 反而收）：换写法再试，省得为一个开关让整单失败
             ParameterValueStruct accepted = null;
             for (ParameterValueStruct alt : alternates(v)) {
                 if (tryWrite(task, alt)) {
@@ -605,8 +586,7 @@ public class IntentDeliveryService {
                         v.getName(), accepted.getValue(), v.getValueType(), accepted.getValueType());
                 continue;
             }
-            // 启用开关类（Enable/Disable）设备收不下就算了：核心的账号、密码、代理都已写进去，
-            // 为一个设备压根不支持写入的开关判整单失败，运维还得重下一次
+            // 启用开关类设备收不下就算了：核心的账号、密码、代理已写进去，为一个不支持的开关判整单失败不划算
             if (isSwitch(v.getName())) {
                 log.warn("启用开关设备不接受，跳过不下发: {}", v.getName());
                 out.skipped.add(v.getName());
@@ -719,7 +699,6 @@ public class IntentDeliveryService {
             return true;
         }
         String leaf = leafOfPath(item.path());
-        // 检查是否匹配该运营商的任一业务绑定参数名
         return adaptation.serviceListNames().stream()
                 .anyMatch(name -> name.equalsIgnoreCase(leaf));
     }
@@ -743,8 +722,7 @@ public class IntentDeliveryService {
         String isp = device.getIsp() == null || device.getIsp().isBlank()
                 ? "standard" : device.getIsp().trim();
         Device adapted = deviceDao.findByIspModelKey(isp, modelKey).orElse(null);
-        // 命中了但这份没申报过（早期采集留下的空档）：同型号里挑有申报的那份。
-        // 否则拿空申报去生成，模板条数为 0，表现成「明明适配过，却说没模板」
+        // 命中了但这份没申报过（早期采集空档）：同型号里挑有申报的那份，否则拿空申报生成，表现成「明明适配过却说没模板」
         if (adapted == null || !declared(adapted)) {
             Device withCap = deviceDao.findByModelKey(modelKey).stream()
                     .filter(IntentDeliveryService::declared)
@@ -762,12 +740,9 @@ public class IntentDeliveryService {
             throw new IllegalArgumentException(
                     "该型号尚未适配，请先发起适配: " + modelKey + "（isp=" + isp + "）");
         }
-        // 型号登记过但没生成过模板（比如能力申报是后补的）：当场补一次，
-        // 不必让运维再跑一遍采集
+        // 型号登记过但没生成过模板（能力申报是后补的）：当场补一次，不必让运维再跑一遍采集
         if (!renderer.hasTemplate(adapted, bizObject)) {
-            // 设备都报出这个频段的 SSID 了，说明适配时 WIFI 规格那一项选漏了。
-            // 这里按设备实有频段补齐申报再生成——漏报 5G 的后果是模板库里根本没有
-            // wlan_b 那张表，想改一次 5G 的 SSID 得重做整轮适配
+            // 设备报出了这个频段的 SSID，说明适配时 WIFI 规格选漏了：按设备实有频段补齐申报再生成，否则模板库里根本没有 wlan_b 那张表
             String spec = adapted.getCapWifiSpec();
             boolean has24 = spec != null && spec.contains("2.4");
             boolean has58 = spec != null && spec.contains("5");
@@ -839,13 +814,10 @@ public class IntentDeliveryService {
 
     private void execute(DeviceTask task, IntentPlan plan) {
         try {
-            // 动 WAN 的业务：先删后建——清理必须发生在任何 AddObject 之前，
-            // 且一个批次只清一次（见 cleanupWan 的台账），否则第二个业务会把
-            // 第一个刚建好的连接当成残留删掉
+            // 动 WAN 的业务先删后建：清理必须在任何 AddObject 之前，且一个批次只清一次（见 cleanupWan 台账），否则第二个业务会把第一个刚建的连接当残留删掉
             if (isWan(task.getCategory())) {
                 plan = alignWanDevice(task, plan);
-                // 模板上勾了「增量业务」就完全跳过清理：只 AddObject 新增这一条，
-                // 设备上已有的 IPTV / VOIP / 用户自建 Internet 一条都不动
+                // 模板上勾了「增量业务」就完全跳过清理：只 AddObject 新增，已有的 IPTV/VOIP/自建连接一条不动
                 if (incremental(task)) {
                     log.info("增量业务，跳过 WAN 清理（只新增，不删不改已有连接）: sn={}, taskNo={}",
                             task.getSn(), task.getTaskNo());
@@ -853,8 +825,7 @@ public class IntentDeliveryService {
                     cleanupWan(task);
                 }
             }
-            // AddObject 的实例号是设备分配的，可能和计划渲染时占的号不同，
-            // 必须回填进参数路径，否则会写到错误的实例上去
+            // AddObject 的实例号是设备分配的，可能与计划渲染时占的号不同，必须回填进参数路径，否则会写到错误的实例上
             Map<String, Integer> allocated = new LinkedHashMap<>();
             for (String objectName : plan.objectsToAdd()) {
                 SoapMessage resp = await(rpcService.addObject(task.getSn(), objectName, task.getTaskNo()));
@@ -866,9 +837,7 @@ public class IntentDeliveryService {
                 Integer instance = parseInstance(CwmpRpcService.instanceNumberOf(resp));
                 if (instance != null) {
                     allocated.put(objectName, instance);
-                    // 记进清理台账：这是本次新建的连接，之后任何清理都不得删它。
-                    // 实例号必须是设备响应里的这个号——删过一轮后设备会重排编号，
-                    // 照模板里的固定号找会找到别人头上
+                    // 记进清理台账：本次新建的连接之后任何清理都不得删它；实例号必须是设备响应里的号——删过一轮设备会重排编号
                     rememberCreated(task.getSn(), objectName, instance);
                 }
                 log.info("已创建业务对象: sn={}, object={}, instance={}",
@@ -888,8 +857,7 @@ public class IntentDeliveryService {
                         task.getSn(), values, task.getTaskNo()));
                 String error = failureOf(resp, "SetParameterValues 第 " + (i + 1) + "/" + chunks.size() + " 批");
                 if (error != null) {
-                    // SPV 是按批生效的，一条写错整批都废。不打这批参数根本不知道错在哪个路径、
-                    // 错在哪个值——设备只回一个笼统的 9003/9007，只能拆开逐条重发来定位
+                    // SPV 按批生效，一条写错整批都废；设备只回笼统的 9003/9007，把整批参数打进日志并逐条重发定位
                     log.warn("下发参数被设备拒绝: sn={}, taskNo={}, 批次={}/{}, err={}, 参数={}",
                             task.getSn(), task.getTaskNo(), i + 1, chunks.size(), error, dump(values));
                     LocateResult located = new LocateResult();
@@ -900,8 +868,7 @@ public class IntentDeliveryService {
                         finish(task, DeviceTask.STATUS_FAILED, error + "；" + rejected);
                         return;
                     }
-                    // 整批被拒但拆开发全都成了：参数已经在设备上生效，按成功收尾，
-                    // 否则为了一个兼容性写法就得让运维重下一次
+                    // 整批被拒但拆开发全都成了：参数已生效，按成功收尾，否则为一个兼容性写法就让运维重下一次
                     log.info("整批被拒但逐条重发全部成功，按成功收尾: sn={}, taskNo={}",
                             task.getSn(), task.getTaskNo());
                     refreshDeliveredValues(task.getSn(), plan);
@@ -917,8 +884,7 @@ public class IntentDeliveryService {
             }
             log.info("下发完成: sn={}, taskNo={}, 参数={}", task.getSn(), task.getTaskNo(),
                     plan.parameters().size());
-            // 下发改的是设备现值，库里的快照不会自己跟上。全量补采要几十秒，
-            // 页面这会儿早刷新过了——先把本次写下去的参数读回来落库，列表立刻对得上现场
+            // 下发改的是设备现值，库里的快照不会自己跟上；全量补采要几十秒，先把本次写下去的参数读回来落库，列表立刻对得上现场
             refreshDeliveredValues(task.getSn(), plan);
             if (needReboot(task)) {
                 // 马上要重启了，补采只会采到重启前的一瞬，设备上报 0 BOOTSTRAP 时自然会再采
@@ -1108,9 +1074,7 @@ public class IntentDeliveryService {
                 managementHint = findManagementWanPath(sn);
                 clean = WanCleanup.plan(existing, managementHint, state.createdPaths());
             } catch (Exception e) {
-                // 现场读不清就不知道该保住哪条：一条都不删，但也不中止下发——
-                // 不删就不会误删管理通道，业务照发。台账照样记账，免得整包里
-                // 每个成员都再干等一轮采集超时
+                // 现场读不清就不知道该保住哪条：一条都不删但也不中止下发——不删就不会误删管理通道；台账照样记账，免得整包每个成员再干等一轮采集超时
                 log.warn("读取现有 WAN 失败，本次跳过清理继续下发: sn={}, taskNo={}, err={}",
                         sn, task.getTaskNo(), textOf(e));
                 state.markCleaned(System.currentTimeMillis());
@@ -1133,16 +1097,13 @@ public class IntentDeliveryService {
                             sn, victim.path(), task.getTaskNo()));
                     String error = failureOf(resp, "DeleteObject " + victim.path());
                     if (error != null) {
-                        // 设备拒绝删除（实测回 9002 Internal error）就是最硬的「占用」证据：
-                        // 这条连接要么正在承载业务，要么是内置不允许删的。清理是尽力而为——
-                        // 删不掉就留着继续下发，总比整单判死、新业务一条都发不下去强
+                        // 设备拒绝删除（实测回 9002 Internal error）就是最硬的「占用」证据：清理是尽力而为，删不掉就留着继续下发，总比整单判死强
                         log.warn("清理旧 WAN 被设备拒绝，跳过该连接继续下发: sn={}, path={}, err={}",
                                 sn, victim.path(), error);
                         skipped.add(victim.path());
                     }
                 } catch (Exception e) {
-                    // 设备不回（等满 request-timeout-seconds 的 TimeoutException）也是「没清掉」，
-                    // 不能当成致命错误：把整单判死了，新业务一条都发不下去
+                    // 设备不回（TimeoutException）也是「没清掉」，不能当致命错误把整单判死——新业务一条都发不下去
                     log.warn("清理旧 WAN 未拿到设备回应，跳过该连接继续下发: sn={}, path={}, err={}",
                             sn, victim.path(), textOf(e));
                     skipped.add(victim.path());
@@ -1181,8 +1142,7 @@ public class IntentDeliveryService {
                             .eq(CpeParameter::getSn, sn)
                             .like(CpeParameter::getParamPath, "ManagementServer.")
                             .last("LIMIT 200"));
-            // ManagementServer 下还有 PeriodicInformInterval 这类纯数字参数，
-            // 它们跟管理通道无关，所以先找「带连接片段」的值，找不到才退到纯数字
+            // ManagementServer 下还有 PeriodicInformInterval 这类纯数字参数与管理通道无关，先找「带连接片段」的值，找不到才退到纯数字
             String numeric = null;
             for (CpeParameter row : rows) {
                 String value = row.getParamValue();
@@ -1433,9 +1393,7 @@ public class IntentDeliveryService {
     }
 
     private List<List<PlanItem>> chunks(List<PlanItem> items) {
-        // WAN 连接的 Enable 单独放最后一批：设备要求先把业务绑定 / VLAN / 绑定端口配好
-        // 才允许启用，同一批里带着 Enable 时，前面任何一条被拒都会把启用一起拖掉，
-        // 而且日志里只看得到整批 9003，分不清是"配置不对"还是"不许启用"
+        // WAN 连接的 Enable 单独放最后一批：设备要求先配好业务绑定/VLAN/绑定端口才允许启用，同批带 Enable 时前面任何一条被拒都会把启用一起拖掉
         List<PlanItem> body = new ArrayList<>(items.size());
         List<PlanItem> enables = new ArrayList<>();
         for (PlanItem item : items) {

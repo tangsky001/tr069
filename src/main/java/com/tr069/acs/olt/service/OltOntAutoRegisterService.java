@@ -93,7 +93,7 @@ public class OltOntAutoRegisterService {
                 OltOntRegConfig config = ontRegService.config(device.getId());
                 if (config.getEnabled() == null || config.getEnabled() != 1) {
                     if (reportedOff.add(device.getId())) {
-                        log.info("ONT 自动注册未开启，跳过 id={}（页面上打开开关并点「保存设置」后才会跑）",
+                        log.info("ONT 自动注册未开启，跳过 id={}）",
                                 device.getId());
                     }
                     continue;

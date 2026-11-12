@@ -27,22 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * 纯 Java 隧道客户端：ACS 启动后主动连公网服务器，建立 Socket 长连接。
- *
- * <p>协议（自定义，简单帧格式）：
- * <ul>
- *   <li>握手帧（A→B）：type=1, instanceId, subdomain
- *   <li>握手响应（B→A）：type=2, success/fail
- *   <li>心跳帧（A→B）：type=3
- *   <li>HTTP 请求帧（B→A）：type=4, requestId, length, body（原始 HTTP 请求字节）
- *   <li>HTTP 响应帧（A→B）：type=5, requestId, length, body（原始 HTTP 响应字节）
- *   <li>断开通知（B→A）：type=6
- * </ul>
- *
- * <p>所有参数写死在常量里，不在配置文件暴露。
- * 公网服务器地址 {@link #SERVER_HOST} 填好后即生效。
- */
+/** 纯 Java 隧道客户端：ACS 启动后连公网服务器建立 Socket 长连接，自定义简单帧协议（type 1~6 见常量），参数全部写死 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -52,7 +37,7 @@ public class TunnelClient {
 
     // ==================== 写死的参数 ====================
 
-    /** 公网服务器地址与统计上报同一个服务器） */
+    /** 公网服务器地址（与统计上报同一台服务器） */
     private static final String SERVER_HOST = "total.i-ddns.com";
 
     /** 公网服务器隧道监听端口 */
@@ -118,7 +103,6 @@ public class TunnelClient {
         while (running.get()) {
             try {
                 connect();
-                // 连接断开后会走到这里，等一会儿再重连
                 if (running.get()) {
                     log.info("隧道断开，{}秒后重连", RECONNECT_INTERVAL);
                     Thread.sleep(RECONNECT_INTERVAL * 1000L);
@@ -143,7 +127,7 @@ public class TunnelClient {
     // ==================== 建连 + 握手 ====================
 
     private void connect() throws IOException {
-        log.info("正在连接公网服务器 {}:{} ...", SERVER_HOST, SERVER_PORT);
+        log.info("正在连接隧道服务器...");
 
         Socket raw;
         if (USE_TLS) {
@@ -160,12 +144,10 @@ public class TunnelClient {
         in = new DataInputStream(raw.getInputStream());
         out = new DataOutputStream(raw.getOutputStream());
 
-        // 握手
         String instanceId = opsRemoteService.ensureInstanceId();
         String subdomain = opsRemoteService.ensureSubdomain();
         sendHandshake(instanceId, subdomain);
 
-        // 等握手响应
         byte respType = in.readByte();
         if (respType != TYPE_HANDSHAKE_RESP) {
             throw new IOException("握手响应帧类型错误: " + respType);
@@ -178,7 +160,6 @@ public class TunnelClient {
 
         if (code != 1) {
             log.warn("握手失败: {}", msg);
-            // 冲突，重新生成子域名再试
             if (msg.contains("conflict") || msg.contains("冲突")) {
                 log.info("子域名冲突，重新生成...");
                 opsRemoteService.regenerateSubdomain();
@@ -187,12 +168,10 @@ public class TunnelClient {
             return;
         }
 
-        log.info("隧道握手成功: {} → {}.i-ddns.com", instanceId, subdomain);
+        log.info("隧道连接成功: {} → {}.i-ddns.com", instanceId, subdomain);
 
-        // 启动心跳
         executor.submit(this::heartbeatLoop);
 
-        // 读循环：等服务器发 HTTP 请求过来
         readLoop();
     }
 
@@ -269,11 +248,9 @@ public class TunnelClient {
                 try {
                     reqBuilder.header(name, value);
                 } catch (IllegalArgumentException ignored) {
-                    // 其他受限头，丢弃即可，不影响业务
                 }
             }
 
-            // 设置 method + body
             if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method)) {
                 reqBuilder.method(method, HttpRequest.BodyPublishers.noBody());
             } else {
@@ -309,12 +286,10 @@ public class TunnelClient {
             System.arraycopy(respHeadBytes, 0, respBytes, 0, respHeadBytes.length);
             System.arraycopy(resp.body(), 0, respBytes, respHeadBytes.length, resp.body().length);
 
-            // 回传给服务器
             sendHttpResponse(requestId, respBytes);
 
         } catch (Exception e) {
             log.warn("转发 HTTP 请求到本地失败: {}", e.getMessage());
-            // 回一个 502
             byte[] err = ("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
             sendHttpResponse(requestId, err);

@@ -56,11 +56,7 @@ public class DeviceController {
     private final DirectDispatchService directDispatchService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
-    /**
-     * 设备页直接下发：逐台受理即发，不建工单，进度看下发任务本身。
-     * 入参：sns（数组或逗号分隔）、category、values（业务变量）、templateId、
-     * wifi（WLAN 编辑业务字段，可选）、username。
-     */
+    /** 设备页直接下发：逐台受理即发，不建工单；入参 sns / category / values / templateId / wifi / username */
     @PostMapping("/dispatch")
     public Result<Map<String, Object>> dispatch(@RequestBody Map<String, Object> body) {
         List<String> sns = new ArrayList<>();
@@ -307,8 +303,7 @@ public class DeviceController {
         CpeDevice device = cpeDeviceMapper.selectOne(
                 new LambdaQueryWrapper<CpeDevice>().eq(CpeDevice::getSn, sn));
         if (device == null) {
-            // 带上 SN：清过型号档案、设备还没重新上报时这里会命中，
-            // 前端提示和日志里都得能看出是哪台
+            // 日志带上 SN：前端提示和日志里都得能看出是哪台
             log.info("设备详情查询不到台账: sn={}", sn);
             return Result.failure("设备不存在: " + sn);
         }
@@ -397,8 +392,7 @@ public class DeviceController {
     @GetMapping("/{sn}/admin-account")
     public Result<Map<String, Object>> adminAccount(@PathVariable String sn) {
         Map<String, Object> data = new LinkedHashMap<>(accountService.queryAdminAccount(sn));
-        // 状态中文与标签色在此统一补：查询结果有 offline / timeout / fail / empty / success 五个分支，
-        // 页面原来自己维护一张码表，后端加一个分支就显示成「未知」
+        // 状态中文与标签色在此统一补：页面原来自己维护码表，后端加分支就会显示成「未知」
         String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
         data.put("statusText", adminStatusText(status));
         data.put("statusLevel", adminStatusLevel(status));
@@ -433,8 +427,7 @@ public class DeviceController {
     public Result<Map<String, Object>> rpc(@PathVariable String sn,
                                            @PathVariable String rpcName,
                                            @RequestBody(required = false) Map<String, Object> args) {
-        // 提交即返回，不再挂起请求线程等设备回应：
-        // 设备可能几十秒后才来空 POST 把指令取走
+        // 提交即返回，设备可能几十秒后才来空 POST 取走指令，不挂请求线程等回应
         RpcDispatchService.DispatchHandle handle = rpcDispatchService.submitAsync(
                 sn, rpcName, args == null ? Map.of() : args, null);
         Map<String, Object> data = new HashMap<>();

@@ -64,8 +64,6 @@ public class OltBoardRefreshService {
         devicePool = new ThreadPoolExecutor(MAX_CONCURRENCY, MAX_CONCURRENCY,
                 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(MAX_CONCURRENCY * 2), daemon("olt-board-refresh"));
         devicePool.allowCoreThreadTimeOut(true);
-        log.info("OLT 板卡状态刷新已就绪：{} 分钟一轮，上限 {} 路并行，人工操作优先",
-                INTERVAL_MILLIS / 60000, MAX_CONCURRENCY);
     }
 
     @PreDestroy

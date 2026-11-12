@@ -177,8 +177,7 @@ public class CwmpController {
     /** 把这一跳请求挂起，等指令入队信号把它叫起来 */
     private void suspendForNextRpc(String sn, HttpServletRequest request, HttpServletResponse response) {
         if (request == null || !request.isAsyncSupported()) {
-            // 拿不到原生请求（降级处理、内嵌调用）或容器不支持异步，
-            // 就按老办法收尾，不值得为等一条指令把链路搞复杂
+            // 容器不支持异步时按老办法收尾，不为等一条指令把链路搞复杂
             log.debug("该请求不支持异步挂起，本轮直接结束: sn={}", sn);
             endSessionRound(sn, sessionManager.find(sn), response);
             return;
@@ -305,8 +304,7 @@ public class CwmpController {
             handleInform(connId, body, request, response, message.getCwmpId());
             return;
         }
-        // TransferComplete 是设备下载完文件后的主动上报，与 Inform 一样由 CPE 发起，
-        // 必须给回应，否则设备会认为 ACS 没收到而反复重报
+        // TransferComplete 是设备下载完文件后的主动上报，必须回应，否则设备会反复重报
         if ("TransferComplete".equals(methodName)) {
             handleTransferComplete(connId, message, request, response);
             return;
@@ -326,8 +324,7 @@ public class CwmpController {
         }
         session.touch();
 
-        // 会话顺序校验：没在等回应却来了响应，说明两边进度已不一致。
-        // 默认只告警，回绝只在 strictStateCheck 打开时做
+        // 没在等回应却来了响应：进度不一致，默认只告警，strictStateCheck 打开才回绝
         if (session.getState() != SessionState.WAIT_RPC_RESPONSE) {
             log.warn("会话状态与报文不匹配: sn={}, state={}, 收到={}",
                     sn, session.getState(), methodName);
@@ -347,7 +344,6 @@ public class CwmpController {
                         sn, completed.getRpcName(),
                         message.getStrResult().replace("\n", " | "));
             }
-            // 回填结果并唤醒排在该指令后面的工单步骤
             rpcDispatchService.completeTask(completed.getRpcId(), message);
         } else {
             log.warn("收到未预期的 RPC 响应: sn={}, method={}", sn, methodName);
@@ -440,7 +436,6 @@ public class CwmpController {
         String oui = inform.getDeviceId().getOui();
         String sn = inform.getDeviceId().getSerialNumber();
 
-        // CPE -> ACS 认证
         CpeAuthenticator.AuthResult auth = authenticator.authenticate(
                 request.getHeader("Authorization"),
                 request.getMethod(),
@@ -461,8 +456,7 @@ public class CwmpController {
             return;
         }
 
-        // 疑似双会话检测。连接变了属于正常的会话接管，因此只记日志：关掉会话会把
-        // 排队中的指令一并作废，是否离线交给 SessionManager 按无通信时长判定
+        // 连接变了属于正常会话接管，只记日志：关会话会作废排队指令，离线交给 SessionManager 判定
         if (sessionManager.detectDuplicateSession(sn, connId)) {
             log.warn("疑似双会话，按会话接管处理: sn={}, connId={}", sn, connId);
         }
@@ -473,8 +467,7 @@ public class CwmpController {
 
         CpeSession session = sessionManager.getOrCreate(oui, sn, connId);
 
-        // 从 Inform 报文的 SOAP 命名空间提取设备声明的 CWMP 版本（cwmp-1-0 ~ cwmp-1-4），
-        // 后续所有 ACS 回复都用设备声明的版本，保证向下兼容
+        // 后续 ACS 回复都用设备声明的 CWMP 版本，保证向下兼容
         if (inform.getCwmpVersion() != null && !inform.getCwmpVersion().isBlank()) {
             session.setCwmpVersion(inform.getCwmpVersion());
         }
@@ -483,25 +476,16 @@ public class CwmpController {
             return;
         }
 
-        // 设备换新连接回来发 Inform 时，旧会话上可能还有一条已下发但未回应的 RPC。
-        // 典型场景：SetParameterValues 写回 ManagementServer.URL 后设备立即断连重连，
-        // 旧 awaiting 不会被设备回应，却会卡住 handleEmptyPost（line 150-155）使其
-        // 一直回 204 不取新指令，直到 60 秒超时。
-        //
-        // 设备既然换了新连接，说明它已经处理完上一条 RPC（否则不会断连），所以这里
-        // 直接清除旧 awaiting，既不重排也不判失败——重排 SPV 只会让设备再次执行、
-        // 再次断连，形成循环；判失败则误报（设备其实已执行成功）。
+        // 设备换新连接说明上一条 RPC 已执行完，旧 awaiting 不会被回应却会卡住空 POST：
+        // 直接清除，查询类重排下一轮再取，写操作不重排不判失败
         if (session.hasPendingAwaiting()) {
             PendingRpc stale = session.failAwaiting("设备换新连接，旧 RPC 未被回应");
             if (stale != null) {
                 log.info("设备换新连接，清理旧 RPC: sn={}, rpc={}", sn, stale.getRpcName());
-                // GetParameterNames 等查询类指令重排后下一轮还能取到结果，重排无副作用
                 RpcMethod method = RpcMethod.of(stale.getRpcName());
                 if (method != null && method.isRetriable() && stale.getRpcId() > 0) {
                     settleUndelivered(session, stale, "设备换新连接，旧 RPC 未被回应");
                 }
-                // SetParameterValues 等写操作：设备已执行过，不重排不判失败，
-                // 下一轮预设机制会在需要时重新下发
             }
         }
 
@@ -577,8 +561,7 @@ public class CwmpController {
             log.warn("{}，本次不作处理: sn={}, rpc={}", reason, sn, rpc.getRpcName());
             return;
         }
-        // 没收到回应时并不知道设备执行了没有：设值与取值重发一次结果一样，
-        // 重启 / 下载这类重发就是真干了第二次，只能直接按失败结
+        // 没收到回应时不知设备执行了没有：查询类重发无害，重启/下载重发就是真干第二次
         RpcMethod method = RpcMethod.of(rpc.getRpcName());
         if (!queueProperties.isEnabled()
                 || rpc.getAttempts() >= maxDeliveryAttempts

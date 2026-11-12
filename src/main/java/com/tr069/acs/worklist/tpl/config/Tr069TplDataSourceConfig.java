@@ -70,7 +70,6 @@ public class Tr069TplDataSourceConfig {
         }
         initSchema(t, tr069TplDataSource, resourceLoader);
         migrateColumns(t);
-        logState(t, absPath);
         return t;
     }
 
@@ -179,24 +178,6 @@ public class Tr069TplDataSourceConfig {
         } catch (Exception e) {
             LOG.error("模板库补列失败: {}.{} —— 该字段下发时会被跳过: {}",
                     table, column, e.getMessage());
-        }
-    }
-
-    /** 启动自检：把连的哪个文件、表齐不齐、有几个已适配型号一次说清 */
-    private void logState(JdbcTemplate t, String absPath) {
-        try {
-            List<String> tables = t.queryForList(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name", String.class);
-            if (!tables.contains("device")) {
-                LOG.error("模板库缺 device 主表，现有表={} file={}", tables, absPath);
-                return;
-            }
-            Integer models = t.queryForObject("SELECT COUNT(*) FROM device", Integer.class);
-            LOG.info("模板库就绪: file={}, 表={}张, 已适配型号={}个, journal_mode={}",
-                    absPath, tables.size(), models,
-                    t.queryForObject("PRAGMA journal_mode", String.class));
-        } catch (Exception e) {
-            LOG.error("模板库自检失败: file={}, err={}", absPath, e.getMessage());
         }
     }
 }

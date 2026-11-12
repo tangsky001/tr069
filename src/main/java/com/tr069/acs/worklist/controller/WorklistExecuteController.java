@@ -63,8 +63,7 @@ public class WorklistExecuteController {
         Map<String, String> values = body.getValues();
         WifiEdit wifi = body.getWifi();
         if (wifi != null) {
-            // WiFi 编辑只提交业务字段：业务类型与意图键名都在后端翻译，
-            // 页面不必知道 wpa_mode / wpa_key 这些键，也不会把频段选到另一条 SSID 上
+            // WiFi 编辑只提交业务字段：类型与意图键名都在后端翻译，页面不感知具体键名
             if (wifi.getSsid() == null || wifi.getSsid().isBlank()) {
                 return Result.failure("SSID 名称不能为空");
             }
@@ -145,13 +144,7 @@ public class WorklistExecuteController {
         private String bizTemplateName;
     }
 
-    /**
-     * 工单执行记录，按设备或状态查询。
-     *
-     * 工单页的横向筛选条：keyword（SN/MAC/LOID 一个框查）、worklistNo（工单号/流水号）、
-     * room（房间号，经设备台账反查）、timeStart/timeEnd（执行时间区间）、status（逗号分隔多值）；
-     * 老参数 sn（精确）与 status（单值）继续兼容。
-     */
+    /** 工单执行记录查询：keyword（SN/MAC/LOID）、worklistNo、room、时间区间、status 多值；兼容老参数 sn/status */
     @GetMapping("/instances")
     public Result<PageResult<Worklist>> instances(
             @RequestParam(required = false) String sn,

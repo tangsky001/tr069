@@ -15,7 +15,7 @@ import static com.tr069.acs.olt.model.OltAction.queryWith;
 /** 鸿升光 GPON 一体化 OLT（4/8/16 口）的命令动作目录，对应《GPON 光纤接入局端设备 */
 public final class HsgqGponActionCatalog {
 
-    // ---------------------------------------------------------------- 章节
+    // 章节
 
     private static final String CH_MGMT_OUT = "2.2 带外管理接口（NMS）";
 
@@ -137,7 +137,7 @@ public final class HsgqGponActionCatalog {
 
     private static final String CH_LAG = "14 链路聚合";
 
-    // ---------------------------------------------------------------- 参数
+    // 参数
 
     /** GPON 的端口类型：gpon / ge / xge */
     private static OltActionParam portType() {

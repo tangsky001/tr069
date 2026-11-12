@@ -78,16 +78,7 @@ public class ModelTreeStore {
         return export(sn, false, archiveIsp(findDevice(sn)));
     }
 
-    /**
-     * 采集完成后的归档：只写能力树 XML，不往 SQLite 模板库登记型号。
-     * <p>
-     * 采集只是「把这台设备的能力读回来」，还没做适配——没适配的型号往模板库里塞一条
-     * PENDING 占位没意义：它不参与下发，却让库里堆满未适配型号的垃圾行，
-     * 列表上的适配判定也跟着变乱。
-     * <p>
-     * 真正登记型号是「测试通过 → 保存到库」那一步的事：
-     * 那时落库的是实测能力，status=ADAPTED，同型号设备上线直接复用。
-     */
+    /** 采集完成后的归档：只写能力树 XML 不登记模板库——采集不等于适配，没适配的型号往模板库塞 PENDING 占位没意义 */
     public ExportResult exportCollectedOnly(String sn) {
         return export(sn, false, archiveIsp(findDevice(sn)), false);
     }
@@ -109,13 +100,7 @@ public class ModelTreeStore {
         return export(sn, force, ispOverride, true);
     }
 
-    /**
-     * 导出型号能力树。
-     *
-     * @param registerInLib 是否往 SQLite 模板库登记型号。
-     *                      false 表示只写 XML 不落库——采集自动归档走这条，
-     *                      没适配的型号不必在模板库里占位。
-     */
+    /** 导出型号能力树：registerInLib=false 表示只写 XML 不落库（采集自动归档走这条，没适配的型号不必在模板库里占位） */
     public ExportResult export(String sn, boolean force, String ispOverride, boolean registerInLib) {
         List<CpeParameter> nodes = parameterMapper.selectList(new LambdaQueryWrapper<CpeParameter>()
                 .eq(CpeParameter::getSn, sn)
@@ -130,8 +115,7 @@ public class ModelTreeStore {
                 device == null ? null : device.getProductClass(),
                 device == null ? null : device.getSoftwareVersion());
 
-        // 不落库时也要拿到这一行做「能力树已存在就别覆盖」的判断，
-        // 但没有就算了——写文件本身不依赖模板库
+        // 不落库时也拿这一行做「能力树已存在别覆盖」判断，没有就算了——写文件本身不依赖模板库
         Device modelRow = registerInLib ? resolveModelRow(isp, modelKey, device, sn) : null;
         if (registerInLib && modelRow == null) {
             throw new IllegalStateException("型号登记失败: " + modelKey);
@@ -220,11 +204,9 @@ public class ModelTreeStore {
         String modelKey = ModelMappingService.buildModelKey(
                 device == null ? null : device.getProductClass(),
                 device == null ? null : device.getSoftwareVersion());
-        // 与归档同一套规则：没适配过的型号档案只可能在 standard 下，
-        // 拿台账运营商去查会查到「未登记」，与磁盘上真实存在的文件对不上
+        // 与归档同一套规则：没适配的型号档案只在 standard 下，拿台账运营商查会与磁盘上真实文件对不上
         String isp = archiveIspOf(modelKey);
-        // 型号档案改查 SQLite 模板库：下发前取路径这一步必须只看「适配数据」那一侧，
-        // MySQL cpe_model 不再是数据源
+        // 型号档案改查 SQLite 模板库：下发前取路径只看「适配数据」那一侧，MySQL cpe_model 不再是数据源
         Device model = deviceDao.findByIspModelKey(isp, modelKey).orElse(null);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("sn", sn);
@@ -248,8 +230,7 @@ public class ModelTreeStore {
         data.put("exists", Files.isRegularFile(file));
         data.put("sampleSn", model.getSampleSn());
         if (!Files.isRegularFile(file)) {
-            // 能力树 XML 只是归档产物： SQLite 模板库里那份适配结果还在，下发照旧能发，
-            // 缺的只是「同型号新设备的骨架」。说成「必须重新适配」会让现场白跑一轮采集
+            // 能力树 XML 只是归档产物：模板库里的适配结果还在，下发照旧能发；说成「必须重新适配」会让现场白跑一轮采集
             data.put("hint", "型号能力树文件缺失（适配结果仍在模板库中，下发不受影响）；"
                     + "需要时可对该设备再执行一次能力树导出重建");
             log.warn("型号能力树文件缺失，下发路径校正只用设备自身参数树: model={}, file={}",
@@ -269,8 +250,7 @@ public class ModelTreeStore {
         }
         Path file = resolveFile(String.valueOf(relative));
         if (!Files.isRegularFile(file)) {
-            // 这份接口查的是归档的能力档案，文件不在就拿不出节点清单；
-            // 与下发无关：适配结果在 SQLite 模板库里，缺的只是这份档案本身
+            // 这份接口查的是归档的能力档案，文件不在就拿不出节点清单；与下发无关：适配结果在 SQLite 模板库里
             throw new IllegalStateException("型号能力树文件不存在（适配结果仍在模板库，下发不受影响）；"
                     + "需要这份档案时对该设备再执行一次能力树导出即可重建: " + file);
         }
@@ -498,9 +478,7 @@ public class ModelTreeStore {
         map.put("X_CMCC_VLANID", List.of("X_CMCC_VLANIDMark", "X_CT-COM_VLANIDMark", "VLANIDMark"));
         map.put("VLANID", List.of("X_CMCC_VLANIDMark", "X_CT-COM_VLANIDMark", "VLANIDMark"));
         map.put("IPAddressingType", List.of("AddressingType"));
-        // 绑定端口：模板库统一登记的是 X_CMCC_BindLANPort，而移动定制机（如中兴 P22g-CIac）
-        // 上真实存在的节点叫 X_CMCC_LanInterface——两个名字毫无字面相似，不加别名就永远
-        // 判成「该型号不支持」，勾的端口一个都发不出去
+        // 绑定端口：模板库统一登记 X_CMCC_BindLANPort，而移动定制机（中兴 P22g-CIac）上真实节点叫 X_CMCC_LanInterface——毫无字面相似，不加别名端口一个都发不出去
         map.put("X_CMCC_BindLANPort", List.of("X_CMCC_LanInterface", "X_CT-COM_LanInterface",
                 "X_CMCC_LANInterface"));
         map.put("BindLANPort", List.of("X_CMCC_LanInterface", "X_CT-COM_LanInterface"));
@@ -521,9 +499,7 @@ public class ModelTreeStore {
         String wanted = leafOf(templatePath);
         String skeleton = skeleton(parent);
 
-        // 第一轮只在同父对象范围内找：模板要写的是这个对象下的参数，别处的同名节点不算数，
-        // 否则 VoiceService 下的 VLANIDMark 会压过 WAN 侧的 X_CMCC_VLANIDMark。
-        // 父对象按「去掉实例号后的骨架」比较，因此模板把实例号写错位置也能对上。
+        // 第一轮只在同父对象范围内找：别处的同名节点不算数（VoiceService 下的 VLANIDMark 会压过 WAN 侧的）；父对象按去实例号骨架比较，实例号写错位置也能对上
         ParamNode best = null;
         int bestScore = 0;
         for (ParamNode p : params) {
@@ -540,8 +516,7 @@ public class ModelTreeStore {
         if (best != null) {
             return best;
         }
-        // 第二轮才考虑别的对象：必须剥掉厂商前缀后完全同名，弱匹配（后缀/包含）一律不采信，
-        // 宁可让设备明确报「参数不存在」，也不能把值写到不相干的节点上
+        // 第二轮才考虑别的对象：必须剥前缀后完全同名，弱匹配一律不采信——宁可报「参数不存在」也不能把值写到不相干节点上
         for (ParamNode p : params) {
             int score = leafScore(leafOf(p.getPath()), wanted);
             if (score >= 90 && score > bestScore) {
@@ -570,8 +545,7 @@ public class ModelTreeStore {
         if (c.equals(w)) {
             return 90;
         }
-        // 只有长度接近才认「后缀/包含」：丢掉这条约束，HideSSID 会因为 SSID 是它的后缀而
-        // 匹配到 SSID 上，等于把「隐藏」的取值写到了 SSID 名称上
+        // 只有长度接近才认「后缀/包含」：否则 HideSSID 会因 SSID 是其后缀而匹配到 SSID 上，把「隐藏」取值写到 SSID 名上
         if (Math.abs(c.length() - w.length()) > 2) {
             return 0;
         }
@@ -754,7 +728,6 @@ public class ModelTreeStore {
 
     // ==================== 文件与型号 ====================
 
-    /** 型号文件相对配置根目录的路径：已有登记就沿用，否则按默认规则生成 */
     /** 型号能力树文件的相对路径（相对配置根目录） */
     private static String relativePath(String isp, String modelKey) {
         return MODEL_DIR + "/" + ModelMappingService.defaultConfigPath(isp, modelKey);
@@ -786,7 +759,6 @@ public class ModelTreeStore {
         }
     }
 
-    /** 按「运营商 + 型号标识」定位型号档案，没有就登记一条待适配 */
     /** 按「运营商 + 型号标识」定位型号档案，没有就登记一条待适配 */
     private Device resolveModelRow(String isp, String modelKey, CpeDevice device, String sn) {
         Optional<Device> exist = deviceDao.findByIspModelKey(isp, modelKey);

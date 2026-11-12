@@ -70,14 +70,7 @@ public class WorklistDeliveryService {
         return create(sn, category, worklistDesc, values, username, templateId, null);
     }
 
-    /**
-     * 创建下发工单。
-     *
-     * 建单不立即下发：先按 SN / OUI-SN / MAC / LOID 在库里找设备——
-     * 找不到就一直留在「等待执行」（standby），设备登记后由调度自动跟上；
-     * 找到就把房间号同步进设备台账，设备在线则进入「预约中」（reserve），
-     * 满 10 秒由调度执行下发，离线则等上线再预约。
-     */
+    /** 创建下发工单：找不到设备留「等待执行」由调度跟上，在线设备进「预约中」10 秒后下发 */
     public Worklist create(String sn, String category, String worklistDesc,
                            Map<String, String> values, String username, Long templateId,
                            OrderExtras ext) {
@@ -85,9 +78,7 @@ public class WorklistDeliveryService {
             throw new IllegalArgumentException("缺少设备序列号");
         }
         if (worklistDesc == null || worklistDesc.isBlank()) {
-            // 页面上直接点提交时调用方不给流水号，这里按需生成一个——
-            // 流水号是幂等键，交给前端生成的话它只能用 Math.random，
-            // 撞号时两单合成一单，后一单被幂等掉，运维以为开成功了其实没发
+            // 流水号是幂等键，交给前端生成用随机数会撞号，撞号的两单被幂等掉、后一单实际没发
             worklistDesc = newWorklistDesc(category);
         }
 
@@ -102,12 +93,10 @@ public class WorklistDeliveryService {
         // 设备标识解析：找不到不报错，工单留在「等待执行」，设备登记后调度自动跟上
         CpeDevice device = identifierResolver.resolve(sn);
         if (device != null) {
-            // 房间号同步设备台账：建单时运维填的房间号就是这台设备现在的位置
             syncRoomNo(device, ext == null ? null : ext.roomNo());
         }
 
-        // 变量兜底：房间号取设备登记的备注，口令没填用约定默认值。
-        // 单台与批量下发都在这里补齐，调用方一个变量都不传也能渲染出完整计划
+        // 变量兜底在这里统一补齐，调用方一个变量都不传也能渲染出完整计划
         Map<String, String> filled = withDefaults(category, device, values);
         String bizType = ext == null || ext.bizType() == null || ext.bizType().isBlank()
                 ? "normal" : ext.bizType();
@@ -184,11 +173,7 @@ public class WorklistDeliveryService {
 
     // ==================== 待执行工单调度 ====================
 
-    /**
-     * 扫描等待执行 / 预约中的工单：
-     * 设备已登记且在线 → 预约满 10 秒执行下发；设备未登记 → 一直等待。
-     * 状态先抢占成 sending 再下发，防止下一轮扫描重复执行。
-     */
+    /** 扫描 standby/reserve 工单：设备在线且预约满 10 秒执行下发；先抢占 sending 防重复执行 */
     @Scheduled(fixedDelay = 10000, initialDelay = 5000)
     public void deliverPendingWorklists() {
         List<Worklist> pending;
@@ -214,14 +199,12 @@ public class WorklistDeliveryService {
     private void processPending(Worklist w, LocalDateTime now) {
         CpeDevice device = identifierResolver.resolve(w.getSn());
         if (device == null) {
-            // 设备还没登记进台账，继续等待
             return;
         }
         syncRoomNo(device, w.getRoomNo());
         boolean online = CpeDevice.onlineOf(device.getStatus());
         if ("standby".equals(w.getStatus())) {
             if (online) {
-                // 设备在线，从现在起预约 10 秒后下发
                 Worklist patch = new Worklist();
                 patch.setId(w.getId());
                 patch.setStatus("reserve");
@@ -234,7 +217,6 @@ public class WorklistDeliveryService {
         }
         // reserve：预约中
         if (!online) {
-            // 掉线了，退回等待，上线后重新预约
             Worklist patch = new Worklist();
             patch.setId(w.getId());
             patch.setStatus("standby");
@@ -265,9 +247,7 @@ public class WorklistDeliveryService {
         }
         Map<String, String> values = readValues(w);
         values.remove("bizTemplateId");
-        // 房间号以台账为准重算 %room%：建单时设备可能还没登记进台账，
-        // 兜底值 0000 已经写进工单参数，不重算的话 WiFi SSID / SIP 账号会按 0000 下发。
-        // 只覆盖兜底值与空值，运维手填的房间名（非 0000）不动
+        // 房间号以台账为准重算 %room%，只覆盖兜底值与空值，运维手填的不动
         String storedRoom = values.get(TemplateVariables.ROOM);
         if (storedRoom == null || storedRoom.isBlank()) {
             storedRoom = values.get("room");
@@ -388,13 +368,7 @@ public class WorklistDeliveryService {
         return "build".equals(status) || "standby".equals(status) || "reserve".equals(status);
     }
 
-    /**
-     * 修改工单。
-     *
-     * 房间号改动同步设备台账（与建单同口径）；设备标识改动只在 build/standby/reserve
-     * 阶段允许，改完重新归一 SN 并刷新运营商/型号；未激活单改回激活后进入「等待执行」，
-     * 由调度自动跟上。
-     */
+    /** 修改工单：设备标识只在 build/standby/reserve 阶段可改，房间号改动同步台账，激活后由调度跟上 */
     public Worklist update(Long id, OrderUpdate cmd) {
         Worklist w = worklistMapper.selectById(id);
         if (w == null) {
@@ -403,7 +377,6 @@ public class WorklistDeliveryService {
         if (inFlight(w.getStatus())) {
             throw new IllegalArgumentException("工单正在执行，暂不能修改");
         }
-        // 设备标识：改了就重新解析归一
         if (cmd.sn() != null && !cmd.sn().isBlank() && !cmd.sn().trim().equals(w.getSn())) {
             if (!pending(w.getStatus())) {
                 throw new IllegalArgumentException("工单已执行，设备标识不能再改");
@@ -415,7 +388,6 @@ public class WorklistDeliveryService {
                 w.setDomain(device.getDeviceType());
             }
         }
-        // 房间号：工单与台账一起改
         if (cmd.roomNo() != null) {
             w.setRoomNo(cmd.roomNo().isBlank() ? null : cmd.roomNo().trim());
         }
@@ -439,7 +411,6 @@ public class WorklistDeliveryService {
         }
         if (cmd.active() != null) {
             w.setActive(cmd.active() ? 1 : 0);
-            // 未激活单改回激活：进入等待执行，调度自动跟上
             if (cmd.active() && "build".equals(w.getStatus())) {
                 w.setStatus("standby");
             }

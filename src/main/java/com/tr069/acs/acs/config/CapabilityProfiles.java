@@ -35,14 +35,11 @@ public class CapabilityProfiles {
         Profile profile = new Profile();
         Isp target = isp == null ? Isp.STANDARD : isp;
         profile.setName(target.getLabel());
-        // 策略现状：四家一致，都是「先递归 + 递归不成逐层 + 都不成按实例号探」。
-        // 哪天某家确认了更合适的姿势，在这里单独给这家赋值即可
+        // 策略现状四家一致：先递归 + 递归不成逐层 + 都不成按实例号探；某家有差异时在此单独赋值
         profile.setGpnStrategy(Profile.STRATEGY_RECURSIVE_FIRST);
         profile.setInstanceProbe(true);
         profile.setMaxInstances(4);
-        // 已知路径兜底：GetParameterNames 一句都问不出来的设备（电信定制机的典型表现，
-        // 父对象一律 9002），靠这几条把设备身份读回来——先认出这是什么猫，再谈能力树。
-        // 相对数据模型根节点书写，TR-098 与 TR-181 通用
+        // 已知路径兜底：GPN 问不出来的设备（父对象一律 9002）靠这几条先认出设备身份；相对根节点书写
         profile.setProbePaths(List.of(
                 "DeviceInfo.SpecVersion",
                 "DeviceInfo.Manufacturer",
@@ -50,15 +47,10 @@ public class CapabilityProfiles {
                 "DeviceInfo.ProductClass",
                 "DeviceInfo.HardwareVersion",
                 "DeviceInfo.SoftwareVersion",
-                // 连接请求（ACS 反连设备）的认证凭据是设备侧生成的，只有问它才知道。
-                // 没有凭据就唤不醒设备，手动采集只能干等它自己上报，所以一并读回来
+                // 连接请求凭据只有问设备才知道，没有它就唤不醒设备
                 "ManagementServer.ConnectionRequestUsername",
                 "ManagementServer.ConnectionRequestPassword",
-                // 业务能力：拉不动参数树的设备（GetParameterNames 一律回 9002 的固件，
-                // 瑞斯康达 MSG2100E 就是这种）拿不到完整的树，型号模板里的
-                // WiFi / LAN / SIP 数就全是 0，同型号的工单没法下发这几类业务。
-                // 这几条是 TR-098 的代表性叶子，读到就等于承认有这块能力，
-                // 读不到会被二分拆批剔掉，不影响其他路径
+                // 业务能力代表性叶子：GPN 全 9002 的固件靠 GPV 探测 WiFi/LAN 能力，读不到会被拆批剔掉
                 "LANDevice.1.WLANConfiguration.1.Enable",
                 "LANDevice.1.WLANConfiguration.1.SSID",
                 "LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase",
@@ -66,14 +58,10 @@ public class CapabilityProfiles {
                 "LANDevice.1.LANHostConfigManagement.IPInterface.1.IPInterfaceSubnetMask",
                 "LANDevice.1.LANHostConfigManagement.DHCPServerEnable",
                 "LANDevice.1.WLANConfiguration.1.X_CT-COM_SSID",
-                // 条目数与频段：适配页要拿实测数校验申报值（4 口 / 8 路 SIP / 2.4G）。
-                // 只数实例容易低估——不建 LANEthernetInterfaceConfig 的固件数出 0 口，
-                // 只建一路 Line 的数出 1 路。NumberOfEntries 是设备自报的口径，更准
+                // 条目数与频段：NumberOfEntries 是设备自报口径，比数实例更准（有的固件不建实例会数出 0）
                 "LANDevice.1.LANEthernetInterfaceNumberOfEntries",
                 "LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate",
-                // 网口的开关类参数：适配页的试探下发要靠它证明「这个能力真能配」。
-                // 只采 MaxBitRate 的话，值域各厂商不一（「1000M」写回去就被判 9003），
-                // 表格里网口那一行只能显示「无可写参数」
+                // 网口开关类参数：适配页试探下发靠它证明能力可配，只采 MaxBitRate 会因值域不一被判 9003
                 "LANDevice.1.LANEthernetInterfaceConfig.1.Enable",
                 "LANDevice.1.LANEthernetInterfaceConfig.1.Status",
                 "LANDevice.1.WLANConfigurationNumberOfEntries",
@@ -82,9 +70,7 @@ public class CapabilityProfiles {
                 "Services.VoiceService.1.VoiceProfile.1.LineNumberOfEntries",
                 // 8 路语音口的机器常常只建一条 Line，容量挂在物理口上
                 "Services.VoiceService.1.PhyInterfaceNumberOfEntries",
-                // WAN 连接完整叶子：GPN 扫不出参数树时靠 GPV 兜底读回业务面板所需全部字段。
-                // IP 连接和 PPP 连接各一套，覆盖服务类型、连接模式、VLAN、MTU、NAT、
-                // 连接状态、IPv4 地址/网关/DNS、IPv6 地址/状态、Name
+                // WAN 连接完整叶子：GPN 扫不出树时靠 GPV 兜底读回业务面板字段，IP 与 PPP 连接各一套
                 "WANDevice.1.WANConnectionDeviceNumberOfEntries",
                 "WANDevice.1.WANConnectionDevice.1.WANIPConnectionNumberOfEntries",
                 "WANDevice.1.WANConnectionDevice.1.WANPPPConnectionNumberOfEntries",
@@ -129,15 +115,12 @@ public class CapabilityProfiles {
                 "LANDevice.1.LANEthernetInterfaceConfig.1.X_CT-COM-UpLineStatus",
                 "LANDevice.1.LANEthernetInterfaceConfig.1.X_CT-COM-LineStatus",
                 "Services.VoiceService.1.VoiceProfile.1.Line.1.DirectoryNumber",
-                // SIP 未配置时 ProxyServer / AuthUserName 是空值或直接 9005，
-                // 试探就一个候选都挑不出来。Line 与 SIP 的开关是必定有值的
+                // SIP 未配置时 ProxyServer 等是空值或 9005，Line 与 SIP 的开关必定有值
                 "Services.VoiceService.1.VoiceProfile.1.Line.1.Enable",
                 "Services.VoiceService.1.VoiceProfile.1.SIP.Enable",
                 "Services.VoiceService.1.VoiceProfile.1.SIP.AuthUserName",
                 "Services.VoiceService.1.VoiceProfile.1.SIP.ProxyServer"));
-        // 天翼那套私有分支、采集策略、子树、额外探测路径的差异
-        // 已移到 CtAdaptation 里，由 DeviceCapabilityService.profileFor 覆盖，
-        // 这里不再按运营商写 if 分支——每家的差异收在各自的 IspAdaptation 实现类中
+        // 各家差异已移到各自的 IspAdaptation 实现类（如 CtAdaptation），这里不再按运营商写 if 分支
         return profile;
     }
 

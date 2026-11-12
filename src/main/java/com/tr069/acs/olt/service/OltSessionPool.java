@@ -90,8 +90,6 @@ public class OltSessionPool {
             return thread;
         });
         keeper.scheduleWithFixedDelay(this::sweep, SWEEP_TICK_MS, SWEEP_TICK_MS, TimeUnit.MILLISECONDS);
-        log.info("OLT 长连接管理已启动：每设备最多 {} 条并行会话，保活开关默认{}（{}分钟探活一次）",
-                SESSIONS_PER_DEVICE, keepaliveEnabled ? "开" : "关", keepaliveIntervalMs / 60000);
     }
 
     @PreDestroy

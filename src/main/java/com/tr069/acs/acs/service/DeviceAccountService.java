@@ -86,9 +86,7 @@ public class DeviceAccountService {
         boolean online = session != null && session.isOnline();
         data.put("online", online);
         if (!online) {
-            // 「没有会话」不等于叫不醒：设备可被 UDP ConnectionRequest 叫上来，
-            // 它自己建链之后指令才有地方捎带。先叫一次，叫得醒就接着读，
-            // 直接回 offline 等于把唯一能救回来的手段丢掉了
+            // 没有会话不等于叫不醒：先发 UDP 连接请求叫一次，设备自己建链后指令才有地方捎带
             if (!capabilityService.canWakeUp(sn)) {
                 data.put("status", "offline");
                 data.put("accounts", List.of());
@@ -108,14 +106,11 @@ public class DeviceAccountService {
             }
             log.info("设备原本离线，已被连接请求唤醒: sn={}", sn);
         } else {
-            // 会话在线不等于设备现在还连着：设备报完一轮就把 TCP 断了，指令只能排在队列里等
-            // 下一次周期上报（十几分钟）——现场就是「17:52:20 下发成功，17:52:36 读取超时」。
-            // 所以不拿探活读取当在线判据（它必然超时并误判成设备不回应），改成先反向唤醒再读
+            // 会话在线不等于设备还连着（报完一轮就断 TCP），不拿探活读取当在线判据，先反向唤醒再读
             capabilityService.wakeUpAndAwait(sn, Math.min(WAKEUP_WAIT_SECONDS, remaining(deadline)));
         }
 
-        // 第一轮只发最可能命中的几条：运营商定制节点 + 能力树快照里真实采到过的账号路径。
-        // 两种根节点一起拼会把候选翻到二十来条，二分拆批的往返把耗时吃掉了
+        // 第一轮只发最可能命中的候选：定制节点 + 快照采到过的路径，控制候选数避免拆批往返拖慢
         String isp = resolveIsp(sn);
         List<String> primary = primaryPaths(sn, root, isp);
 
@@ -137,8 +132,7 @@ public class DeviceAccountService {
             log.warn("读取设备账号失败: sn={}, err={}", sn, e.getMessage());
         }
 
-        // 定制节点读不到才扩大范围：先在同根下换节点形态（华为 Web 账号 / 标准 User 实例），
-        // 再换另外两种根节点。只换根不换形态时，运营商登记错一台设备就永远读不到账号
+        // 定制节点读不到才扩大范围：换节点形态、再换根节点；只换根不换形态会漏掉登记错的设备
         List<String> candidates = new ArrayList<>(primary);
         if (values.isEmpty() && !expired(deadline)) {
             List<String> fallback = fallbackPaths(root, isp);
@@ -151,9 +145,7 @@ public class DeviceAccountService {
             }
         }
 
-        // 整批被拒时逐条重试：有些设备只要批里有一个不认识的节点就整批回 fault，
-        // 拆开单发却每一条都认（下发侧同样的兼容性问题已实测过）。
-        // 重试与前面几段共用总预算，避免设备不支持时把请求拖到几分钟。
+        // 整批被拒时逐条重试：有些设备批里混入不认识的节点就整批回 fault，单发却每条都认；重试共用总预算
         for (String path : candidates) {
             if (values.containsKey(path)) {
                 continue;
@@ -209,8 +201,7 @@ public class DeviceAccountService {
     /** 第二轮候选：定制节点读不到时才展开 */
     private List<String> fallbackPaths(String root, String isp) {
         LinkedHashSet<String> paths = new LinkedHashSet<>(genericPaths(root));
-        // 台账上的运营商可能是别的：这台实际节点是 X_CMCC_TeleComAccount，
-        // 登记成别家的就只有把三家定制节点都试一遍才读得到
+        // 台账登记的运营商可能是错的：把三家定制节点都试一遍才读得到
         paths.addAll(otherIspPaths(root, isp));
         for (String r : otherRoots(root)) {
             paths.addAll(ispPaths(r, isp));
