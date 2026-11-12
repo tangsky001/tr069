@@ -5,7 +5,9 @@ import com.tr069.acs.acs.adaptation.AdaptationManager;
 import com.tr069.acs.acs.adaptation.IspAdaptation;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.domain.entity.CpeDevice;
+import com.tr069.acs.domain.entity.CpeParameter;
 import com.tr069.acs.mapper.CpeDeviceMapper;
+import com.tr069.acs.mapper.CpeParameterMapper;
 import com.tr069.acs.worklist.service.ModelMappingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +18,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import com.tr069.acs.common.log.AcsCoreLog;
 
 /** 设备台账落库 */
@@ -30,6 +34,8 @@ public class DeviceRegistryService implements ApplicationRunner {
     private static final String STATUS_OFFLINE = "offline";
 
     private final CpeDeviceMapper cpeDeviceMapper;
+
+    private final CpeParameterMapper cpeParameterMapper;
 
     /** 在线判定窗口（秒）：最近一次上报落在窗口内就算在线 */
     @Value("${acs.session.online-window-seconds:900}")
@@ -100,7 +106,7 @@ public class DeviceRegistryService implements ApplicationRunner {
         return adaptation.code();
     }
 
-    /** 按上报窗口清扫：超过窗口还没再上报的设备才置离线 */
+    /** 按上报窗口清扫：超过窗口还没再上报的设备才置离线；窗口按设备实际 PeriodicInformInterval 动态放宽 */
     @Scheduled(fixedDelayString = "${acs.session.offline-sweep-interval-millis:60000}")
     public void sweepExpiredOnline() {
         try {
@@ -109,12 +115,48 @@ public class DeviceRegistryService implements ApplicationRunner {
                     new LambdaQueryWrapper<CpeDevice>()
                             .eq(CpeDevice::getStatus, STATUS_ONLINE)
                             .lt(CpeDevice::getLastContactTime, deadline));
+            if (expired.isEmpty()) {
+                return;
+            }
+            // 上报间隔被纳管改大过的设备，用固定窗口会误判离线：判定线取 max(窗口, 间隔×3)
+            Map<String, Long> intervals = loadInformIntervals(
+                    expired.stream().map(CpeDevice::getSn).toList());
+            LocalDateTime now = LocalDateTime.now();
             for (CpeDevice device : expired) {
-                markOffline(device.getSn());
+                Long interval = intervals.get(device.getSn());
+                long effWindow = interval == null || interval <= 0
+                        ? onlineWindowSeconds
+                        : Math.max(onlineWindowSeconds, interval * 3);
+                if (device.getLastContactTime() == null
+                        || device.getLastContactTime().isBefore(now.minusSeconds(effWindow))) {
+                    markOffline(device.getSn());
+                }
             }
         } catch (Exception e) {
             log.warn("按上报窗口清扫离线失败，忽略: {}", e.getMessage());
         }
+    }
+
+    /** 批量取设备实际生效的 PeriodicInformInterval（秒），取不到的设备不在返回里 */
+    private Map<String, Long> loadInformIntervals(List<String> sns) {
+        Map<String, Long> result = new HashMap<>();
+        try {
+            List<CpeParameter> rows = cpeParameterMapper.selectList(
+                    new LambdaQueryWrapper<CpeParameter>()
+                            .in(CpeParameter::getSn, sns)
+                            .like(CpeParameter::getParamPath, "ManagementServer.PeriodicInformInterval"));
+            for (CpeParameter row : rows) {
+                try {
+                    long interval = Long.parseLong(row.getParamValue().trim());
+                    // 更长的间隔优先：同设备多条记录时保留最大的
+                    result.merge(row.getSn(), interval, Math::max);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        } catch (Exception e) {
+            log.warn("读取设备上报间隔失败，按固定窗口判定: {}", e.getMessage());
+        }
+        return result;
     }
 
     /** 标记离线；本就离线或尚未入库的设备直接跳过，避免无谓写库 */

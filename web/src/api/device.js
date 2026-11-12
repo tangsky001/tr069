@@ -214,6 +214,48 @@ export function fetchAdminAccounts(sn) {
 }
 
 /**
+ * 查询设备 Telnet 使能状态。
+ * 后端会按运营商适配路径向设备实时读取，离线设备会先发连接请求唤醒。
+ * 返回 data: { sn, online, status, enabled, path, message, statusText, statusLevel }
+ */
+export function fetchTelnetStatus(sn) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/telnet',
+    method: 'get',
+    timeout: 90000
+  })
+}
+
+/**
+ * 开启或关闭设备 Telnet。
+ * enabled 为 true 时开启，false 时关闭。
+ * 返回 data: { sn, status, taskId, path, message, statusText, statusLevel }
+ */
+export function setTelnetEnabled(sn, enabled) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/telnet',
+    method: 'post',
+    data: { enabled },
+    timeout: 30000
+  })
+}
+
+/**
+ * 查询 Telnet 状态及默认账号密码。
+ * 后端会先读使能状态：已开启就直接读账号密码；未开启会自动下发开启指令，
+ * 等设备应用成功后再读取 TelnetUserName / TelnetPassword / TelnetPort。
+ * 返回 data: { sn, online, status, enabled, path, message,
+ *   username, password, port, credentialStatus, enablePath, enableTaskId, ... }
+ */
+export function fetchTelnetCredentials(sn) {
+  return request({
+    url: '/device/' + encodeURIComponent(sn) + '/telnet/credentials',
+    method: 'get',
+    timeout: 120000
+  })
+}
+
+/**
  * 手动下发一条 CWMP RPC。
  * args 为 JSON 对象，由后端透传给设备。
  */

@@ -53,8 +53,8 @@ public class ModelAdaptationService {
     private final DeviceDao deviceDao;
     private final AdaptationManager adaptationManager;
 
-    /** 测试时等待光猫返回参数树的最长时间，秒 */
-    @Value("${acs.adapt.test-timeout-seconds:120}")
+    /** 测试时等待光猫返回参数树的最长时间，秒。上千参数按批串行读，120s 经常不够 */
+    @Value("${acs.adapt.test-timeout-seconds:300}")
     private int testTimeoutSeconds;
 
     /** 单次试探下发等待设备响应的时间，秒 */
@@ -276,6 +276,7 @@ public class ModelAdaptationService {
         data.put("requested", request.asMap());
         CollectResult collect = collectTree(sn, request.getIsp());
         data.put("collectStatus", collect.status);
+        data.put("collectInterrupted", collect.interrupted);
         if (collect.error != null) {
             data.put("collectError", collect.error);
         }
@@ -285,18 +286,30 @@ public class ModelAdaptationService {
                         .orderByAsc(CpeParameter::getParamPath));
         Detection detected = detect(params);
         data.put("detected", detected.asMap());
+        List<Check> checks = checks(detected, request);
+        data.put("checks", checks.stream().map(Check::asMap).toList());
         List<String> reasons = new ArrayList<>(compare(detected, request));
-        // 采集状态判定：partial 也算数——电信定制固件 GPN 对父对象一律 9002 只能 GPV 兜底读值，照样读回真实参数，判失败等于把电信设备挡在门外
+        List<String> notes = new ArrayList<>(notes(detected, request));
+        // 采集状态判定：partial 也算数——电信定制固件 GPN 对父对象一律 9002 只能 GPV 兜底读值，照样读回真实参数，判失败等于把电信设备挡在门外。
+        // running 是「还没采完」不是失败：等待超时但能力比对全过时按通过处理，结论基于已采到的参数
         boolean collected = COLLECTED_OK.contains(collect.status);
-        if (!collected && reasons.isEmpty()) {
-            reasons.add("能力采集未成功(" + collect.status + ")"
-                    + (collect.error == null ? "" : "：" + collect.error));
+        if ("running".equals(collect.status)) {
+            if (reasons.isEmpty()) {
+                notes.add("采集仍在进行（等待超时未结束），本次结论基于已采到的参数，能力比对全部通过");
+            }
+            collected = false;
+        } else if (!COLLECTED_OK.contains(collect.status) && reasons.isEmpty()) {
+            if (collect.interrupted) {
+                reasons.add("设备会话中断，采集未完成（不是能力不满足），请重新测试");
+            } else {
+                reasons.add("能力采集未成功(" + collect.status + ")"
+                        + (collect.error == null ? "" : "：" + collect.error));
+            }
         }
         // 真下发一次：把参数当前值原样写回，验证光猫确实能执行这些能力
         List<Probe> probes = collected ? probeCapabilities(sn, params, request) : List.of();
         data.put("probes", probes.stream().map(Probe::asMap).toList());
         // 试探失败只作提示：Writable 未知时候选面本来就宽，写回同值被拒常只是值域问题（MaxBitRate 报「1000M」），不代表能力缺失
-        List<String> notes = new ArrayList<>(notes(detected, request));
         for (Probe p : probes) {
             if (p.failed) {
                 notes.add("参数下发未通过：" + p.capability + " " + p.path + " -> " + p.status);
@@ -440,9 +453,18 @@ public class ModelAdaptationService {
             return result;
         }
         result.status = status.getStatus();
+        // 会话中断（设备中途不再回应）不是能力问题：单独立标记，测试结果按「请重测」呈现而不是「不满足」
+        result.interrupted = status.isAborted()
+                || (status.getMessage() != null && status.getMessage().contains("采集中断"));
         List<String> errors = status.getErrors();
         if (errors != null && !errors.isEmpty()) {
-            result.error = errors.get(errors.size() - 1);
+            // 倒序找第一条真实故障：单条路径被拒「已跳过」是探测的正常保护动作，不该当成采集失败的原因展示
+            for (int i = errors.size() - 1; i >= 0; i--) {
+                if (!errors.get(i).contains("已跳过")) {
+                    result.error = errors.get(i);
+                    break;
+                }
+            }
         }
         return result;
     }
@@ -450,6 +472,7 @@ public class ModelAdaptationService {
     private static class CollectResult {
         String status = "unknown";
         String error;
+        boolean interrupted;
     }
 
     // ==================== 能力解析 ====================
@@ -740,32 +763,130 @@ public class ModelAdaptationService {
     }
 
     /** 逐项比对申报能力与实测能力，返回不满足的原因列表，空列表即全部支持 */
-    List<String> compare(Detection d, AdaptRequest req) {
-        List<String> reasons = new ArrayList<>();
-        int lanRequired = parseCount(req.getLanPorts());
-        if (lanRequired > 0 && d.lanPortCount < lanRequired) {
-            reasons.add("网口数量不足：申报 " + req.getLanPorts() + "，实测 " + d.lanPortCount);
+    /** 单项能力比对结论，前端按 ✓/✗ 逐项渲染 */
+    @Data
+    static class Check {
+
+        /** 能力项名称：网口数量 / 网口速率 / SIP 数量 / WIFI 规格 */
+        private String label;
+
+        /** 是否参与比对：申报「无 / 自动」时不比对 */
+        private boolean checked;
+
+        /** 比对结论：true 满足 */
+        private boolean pass;
+
+        /** 申报与实测的对照说明 */
+        private String detail;
+
+        /** 不满足时的原因；满足时为 null */
+        private String reason;
+
+        Map<String, Object> asMap() {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("label", label);
+            data.put("checked", checked);
+            data.put("pass", pass);
+            data.put("detail", detail);
+            data.put("reason", reason);
+            return data;
         }
-        double speedRequired = parseSpeed(req.getLanSpeed());
-        if (speedRequired > 0) {
-            if (d.lanSpeedMbps == null) {
-                reasons.add("未采集到网口速率参数，无法确认申报的 " + req.getLanSpeed());
-            } else if (d.lanSpeedMbps < speedRequired) {
-                reasons.add(String.format("网口速率不足：申报 %s，实测最高 %.0fMbps",
-                        req.getLanSpeed(), d.lanSpeedMbps));
+    }
+
+    /** 逐项比对申报与实测，每项独立给结论 */
+    List<Check> checks(Detection d, AdaptRequest req) {
+        List<Check> result = new ArrayList<>();
+
+        int lanRequired = parseCount(req.getLanPorts());
+        Check lan = new Check();
+        lan.setLabel("网口数量");
+        lan.setChecked(lanRequired > 0);
+        lan.setDetail(lanRequired > 0
+                ? "申报 " + req.getLanPorts() + "，实测 " + d.lanPortCount
+                : "未申报，不比对");
+        if (lanRequired > 0) {
+            lan.setPass(d.lanPortCount >= lanRequired);
+            if (!lan.isPass()) {
+                lan.setReason("网口数量不足：申报 " + req.getLanPorts() + "，实测 " + d.lanPortCount);
             }
         }
+        result.add(lan);
+
+        double speedRequired = parseSpeed(req.getLanSpeed());
+        Check speed = new Check();
+        speed.setLabel("网口速率");
+        speed.setChecked(speedRequired > 0);
+        if (speedRequired > 0) {
+            if (d.lanSpeedMbps == null) {
+                speed.setPass(false);
+                speed.setDetail("申报 " + req.getLanSpeed() + "，实测未采集到速率参数");
+                speed.setReason("未采集到网口速率参数，无法确认申报的 " + req.getLanSpeed());
+            } else {
+                speed.setPass(d.lanSpeedMbps >= speedRequired);
+                speed.setDetail(String.format("申报 %s，实测最高 %.0fMbps",
+                        req.getLanSpeed(), d.lanSpeedMbps));
+                if (!speed.isPass()) {
+                    speed.setReason(String.format("网口速率不足：申报 %s，实测最高 %.0fMbps",
+                            req.getLanSpeed(), d.lanSpeedMbps));
+                }
+            }
+        } else {
+            speed.setDetail("未申报，不比对");
+        }
+        result.add(speed);
+
         int sipRequired = parseCount(req.getSipCount());
-        // 只有设备确实报了语音容量才谈「不足」：有的固件只暴露 Line.1，攒出的「1 路」不是证据，按实物申报 8 路反倒被挡
-        if (sipRequired > 0 && d.sipCount < sipRequired && d.sipCapacityKnown) {
-            reasons.add("SIP 数量不足：申报 " + req.getSipCount() + "，实测 " + d.sipCount);
+        Check sip = new Check();
+        sip.setLabel("SIP 数量");
+        sip.setChecked(sipRequired > 0);
+        sip.setDetail(sipRequired > 0
+                ? "申报 " + req.getSipCount() + "，实测 " + d.sipCount + " 路"
+                : "未申报，不比对");
+        if (sipRequired > 0) {
+            // 只有设备确实报了语音容量才谈「不足」：有的固件只暴露 Line.1，攒出的「1 路」不是证据，按实物申报 8 路反倒被挡
+            boolean pass = !(d.sipCount < sipRequired && d.sipCapacityKnown);
+            sip.setPass(pass);
+            if (!pass) {
+                sip.setReason("SIP 数量不足：申报 " + req.getSipCount() + "，实测 " + d.sipCount);
+            }
         }
+        result.add(sip);
+
         String wifi = req.getWifiSpec();
-        if (wifi != null && wifi.contains("2.4") && !d.wifiBands.contains("2.4G")) {
-            reasons.add("未检测到 2.4G WIFI");
+        boolean wifiChecked = wifi != null && (wifi.contains("2.4") || wifi.contains("5.8"));
+        Check wifiCheck = new Check();
+        wifiCheck.setLabel("WIFI 规格");
+        wifiCheck.setChecked(wifiChecked);
+        wifiCheck.setDetail(wifiChecked
+                ? "申报 " + wifi + "，实测 " + (d.wifiBands.isEmpty() ? "无" : String.join("+", d.wifiBands))
+                : "未申报，不比对");
+        if (wifiChecked) {
+            boolean pass = true;
+            StringBuilder reason = new StringBuilder();
+            if (wifi.contains("2.4") && !d.wifiBands.contains("2.4G")) {
+                pass = false;
+                reason.append("未检测到 2.4G WIFI");
+            }
+            if (wifi.contains("5.8") && !d.wifiBands.contains("5.8G")) {
+                if (!reason.isEmpty()) {
+                    reason.append("；");
+                }
+                reason.append("未检测到 5.8G WIFI");
+            }
+            wifiCheck.setPass(pass);
+            wifiCheck.setReason(pass ? null : reason.toString());
         }
-        if (wifi != null && wifi.contains("5.8") && !d.wifiBands.contains("5.8G")) {
-            reasons.add("未检测到 5.8G WIFI");
+        result.add(wifiCheck);
+
+        return result;
+    }
+
+    List<String> compare(Detection d, AdaptRequest req) {
+        List<String> reasons = new ArrayList<>();
+        for (Check c : checks(d, req)) {
+            if (c.isChecked() && !c.isPass() && c.getReason() != null) {
+                reasons.add(c.getReason());
+            }
         }
         return reasons;
     }

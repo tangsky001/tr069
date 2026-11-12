@@ -301,11 +301,47 @@ public final class SoapParser {
                 }
                 dict.put("OptionList", entries);
             }
+            case "GetParameterValuesXMLResponse" ->
+                    dict.put("XmlContent", textOfChild(root, "Content"));
             default -> {
                 // Inform 等 CPE 主动请求由专门逻辑处理
             }
         }
+        // CPE 主动请求（TransferComplete / RequestDownload / Kicked 等）拍平简单子节点，
+        // 供控制器取 CommandKey / FaultCode / FileType 等字段
+        RpcMethod reqMethod = RpcMethod.of(methodName);
+        if (reqMethod != null && reqMethod.isRequestFromCpe()) {
+            flattenSimpleChildren(root, dict);
+        }
         return dict;
+    }
+
+    /** 把无子元素的子节点拍平进字典 */
+    private static void flattenSimpleChildren(Element root, Map<String, Object> dict) {
+        NodeList children = root.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node n = children.item(i);
+            if (!(n instanceof Element e)) {
+                continue;
+            }
+            if (e.getChildNodes().getLength() > 0) {
+                boolean hasElement = false;
+                NodeList inner = e.getChildNodes();
+                for (int j = 0; j < inner.getLength(); j++) {
+                    if (inner.item(j) instanceof Element) {
+                        hasElement = true;
+                        break;
+                    }
+                }
+                if (hasElement) {
+                    continue;
+                }
+            }
+            String key = localName(e);
+            if (!dict.containsKey(key)) {
+                dict.put(key, text(e));
+            }
+        }
     }
 
     private static List<Map<String, Object>> transferList(Element root, boolean all) {
@@ -366,6 +402,12 @@ public final class SoapParser {
                     .append("; Value = ").append(p.getValue())
                     .append("; Value_Type = ").append(p.getValueType())
                     .append("\n");
+        }
+        if ("GetParameterValuesXMLResponse".equals(methodName)) {
+            String xml = textOfChild(root, "Content");
+            if (!xml.isEmpty()) {
+                sb.append("XmlContent = ").append(xml).append("\n");
+            }
         }
         return sb.toString();
     }

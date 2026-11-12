@@ -75,6 +75,32 @@ public class RpcTaskQueue {
             + "return dropped",
             Long.class);
 
+    /** 按 taskId 摘除队列元素的 Lua 脚本：读全部→过滤→回写，与 DROP_STALE 同套路 */
+    private static final DefaultRedisScript<Long> REMOVE_TASK_SCRIPT = new DefaultRedisScript<>(
+            "local all = redis.call('LRANGE', KEYS[1], 0, -1) "
+            + "local keep = {} "
+            + "local removed = 0 "
+            + "local marker = '\"taskId\":' .. ARGV[1] .. ',' "
+            + "for i, v in ipairs(all) do "
+            + "  if string.find(v, marker, 1, true) ~= nil "
+            + "    or string.find(v, '\"taskId\": ' .. ARGV[1] .. ',', 1, true) ~= nil then "
+            + "    removed = removed + 1 "
+            + "  else "
+            + "    table.insert(keep, v) "
+            + "  end "
+            + "end "
+            + "if removed > 0 then "
+            + "  redis.call('DEL', KEYS[1]) "
+            + "  for i, v in ipairs(keep) do "
+            + "    redis.call('RPUSH', KEYS[1], v) "
+            + "  end "
+            + "  if #keep > 0 then "
+            + "    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) "
+            + "  end "
+            + "end "
+            + "return removed",
+            Long.class);
+
     /** 提交一条指令到设备队列 */
     public boolean enqueue(RpcTask task) {
         try {
@@ -201,21 +227,48 @@ public class RpcTaskQueue {
     /** 扫描仍在排队的 taskId：进程重启后内存 pending 表清空，需据此重建，否则 CompletableFuture 永不完成 */
     public List<Long> scanPendingTaskIds(String sn) {
         List<Long> ids = new ArrayList<>();
+        for (RpcTask task : scanPendingTasks(sn)) {
+            ids.add(task.getTaskId());
+        }
+        return ids;
+    }
+
+    /** 扫描仍在排队的任务全量信息（含 sn/rpc/提交时间），重建与清扫用 */
+    public List<RpcTask> scanPendingTasks(String sn) {
+        List<RpcTask> tasks = new ArrayList<>();
         try {
             List<String> all = redis.opsForList().range(deviceKey(sn), 0, -1);
             if (all == null || all.isEmpty()) {
-                return ids;
+                return tasks;
             }
             for (String json : all) {
                 RpcTask task = parseTask(json);
                 if (task != null && task.getTaskId() > 0) {
-                    ids.add(task.getTaskId());
+                    tasks.add(task);
                 }
             }
         } catch (Exception e) {
             logFailure("扫描排队指令", e);
         }
-        return ids;
+        return tasks;
+    }
+
+    /** 把指定任务从设备队列里摘掉（清扫判死时必须同步摘除，否则重启后又被重建、又被清扫，永远循环） */
+    public void remove(String sn, long taskId) {
+        if (sn == null || sn.isBlank()) {
+            return;
+        }
+        try {
+            Long removed = redis.execute(REMOVE_TASK_SCRIPT,
+                    Collections.singletonList(deviceKey(sn)),
+                    String.valueOf(taskId),
+                    String.valueOf(properties.getRpc().getQueueTtlSeconds()));
+            if (removed != null && removed > 0) {
+                log.info("已从队列摘除指令: sn={}, taskId={}", sn, taskId);
+            }
+        } catch (Exception e) {
+            logFailure("摘除排队指令", e);
+        }
     }
 
     /** 获取所有有指令排队的设备 SN */

@@ -45,6 +45,17 @@ public interface IspAdaptation {
         return List.of();
     }
 
+    // ==================== Telnet 使能参数 ====================
+
+    /**
+     * Telnet 使能参数所在的节点（相对根节点，带尾点）。
+     * 业务代码会在这个节点下拼接 {@code TelnetEnable} 叶子路径进行读写。
+     * 没有定制节点时返回空，由业务代码走通用标准路径兜底。
+     */
+    default List<String> telnetEnableNodes() {
+        return List.of();
+    }
+
     // ==================== WAN 连接私有参数 ====================
 
     /** WAN「业务绑定」参数名候选，按优先级逐个试；移动 X_CMCC_ServiceList、电信 X_CT-COM_ServiceList */

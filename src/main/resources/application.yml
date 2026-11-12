@@ -129,6 +129,8 @@ acs:
     user-path: /user
     # SOAP 命名空间版本
     cwmp-version: urn:dslforum-org:cwmp-1-0
+    # 单个请求报文大小上限（字节），防异常设备把内存打爆
+    max-body-bytes: 5242880
 
   session:
     # 在线判定窗口(秒)：台账里最近一次上报落在窗口内就算在线，设备列表、详情页、
@@ -163,6 +165,12 @@ acs:
     # 作废等待中的指令。设备是否离线只看 online-check-interval（长期无通信）
     duplicate-grace-seconds: 30
 
+  soap-message:
+    # 设备回 fault 的原始报文是否落 soap_message 表留证
+    fault-trace-enabled: true
+    # 单条留证报文的长度上限（字符），超出截断
+    max-chars: 60000
+
   auth:
     # CPE -> ACS 认证的默认账号，设备级配置优先
     # 免认证：写成 auto 或留空（含删除该配置项），任何账号密码都放行，
@@ -176,6 +184,8 @@ acs:
     # 某批次确定用别的密码就在这里改；留空或 auto 同样按 itms 处理
     acs-to-cpe-username: itms
     acs-to-cpe-password: itms
+    # Digest nonce 有效期（秒），过期 nonce 认证失败；同一 nonce 只允许成功一次防重放
+    nonce-ttl-seconds: 300
 
   device:
     # 设备离线判定周期(秒)：超过该时长没有任何通信才判离线

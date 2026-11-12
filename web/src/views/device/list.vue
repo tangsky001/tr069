@@ -436,6 +436,51 @@
       </span>
     </el-dialog>
 
+    <!-- Telnet 状态与账号密码弹窗：未开启会自动开启并读取默认账号密码 -->
+    <el-dialog title="Telnet 状态与账号密码" :visible.sync="telnetVisible" width="1040px">
+      <el-table v-loading="telnetLoading" :data="telnetRows" border size="small" max-height="480">
+        <el-table-column label="序列号" prop="sn" min-width="175" show-overflow-tooltip />
+        <el-table-column label="状态" width="95">
+          <template slot-scope="{ row }">
+            <el-tag size="mini" :type="telnetTagType(row)">{{ telnetStatusText(row) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Telnet" width="90" align="center">
+          <template slot-scope="{ row }">
+            <el-tag v-if="row.enabled === true" size="mini" type="success">已开启</el-tag>
+            <el-tag v-else-if="row.enabled === false" size="mini" type="info">已关闭</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="账号" prop="username" min-width="120" show-overflow-tooltip>
+          <template slot-scope="{ row }">{{ row.username || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="密码" min-width="180" show-overflow-tooltip>
+          <template slot-scope="{ row }">
+            <span v-if="row.password">{{ telnetPwdShow ? row.password : '••••••' }}</span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="端口" prop="port" width="70">
+          <template slot-scope="{ row }">{{ row.port || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="参数路径" min-width="240" show-overflow-tooltip>
+          <template slot-scope="{ row }">{{ row.path || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="说明" min-width="200" show-overflow-tooltip>
+          <template slot-scope="{ row }">{{ telnetHint(row) }}</template>
+        </el-table-column>
+      </el-table>
+      <div class="admin-pwd-tip" :class="{ 'admin-pwd-tip-warn': telnetHasNoResult }">{{ telnetTip }}</div>
+      <span slot="footer">
+        <el-button type="text" @click="telnetPwdShow = !telnetPwdShow">{{ telnetPwdShow ? '隐藏密码' : '显示密码' }}</el-button>
+        <el-button type="success" plain :loading="telnetLoading" :disabled="!telnetCanEnable" @click="batchTelnetSwitch(true)">全部开启</el-button>
+        <el-button type="danger" plain :loading="telnetLoading" :disabled="!telnetCanDisable" @click="batchTelnetSwitch(false)">全部关闭</el-button>
+        <el-button type="primary" :loading="telnetLoading" @click="reloadTelnet">重新查询</el-button>
+        <el-button @click="telnetVisible = false">关闭</el-button>
+      </span>
+    </el-dialog>
+
     <el-dialog title="在线会话明细" :visible.sync="onlineVisible" width="900px">
       <el-table :data="onlineList" border size="small" max-height="460">
         <el-table-column label="序列号" prop="sn" min-width="180" show-overflow-tooltip />
@@ -723,11 +768,25 @@
           </el-select>
         </el-form-item>
         <el-form-item v-if="adaptResult" label="测试结果">
-          <div class="adapt-result" :class="adaptResult.supported ? 'is-ok' : 'is-bad'">
+          <div class="adapt-result" :class="adaptResult.supported ? 'is-ok' : (adaptResult.collectInterrupted ? 'is-warn' : 'is-bad')">
             <div class="adapt-result-head">
-              <i :class="adaptResult.supported ? 'el-icon-success' : 'el-icon-error'" />
-              {{ adaptResult.supported ? '能力全部支持，可保存到库' : '存在不满足项' }}
-              <el-tag size="mini" type="info">采集：{{ adaptResult.collectStatus }}</el-tag>
+              <i :class="adaptResult.supported ? 'el-icon-success' : (adaptResult.collectInterrupted ? 'el-icon-warning' : 'el-icon-error')" />
+              {{ adaptResult.supported ? '能力全部支持，可保存到库'
+                : (adaptResult.collectInterrupted ? '采集被会话中断，请重新测试' : '存在不满足项') }}
+              <el-tag size="mini" :type="adaptResult.collectStatus === 'running' ? 'warning' : 'info'">
+                采集：{{ adaptResult.collectStatus }}
+              </el-tag>
+            </div>
+            <!-- 逐项比对结论：√ 满足 / ✗ 不满足 / — 未申报不比对 -->
+            <div v-if="adaptResult.checks && adaptResult.checks.length" class="adapt-checks">
+              <div v-for="c in adaptResult.checks" :key="c.label" class="adapt-check">
+                <el-tag
+                  size="mini"
+                  :type="!c.checked ? 'info' : (c.pass ? 'success' : 'danger')"
+                >{{ !c.checked ? '—' : (c.pass ? '✓' : '✗') }}</el-tag>
+                <span class="adapt-check-label">{{ c.label }}</span>
+                <span class="adapt-check-detail">{{ c.detail }}</span>
+              </div>
             </div>
             <div class="adapt-result-row">
               实测能力：网口 {{ adaptResult.detected.lanPortCount }} 个
@@ -757,7 +816,11 @@
                 </template>
               </el-table-column>
             </el-table>
-            <div v-for="(r, i) in adaptResult.reasons" :key="i" class="adapt-reason">{{ r }}</div>
+            <div
+              v-for="(r, i) in adaptResult.reasons"
+              :key="i"
+              :class="adaptResult.collectInterrupted ? 'adapt-reason-warn' : 'adapt-reason'"
+            >{{ r }}</div>
           </div>
         </el-form-item>
       </el-form>
@@ -831,7 +894,9 @@ import {
   fetchAdminAccounts, fetchDeviceStat, fetchCapabilityOptions, setDeviceParams,
   fetchDeviceActiveTasks, fetchRpcMethods, fetchQuickCommands,
   fetchSipLines, submitSipEdit, dispatchDevices, exportDevices as exportDevicesApi,
-  fetchPollConfig, fetchRpcProgressLabels
+  fetchPollConfig, fetchRpcProgressLabels,
+  setTelnetEnabled,
+  fetchTelnetCredentials
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchConfigTemplates } from '@/api/configTemplate'
@@ -935,6 +1000,12 @@ export default {
       adminPwdVisible: false,
       adminPwdLoading: false,
       adminPwdRows: [],
+      // Telnet 状态弹窗：每台设备一行，可逐台/批量开启或关闭
+      telnetVisible: false,
+      telnetLoading: false,
+      telnetRows: [],
+      // Telnet 密码默认掩码显示，点「显示密码」才明文
+      telnetPwdShow: false,
       // 可下发方法清单，以后端 /device/rpc/methods 为准；空了就是后端没给，前端不兜底
       rpcMethods: [],
       // 快捷操作的「命令 → RPC」映射，以后端 /device/rpc/quick-commands 为准
@@ -993,6 +1064,20 @@ export default {
       if (this.adminPwdLoading) return '正在向设备实时读取账号与口令（离线设备会先发连接请求唤醒），单台最长等约 70 秒…'
       if (!this.adminPwdHasNoAccount) return '账号与口令是从设备上实时读到的明文，可直接用于登录光猫后台。'
       return '没读到账号与口令：原因见上方“说明”列，展开行可看每台设备读到的参数路径。'
+    },
+    telnetHasNoResult() {
+      return !this.telnetLoading && !this.telnetRows.some(r => r.enabled === true || r.enabled === false)
+    },
+    telnetTip() {
+      if (this.telnetLoading) return '正在向设备读取 Telnet 状态与账号密码（未开启的会自动下发开启指令），单台最长等约 120 秒…'
+      if (!this.telnetHasNoResult) return '账号密码为实时读取结果；未开启的设备已自动开启。点击「全部开启/关闭」可批量切换。'
+      return '没读到 Telnet 状态：原因见上方“说明”列，常见情况是设备不支持该参数或当前离线。'
+    },
+    telnetCanEnable() {
+      return !this.telnetLoading && this.telnetRows.some(r => r.enabled !== true)
+    },
+    telnetCanDisable() {
+      return !this.telnetLoading && this.telnetRows.some(r => r.enabled !== false)
     }
   },
   watch: {
@@ -1034,7 +1119,7 @@ export default {
       return !!(this.adaptVisible || this.wanVisible || this.wifiEditVisible ||
         this.detailVisible || this.onlineVisible || this.businessVisible ||
         this.customParamVisible || this.debugVisible || this.adminPwdVisible ||
-        this.remarkVisible || this.selection.length)
+        this.telnetVisible || this.remarkVisible || this.selection.length)
     },
     /**
      * 拉设备分页数据。
@@ -1944,6 +2029,33 @@ export default {
         this.openAdminPwd()
         return
       }
+      // 开启/查询 Telnet：打开弹窗并实时读取当前状态
+      if (cmd === 'query-telnet') {
+        this.openTelnet()
+        return
+      }
+      // 关闭 Telnet：直接对勾选设备下发关闭指令
+      if (cmd === 'close-telnet') {
+        const sns = this.requireSelection()
+        if (!sns) return
+        this.$confirm('确认关闭已勾选 ' + sns.length + ' 台设备的 Telnet？', '关闭 Telnet', { type: 'warning' })
+          .then(() => {
+            let done = 0
+            let fail = 0
+            sns.forEach(sn => {
+              setTelnetEnabled(sn, false)
+                .then(() => { done++ })
+                .catch(() => { fail++ })
+                .finally(() => {
+                  if (done + fail === sns.length) {
+                    this.$message.success('已提交关闭 Telnet 指令：成功 ' + done + ' 台' + (fail ? '，失败 ' + fail + ' 台' : ''))
+                  }
+                })
+            })
+          })
+          .catch(() => {})
+        return
+      }
       this.todoPending('批量操作：' + cmd)
     },
     handleOltCommand(cmd) {
@@ -2101,6 +2213,117 @@ export default {
     adminPwdTagType(row) {
       if (row.loading) return 'info'
       return row.statusLevel || 'info'
+    },
+    // ===== Telnet 查询与开关 =====
+    // 走 credentials 接口：未开启的设备后端会自动下发开启并读取默认账号密码
+    openTelnet() {
+      const sns = this.requireSelection()
+      if (!sns) return
+      this.telnetVisible = true
+      this.telnetLoading = true
+      this.telnetPwdShow = false
+      this.telnetRows = sns.map(sn => ({
+        sn, loading: true, status: '', enabled: null, path: '', message: '',
+        username: '', password: '', port: ''
+      }))
+      const settle = () => {
+        this.telnetLoading = this.telnetRows.some(r => r.loading)
+      }
+      sns.forEach((sn, idx) => {
+        fetchTelnetCredentials(sn)
+          .then((res) => {
+            const d = (res && res.data) || {}
+            const row = this.telnetRows[idx]
+            row.status = d.status || ''
+            row.statusText = d.statusText || ''
+            row.statusLevel = d.statusLevel || ''
+            row.enabled = d.enabled
+            row.path = d.path || ''
+            row.message = d.message || ''
+            row.username = d.username || ''
+            row.password = d.password || ''
+            row.port = d.port || ''
+            // 未开启但已自动下发开启成功的，说明里带上提示
+            if (d.enablePath && d.enabled === true) {
+              row.message = row.message || 'Telnet 原未开启，已自动开启并读取账号密码'
+            }
+            row.loading = false
+          })
+          .catch((err) => {
+            const row = this.telnetRows[idx]
+            row.status = 'fail'
+            row.statusText = '失败'
+            row.statusLevel = 'danger'
+            row.enabled = null
+            row.message = (err && err.message) || '查询失败'
+            row.loading = false
+          })
+          .finally(settle)
+      })
+    },
+    reloadTelnet() {
+      this.openTelnet()
+    },
+    telnetStatusText(row) {
+      if (row.loading) return '查询中'
+      return row.statusText || row.status || '未知'
+    },
+    telnetTagType(row) {
+      if (row.loading) return 'info'
+      return row.statusLevel || 'info'
+    },
+    telnetHint(row) {
+      if (row.loading) return '正在向设备读取 Telnet 使能状态…'
+      if (row.message) return row.message
+      return '-'
+    },
+    batchTelnetSwitch(enabled, sns) {
+      const targetSns = sns || this.requireSelection()
+      if (!targetSns) return
+      const actionText = enabled ? '开启' : '关闭'
+      // 弹窗内点击时更新对应行的临时状态
+      targetSns.forEach(sn => {
+        const row = this.telnetRows.find(r => r.sn === sn)
+        if (row) {
+          row.loading = true
+          row.status = ''
+          row.statusText = ''
+          row.message = ''
+        }
+      })
+      this.telnetLoading = true
+      const settle = () => {
+        this.telnetLoading = this.telnetRows.some(r => r.loading)
+      }
+      targetSns.forEach((sn) => {
+        setTelnetEnabled(sn, enabled)
+          .then((res) => {
+            const d = (res && res.data) || {}
+            const row = this.telnetRows.find(r => r.sn === sn)
+            if (row) {
+              row.status = d.status || ''
+              row.statusText = d.statusText || ''
+              row.statusLevel = d.statusLevel || ''
+              row.message = d.message || ''
+              // 下发成功但不立即刷新 enabled，因为设备可能还没应用；任务ID给提示
+              if (d.taskId) {
+                row.message = (row.message || '已下发') + ' (任务' + d.taskId + ')'
+              }
+              row.loading = false
+            }
+          })
+          .catch((err) => {
+            const row = this.telnetRows.find(r => r.sn === sn)
+            if (row) {
+              row.status = 'fail'
+              row.statusText = '失败'
+              row.statusLevel = 'danger'
+              row.message = (err && err.message) || actionText + '失败'
+              row.loading = false
+            }
+          })
+          .finally(settle)
+      })
     },
     todoPending(text) {
       this.$message.info(text + '：功能开发中，后端接口接入后启用')
@@ -2301,6 +2524,10 @@ export default {
   border-color: #f56c6c;
   background: #fef0f0;
 }
+.adapt-result.is-warn {
+  border-color: #e6a23c;
+  background: #fdf6ec;
+}
 .adapt-result-head i {
   margin-right: 4px;
 }
@@ -2315,6 +2542,25 @@ export default {
 }
 .adapt-reason {
   color: #f56c6c;
+}
+.adapt-reason-warn {
+  color: #e6a23c;
+}
+.adapt-checks {
+  margin: 6px 0;
+}
+.adapt-check {
+  display: flex;
+  align-items: center;
+  line-height: 22px;
+}
+.adapt-check-label {
+  margin-left: 6px;
+  font-weight: 600;
+}
+.adapt-check-detail {
+  margin-left: 8px;
+  color: #606266;
 }
 .adapt-probe-table {
   margin-top: 6px;

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.service.CwmpRpcService;
 import com.tr069.acs.acs.service.DeviceBusinessService;
+import com.tr069.acs.cwmp.CwmpFaultCode;
 import com.tr069.acs.cwmp.model.ParameterValueStruct;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.domain.entity.CpeDevice;
@@ -829,6 +830,10 @@ public class IntentDeliveryService {
             Map<String, Integer> allocated = new LinkedHashMap<>();
             for (String objectName : plan.objectsToAdd()) {
                 SoapMessage resp = await(rpcService.addObject(task.getSn(), objectName, task.getTaskNo()));
+                if (isSessionLevelFailure(resp)) {
+                    finishSessionBroken(task, "AddObject " + objectName);
+                    return;
+                }
                 String error = failureOf(resp, "AddObject " + objectName);
                 if (error != null) {
                     finish(task, DeviceTask.STATUS_FAILED, error);
@@ -855,6 +860,11 @@ public class IntentDeliveryService {
                 }
                 SoapMessage resp = await(rpcService.setParameterValues(
                         task.getSn(), values, task.getTaskNo()));
+                if (isSessionLevelFailure(resp)) {
+                    // 会话级故障（超时/会话中断）不是参数被拒：逐条重发是对着死会话烧超时，直接终止
+                    finishSessionBroken(task, "SetParameterValues 第 " + (i + 1) + "/" + chunks.size() + " 批");
+                    return;
+                }
                 String error = failureOf(resp, "SetParameterValues 第 " + (i + 1) + "/" + chunks.size() + " 批");
                 if (error != null) {
                     // SPV 按批生效，一条写错整批都废；设备只回笼统的 9003/9007，把整批参数打进日志并逐条重发定位
@@ -1369,6 +1379,24 @@ public class IntentDeliveryService {
     }
 
     /** 判定响应是否算失败，成功返回 null */
+    /** 会话级故障（8002 内部错误 / 8003 入队失败）：指令根本没到设备或会话已断，不是参数被设备拒绝 */
+    private static boolean isSessionLevelFailure(SoapMessage resp) {
+        if (resp == null || !resp.isFault()) {
+            return false;
+        }
+        String code = resp.getFault().getFaultCode();
+        return CwmpFaultCode.INTERNAL_ERROR.getCode().equals(code)
+                || CwmpFaultCode.QUEUE_FAILURE.getCode().equals(code);
+    }
+
+    /** 会话中断收尾：设备中途不再回应，剩余参数没发出去，任务判失败并注明原因 */
+    private void finishSessionBroken(DeviceTask task, String action) {
+        log.warn("设备会话中断，任务终止（未发完的参数没下发出去）: sn={}, taskNo={}, 中断在={}",
+                task.getSn(), task.getTaskNo(), action);
+        finish(task, DeviceTask.STATUS_FAILED,
+                action + " 失败: 设备会话中断，指令未送达设备，请检查设备网络后重试");
+    }
+
     private String failureOf(SoapMessage resp, String action) {
         if (resp == null) {
             return action + " 失败: 设备无响应";

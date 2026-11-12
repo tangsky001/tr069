@@ -145,6 +145,7 @@ public final class SoapEnvelopeBuilder {
         switch (method) {
             // ---------- 无参数结构 ----------
             case GET_RPC_METHODS:
+            case GET_PARAMETER_VALUES_XML:
             case FACTORY_RESET:
             case GET_QUEUED_TRANSFERS:
             case GET_ALL_QUEUED_TRANSFERS:

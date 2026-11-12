@@ -110,6 +110,9 @@ public class DashboardService {
         // 兆能固件也直接报缩写 ZNXT
         map.put("znxt", "兆能");
         map.put("兆能", "兆能");
+        // 网经科技固件把厂商字段写成 "ITIBIA网经科技"（台账归一后是 ITIBIA），首页统一显示中文品牌
+        map.put("itibia", "网经科技");
+        map.put("网经", "网经科技");
         return map;
     }
 

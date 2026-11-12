@@ -33,6 +33,11 @@ public class RpcTaskRegistry {
      * 已存在则返回原 Future。用于进程重启后从 Redis 队列重建 pending 表。
      */
     public CompletableFuture<SoapMessage> createIfAbsent(long taskId) {
+        return createIfAbsent(taskId, System.currentTimeMillis());
+    }
+
+    /** 同上，但用调用方给的真实提交时间：重建时带上队列里的 createdAt，清扫按真实排队时长判定 */
+    public CompletableFuture<SoapMessage> createIfAbsent(long taskId, long submitTimeMillis) {
         CompletableFuture<SoapMessage> existing = futures.get(taskId);
         if (existing != null) {
             return existing;
@@ -42,7 +47,7 @@ public class RpcTaskRegistry {
         if (prev != null) {
             return prev;
         }
-        submitTimes.putIfAbsent(taskId, System.currentTimeMillis());
+        submitTimes.putIfAbsent(taskId, submitTimeMillis);
         return future;
     }
 

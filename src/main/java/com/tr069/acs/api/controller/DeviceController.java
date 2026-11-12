@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.service.DeviceAccountService;
 import com.tr069.acs.acs.service.DeviceBusinessService;
+import com.tr069.acs.acs.service.DeviceTelnetService;
 import com.tr069.acs.acs.service.DirectDispatchService;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.SessionManager;
@@ -51,6 +52,7 @@ public class DeviceController {
     private final RpcTaskQueue rpcTaskQueue;
     private final DeviceBusinessService businessService;
     private final DeviceAccountService accountService;
+    private final DeviceTelnetService telnetService;
     private final DeviceTaskProgressService taskProgressService;
     private final DeviceListService deviceListService;
     private final DirectDispatchService directDispatchService;
@@ -397,6 +399,74 @@ public class DeviceController {
         data.put("statusText", adminStatusText(status));
         data.put("statusLevel", adminStatusLevel(status));
         return Result.success(data);
+    }
+
+    /** 查询设备 Telnet 使能状态 */
+    @GetMapping("/{sn}/telnet")
+    public Result<Map<String, Object>> telnetStatus(@PathVariable String sn) {
+        Map<String, Object> data = new LinkedHashMap<>(telnetService.queryTelnetStatus(sn));
+        String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
+        data.put("statusText", telnetStatusText(status));
+        data.put("statusLevel", telnetStatusLevel(status));
+        return Result.success(data);
+    }
+
+    /** 开启或关闭设备 Telnet */
+    @PostMapping("/{sn}/telnet")
+    public Result<Map<String, Object>> telnetSwitch(@PathVariable String sn,
+                                                    @RequestBody(required = false) TelnetRequest request) {
+        boolean enabled = request != null && Boolean.TRUE.equals(request.getEnabled());
+        Map<String, Object> data = telnetService.setTelnetEnabled(sn, enabled);
+        String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
+        data.put("statusText", telnetStatusText(status));
+        data.put("statusLevel", telnetStatusLevel(status));
+        return Result.success(data);
+    }
+
+    /**
+     * 查询 Telnet 状态及默认账号密码。
+     * 未开启时会自动下发开启指令，开启成功后再读取账号 / 密码 / 端口。
+     */
+    @GetMapping("/{sn}/telnet/credentials")
+    public Result<Map<String, Object>> telnetCredentials(@PathVariable String sn) {
+        Map<String, Object> data = new LinkedHashMap<>(telnetService.queryTelnetCredentials(sn));
+        String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
+        data.put("statusText", telnetStatusText(status));
+        data.put("statusLevel", telnetStatusLevel(status));
+        String credStatus = data.get("credentialStatus") == null ? ""
+                : String.valueOf(data.get("credentialStatus"));
+        data.put("credentialStatusText", telnetStatusText(credStatus));
+        data.put("credentialStatusLevel", telnetStatusLevel(credStatus));
+        return Result.success(data);
+    }
+
+    /** Telnet 状态中文：已开启 / 已关闭 / 未读到 / 超时 / 失败 / 离线 */
+    private static String telnetStatusText(String status) {
+        return switch (status) {
+            case "success" -> "已读取";
+            case "queued" -> "已下发";
+            case "empty" -> "未读到";
+            case "timeout" -> "超时";
+            case "fail" -> "失败";
+            case "offline" -> "离线";
+            default -> status;
+        };
+    }
+
+    private static String telnetStatusLevel(String status) {
+        return switch (status) {
+            case "success", "queued" -> "success";
+            case "empty", "offline" -> "info";
+            case "timeout" -> "warning";
+            case "fail" -> "danger";
+            default -> "info";
+        };
+    }
+
+    /** Telnet 开关入参 */
+    @Data
+    public static class TelnetRequest {
+        private Boolean enabled;
     }
 
     /** 超管账号查询结果的中文：查到了 / 没账号 / 超时 / 失败 / 设备离线 */

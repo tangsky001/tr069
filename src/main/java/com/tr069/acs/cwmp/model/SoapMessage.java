@@ -37,14 +37,7 @@ public class SoapMessage implements Serializable {
 
     /** 是否是需要 ACS 回复的方法（Inform / TransferComplete 等由 CPE 主动发起者） */
     public boolean isRequestFromCpe() {
-        if (method == null) {
-            return false;
-        }
-        return switch (method) {
-            case INFORM, TRANSFER_COMPLETE, REQUEST_DOWNLOAD, DU_STATE_CHANGE_COMPLETE,
-                    AUTONOMOUS_TRANSFER_COMPLETE, AUTONOMOUS_DU_STATE_CHANGE_COMPLETE -> true;
-            default -> false;
-        };
+        return method != null && method.isRequestFromCpe();
     }
 
     /** 是否为故障报文 */

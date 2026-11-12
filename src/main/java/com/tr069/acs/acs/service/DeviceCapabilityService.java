@@ -227,6 +227,12 @@ public class DeviceCapabilityService {
     /** 设备最近有通信就算还在下发窗口，不必叫它（秒） */
     private static final long WAKEUP_SESSION_FRESH_SECONDS = 60L;
 
+    /** 最近一次非强制唤醒发出的时刻（sn → 时间戳）：批量入队时每条指令都喊一声没有意义 */
+    private final Map<String, Long> wakeSentAt = new ConcurrentHashMap<>();
+
+    /** 两次非强制唤醒之间的最小间隔（毫秒） */
+    private static final long WAKE_MIN_INTERVAL_MILLIS = 15_000L;
+
     /** 从 Inform 上报参数预判出的运营商（sn → 运营商代码） */
     private final Map<String, String> informIsp = new ConcurrentHashMap<>();
 
@@ -1240,6 +1246,10 @@ public class DeviceCapabilityService {
             if (session != null && !session.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
                 return WakeUpResult.FRESH;
             }
+            Long sentAt = wakeSentAt.get(sn);
+            if (sentAt != null && System.currentTimeMillis() - sentAt < WAKE_MIN_INTERVAL_MILLIS) {
+                return WakeUpResult.THROTTLED;
+            }
         }
         CpeDevice device = findDevice(sn);
         if (device == null) {
@@ -1285,6 +1295,7 @@ public class DeviceCapabilityService {
                 return WakeUpResult.FAILED;
             }
             log.info("已发连接请求唤醒设备: sn={}, url={}, 响应码={}", sn, url, resp.statusCode());
+            wakeSentAt.put(sn, System.currentTimeMillis());
             return WakeUpResult.SENT;
         } catch (Exception e) {
             log.warn("连接请求唤醒失败，改为等待设备自行上报: sn={}, url={}, err={}",

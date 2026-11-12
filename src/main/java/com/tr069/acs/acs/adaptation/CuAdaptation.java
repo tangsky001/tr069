@@ -26,6 +26,13 @@ public class CuAdaptation implements IspAdaptation {
         return List.of("DeviceInfo.X_CU_TeleComAccount.");
     }
 
+    // ==================== Telnet 使能参数 ====================
+
+    @Override
+    public List<String> telnetEnableNodes() {
+        return List.of("DeviceInfo.X_CU_ServiceManage.");
+    }
+
     // ==================== WAN 连接私有参数 ====================
 
     /** 联通定制机上的业务绑定参数 */
