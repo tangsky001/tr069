@@ -48,9 +48,27 @@ public class CuAdaptation implements IspAdaptation {
 
     // ==================== LAN 绑定端口 ====================
 
-    /** 联通定制机上的绑定端口参数名 */
+    /** 联通定制机上绑定端口节点叫这个名字，取值为 LAN 口的完整路径串 */
+    @Override
+    public String lanInterfaceNode() {
+        return "X_CU_LanInterface";
+    }
+
+    /** 读取设备当前绑定时优先试联通私有名 */
     @Override
     public List<String> bindPortNames() {
         return List.of("X_CU_LanInterface", "LanInterface", "BindLANPort");
+    }
+
+    // ==================== IPv6 状态参数 ====================
+
+    @Override
+    public List<String> ipv6StatusNames() {
+        return List.of("X_CU_IPv6ConnStatus", "IPv6ConnectionStatus");
+    }
+
+    @Override
+    public List<String> ipv6AddressNames() {
+        return List.of("X_CU_IPv6Address", "X_CU_IPv6IPAddress", "IPv6Address");
     }
 }
