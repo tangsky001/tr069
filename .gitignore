@@ -13,6 +13,7 @@ target/
 deploy/
 tmp/
 ad/
+pdf/
 #############
 ## 前端（server/web，vue-admin-template）
 #############

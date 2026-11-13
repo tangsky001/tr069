@@ -211,10 +211,13 @@ public class DeviceBusinessService {
         if (ipTpls.isEmpty() && pppTpls.isEmpty() && linkTpls.isEmpty()) {
             return List.of();
         }
-        // 探测路径 → {cd, ci, 类型(0=IP/1=PPP/2=GPON链路层)}：命中后按类型展开整组叶子
+        // 探测路径 → {cd, ci, 类型(0=IP/1=PPP/2=GPON链路层)}：命中后按类型展开整组叶子。
+        // 边界覆盖两种真实组网：移动/电信常见「全部连接挤在一个 WANConnectionDevice 下、
+        // WANIPConnection 编号 1..4」和华为式「每个 WANConnectionDevice 各挂一条连接」——
+        // 旧边界 cd=1 只探到 .2、cd>=2 只探 .1，恰好漏掉前者，面板 WAN 数量永远停在 1 条
         Map<String, int[]> probes = new LinkedHashMap<>();
-        for (int cd = 1; cd <= 8; cd++) {
-            for (int ci = 1; ci <= (cd == 1 ? 2 : 1); ci++) {
+        for (int cd = 1; cd <= 4; cd++) {
+            for (int ci = 1; ci <= 4; ci++) {
                 if (cd == 1 && ci == 1) {
                     continue; // 实例 1 已在采集清单里
                 }

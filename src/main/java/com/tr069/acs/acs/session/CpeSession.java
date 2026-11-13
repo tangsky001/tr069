@@ -73,6 +73,14 @@ public class CpeSession {
 
     private volatile ScheduledFuture<?> waitRpcResponseTimer;
 
+    /**
+     * 下发进行中标志：IntentDeliveryService 在执行多步下发（AddObject → SetParameterValues → ...）时置 true，
+     * 全部完成后置 false。置 true 期间，空 POST 的挂起时间从 piggyback-wait-ms(1.5s) 拉长到
+     * delivery-hold-seconds(默认30s)，让 ACS 有足够时间把下一条指令入队，而不是1.5秒就回204断掉会话。
+     * 任务发完后 ACS 回204告诉设备「本轮结束」，设备才断开会话。
+     */
+    private volatile boolean deliveryInProgress = false;
+
     public CpeSession(String oui, String sn) {
         this.oui = oui;
         this.sn = sn;

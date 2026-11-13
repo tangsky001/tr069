@@ -140,6 +140,11 @@ acs:
     # 队列空时把这一跳请求挂起多久再回 204(毫秒)。这段时间不占 Tomcat 线程，
     # 指令入队时会把挂着的请求叫起来，不用等到超时
     piggyback-wait-ms: 1500
+    # 下发进行中时把这一跳挂起多久再回 204(秒)。
+    # 下发任务有多条 RPC（AddObject → SetParameterValues × N → Reboot），
+    # 两条 RPC 之间 ACS 需要几秒准备下一条，会话断了就只能等设备下一次周期上报（可能几分钟到几小时）。
+    # 任务全部发完后 ACS 回 204 告诉设备本轮可以断了
+    delivery-hold-seconds: 30
     # 单条指令最多尝试下发几次：只有「没等到回应」才重排队列重试，
     # 设备明确回了 fault（节点不存在、不可写）重发也是同一个结果，直接判失败
     max-delivery-attempts: 2
@@ -156,8 +161,9 @@ acs:
     strict-state-check: false
     # 收到 Inform 后等待 CPE 空 POST 的超时(秒)。超时只结束本轮下发窗口，不判设备离线
     wait-post-null-timeout: 60
-    # 下发 RPC 后等待响应的超时(秒)
-    wait-rpc-response-timeout: 60
+    # 下发 RPC 后等待响应的超时(秒)。必须 >= acs.exec.request-timeout-seconds(默认90)，
+    # 否则 CwmpController 在 await 超时前就 failAwaiting，设备迟到的真实响应会被 CompletableFuture 丢弃
+    wait-rpc-response-timeout: 120
     # Inform 处理整体超时(秒)
     soap-inform-timeout: 60
     # 疑似双会话的告警窗口(秒)：同 SN 在该窗口内从另一条连接上报时记一条 warn 供排查。

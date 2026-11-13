@@ -1,15 +1,10 @@
 <template>
   <div>
     <div class="record-head">
-      <span>最近 20 次连接与同步记录，展开可看设备原始回显。</span>
+      <span>最近 20 次连接与同步记录。</span>
       <el-button size="mini" icon="el-icon-refresh" @click="$emit('refresh')">刷新</el-button>
     </div>
     <el-table :data="records" border size="small">
-      <el-table-column type="expand">
-        <template slot-scope="{ row }">
-          <pre class="raw-output">{{ row.rawPreview || '本次无回显（连接阶段即失败）' }}</pre>
-        </template>
-      </el-table-column>
       <el-table-column label="时间" width="170">
         <template slot-scope="{ row }">{{ row.createdAt ? String(row.createdAt).replace('T', ' ') : '-' }}</template>
       </el-table-column>

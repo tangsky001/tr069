@@ -41,6 +41,20 @@ public class InformService {
 
     private final CpeParameterMapper parameterMapper;
 
+    /** 设备事件落台账 */
+    private final DeviceEventRecorder eventRecorder;
+
+    /** 业务参数采集（WAN/WIFI/SIP 全量读值 + WAN 实例盲探），重启类上报后自动触发 */
+    private final com.tr069.acs.acs.service.DeviceBusinessService businessService;
+
+    /** 重启类上报后的业务采集走独立线程池，不占用 Inform 处理线程 */
+    private final java.util.concurrent.ExecutorService bizCollectExecutor =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread thread = new Thread(r, "biz-inform-collect");
+                thread.setDaemon(true);
+                return thread;
+            });
+
     /** Inform 上报批次号前缀 */
     private static final String INFORM_BATCH_PREFIX = "inform-";
 
@@ -96,12 +110,41 @@ public class InformService {
         // 核心日志：设备上报单独记一行到 log/ACS_LOG.LOG
         coreLog.inform(session.getSn(), eventCodes, session.getConnectionId());
 
+        // 事件码落台账（cpe_device_event）：重启（BOOT/BOOTSTRAP）、连接请求、传输完成等
+        // 运维要按设备查"上周重启过几次"。周期上报是噪音，跳过不记
+        recordInformEvents(session.getSn(), eventCodes);
+
         // Inform 上报的参数值写入 cpe_parameter：设备首次上报就带了 WAN / LAN 等业务参数，
         // 不写的话业务面板要等能力采集（GPN+GPV）完成后才有数据。
         // 用 upsert：能力树已有同路径就更新值，没有就插入——不破坏后续能力采集的结构。
         saveInformParameters(session.getSn(), parameters);
 
+        // 重启类上报（下发后重启 / 恢复出厂）= 设备配置刚变过，业务值快照必定过期：
+        // 自动把 WAN/WIFI/SIP 全量重读一遍落库。万台规模不可能靠人点「重新采集」，
+        // 重启上报就是唯一可靠的刷新时机。延迟几秒给能力树采集让路（同一次 Inform 触发）
+        scheduleBizCollectOnReboot(session.getSn(), eventCodes);
+
         return eventCodes;
+    }
+
+    /** 重启类上报（1 BOOT / 0 BOOTSTRAP）后自动做一次业务参数采集 */
+    private void scheduleBizCollectOnReboot(String sn, List<String> eventCodes) {
+        boolean reboot = eventCodes != null && eventCodes.stream()
+                .anyMatch(c -> c != null && (c.startsWith("0 BOOTSTRAP") || c.startsWith("1 BOOT")));
+        if (!reboot) {
+            return;
+        }
+        java.util.concurrent.CompletableFuture
+                .delayedExecutor(5, java.util.concurrent.TimeUnit.SECONDS, bizCollectExecutor)
+                .execute(() -> {
+                    try {
+                        businessService.collect(sn);
+                        log.info("重启上报后已自动刷新业务参数: sn={}", sn);
+                    } catch (Exception e) {
+                        log.warn("重启上报后自动刷新业务参数失败（不影响上报流程）: sn={}, err={}",
+                                sn, e.getMessage());
+                    }
+                });
     }
 
     /** 事件码排序：0 BOOTSTRAP 强制排在最前，其余保持原顺序 */
@@ -118,6 +161,20 @@ public class InformService {
             }
         }
         return codes;
+    }
+
+    /** 事件码落台账：周期上报（2 PERIODIC）这种每几十分钟一条的噪音不记，其余全留 */
+    private void recordInformEvents(String sn, List<String> eventCodes) {
+        try {
+            for (String code : eventCodes) {
+                if (code == null || code.startsWith("2 ") || code.startsWith("3 ")) {
+                    continue;
+                }
+                eventRecorder.recordEvent(sn, "inform", code, null);
+            }
+        } catch (Exception e) {
+            log.warn("Inform 事件落台账失败（不影响上报流程）: sn={}, err={}", sn, e.getMessage());
+        }
     }
 
     /**

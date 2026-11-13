@@ -17,6 +17,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +46,38 @@ public class RpcDispatchService {
     /** 唤醒服务的延迟引用：DeviceCapabilityService 依赖本类，直接注入会成环 */
     private final org.springframework.beans.factory.ObjectProvider<
             com.tr069.acs.acs.service.DeviceCapabilityService> capabilityProvider;
+
+    /** rpc_record 保留天数，0 表示永久保留。审计只留成功/失败摘要，过期行夜间分批清掉 */
+    @Value("${acs.rpc.record-retention-days:7}")
+    private int recordRetentionDays;
+
+    /** 每晚分批清理过期 rpc_record：一次性 DELETE 上万行会长时间锁表，每批 5000 行 */
+    @Scheduled(cron = "${acs.rpc.record-purge-cron:0 30 3 * * ?}")
+    public void purgeExpiredRpcRecords() {
+        if (recordRetentionDays <= 0) {
+            return;
+        }
+        java.time.LocalDateTime before = LocalDateTime.now().minusDays(recordRetentionDays);
+        int total = 0;
+        try {
+            com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<RpcRecord> wrapper =
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<RpcRecord>()
+                            .lt(RpcRecord::getCreatedAt, before)
+                            .last("LIMIT 5000");
+            while (true) {
+                int deleted = rpcRecordMapper.delete(wrapper);
+                total += deleted;
+                if (deleted < 5000) {
+                    break;
+                }
+            }
+            if (total > 0) {
+                log.info("rpc_record 过期清理完成: 删除 {} 行, 保留 {} 天内记录", total, recordRetentionDays);
+            }
+        } catch (Exception e) {
+            log.warn("rpc_record 过期清理失败: {}", e.getMessage());
+        }
+    }
 
     /** RPC 审计流水号，入库失败时兜底 */
     private final AtomicLong rpcSequence = new AtomicLong(1);
@@ -117,6 +150,11 @@ public class RpcDispatchService {
     /** 丢弃上一轮采集压在队列里的旧指令（见 {@link RpcTaskQueue#dropStale}） */
     public int dropStaleCollectTasks(String sn, String currentBatch) {
         return rpcTaskQueue.dropStale(sn, currentBatch);
+    }
+
+    /** 指令重排退避后刷新排队时间戳，避免清扫按首次提交时间把它误判为超时（重试次数未用完就判死） */
+    public void touchPending(long taskId) {
+        rpcTaskRegistry.touch(taskId);
     }
 
     /** 同 {@link #submitAsync(String, String, Map, String)}，多带一个采集批次号 */
@@ -197,9 +235,10 @@ public class RpcDispatchService {
         if (result != null && result.getFault() != null) {
             result2.setFaultCode(result.getFault().getFaultCode());
             result2.setFaultString(result.getFault().getFaultString());
-        }
-        if (result != null) {
-            result2.setResultContent(result.getStrResult());
+            result2.setResultContent("fault=" + result.getFault().getFaultCode()
+                    + " " + result.getFault().getFaultString());
+        } else {
+            result2.setResultContent("成功");
         }
         rpcTaskQueue.saveResult(result2);
 
@@ -294,11 +333,7 @@ public class RpcDispatchService {
         record.setWorklistId(parseWorklistId(worklistId));
         record.setStatus("init");
         record.setStartTime(LocalDateTime.now());
-        try {
-            record.setRequestArgs(objectMapper.writeValueAsString(args));
-        } catch (Exception e) {
-            record.setRequestArgs(String.valueOf(args));
-        }
+        record.setRequestArgs(summarizeArgs(args));
         try {
             rpcRecordMapper.insert(record);
             return record.getId();
@@ -308,14 +343,49 @@ public class RpcDispatchService {
         }
     }
 
+    /**
+     * 请求参数摘要：只记结构不记值——GPV 的路径清单、SPV 的参数键值动辄几十 KB，
+     * 原样入库把 rpc_record 撑到几百 MB（万台规模直接爆盘）。审计要的是
+     * 「哪台设备、什么指令、成功没有」，完整报文在 ACS_CORE 日志里已经有一份
+     */
+    private String summarizeArgs(Map<String, Object> args) {
+        if (args == null || args.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Object> e : args.entrySet()) {
+            if (sb.length() > 0) {
+                sb.append("; ");
+            }
+            Object v = e.getValue();
+            if (v instanceof Collection<?> c) {
+                sb.append(e.getKey()).append("[n=").append(c.size()).append(']');
+            } else if (v instanceof Map<?, ?> m) {
+                sb.append(e.getKey()).append("[m=").append(m.size()).append(']');
+            } else {
+                String s = String.valueOf(v);
+                sb.append(e.getKey()).append('=')
+                        .append(s.length() <= 80 ? s : "len=" + s.length());
+            }
+            if (sb.length() >= 200) {
+                sb.append("...");
+                break;
+            }
+        }
+        return sb.toString();
+    }
+
     private void finishRecord(long rpcId, SoapMessage result) {
         try {
             RpcRecord update = new RpcRecord();
             update.setId(rpcId);
             update.setStatus(result == null || result.isFault() ? "fail" : "success");
             update.setFinishTime(LocalDateTime.now());
-            if (result != null) {
-                update.setResultContent(result.getStrResult());
+            if (result != null && result.isFault()) {
+                update.setResultContent("fault=" + result.getFault().getFaultCode()
+                        + " " + result.getFault().getFaultString());
+            } else {
+                update.setResultContent("成功");
             }
             rpcRecordMapper.updateById(update);
         } catch (Exception e) {

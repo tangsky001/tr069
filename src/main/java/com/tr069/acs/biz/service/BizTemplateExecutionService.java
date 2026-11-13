@@ -43,6 +43,9 @@ public class BizTemplateExecutionService {
     private static final String STATUS_PARTIAL = "partial";
     private static final String STATUS_FAIL = "fail";
 
+    /** stop-rule 熔断阈值：连续这么多个成员失败就停止剩余成员 */
+    private static final int STOP_RULE_THRESHOLD = 3;
+
     private final BizTemplateExecutionMapper executionMapper;
     private final BizTemplateMapper templateMapper;
     private final BizTemplateService bizTemplateService;
@@ -302,6 +305,16 @@ public class BizTemplateExecutionService {
             finish(progress, error);
             return;
         }
+        // stop-rule 熔断（FreeACS JobRuleEnforcer 的思路）：continueOnError 允许失败继续，
+        // 但连续 3 个成员都失败说明不是单点问题——设备断会话、型号固件不适配、参数路径
+        // 该机型根本没有。剩下每格成员还要各烧 90 秒超时，运维眼睁睁看它挨个烧完没有意义
+        if (!ok && progress.consecutiveFails() >= STOP_RULE_THRESHOLD) {
+            int remaining = progress.items().size() - progress.index() - 1;
+            finish(progress, error + "；连续 " + progress.consecutiveFails()
+                    + " 个成员下发失败已自动熔断，剩余 " + remaining + " 个成员未执行"
+                    + "（请检查设备会话/网络或确认该型号是否适配此模板）");
+            return;
+        }
         progress.next();
         persist(progress);
         startNext(progress);
@@ -394,6 +407,7 @@ public class BizTemplateExecutionService {
         private int index;
         private int successCount;
         private int failCount;
+        private int consecutiveFails;
         private String currentKey;
 
         Progress(BizTemplateExecution execution, BizTemplate template,
@@ -421,8 +435,10 @@ public class BizTemplateExecutionService {
             results.add(row);
             if (ok) {
                 successCount++;
+                consecutiveFails = 0;
             } else {
                 failCount++;
+                consecutiveFails++;
             }
         }
 
@@ -472,6 +488,10 @@ public class BizTemplateExecutionService {
 
         int failCount() {
             return failCount;
+        }
+
+        int consecutiveFails() {
+            return consecutiveFails;
         }
 
         String currentKey() {

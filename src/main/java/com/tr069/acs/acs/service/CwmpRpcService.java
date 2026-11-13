@@ -39,6 +39,13 @@ public class CwmpRpcService {
     /** 队列关闭时退回会话内存 outbox，此时拿不到 rpc_record 主键 */
     private final AtomicInteger outboxSequence = new AtomicInteger(0);
 
+    /**
+     * 正在下发的设备 SN。下发标志按 SN 存而不是只放会话对象上：
+     * 任务受理时设备往往还没上来，会话对象不存在，只写在会话上的标志会静默丢失——
+     * 之后整个下发期间空 POST 只挂 1.5 秒就被 204 断会话，表现就是「下发到一半会话中断」
+     */
+    private final java.util.Set<String> deliveringSns = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /** 提交一条下发指令，返回设备回应（凭据） */
     public CompletableFuture<SoapMessage> submit(String sn, String rpcName,
                                                  Map<String, Object> args) {
@@ -96,6 +103,43 @@ public class CwmpRpcService {
     public boolean isOnline(String sn) {
         CpeSession session = sessionManager.find(sn);
         return session != null && session.isOnline();
+    }
+
+    /**
+     * 标记设备会话为「下发进行中」：空 POST 来取指令时，CwmpController 会据此延长挂起时间，
+     * 不再1.5秒就回204断会话。IntentDeliveryService 在 execute 开始时调 beginDelivery，
+     * 在 finish/异常时调 endDelivery。标志同时记在 SN 集合里，会话对象此时可能还没建。
+     */
+    public void beginDelivery(String sn) {
+        if (sn == null || sn.isBlank()) {
+            return;
+        }
+        deliveringSns.add(sn);
+        CpeSession session = sessionManager.find(sn);
+        if (session != null) {
+            session.setDeliveryInProgress(true);
+        }
+    }
+
+    /** 标记设备「下发完成」：ACS 回 204 告诉设备本轮可以断了 */
+    public void endDelivery(String sn) {
+        if (sn == null || sn.isBlank()) {
+            return;
+        }
+        deliveringSns.remove(sn);
+        CpeSession session = sessionManager.find(sn);
+        if (session != null) {
+            session.setDeliveryInProgress(false);
+        }
+    }
+
+    /** 这台设备是否有下发在进行中（含会话对象尚未建立的情况） */
+    public boolean isDelivering(String sn) {
+        if (sn != null && deliveringSns.contains(sn)) {
+            return true;
+        }
+        CpeSession session = sn == null ? null : sessionManager.find(sn);
+        return session != null && session.isDeliveryInProgress();
     }
 
     /** 设备是否正处在这一轮会话里：有会话、在线、且最近 {@code seconds} 秒内有通信 */

@@ -56,6 +56,7 @@ public class DeviceController {
     private final DeviceTaskProgressService taskProgressService;
     private final DeviceListService deviceListService;
     private final DirectDispatchService directDispatchService;
+    private final com.tr069.acs.acs.service.DeviceEventRecorder eventRecorder;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /** 设备页直接下发：逐台受理即发，不建工单；入参 sns / category / values / templateId / wifi / username */
@@ -649,5 +650,21 @@ public class DeviceController {
         private String name;
         private String value;
         private String type;
+    }
+
+    // ==================== 设备事件与 syslog 查询 ====================
+
+    /** 设备事件流水：重启、连接请求、下发唤醒、会话异常等（cpe_device_event） */
+    @GetMapping("/{sn}/events")
+    public Result<List<Map<String, Object>>> events(@PathVariable String sn,
+                                                    @RequestParam(defaultValue = "100") int limit) {
+        return Result.success(eventRecorder.events(sn.trim(), limit));
+    }
+
+    /** 设备侧 syslog 原文（cpe_device_syslog，UDP 采集） */
+    @GetMapping("/{sn}/syslog")
+    public Result<List<Map<String, Object>>> syslog(@PathVariable String sn,
+                                                    @RequestParam(defaultValue = "100") int limit) {
+        return Result.success(eventRecorder.syslogs(sn.trim(), limit));
     }
 }

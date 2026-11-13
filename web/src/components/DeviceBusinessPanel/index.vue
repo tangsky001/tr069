@@ -316,6 +316,20 @@ export default {
       } finally {
         this.loading = false
       }
+      // 打开面板即向设备要实时值：MySQL 只是设备离线后的兜底缓存，点开就要最新的
+      // WAN/WIFI/SIP。在线时读回自动覆盖；离线/超时保持库内快照，页面不闪空
+      this.refreshLive()
+    },
+    // 实时读设备（含 WAN 实例盲探），失败静默——继续显示库内快照
+    async refreshLive() {
+      try {
+        const res = await collectDeviceBusiness(this.sn)
+        if (res && res.data) {
+          this.summary = res.data
+        }
+      } catch (e) {
+        // 静默失败：实时刷新拿不到就先用快照，不弹错打扰看页面的人
+      }
     },
     // 定时回读：不置 loading（避免整页闪一下），失败也不弹提示，下一轮继续
     async reload() {

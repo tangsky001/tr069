@@ -87,6 +87,15 @@ public class RpcTaskRegistry {
         return stale;
     }
 
+    /**
+     * 重排退避后刷新排队时间戳。
+     * 不刷的话清扫按「首次提交至今超阈值」判定：重试次数还没用完的指令
+     * 会被 sweepPendingTasks 误判为超时、从队列摘除并判死——重试形同虚设
+     */
+    public void touch(long taskId) {
+        submitTimes.computeIfPresent(taskId, (k, v) -> System.currentTimeMillis());
+    }
+
     public int pending() {
         return futures.size();
     }

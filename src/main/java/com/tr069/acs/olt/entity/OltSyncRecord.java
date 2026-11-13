@@ -40,9 +40,6 @@ public class OltSyncRecord {
 
     private String message;
 
-    /** 设备回显原文 */
-    private String rawOutput;
-
     private Integer costMs;
 
     private String operator;

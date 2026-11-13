@@ -22,6 +22,7 @@ import com.tr069.acs.queue.config.QueueProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -116,6 +117,13 @@ public class DeviceCapabilityService {
     /** 单个参数值的落库长度上限，超出截断，防止 TEXT 溢出导致整批写入失败 */
     private static final int MAX_VALUE_LENGTH = 20000;
 
+    /**
+     * 探测节奏：二分拆批与已知路径探测在固件缺很多候选路径时，会瞬间压出几十条背靠背的
+     * GetParameterValues——低端固件的 CWMP agent 扛不住这种密度，直接不再回应，
+     * 整轮采集以「下发窗口异常终止」收尾，能力树采不全，适配归档跟着缺货。批次间留口气。
+     */
+    private static final long PROBE_PACE_MILLIS = 300L;
+
     private static final DateTimeFormatter BATCH_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final SessionManager sessionManager;
@@ -196,6 +204,15 @@ public class DeviceCapabilityService {
     @Value("${acs.capability.collect-timeout-ms:600000}")
     private long collectTimeoutMillis;
 
+    /** 设备沉默中止阈值：连续这么多条指令一句回应都没有就中止整轮采集 */
+    private static final int SILENCE_ABORT_THRESHOLD = 3;
+
+    /** SIP 注册状态延迟复核：采集完成多少秒后重读注册状态（注册是异步的，刚开机肯定还没注册上） */
+    private static final long SIP_REFRESH_DELAY_SECONDS = 180L;
+
+    /** 延迟复核里等设备回应的总时长上限（秒） */
+    private static final long SIP_REFRESH_TOTAL_WAIT_SECONDS = 300L;
+
     /** 本轮采集的到期时刻（sn → 毫秒时间戳） */
     private final Map<String, Long> deadlines = new ConcurrentHashMap<>();
 
@@ -216,6 +233,10 @@ public class DeviceCapabilityService {
     /** 是否在手动采集前主动唤醒设备（连接请求） */
     @Value("${acs.device.capability.wakeup-enabled:true}")
     private boolean wakeupEnabled;
+
+    /** 采集中设备一直不建链时，隔多久重发一次连接请求（毫秒）；0 = 关闭重试 */
+    @Value("${acs.device.capability.wakeup-retry-interval-millis:60000}")
+    private long wakeupRetryIntervalMillis;
 
     /** 唤醒后最多等多少秒设备建链（手动采集、业务刷新等场景） */
     @Value("${acs.exec.wakeup-wait-seconds:30}")
@@ -471,8 +492,47 @@ public class DeviceCapabilityService {
                     if (exportModelTree && "success".equals(status.getStatus())) {
                         exportModelTreeAsync(sn);
                     }
+                    // SIP 注册状态是异步生效的：BOOTSTRAP/下发后立刻采集，读到的多半还是
+                    // 「注册中/未注册」——这个瞬间快照落库后，页面就一直挂着「未注册」，
+                    // 而周期上报 24 小时才重采一次。延迟几分钟把注册状态重读落库，赶上注册完成
+                    if ("success".equals(status.getStatus())) {
+                        scheduleSipStatusRefresh(sn, status);
+                    }
                 });
         return status;
+    }
+
+    /**
+     * 延迟重读 SIP 注册状态参数并落库。
+     * 只挑树里真实存在的注册状态路径（SIPRegisterStatus / SIP 行的 Status），
+     * 设备此刻不在线就排在队列里随下一次上报读，读完 readPathValues 自己落库
+     */
+    private void scheduleSipStatusRefresh(String sn, CollectStatus status) {
+        try {
+            List<String> paths = paramPaths(status.stagedTree()).stream()
+                    .filter(p -> p.contains("SIP")
+                            && (p.endsWith("SIPRegisterStatus") || p.endsWith(".Status")))
+                    .distinct()
+                    .collect(java.util.stream.Collectors.toList());
+            if (paths.isEmpty()) {
+                return;
+            }
+            CompletableFuture.delayedExecutor(SIP_REFRESH_DELAY_SECONDS, TimeUnit.SECONDS, executor())
+                    .execute(() -> {
+                        try {
+                            readPathValues(sn, paths)
+                                    .get(SIP_REFRESH_TOTAL_WAIT_SECONDS, TimeUnit.SECONDS);
+                            log.info("SIP 注册状态延迟复核完成: sn={}, 路径={}", sn, paths.size());
+                        } catch (Exception e) {
+                            log.debug("SIP 注册状态延迟复核未完成，等下次采集: sn={}, err={}",
+                                    sn, e.getMessage());
+                        }
+                    });
+            log.info("SIP 注册状态已排延迟复核: sn={}, {} 秒后重读 {} 条状态路径",
+                    sn, SIP_REFRESH_DELAY_SECONDS, paths.size());
+        } catch (Exception e) {
+            log.warn("SIP 注册状态延迟复核安排失败（不影响采集结果）: sn={}, err={}", sn, e.getMessage());
+        }
     }
 
     /** 采集成功后把能力树导出成型号 XML，供同型号设备复用与下发取路径 */
@@ -511,8 +571,10 @@ public class DeviceCapabilityService {
                 sn, isp, profileName(profile), strategyText(profile));
 
         if (profile.isValuesOnly()
-                || (profile.isAdaptive() && treeFailures.getOrDefault(sn, 0) >= TREE_FAIL_THRESHOLD)) {
-            // 电信天翼网关这类设备 GPN 一律 9002：不扫参数树只按需读关键字段；自适应档是上轮刚撞过 9002 记住的，直接跳过不再白等
+                || treeFailures.getOrDefault(sn, 0) >= TREE_FAIL_THRESHOLD) {
+            // 电信天翼网关这类设备 GPN 一律 9002：不扫参数树只按需读关键字段。
+            // 降级记忆按设备走、不分档位——华为 LS8025T 这类 GPV/GPN 一律 9002 的固件
+            // 挂在通用档上，若只对自适应档记失败，它每轮采集都要白烧一遍 9002 窗口
             return probeGlobalPaths(sn, root, profile, status).thenApply(probed -> {
                 if (probed) {
                     status.setStatus(PARTIAL);
@@ -530,16 +592,14 @@ public class DeviceCapabilityService {
         return names.thenComposeAsync(nodes -> {
             if (nodes.isEmpty()) {
                 // 整棵树 GPN 都没拿到：退到采集标准登记的已知路径直接读值，至少把设备身份留下
-                if (profile.isAdaptive()) {
-                    // 记一次扫不动：连续两次才降级，避免设备偶发 9002（重启中、CWMP 忙）就被永久判成扫不动
-                    int fails = treeFailures.merge(sn, 1, Integer::sum);
-                    log.warn("参数树扫不动（连续 {} 次）: sn={}, 明细={}", fails, sn,
-                            status.getErrors().isEmpty() ? "子树均未返回节点"
-                                    : String.join("; ", status.getErrors()));
-                    if (fails >= TREE_FAIL_THRESHOLD) {
-                        log.warn("连续 {} 次扫不动参数树，后续采集改走只读关键字段: sn={}",
-                                fails, sn);
-                    }
+                // 任何档位都记：连续两次才降级，避免设备偶发 9002（重启中、CWMP 忙）就被永久判成扫不动
+                int fails = treeFailures.merge(sn, 1, Integer::sum);
+                log.warn("参数树扫不动（连续 {} 次）: sn={}, 明细={}", fails, sn,
+                        status.getErrors().isEmpty() ? "子树均未返回节点"
+                                : String.join("; ", status.getErrors()));
+                if (fails >= TREE_FAIL_THRESHOLD) {
+                    log.warn("连续 {} 次扫不动参数树，后续采集改走只读关键字段: sn={}",
+                            fails, sn);
                 }
                 return probeGlobalPaths(sn, root, profile, status).thenApply(probed -> {
                     if (probed) {
@@ -829,7 +889,9 @@ public class DeviceCapabilityService {
                 if (status.isAborted()) {
                     return CompletableFuture.<Void>completedFuture(null);
                 }
-                return getParameterValues(sn, List.of(target)).thenAccept(resp -> {
+                // 逐条探测同样要留口气：目标清单里大半路径设备都没有，全拒完就是几十连发
+                return pace().thenComposeAsync(ignored ->
+                        getParameterValues(sn, List.of(target)).thenAccept(resp -> {
                     if (resp == null || resp.isFault()) {
                         status.addError("已知路径探测失败: " + target + " (" + faultText(resp) + ")");
                         return;
@@ -840,7 +902,7 @@ public class DeviceCapabilityService {
                     }
                     status.stageValues(rows);
                     sink.add(new Node(target, false, true));
-                });
+                }), executor());
             }, executor());
         }
         return chain.thenComposeAsync(v -> expandInstances(sn, root, profile, sink, status), executor())
@@ -1243,6 +1305,13 @@ public class DeviceCapabilityService {
         if (retryAfter != null && System.currentTimeMillis() < retryAfter) {
             return WakeUpResult.THROTTLED;
         }
+        // 设备还有指令在等回应（下发/采集的会话正干活）：此刻发连接请求，部分固件会
+        // 掐断当前会话重新 Inform，正在等回应的指令就死在这轮窗口里了。强制唤醒也不豁免
+        CpeSession busy = sessionManager != null ? sessionManager.find(sn) : null;
+        if (busy != null && busy.hasPendingAwaiting()) {
+            log.debug("设备仍有指令在等回应，跳过连接请求以免打断会话: sn={}", sn);
+            return WakeUpResult.THROTTLED;
+        }
         // 设备刚上报过还在下发窗口就直接下发，不必叫它；强制唤醒时跳过：要的是「重新上来一轮」，旧会话对象说明不了它还连着
         if (!force) {
             CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
@@ -1315,9 +1384,56 @@ public class DeviceCapabilityService {
     /** 唤醒后轮询会话是否建立的间隔 */
     private static final long WAKEUP_POLL_INTERVAL_MILLIS = 500L;
 
+    /**
+     * 采集中设备一直不上来就周期性重发连接请求。
+     * 唤醒原本只在指令入队时叫一声：那一次设备正忙/瞬断/不可达，指令就要在整个采集窗口里
+     * 干等到超时，表现是「采集结束 status=fail、路径=0、读值=0」，各环节全是 8002「采集总时长已到」。
+     * 这里按固定间隔对还挂着未完成采集、且不在下发窗口的设备再叫。
+     * {@link #wakeUp(String, boolean)} 内部自带 15 秒最小间隔与 401 退避，重复调用是安全的；
+     * 已收到回应的指令不受影响——设备只要上来一轮，积压指令就随它的空 POST 捎带下去。
+     */
+    @Scheduled(fixedDelayString = "${acs.device.capability.wakeup-retry-interval-millis:60000}")
+    public void retryWakeUpDuringCollect() {
+        if (!wakeupEnabled || wakeupRetryIntervalMillis <= 0 || statuses.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, CollectStatus> entry : statuses.entrySet()) {
+            CollectStatus status = entry.getValue();
+            if (status == null || !"running".equals(status.getStatus())) {
+                continue;
+            }
+            String sn = entry.getKey();
+            // 时限已过（deadlines 已摘除或到期）说明采集正在收尾，不必再叫
+            Long deadline = deadlines.get(sn);
+            if (deadline == null || deadline <= now) {
+                continue;
+            }
+            CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
+            if (session != null && !session.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
+                // 刚上报过，还在下发窗口，指令会随它的空 POST 下去
+                continue;
+            }
+            WakeUpResult result = wakeUp(sn);
+            if (result == WakeUpResult.SENT) {
+                log.info("采集中设备未建链，已重发连接请求: sn={}", sn);
+            } else {
+                log.debug("采集中重试唤醒未直接生效: sn={}, 原因={}", sn, result);
+            }
+        }
+    }
+
     /** 反向唤醒设备，并等到它真的建链 */
     public boolean wakeUpAndAwait(String sn, long waitSeconds) {
         long mark = lastContactOf(sn);
+        // 设备本来就在会话窗口里就直接下发，不再叫它：对会话中的设备发连接请求，
+        // 部分固件会掐断当前会话重新 Inform，把正在等回应的下发指令打死——
+        // 整包的下一个成员、另一台并行任务的采集都会走到这里，必须防这一手
+        CpeSession live = sessionManager != null ? sessionManager.find(sn) : null;
+        if (live != null && !live.isExpired(WAKEUP_SESSION_FRESH_SECONDS)) {
+            log.info("设备已在会话窗口中，跳过反向唤醒直接下发: sn={}", sn);
+            return true;
+        }
         WakeUpResult result = wakeUp(sn, true);
         if (result == WakeUpResult.SENT) {
             log.info("已反向唤醒设备，等待它建链: sn={}", sn);
@@ -1366,10 +1482,16 @@ public class DeviceCapabilityService {
         return session == null ? 0L : session.getLastContactTime();
     }
 
-    /** 设备这会儿是否有一条活跃的 TCP 连接：连接断开时会话对象还在，连接标识会被清掉 */
+    /**
+     * 设备这会儿是否真的连着：不仅要登记着 TCP 连接，还必须最近真的通信过。
+     * 只看 connectionId 会出假阳性——设备断会话（如 WAN 启用后管理通道切换）时
+     * TCP 断开事件不一定被感知，connectionId 残留，误判「已建链」就会跳过唤醒、
+     * 立刻提交指令，然后挂在没人取的队列上烧超时
+     */
     private boolean isSessionActive(String sn) {
         CpeSession session = sessionManager != null ? sessionManager.find(sn) : null;
-        return session != null && session.isOnline() && session.getConnectionId() != null;
+        return session != null && session.isOnline() && session.getConnectionId() != null
+                && !session.isExpired(WAKEUP_SESSION_FRESH_SECONDS);
     }
 
     /** 常规凭据链：台账设备级 → 已采集参数 → 全局配置 → 纳管默认值 */
@@ -1697,8 +1819,12 @@ public class DeviceCapabilityService {
                 }
                 if (batch.size() > 1) {
                     int mid = batch.size() / 2;
-                    return readValuesBatch(sn, batch.subList(0, mid), status, index, total)
-                            .thenComposeAsync(x -> readValuesBatch(sn, batch.subList(mid, batch.size()),
+                    // 拆出来的每一片都先留口气再发：整批被拒往往意味着清单里大半路径设备都没有，
+                    // 会一路拆到单条，不加间隔就是几十条背靠背的 RPC 把设备打挂
+                    return pace().thenComposeAsync(v ->
+                                    readValuesBatch(sn, batch.subList(0, mid), status, index, total), executor())
+                            .thenComposeAsync(x -> pace(), executor())
+                            .thenComposeAsync(v -> readValuesBatch(sn, batch.subList(mid, batch.size()),
                                     status, index, total), executor());
                 }
                 // 单条都过不去：这条路径设备没有，剔掉它，别让它拖垮整批
@@ -1715,6 +1841,17 @@ public class DeviceCapabilityService {
     }
 
     // ==================== RPC 提交 ====================
+
+    /** 探测批次之间的口气：给设备 CWMP agent 消化的时间，避免背靠背连发把它打挂 */
+    private CompletableFuture<Void> pace() {
+        if (PROBE_PACE_MILLIS <= 0) {
+            return CompletableFuture.completedFuture(null);
+        }
+        CompletableFuture<Void> gate = new CompletableFuture<>();
+        CompletableFuture.delayedExecutor(PROBE_PACE_MILLIS, TimeUnit.MILLISECONDS, executor())
+                .execute(() -> gate.complete(null));
+        return gate;
+    }
 
     private CompletableFuture<SoapMessage> getParameterNames(String sn, String path,
                                                              boolean nextLevel) {
@@ -1778,6 +1915,27 @@ public class DeviceCapabilityService {
             PendingRpc rpc = session.enqueue(-outboxSequence.incrementAndGet(), rpcName, args, null);
             future = rpc.getResponse();
         }
+        // 设备沉默追踪：连续多条指令设备一句回应都没有（收下就消失），说明 agent 已经装死，
+        // 提前中止整轮采集。不追踪的话每条指令都要走满 60s 定时器 + 各子树全部备选姿势，
+        // 单台烧满 10 分钟预算——万台规模下这类设备会把并发额度占光
+        future = future.whenComplete((resp, ex) -> {
+            CollectStatus st = statuses.get(sn);
+            if (st == null) {
+                return;
+            }
+            boolean noResponse = ex != null || (resp != null && isTimeoutFault(resp));
+            if (noResponse) {
+                int streak = st.markSilence();
+                if (streak >= SILENCE_ABORT_THRESHOLD && !st.isAborted()) {
+                    log.warn("连续 {} 条指令未等到任何设备回应，提前中止本轮采集: sn={}", streak, sn);
+                    st.addError("设备连续 " + streak + " 条指令无回应，提前中止采集");
+                    st.abort();
+                }
+            } else if (resp != null) {
+                // 设备回了话（哪怕回的是 9002 故障）都算活着：清零沉默计数
+                st.markAlive();
+            }
+        });
         if (!deadlines.containsKey(sn)) {
             return future;
         }
@@ -1830,9 +1988,12 @@ public class DeviceCapabilityService {
             chain = chain.thenComposeAsync(v -> readBatch(sn, batch, result, buffer), executor());
         }
         return chain.thenApply(v -> {
-            // 走到这里说明每条路径都有了结论（读到或明确拒答），整批落库
+            // 走到这里说明每条路径都有了结论（读到/明确拒答/异常跳过），整批落库
             if (!buffer.isEmpty()) {
                 saveValues(sn, new ArrayList<>(buffer));
+                log.info("业务参数读值落库: sn={}, 计划路径={}, 实际读到={}", sn, paths.size(), buffer.size());
+            } else {
+                log.warn("业务参数读值无一成功，本轮不落库: sn={}, 计划路径={}", sn, paths.size());
             }
             return result;
         });
@@ -1859,6 +2020,14 @@ public class DeviceCapabilityService {
             log.debug("业务参数读取失败（该路径设备不提供，剔除）: sn={}, path={}, err={}",
                     sn, batch.get(0), faultText(resp));
             return CompletableFuture.completedFuture(null);
+        }).exceptionally(ex -> {
+            // 断会话/60s 定时器判死这类异常完成不能让整条读值链报废：链一断，
+            // 末尾的落库步骤永远不执行，本轮已读到的真实值全部丢弃——表现就是
+            // 「设备中断会话后，上报重新采集也不落库，页面一直回到旧值」。
+            // 跳过该批让链走完，已读到的照常落库，残余路径等下次采集补
+            log.warn("业务参数批次读取异常，跳过该批继续: sn={}, 路径数={}, err={}",
+                    sn, batch.size(), String.valueOf(ex.getMessage()));
+            return null;
         });
     }
 
@@ -2316,6 +2485,20 @@ public class DeviceCapabilityService {
         private volatile int objectRounds;
 
         private volatile boolean aborted;
+
+        /** 连续无回应的指令数：任何一条真实回应（含 9002 这类故障）都清零 */
+        private final java.util.concurrent.atomic.AtomicInteger silenceStreak =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        /** 记一条无回应指令，返回当前连续无回应计数 */
+        int markSilence() {
+            return silenceStreak.incrementAndGet();
+        }
+
+        /** 设备回了话：清零沉默计数 */
+        void markAlive() {
+            silenceStreak.set(0);
+        }
 
         private final List<String> errors = Collections.synchronizedList(new ArrayList<>());
 

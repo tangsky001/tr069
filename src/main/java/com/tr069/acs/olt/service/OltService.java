@@ -3766,7 +3766,8 @@ public class OltService {
             record.setAction(action);
             record.setSuccess(success);
             record.setMessage(cut(message, 1000));
-            record.setRawOutput(telnetService.truncateRaw(rawOutput));
+            // rawOutput 不再进台账：每次同步的完整 telnet 回显动辄几十 KB，台账只留
+            // 结果一行话（message），回显在测试接口的即时响应里仍有，要排查去抓包或重跑诊断
             record.setCostMs((int) Math.min(costMs, Integer.MAX_VALUE));
             record.setOperator(cut(operator, 64));
             recordMapper.insert(record);

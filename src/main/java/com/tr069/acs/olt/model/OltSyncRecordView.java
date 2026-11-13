@@ -5,7 +5,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 采集记录视图：列表只带原文片段，完整原文留给排查接口 */
+/** 采集记录视图：只带结果摘要，不再携带设备回显（raw_output 已退出台账） */
 @Data
 public class OltSyncRecordView {
 
@@ -16,8 +16,6 @@ public class OltSyncRecordView {
     private Boolean success;
 
     private String message;
-
-    private String rawPreview;
 
     private Integer costMs;
 
@@ -37,10 +35,6 @@ public class OltSyncRecordView {
         view.setCostMs(record.getCostMs());
         view.setOperator(record.getOperator());
         view.setCreatedAt(record.getCreatedAt());
-        String raw = record.getRawOutput();
-        if (raw != null) {
-            view.setRawPreview(raw.length() <= previewChars ? raw : raw.substring(0, previewChars) + "...");
-        }
         return view;
     }
 }

@@ -1,5 +1,6 @@
 package com.tr069.acs.acs.session;
 
+import com.tr069.acs.acs.service.DeviceEventRecorder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,6 +17,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 @RequiredArgsConstructor
 public class SessionManager {
+
+    /** 设备事件落台账（异常会话审计用） */
+    private final DeviceEventRecorder eventRecorder;
 
     /** SN -> 会话 */
     private final Map<String, CpeSession> snToSession = new ConcurrentHashMap<>();
@@ -167,6 +171,15 @@ public class SessionManager {
         long now = System.currentTimeMillis();
         for (CpeSession session : snToSession.values()) {
             if (session.isExpired(onlineCheckInterval)) {
+                // 会话异常审计（FreeACS SessionDataCacheCleanup 的思路）：
+                // 到期回收时还有指令在等回应/下发在进行，说明这个会话是断掉的不是走完的，落一条事件
+                if (session.hasPendingAwaiting() || session.isDeliveryInProgress()) {
+                    String detail = session.hasPendingAwaiting()
+                            ? "会话异常终止：指令 " + session.getAwaiting().getRpcName() + " 一直未等到回应"
+                            : "会话异常终止：下发进行中设备失联";
+                    log.warn("会话异常终止: sn={}, {}", session.getSn(), detail);
+                    eventRecorder.recordEvent(session.getSn(), "session", "abnormal-terminate", detail);
+                }
                 session.setOnline(false);
                 // 台账离线不在这里判：交给上报窗口那套规则，见 DeviceRegistryService
                 // 静默足够久才回收会话对象：只标离线不回收的话 snToSession 只增不减，

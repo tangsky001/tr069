@@ -39,6 +39,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -47,6 +48,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -85,6 +87,12 @@ public class IntentDeliveryService {
 
     /** 下发后回读参数等待设备应答的秒数。超时就不再等，交给后面的全量补采 */
     private static final int READBACK_TIMEOUT_SECONDS = 8;
+
+    /** WAN 类任务成功后延迟刷新业务快照的秒数（不重启的场合） */
+    private static final long WAN_REFRESH_DELAY_SECONDS = 90L;
+
+    /** WAN 类任务成功且重启后延迟刷新业务快照的秒数：要等设备回来、WAN 重新拨上 */
+    private static final long WAN_REFRESH_DELAY_AFTER_REBOOT_SECONDS = 240L;
 
     /** 回读不一致时的复核轮次与间隔秒数：设备异步生效，下一轮会话才看得到新值 */
     private static final int VERIFY_ROUNDS = 2;
@@ -175,6 +183,9 @@ public class IntentDeliveryService {
         if (DeviceTask.STATUS_RUNNING.equals(task.getStatus())) {
             // 指令只能捎带在设备自己发起的会话里：先反向唤醒等它建链再提交；以前并行提交，会话未建立指令就进队列，只能干等下一轮周期上报
             EXECUTOR.execute(() -> {
+                // 先标记下发进行中，设备被唤醒后 Inform 进来、空 POST 来取指令时，CwmpController 会保持会话窗口
+                // 不在 execute() 里才标记：唤醒到 execute 之间设备可能已经 Inform + 空 POST 了，窗口早断了
+                rpcService.beginDelivery(request.sn());
                 awaitSession(request.sn(), task.getTaskNo());
                 execute(task);
             });
@@ -313,6 +324,7 @@ public class IntentDeliveryService {
 
         IntentPlan plan = renderer.render(bizObject, request.category(), model,
                 values, resolveInstance(values), overrides);
+        plan = ensureVoiceServiceObjects(request.sn(), plan);
         plan = alignParameterNames(request.sn(), plan, adaptation);
         plan = ensureServiceBinding(request.sn(), plan, values, overrides, adaptation, model);
         plan = ensureVlanMode(request.sn(), plan, adaptation);
@@ -334,6 +346,36 @@ public class IntentDeliveryService {
         taskMapper.updateById(task);
     }
 
+    /**
+     * SIP 下发前提：语音实例（VoiceService.{i}.VoiceProfile.{j}.Line.{k}）必须存在。
+     * 有些设备出语音模板时 VoiceService 还没实例化（能力树上整棵 VoiceService 是空的），
+     * 直接发 SIP 参数设备只会回 9005，参数也会被树校正整单剔光。
+     * 这里把 VoiceService → VoiceProfile → Line 的实例链排进 AddObject；
+     * 实例号执行时按设备分配回填（链式对象名里暂用计划号，见 execute 的改写逻辑）。
+     */
+    private IntentPlan ensureVoiceServiceObjects(String sn, IntentPlan plan) {
+        if (!"Voice_Service".equals(plan.bizObject()) || plan.parameters().isEmpty()) {
+            return plan;
+        }
+        String sample = plan.parameters().get(0).path();
+        if (sample == null || !sample.contains(".Services.VoiceService.")) {
+            return plan;
+        }
+        ModelTreeStore.PathResolution probe = modelTreeStore.resolvePaths(sn, List.of(sample));
+        if (!probe.getUnsupported().contains(sample)) {
+            // 树上已有语音实例，照常走校正下发
+            return plan;
+        }
+        String base = sample.substring(0,
+                sample.indexOf(".Services.VoiceService.") + ".Services.VoiceService.".length());
+        List<String> adds = new ArrayList<>(plan.objectsToAdd());
+        adds.add(base);
+        adds.add(base + plan.instance() + ".VoiceProfile.");
+        adds.add(base + plan.instance() + ".VoiceProfile.1.Line.");
+        log.info("设备上还没有语音实例，下发 SIP 前先排入实例新建链: sn={}, {}", sn, adds);
+        return new IntentPlan(plan.bizObject(), plan.instance(), adds, plan.parameters(), plan.errors());
+    }
+
     /** 把渲染出的参数名校正为该型号真实存在的那套，并剔掉设备上根本没有的参数 */
     private IntentPlan alignParameterNames(String sn, IntentPlan plan, IspAdaptation adaptation) {
         if (plan.parameters().isEmpty()) {
@@ -350,6 +392,12 @@ public class IntentDeliveryService {
         List<PlanItem> items = new ArrayList<>();
         for (PlanItem item : plan.parameters()) {
             if (resolved.getUnsupported().contains(item.path())) {
+                if (isUnderPendingObject(plan.objectsToAdd(), item.path())) {
+                    // 这个参数挂在本单即将新建的对象下：树上没有是因为实例还没建，
+                    // 执行时 AddObject 后会按设备分配的实例号回填，不能在这里剔掉
+                    items.add(item);
+                    continue;
+                }
                 log.warn("该型号能力树上没有这个参数，跳过不下发: {}", item.path());
                 continue;
             }
@@ -388,6 +436,14 @@ public class IntentDeliveryService {
         }
         int idx = path.lastIndexOf('.');
         return idx < 0 ? path : path.substring(idx + 1);
+    }
+
+    /** 参数是否挂在本次计划要新建的对象之下（新建后树上才会有它） */
+    private static boolean isUnderPendingObject(List<String> objectsToAdd, String path) {
+        if (objectsToAdd == null || objectsToAdd.isEmpty() || path == null) {
+            return false;
+        }
+        return objectsToAdd.stream().anyMatch(o -> o != null && !o.isBlank() && path.startsWith(o));
     }
 
     /** 把页面勾选的 {@code LAN1,LAN2} 翻成设备认的 LAN 口路径串 */
@@ -939,6 +995,43 @@ public class IntentDeliveryService {
         }
     }
 
+    /** 下发成功收尾：按需重启，然后安排延迟的业务快照刷新 */
+    private void afterDelivery(DeviceTask task) {
+        if (needReboot(task)) {
+            // 马上要重启了，补采只会采到重启前的一瞬，设备上报 0 BOOTSTRAP 时自然会再采
+            reboot(task);
+            scheduleWanSnapshotRefresh(task.getSn(), task.getCategory(), true);
+        } else {
+            refreshCapability(task.getSn());
+            scheduleWanSnapshotRefresh(task.getSn(), task.getCategory(), false);
+        }
+    }
+
+    /**
+     * WAN 类任务成功后延迟刷新业务快照。
+     * refreshDeliveredValues 只回读本次下发的参数——新建实例的标识叶子要模板里有才落得了库，
+     * 而设备上其余存量 WAN 连接（面板「N 条 WAN 连接」）只有走实例盲探才会被发现；
+     * 重启的场合还要等设备回来、WAN 重新拨上才能读到真值。业务采集自带 WAN 多实例盲探与落库
+     */
+    private void scheduleWanSnapshotRefresh(String sn, String category, boolean afterReboot) {
+        if (sn == null || sn.isBlank() || category == null || !category.startsWith("WAN")) {
+            return;
+        }
+        long delay = afterReboot ? WAN_REFRESH_DELAY_AFTER_REBOOT_SECONDS : WAN_REFRESH_DELAY_SECONDS;
+        CompletableFuture.delayedExecutor(delay, TimeUnit.SECONDS, EXECUTOR).execute(() -> {
+            try {
+                Map<String, Object> data = businessService.collect(sn);
+                Object wan = data.get("wan");
+                int count = wan instanceof List<?> list ? list.size() : 0;
+                log.info("WAN 下发后业务快照延迟刷新完成: sn={}, 延迟={}s, WAN连接={}",
+                        sn, delay, count);
+            } catch (Exception e) {
+                log.warn("WAN 下发后业务快照延迟刷新失败（不影响下发结果）: sn={}, err={}",
+                        sn, e.getMessage());
+            }
+        });
+    }
+
     /** 判断本次下发要不要在成功后重启设备 */
     private boolean needReboot(DeviceTask task) {
         String json = task.getIntentFields();
@@ -1220,6 +1313,8 @@ public class IntentDeliveryService {
     private void execute(DeviceTask task) {
         IntentPlan plan = readPlan(task.getPlan());
         if (plan == null || !plan.deliverable()) {
+            // 没有可下发的内容，但 beginDelivery 已经在外层调过，必须解除
+            rpcService.endDelivery(task.getSn());
             return;
         }
         execute(task, plan);
@@ -1240,25 +1335,38 @@ public class IntentDeliveryService {
             }
             // AddObject 的实例号是设备分配的，可能与计划渲染时占的号不同，必须回填进参数路径，否则会写到错误的实例上
             Map<String, Integer> allocated = new LinkedHashMap<>();
-            for (String objectName : plan.objectsToAdd()) {
-                SoapMessage resp = await(rpcService.addObject(task.getSn(), objectName, task.getTaskNo()));
+            List<String> plannedObjects = List.copyOf(plan.objectsToAdd());
+            List<String> pendingObjects = new ArrayList<>(plannedObjects);
+            for (int oi = 0; oi < pendingObjects.size(); oi++) {
+                // pendingObjects 可能被前序分配改写过（链式新建，如 VoiceService.2.VoiceProfile.）
+                String addName = pendingObjects.get(oi);
+                SoapMessage resp = await(rpcService.addObject(task.getSn(), addName, task.getTaskNo()));
                 if (isSessionLevelFailure(resp)) {
-                    finishSessionBroken(task, "AddObject " + objectName);
+                    finishSessionBroken(task, "AddObject " + addName);
                     return;
                 }
-                String error = failureOf(resp, "AddObject " + objectName);
+                String error = failureOf(resp, "AddObject " + addName);
                 if (error != null) {
                     finish(task, DeviceTask.STATUS_FAILED, error);
                     return;
                 }
                 Integer instance = parseInstance(CwmpRpcService.instanceNumberOf(resp));
                 if (instance != null) {
-                    allocated.put(objectName, instance);
+                    // 键用计划里的原始对象名：remapInstances 靠「计划实例号」定位参数路径里的待回填段
+                    allocated.put(plannedObjects.get(oi), instance);
                     // 记进清理台账：本次新建的连接之后任何清理都不得删它；实例号必须是设备响应里的号——删过一轮设备会重排编号
-                    rememberCreated(task.getSn(), objectName, instance);
+                    rememberCreated(task.getSn(), addName, instance, task.getTaskNo());
+                    if (instance != plan.instance()) {
+                        // 链式新建（VoiceService → VoiceProfile → Line）：后续对象名里带的还是计划实例号，
+                        // 设备实际分配的号不同就必须立即改写，否则下一个 AddObject 会打到不存在的父实例上
+                        for (int j = oi + 1; j < pendingObjects.size(); j++) {
+                            pendingObjects.set(j, remapObjectInstance(pendingObjects.get(j),
+                                    plannedObjects.get(oi), instance));
+                        }
+                    }
                 }
                 log.info("已创建业务对象: sn={}, object={}, instance={}",
-                        task.getSn(), objectName, instance);
+                        task.getSn(), addName, instance);
             }
             List<List<PlanItem>> chunks = chunks(orderByDependency(remapInstances(plan, allocated)));
             for (int i = 0; i < chunks.size(); i++) {
@@ -1270,8 +1378,26 @@ public class IntentDeliveryService {
                             .valueType(item.valueType())
                             .build());
                 }
-                SoapMessage resp = await(rpcService.setParameterValues(
-                        task.getSn(), values, task.getTaskNo()));
+                SoapMessage resp;
+                try {
+                    resp = await(rpcService.setParameterValues(
+                            task.getSn(), values, task.getTaskNo()));
+                } catch (TimeoutException timeout) {
+                    // Enable 批特意排在最后一批就是防这一手：WAN 启用后设备路由/管理通道随之切换，
+                    // 会话经常应声而断，回应等不到——但指令已经送达设备（它取走了 POST 才轮到这条）。
+                    // 前面的业务参数都已写成功，这里判死只会让运维重下一遍整包；按成功收尾，
+                    // 值是否真生效交给回读与下一轮采集复核
+                    boolean lastEnableBatch = i == chunks.size() - 1
+                            && chunks.get(i).stream().allMatch(IntentDeliveryService::isWanEnable);
+                    if (!lastEnableBatch) {
+                        throw timeout;
+                    }
+                    log.warn("启用连接的回应未等到（WAN 上线后设备常断会话），指令已送达，按成功收尾: sn={}, taskNo={}",
+                            task.getSn(), task.getTaskNo());
+                    finish(task, DeviceTask.STATUS_SUCCESS,
+                            "启用指令已送达设备但未等到回应（WAN 上线后设备断开会话），生效情况以下一轮回读复核为准");
+                    return;
+                }
                 if (isSessionLevelFailure(resp)) {
                     // 会话级故障（超时/会话中断）不是参数被拒：逐条重发是对着死会话烧超时，直接终止
                     finishSessionBroken(task, "SetParameterValues 第 " + (i + 1) + "/" + chunks.size() + " 批");
@@ -1294,11 +1420,7 @@ public class IntentDeliveryService {
                     log.info("整批被拒但逐条重发全部成功，按成功收尾: sn={}, taskNo={}",
                             task.getSn(), task.getTaskNo());
                     refreshDeliveredValues(task.getSn(), plan);
-                    if (needReboot(task)) {
-                        reboot(task);
-                    } else {
-                        refreshCapability(task.getSn());
-                    }
+                    afterDelivery(task);
                     finish(task, DeviceTask.STATUS_SUCCESS, located.skipped.isEmpty() ? null
                             : "已跳过设备不接受的参数: " + String.join(" | ", located.skipped));
                     return;
@@ -1308,16 +1430,22 @@ public class IntentDeliveryService {
                     plan.parameters().size());
             // 下发改的是设备现值，库里的快照不会自己跟上；全量补采要几十秒，先把本次写下去的参数读回来落库，列表立刻对得上现场
             refreshDeliveredValues(task.getSn(), plan);
-            if (needReboot(task)) {
-                // 马上要重启了，补采只会采到重启前的一瞬，设备上报 0 BOOTSTRAP 时自然会再采
-                reboot(task);
-            } else {
-                refreshCapability(task.getSn());
-            }
+            afterDelivery(task);
             finish(task, DeviceTask.STATUS_SUCCESS, null);
         } catch (Exception e) {
-            log.warn("下发异常: sn={}, taskNo={}, err={}", task.getSn(), task.getTaskNo(), e.getMessage());
-            finish(task, DeviceTask.STATUS_FAILED, e.getMessage());
+            // NPE、TimeoutException 这类异常 message 是 null，只打 err=null 查不了现场：类型与完整栈都要留下
+            log.warn("下发异常: sn={}, taskNo={}", task.getSn(), task.getTaskNo(), e);
+            Throwable cause = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
+            if (cause instanceof TimeoutException) {
+                // 设备中途不再回应与参数被拒是两类故障：前者多半是会话断了，提示往网络/窗口方向查
+                finish(task, DeviceTask.STATUS_FAILED, "等待设备回应超时(" + requestTimeoutSeconds
+                        + "s)：设备会话中断或已离线，未完成的参数未送达，请检查设备网络后重试");
+                return;
+            }
+            finish(task, DeviceTask.STATUS_FAILED, textOf(e));
+        } finally {
+            // 无论成功还是失败，下发都结束了：解除保活标志，ACS 回 204 告诉设备本轮可以断了
+            rpcService.endDelivery(task.getSn());
         }
     }
 
@@ -1449,6 +1577,19 @@ public class IntentDeliveryService {
         }
     }
 
+    /**
+     * 链式新建时改写后续对象名里的计划实例号：父对象实际分配的是 {@code actual} 号，
+     * 如计划 {@code VoiceService.1.VoiceProfile.}、实际 {@code VoiceService.2.} → 改成 {@code VoiceService.2.VoiceProfile.}
+     */
+    private static String remapObjectInstance(String pending, String parentObject, int actual) {
+        if (pending == null || parentObject == null || !pending.startsWith(parentObject)) {
+            return pending;
+        }
+        String rest = pending.substring(parentObject.length());
+        int dot = rest.indexOf('.');
+        return dot > 0 ? parentObject + actual + rest.substring(dot) : pending;
+    }
+
     /** 业务字段值转成可下发的字符串 */
     private static String textValue(Object v) {
         if (v == null) {
@@ -1503,7 +1644,7 @@ public class IntentDeliveryService {
                 existing = fetchWanLinks(sn);
                 // 2. 管理通道线索：按 ManagementServer 的指向认，不按实例编号认
                 managementHint = findManagementWanPath(sn);
-                clean = WanCleanup.plan(existing, managementHint, state.createdPaths());
+                clean = WanCleanup.plan(existing, managementHint, protectedCreatedPaths(sn, state));
             } catch (Exception e) {
                 // 现场读不清就不知道该保住哪条：一条都不删但也不中止下发——不删就不会误删管理通道；台账照样记账，免得整包每个成员再干等一轮采集超时
                 log.warn("读取现有 WAN 失败，本次跳过清理继续下发: sn={}, taskNo={}, err={}",
@@ -1524,6 +1665,8 @@ public class IntentDeliveryService {
             // 3. 存量里不在保留集合的，一次删完
             for (WanCleanup.WanLink victim : clean.delete()) {
                 try {
+                    // 设备回 9002（Internal g_error）多半是连接还在使用中：删之前先停用，解除引用后再删
+                    disableConnection(sn, victim.path(), task.getTaskNo());
                     SoapMessage resp = awaitCleanup(rpcService.deleteObject(
                             sn, victim.path(), task.getTaskNo()));
                     String error = failureOf(resp, "DeleteObject " + victim.path());
@@ -1559,10 +1702,71 @@ public class IntentDeliveryService {
     }
 
     /** 记下本次新建的连接路径，后续任何清理都不许删它 */
-    private void rememberCreated(String sn, String objectName, int instance) {
+    private void rememberCreated(String sn, String objectName, int instance, String taskNo) {
         String prefix = objectName.endsWith(".") ? objectName + instance + "." : objectName + "." + instance + ".";
-        wanCleanupLedger.computeIfAbsent(sn, k -> new WanCleanupState()).remember(prefix);
+        wanCleanupLedger.computeIfAbsent(sn, k -> new WanCleanupState()).remember(prefix, taskNo);
         log.info("已登记本次新建的 WAN 连接（后续清理不再删它）: sn={}, path={}", sn, prefix);
+    }
+
+    /**
+     * 台账里登记的「新建连接」默认不许清理删掉（保护同批次刚建的业务连接），
+     * 但建它的任务已经失败的不算数——那是会话中断留下的空壳（VLAN=1、无业务模式的残留连接），
+     * 下一个任务必须把它删掉重建，否则空壳越叠越多，实例号也被占着，新连接只能往后跳号。
+     */
+    private Set<String> protectedCreatedPaths(String sn, WanCleanupState state) {
+        Set<String> kept = new LinkedHashSet<>();
+        List<String> orphans = new ArrayList<>();
+        for (Map.Entry<String, String> e : state.createdEntries().entrySet()) {
+            String status = taskStatusOf(sn, e.getValue());
+            if (status == null || DeviceTask.STATUS_RUNNING.equals(status)
+                    || DeviceTask.STATUS_SUCCESS.equals(status)) {
+                kept.add(e.getKey());
+            } else {
+                orphans.add(e.getKey() + "（任务=" + e.getValue() + ", 状态=" + status + "）");
+            }
+        }
+        if (!orphans.isEmpty()) {
+            log.warn("台账里有失败任务留下的 WAN 连接，本次清理不再保护、允许删掉重建: sn={}, {}",
+                    sn, String.join(", ", orphans));
+        }
+        return kept;
+    }
+
+    /** 查下发任务状态；查不到或查询出错按 RUNNING 处理：宁可疑而不删，不可误删运行中批次刚建的连接 */
+    private String taskStatusOf(String sn, String taskNo) {
+        if (taskNo == null || taskNo.isBlank()) {
+            return DeviceTask.STATUS_RUNNING;
+        }
+        try {
+            DeviceTask t = taskMapper.selectOne(new LambdaQueryWrapper<DeviceTask>()
+                    .eq(DeviceTask::getTaskNo, taskNo)
+                    .eq(DeviceTask::getSn, sn)
+                    .last("LIMIT 1"));
+            return t == null ? null : t.getStatus();
+        } catch (Exception e) {
+            log.warn("查询下发任务状态失败，按运行中处理（不删它建的连接）: taskNo={}, err={}",
+                    taskNo, e.getMessage());
+            return DeviceTask.STATUS_RUNNING;
+        }
+    }
+
+    /** 删除前先停用连接：9002 Internal error 多是连接还在使用中，置 Enable=false 解除占用后再删 */
+    private void disableConnection(String sn, String path, String taskNo) {
+        try {
+            SoapMessage resp = awaitCleanup(rpcService.setParameterValues(sn, List.of(
+                    ParameterValueStruct.builder()
+                            .name(path + "Enable")
+                            .value("false")
+                            .valueType("boolean")
+                            .build()), taskNo));
+            if (resp != null && resp.getFault() != null) {
+                log.debug("停用待删连接未成功（继续尝试删除）: sn={}, path={}, fault={}",
+                        sn, path, resp.getFault().getFaultCode());
+            }
+        } catch (Exception e) {
+            // 停用只是提高删除成功率的辅助手段，失败不阻断清理
+            log.debug("停用待删连接失败（继续尝试删除）: sn={}, path={}, err={}", sn, path, textOf(e));
+        }
     }
 
     /** 设备 {@code ManagementServer} 指向的那条 WAN 连接 */
@@ -1947,12 +2151,13 @@ public class IntentDeliveryService {
         return raw == null ? null : String.valueOf(raw);
     }
 
-    /** 一台设备的 WAN 清理台账：上次清理时间 + 本批次新建的连接路径 */
+    /** 一台设备的 WAN 清理台账：上次清理时间 + 各任务新建的连接路径（含建它的任务号） */
     private static final class WanCleanupState {
 
         private volatile long lastCleanedAtMillis;
 
-        private final Set<String> created = ConcurrentHashMap.newKeySet();
+        /** 路径 → 建它的任务号；清理时按任务状态决定是否保护（失败任务建的是空壳，要删） */
+        private final Map<String, String> created = new ConcurrentHashMap<>();
 
         /** 距上次清理还没超过窗口：视为同一批次，不再清理 */
         boolean fresh(long windowMillis) {
@@ -1964,14 +2169,14 @@ public class IntentDeliveryService {
             lastCleanedAtMillis = nowMillis;
         }
 
-        void remember(String createdPath) {
+        void remember(String createdPath, String taskNo) {
             if (createdPath != null && !createdPath.isBlank()) {
-                created.add(createdPath);
+                created.put(createdPath, taskNo == null ? "" : taskNo);
             }
         }
 
-        Set<String> createdPaths() {
-            return Set.copyOf(created);
+        Map<String, String> createdEntries() {
+            return Map.copyOf(created);
         }
     }
 }

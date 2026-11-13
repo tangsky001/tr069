@@ -346,8 +346,13 @@ public class SqlitePlanRenderer {
             }
             return;
         }
-        String value = normalize(field,
-                resolve(field, effectiveValue(val, overrides, field), values, errors));
+        String effective = effectiveValue(val, overrides, field);
+        if (effective == null || effective.isBlank()) {
+            // 模板登记了路径但值为空：静默跳过会让「要 IPv4 却变成双栈」这类问题查不到原因
+            log.warn("型号模板登记了 {} 的参数路径但值为空，本次不下发（保持设备现值）: path={}", field, path);
+            return;
+        }
+        String value = normalize(field, resolve(field, effective, values, errors));
         if (value == null) {
             return;
         }

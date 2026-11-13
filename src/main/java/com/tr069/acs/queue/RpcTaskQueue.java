@@ -44,16 +44,16 @@ public class RpcTaskQueue {
             + "return 1",
             Long.class);
 
-    /** 原子清理过期采集指令的 Lua 脚本：删掉 batch 不匹配的元素，Redis 单线程内完成不误删并发入队的新指令 */
+    /**
+     * 原子清理过期采集指令的 Lua 脚本：删掉 batch 不匹配的元素，Redis 单线程内完成不误删并发入队的新指令。
+     * 结构与 REMOVE_TASK_SCRIPT 完全同款（读全部→过滤→DEL+RPUSH 回写）——生产已验证可用。
+     * 不再保留原先那段「先 LREM 逐个摘除再回写」的废循环：它对每个元素做全表 LREM 又整队 DEL 重写，
+     * 在非空队列上触发过 "Error in execution"，而 REMOVE_TASK 同结构一直正常
+     */
     private static final DefaultRedisScript<Long> DROP_STALE_SCRIPT = new DefaultRedisScript<>(
             "local current = ARGV[1] "
             + "local all = redis.call('LRANGE', KEYS[1], 0, -1) "
             + "local dropped = 0 "
-            + "for i, v in ipairs(all) do "
-            + "  local stale = redis.call('LREM', KEYS[1], 0, v) "
-            + "  -- 这里不能用 LREM：遍历期间索引会乱 "
-            + "end "
-            + "-- 改用 DEL + RPUSH 回写保留的 "
             + "local keep = {} "
             + "for i, v in ipairs(all) do "
             + "  if string.find(v, '\"batch\":\"' .. current .. '\"', 1, true) ~= nil "
@@ -162,7 +162,12 @@ public class RpcTaskQueue {
         return null;
     }
 
-    /** 把跳过的退避指令放回队尾，保持原相对顺序 */
+    /**
+     * 把跳过的退避指令放回队尾，保持原相对顺序。
+     * 注意不能在这里 signal：队首全是退避指令时，signal 会唤醒挂起跳再 poll 一轮，
+     * 又整队弹出又回填又 signal——退避窗口内自激循环，反复抽打 Redis 还扰动队列顺序。
+     * 退避指令本来就不该立刻被取走，设备下一次空 POST 自然会再来 poll
+     */
     private void requeueSkipped(String key, List<RpcTask> skipped) {
         if (skipped.isEmpty()) {
             return;
@@ -172,10 +177,6 @@ public class RpcTaskQueue {
                 redis.opsForList().rightPush(key, toJson(task));
             }
             redis.expire(key, properties.getRpc().getQueueTtlSeconds(), TimeUnit.SECONDS);
-            // 跳过的指令放回后，下一跳可能仍需被唤醒去尝试
-            if (skipped.size() > 0) {
-                signal(skipped.get(0).getSn());
-            }
         } catch (Exception e) {
             logFailure("退避指令回队尾", e);
         }

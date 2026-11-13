@@ -56,6 +56,7 @@ public class CwmpController {
 
     private final SessionManager sessionManager;
     private final CpeAuthenticator authenticator;
+    private final com.tr069.acs.acs.service.CwmpRpcService rpcService;
     private final InformService informService;
     private final ReportQueueService reportQueue;
     private final RpcTaskQueue rpcTaskQueue;
@@ -84,6 +85,10 @@ public class CwmpController {
     /** 队列空时把这一跳请求挂起多久再回 204（毫秒）。挂起期间不占 Tomcat 线程 */
     @Value("${acs.session.piggyback-wait-ms:1500}")
     private long piggybackWaitMs;
+
+    /** 下发进行中时把这一跳挂起多久再回 204（秒）。任务没发完不该1.5秒就断会话 */
+    @Value("${acs.session.delivery-hold-seconds:30}")
+    private long deliveryHoldSeconds;
 
     /** 会话 Cookie 的路径。留空则不写 Path 属性，部分固件对带 Path 的 Cookie 认不全 */
     @Value("${acs.cwmp.cookies-path:}")
@@ -205,7 +210,16 @@ public class CwmpController {
             sendStatus(response, 204);
             return;
         }
-        async.setTimeout(piggybackWaitMs);
+        // 下发进行中：ACS 还有后续指令要发，大幅延长挂起时间，等 IntentDeliveryService 把下一条入队
+        // 不在下发中：按原来的短挂起(1.5s)，指令入队信号没到就回204结束本轮
+        // isDelivering 兜底会话对象标志：设备还没 Inform 过时 beginDelivery 找不到会话，标志丢了会整个下发都按 1.5s 挂起，批次间就断会话
+        CpeSession session = sessionManager.find(sn);
+        boolean holding = (session != null && session.isDeliveryInProgress()) || rpcService.isDelivering(sn);
+        long timeoutMs = holding ? deliveryHoldSeconds * 1000L : piggybackWaitMs;
+        if (holding) {
+            log.info("下发进行中，保持会话窗口等待下一条指令: sn={}, 挂起={}s", sn, deliveryHoldSeconds);
+        }
+        async.setTimeout(timeoutMs);
         PendingDelivery delivery = new PendingDelivery(sn, async, response);
         async.addListener(new AsyncListener() {
             @Override
@@ -236,7 +250,9 @@ public class CwmpController {
         if (deliverNextRpc(sn, session, response)) {
             return true;
         }
-        long deadline = System.currentTimeMillis() + piggybackWaitMs;
+        // 内存模式下同样尊重下发进行中标志：任务没发完就多等一会儿
+        long waitMs = session.isDeliveryInProgress() ? deliveryHoldSeconds * 1000L : piggybackWaitMs;
+        long deadline = System.currentTimeMillis() + waitMs;
         while (System.currentTimeMillis() < deadline) {
             try {
                 Thread.sleep(PIGGYBACK_POLL_INTERVAL_MS);
@@ -328,8 +344,12 @@ public class CwmpController {
         }
 
         // 不认识的方法（非 Inform、非 CPE 主动请求、也非已知 RPC 响应）：按 CWMP 规范回 Fault 8000，
-        // 让设备明确收到"方法不支持"，而不是对着一个不带响应的 400 反复重试
-        if (message.getMethod() == null && !message.isFault()) {
+        // 让设备明确收到"方法不支持"，而不是对着一个不带响应的 400 反复重试。
+        // 注意：ACS 下发请求的响应（GetParameterValuesResponse / DeleteObjectResponse / AddObjectResponse
+        // 等）不在 RpcMethod 枚举里，method 同样是 null，不能在这里拦——它们要落到下面的
+        // completeAwaiting 去完成等待中的 RPC，拦掉的话设备回得再快也是 8002 超时
+        if (message.getMethod() == null && !message.isFault()
+                && !methodName.endsWith("Response")) {
             log.warn("收到不支持的方法, conn={}, method={}", connId, methodName);
             sendSoapFault(response, message.getCwmpId(), "8000", "Method not supported");
             return;
@@ -386,7 +406,9 @@ public class CwmpController {
             }
             rpcDispatchService.completeTask(completed.getRpcId(), message);
         } else {
-            log.warn("收到未预期的 RPC 响应: sn={}, method={}", sn, methodName);
+            // awaiting 已被超时清除（failAwaiting）但设备终于还是回应了：
+            // 会话本身还活着，不应浪费这次窗口，继续尝试下发下一条指令
+            log.info("收到迟到的 RPC 响应（awaiting 已超时清除）: sn={}, method={}", sn, methodName);
         }
         session.setState(SessionState.READY);
         // 在同一响应里捎带下一条指令：设备收到 204 就认为本轮结束，不一定再发空 POST
@@ -554,17 +576,13 @@ public class CwmpController {
             return;
         }
 
-        // 设备换新连接说明上一条 RPC 已执行完，旧 awaiting 不会被回应却会卡住空 POST：
-        // 直接清除，查询类重排下一轮再取，写操作不重排不判失败
+        // 设备换新连接时保留正在等待回应的 RPC：设备常在新连接上发回上一条 RPC 的响应，
+        // 如果在这里 failAwaiting，设备迟到的真实响应会被 CompletableFuture 丢弃（已 complete 过 fault）。
+        // SessionManager.getOrCreate 已做了连接标识迁移，awaiting 继续保留，由 RPC 响应定时器兜底超时。
+        // 仅在没有 awaiting 时清一下可能残留的脏状态
         if (session.hasPendingAwaiting()) {
-            PendingRpc stale = session.failAwaiting("设备换新连接，旧 RPC 未被回应");
-            if (stale != null) {
-                log.info("设备换新连接，清理旧 RPC: sn={}, rpc={}", sn, stale.getRpcName());
-                RpcMethod method = RpcMethod.of(stale.getRpcName());
-                if (method != null && method.isRetriable() && stale.getRpcId() > 0) {
-                    settleUndelivered(session, stale, "设备换新连接，旧 RPC 未被回应");
-                }
-            }
+            log.info("设备换新连接，保留等待中的 RPC（设备可能在新连接上回应）: sn={}, rpc={}",
+                    sn, session.getAwaiting().getRpcName());
         }
 
         // 采集指令必须在回响应之前入队，紧接着的空 POST 才取得到
@@ -627,12 +645,9 @@ public class CwmpController {
             if (rpc != null) {
                 log.warn("等待 RPC 响应超时: sn={}, rpc={}", session.getSn(), rpc.getRpcName());
                 settleUndelivered(session, rpc, "等待 RPC 响应超时");
-                // 设备不再回应 = 本轮下发窗口已经死了。会话由 CPE 驱动，ACS 无法保持，
-                // 显式收尾让同批后续任务不再往死窗口上挂，留在队列等设备下次上报
-                if (session.getState() == SessionState.WAIT_RPC_RESPONSE) {
-                    session.setState(SessionState.READY);
-                    log.info("本轮下发窗口异常终止（设备不再回应）: sn={}", session.getSn());
-                }
+                // 超时只 failAwaiting 这一条 RPC，不关闭整个下发窗口（不改 state=READY）。
+                // 设备可能只是回应慢，之后还会发空 POST 来取下一条指令。
+                // 强制 READY 会让设备后续的空 POST 走不到 deliverNextRpc，整批下发被一条超时卡死。
             }
         }, waitRpcResponseTimeout, TimeUnit.SECONDS));
     }
@@ -668,6 +683,8 @@ public class CwmpController {
         task.setNotBefore(System.currentTimeMillis() + delayMs);
         rpcTaskQueue.pushBack(task);
         rpcTaskQueue.saveQueued(task);
+        // 重排 = 这一轮的等待重新起算：不刷时间戳，清扫会按首次提交的总年龄把重试中的指令误判超时摘掉
+        rpcDispatchService.touchPending(task.getTaskId());
         log.warn("{}，已重排队列，{}秒后再试: sn={}, rpc={}, attempts={}/{}",
                 reason, delayMs / 1000, sn, rpc.getRpcName(), task.getAttempts(), maxDeliveryAttempts);
     }

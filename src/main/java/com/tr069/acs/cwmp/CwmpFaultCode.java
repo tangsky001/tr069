@@ -24,31 +24,31 @@ public enum CwmpFaultCode {
     /** 未知方法名 */
     BAD_METHOD("8005", "Invalid parameter name (unknown method)"),
 
-    // ---------------- CPE 侧（9000 系列） ----------------
+    // ---------------- CPE 侧（9000 系列，按 TR-069 附录 A.3.3） ----------------
 
-    /** 请求被拒绝（设备侧原因不明） */
-    REQUEST_DENIED("9000", "Request denied"),
-    /** 请求被拒绝（内部错误） */
+    /** 请求被拒绝（设备侧未说明原因） */
+    REQUEST_DENIED("9000", "Request denied (no reason specified)"),
+    /** 请求被拒绝（设备内部错误） */
     REQUEST_DENIED_INTERNAL("9001", "Request denied (internal error)"),
-    /** 请求被拒绝（CWMP 版本不支持） */
-    INVALID_CWMP_VERSION("9002", "Invalid CWMP version"),
+    /** 设备内部错误（CWMP agent 忙、数据模型异常等笼统失败，是最常见的 CPE 侧故障） */
+    CPE_INTERNAL_ERROR("9002", "Internal error"),
+    /** 设备不支持该方法 */
+    METHOD_NOT_SUPPORTED_CPE("9003", "Method not supported"),
+    /** 设备忙，请求被拒 */
+    REQUEST_DENIED_BUSY("9004", "Request denied (process busy)"),
     /** 参数名不存在 */
-    INVALID_PARAMETER_NAME_9003("9003", "Invalid parameter name"),
-    /** 参数值越界 */
-    INVALID_PARAMETER_VALUE("9004", "Invalid parameter value"),
-    /** 参数不可写 */
-    NON_WRITABLE_PARAMETER("9005", "Non-writable parameter"),
-    /** 参数通知设置不支持 */
-    INVALID_NOTIFICATION("9006", "Invalid notification request"),
-    /** 对象不存在 */
-    INVALID_OBJECT("9007", "Invalid object"),
-    /** 对象不可写 */
-    NON_WRITABLE_OBJECT("9008", "Non-writable object"),
-    /** 对象数量超上限 */
-    OBJECT_LIMIT_REACHED("9009", "Object creation denied (limit reached)"),
-    /** AddObject 参数不完整 */
-    INCOMPLETE_PARENT("9010", "Object creation denied (incomplete parent object)"),
-    /** 重启后需重设值 */
+    INVALID_PARAMETER_NAME_CPE("9005", "Invalid parameter name"),
+    /** 参数类型不合法 */
+    INVALID_PARAMETER_TYPE("9006", "Invalid parameter type"),
+    /** 参数值不合法 */
+    INVALID_PARAMETER_VALUE("9007", "Invalid parameter value"),
+    /** 参数只读，不可写 */
+    NON_WRITABLE_PARAMETER("9008", "Non-writable parameter"),
+    /** 参数值与其他配置冲突 */
+    PARAMETER_VALUE_CONFLICT("9009", "Parameter value conflict"),
+    /** 参数重建冲突 */
+    PARAMETER_RECONSTRUCTION_CONFLICT("9010", "Parameter reconstruction conflict"),
+    /** 设备重启后才能创建对象 */
     REBOOT_REQUIRED("9011", "Object creation denied (reboot required)"),
     /** DeleteObject 对象不存在 */
     INVALID_DELETE_OBJECT("9012", "Object deletion denied (invalid object)"),
