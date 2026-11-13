@@ -565,10 +565,11 @@ public class DeviceController {
         String base = traceBase(sn);
         List<Map<String, String>> params = new ArrayList<>();
         params.add(paramEntry(base + "Host", target, "string"));
-        params.add(paramEntry(base + "DiagnosticsState", "Requested", "string"));
         params.add(paramEntry(base + "NumberOfTries", "3", "unsignedInt"));
         params.add(paramEntry(base + "Timeout", "5000", "unsignedInt"));
         params.add(paramEntry(base + "DataBlockSize", "32", "unsignedInt"));
+        // 必须最后写：设备看到 Requested 就开跑，前面参数没写进去会拿空 Host 去诊断
+        params.add(paramEntry(base + "DiagnosticsState", "Requested", "string"));
         RpcDispatchService.DispatchHandle handle =
                 rpcDispatchService.submitAsync(sn, "SetParameterValues",
                         spvArgs("acs-trace", params), null);

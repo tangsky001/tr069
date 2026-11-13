@@ -248,7 +248,8 @@ public final class SoapEnvelopeBuilder {
     }
 
     private static String valueType(ParameterValueStruct p) {
-        return p.getValueType() == null || p.getValueType().isEmpty() ? "string" : p.getValueType();
+        return p.getValueType() == null || p.getValueType().isEmpty()
+                ? "string" : XmlUtils.canonicalType(p.getValueType());
     }
 
     /** GetParameterValues / GetParameterAttributes 共用：ParameterNames 字符串数组 */

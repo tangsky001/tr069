@@ -130,6 +130,9 @@ public class DeviceCapabilityService {
 
     private final com.tr069.acs.acs.adaptation.AdaptationManager adaptationManager;
 
+    /** 连接请求安全防护：外呼前校验目标地址；配了主密钥时按序列号派生一台一密的凭据 */
+    private final ConnectionRequestGuard connReqGuard;
+
     /** 采集总开关 */
     @Value("${acs.device.capability.enabled:true}")
     private boolean enabled;
@@ -205,7 +208,7 @@ public class DeviceCapabilityService {
 
     private static final String AUTH_AUTO = "auto";
 
-    /** 连接请求凭据的最后兜底（电信 ITMS 现场通用 itms/itms） */
+    /** 连接请求凭据的最后兜底 */
     private static final String DEFAULT_CR_USER = "itms";
 
     private static final String DEFAULT_CR_PASSWORD = "itms";
@@ -509,7 +512,7 @@ public class DeviceCapabilityService {
 
         if (profile.isValuesOnly()
                 || (profile.isAdaptive() && treeFailures.getOrDefault(sn, 0) >= TREE_FAIL_THRESHOLD)) {
-            // 电信天翼网关这类设备 GPN 一律 9002（与官方 ITMS 一致）：不扫参数树只按需读关键字段；自适应档是上轮刚撞过 9002 记住的，直接跳过不再白等
+            // 电信天翼网关这类设备 GPN 一律 9002：不扫参数树只按需读关键字段；自适应档是上轮刚撞过 9002 记住的，直接跳过不再白等
             return probeGlobalPaths(sn, root, profile, status).thenApply(probed -> {
                 if (probed) {
                     status.setStatus(PARTIAL);
@@ -1262,25 +1265,30 @@ public class DeviceCapabilityService {
                     + "检查 acs.public-host 是否为真实地址（写成 127.0.0.1 时唤醒的是 ACS 自己）", sn);
             return WakeUpResult.NO_URL;
         }
-        // 凭据优先级：台账设备级（纳管改写 CR 凭据时登记）→ 已采集参数里翻（采过完整树的设备值本来就在库里，不必再采一轮）→ 全局配置（排最后：各批次出厂密码不一样）
-        String user = device.getAcsToCpeName();
-        String password = device.getAcsToCpePassword();
-        if (authDisabled(user)) {
-            user = paramValue(sn, "ManagementServer.ConnectionRequestUsername");
-            password = paramValue(sn, "ManagementServer.ConnectionRequestPassword");
-        }
-        if (authDisabled(user)) {
-            user = defaultAcsToCpeUser;
-            password = defaultAcsToCpePassword;
-        }
-        if (authDisabled(user)) {
-            // 三处都没有：按纳管写进设备的默认值试，试不过也只是退化成等它自己上报
-            user = DEFAULT_CR_USER;
-            password = DEFAULT_CR_PASSWORD;
+        // 凭据选择：配了主密钥走派生模式（一台一密，纳管时已按同一算法写进设备），
+        // 没配则走常规链：台账设备级（纳管改写 CR 凭据时登记）→ 已采集参数里翻
+        // （采过完整树的设备值本来就在库里，不必再采一轮）→ 全局配置（排最后：各批次出厂密码不一样）
+        boolean derived = connReqGuard.derivedCredentialsEnabled();
+        String user;
+        String password;
+        if (derived) {
+            user = connReqGuard.deriveConnReqUsername(sn);
+            password = connReqGuard.deriveConnReqPassword(sn);
+        } else {
+            String[] creds = resolveLegacyCredentials(sn, device);
+            user = creds[0];
+            password = creds[1];
         }
         boolean withCredentials = !authDisabled(user);
         try {
             HttpResponse<String> resp = sendConnectionRequest(url, user, password);
+            if (resp.statusCode() == 401 && derived) {
+                // 派生密码还没写进设备（刚纳管/恢复出厂后）：退回常规凭据链再试一次
+                String[] creds = resolveLegacyCredentials(sn, device);
+                if (!authDisabled(creds[0])) {
+                    resp = sendConnectionRequest(url, creds[0], creds[1]);
+                }
+            }
             if (resp.statusCode() >= 400) {
                 if (!withCredentials && resp.statusCode() == 401) {
                     // 没凭据又被要求认证：短期内别再撞；唤醒只是加速手段，拿不到就等它自己上报，不影响采集
@@ -1364,11 +1372,35 @@ public class DeviceCapabilityService {
         return session != null && session.isOnline() && session.getConnectionId() != null;
     }
 
+    /** 常规凭据链：台账设备级 → 已采集参数 → 全局配置 → 纳管默认值 */
+    private String[] resolveLegacyCredentials(String sn, CpeDevice device) {
+        String user = device.getAcsToCpeName();
+        String password = device.getAcsToCpePassword();
+        if (authDisabled(user)) {
+            user = paramValue(sn, "ManagementServer.ConnectionRequestUsername");
+            password = paramValue(sn, "ManagementServer.ConnectionRequestPassword");
+        }
+        if (authDisabled(user)) {
+            user = defaultAcsToCpeUser;
+            password = defaultAcsToCpePassword;
+        }
+        if (authDisabled(user)) {
+            // 三处都没有：按纳管写进设备的默认值试，试不过也只是退化成等它自己上报
+            user = DEFAULT_CR_USER;
+            password = DEFAULT_CR_PASSWORD;
+        }
+        return new String[]{user, password};
+    }
+
     /** 发连接请求；设备要认证就带上凭据重发一次 */
     private HttpResponse<String> sendConnectionRequest(String url, String user, String password)
             throws Exception {
+        // 外呼前校验目标：协议/端口/解析出的 IP 全部合规才放行，防 SSRF 与 DNS 重绑定
+        connReqGuard.validate(url);
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(3))
+                // 不跟随重定向：设备给的地址可能把请求引向别的目标
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         URI uri = URI.create(url);
         HttpResponse<String> resp = client.send(

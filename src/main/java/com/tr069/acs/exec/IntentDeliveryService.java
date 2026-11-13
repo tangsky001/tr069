@@ -34,6 +34,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -51,6 +52,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import com.tr069.acs.common.log.AcsCoreLog;
+import com.tr069.acs.worklist.config.WorklistProperties;
+import com.fasterxml.jackson.core.type.TypeReference;
+import jakarta.annotation.PostConstruct;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 
 /** 意图模板下发执行器 */
 @Slf4j
@@ -75,6 +85,10 @@ public class IntentDeliveryService {
 
     /** 下发后回读参数等待设备应答的秒数。超时就不再等，交给后面的全量补采 */
     private static final int READBACK_TIMEOUT_SECONDS = 8;
+
+    /** 回读不一致时的复核轮次与间隔秒数：设备异步生效，下一轮会话才看得到新值 */
+    private static final int VERIFY_ROUNDS = 2;
+    private static final int VERIFY_DELAY_SECONDS = 60;
 
     /** 下发等待设备回应的时间不定，统一丢到这个后台线程池 */
     private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool(r -> {
@@ -104,6 +118,11 @@ public class IntentDeliveryService {
     private final com.tr069.acs.acs.service.DeviceCapabilityService capabilityService;
     /** 按设备运营商取定制参数名，替代硬编码 X_CMCC_/X_CT-COM_ 常量 */
     private final AdaptationManager adaptationManager;
+    /** 配置根目录：待复核列表落在它下面，重启后接着核 */
+    private final WorklistProperties worklistProperties;
+
+    /** 待复核的下发参数：sn -> (路径 -> 下发值)，与延迟任务是同一个实例，换成新批次即失效 */
+    private final Map<String, Map<String, String>> pendingVerify = new ConcurrentHashMap<>();
 
     /** 路径里的 WAN 挂载位置，形如 {@code WANConnectionDevice.2.} */
     private static final Pattern WAN_DEVICE = Pattern.compile("WANConnectionDevice\\.(\\d+)\\.");
@@ -295,8 +314,11 @@ public class IntentDeliveryService {
         IntentPlan plan = renderer.render(bizObject, request.category(), model,
                 values, resolveInstance(values), overrides);
         plan = alignParameterNames(request.sn(), plan, adaptation);
-        plan = ensureServiceBinding(request.sn(), plan, values, overrides, adaptation);
+        plan = ensureServiceBinding(request.sn(), plan, values, overrides, adaptation, model);
         plan = ensureVlanMode(request.sn(), plan, adaptation);
+        plan = ensureVendorVlan(request.sn(), plan, overrides, model);
+        plan = ensureVendorWifiModule(request.sn(), plan, overrides, model);
+        plan = ensureVendorMgmt(request.sn(), plan, values, overrides, device);
         task.setIntentFields(writeJson(merge(intentFields, values)));
         task.setPlan(writeJson(planView(plan)));
         if (!plan.deliverable()) {
@@ -408,9 +430,10 @@ public class IntentDeliveryService {
         return root + "LANDevice.1.LANEthernetInterfaceConfig." + no;
     }
 
-    /** WAN 连接补写「业务绑定」参数（移动为 X_CMCC_ServiceList，电信为 X_CT-COM_ServiceList） */
+    /** WAN 连接补写「业务绑定」参数，候选 = 运营商适配层 ∪ 厂商方言 */
     private IntentPlan ensureServiceBinding(String sn, IntentPlan plan, Map<String, Object> values,
-                                            Map<String, String> overrides, IspAdaptation adaptation) {
+                                            Map<String, String> overrides, IspAdaptation adaptation,
+                                            Device model) {
         if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
             return plan;
         }
@@ -425,7 +448,14 @@ public class IntentDeliveryService {
         String first = plan.parameters().get(0).path();
         int cut = first.lastIndexOf('.');
         String parent = cut < 0 ? first : first.substring(0, cut + 1);
-        for (String candidate : adaptation.serviceListNames()) {
+        List<String> candidates = new ArrayList<>(adaptation.serviceListNames());
+        VendorDialect dialect = VendorDialect.of(model);
+        for (String leaf : dialect.serviceListLeaves()) {
+            if (candidates.stream().noneMatch(c -> c.equalsIgnoreCase(leaf))) {
+                candidates.add(leaf);
+            }
+        }
+        for (String candidate : candidates) {
             String path = parent + candidate;
             ModelTreeStore.PathResolution resolved = modelTreeStore.resolvePaths(sn, List.of(path));
             if (resolved.getUnsupported().contains(path)) {
@@ -493,26 +523,408 @@ public class IntentDeliveryService {
         return plan;
     }
 
-    /** 把本次刚写下去的参数读回来落库，让设备列表立刻对得上现场 */
-    private void refreshDeliveredValues(String sn, IntentPlan plan) {
-        List<String> paths = new ArrayList<>();
-        for (PlanItem item : plan.parameters()) {
-            if (item.path() != null && !item.path().isBlank()) {
-                paths.add(item.path());
+    /** 厂商方言补写 WAN VLAN；华为还需配套补 X_HW_VlanEnable 开关 */
+    private IntentPlan ensureVendorVlan(String sn, IntentPlan plan,
+                                        Map<String, String> overrides, Device model) {
+        if (!isWanConnection(plan.bizObject()) || plan.parameters().isEmpty()) {
+            return plan;
+        }
+        VendorDialect dialect = VendorDialect.of(model);
+        if (dialect == VendorDialect.NONE) {
+            return plan;
+        }
+        String first = plan.parameters().get(0).path();
+        int cut = first.lastIndexOf('.');
+        String parent = cut < 0 ? first : first.substring(0, cut + 1);
+
+        // 已有 VLAN 条目就不再补 ID，只补华为的生效开关
+        boolean hasVlan = plan.parameters().stream()
+                .anyMatch(p -> "vlan_id".equalsIgnoreCase(p.bizField())
+                        || dialect.vlanIdLeaves().stream()
+                                .anyMatch(leaf -> leafOf(p.path()).equalsIgnoreCase(leaf)));
+        if (!hasVlan) {
+            String vlan = overrides.get("vlan_id");
+            if (vlan != null && !vlan.isBlank() && !"0".equals(vlan.trim())) {
+                for (String leaf : dialect.vlanIdLeaves()) {
+                    String[] resolved = resolveReal(sn, parent + leaf);
+                    if (resolved == null) {
+                        continue;
+                    }
+                    List<PlanItem> items = new ArrayList<>(plan.parameters());
+                    items.add(new PlanItem(plan.bizObject(), "vlan_id", resolved[0], vlan.trim(),
+                            resolved[1] != null ? resolved[1] : "unsignedInt"));
+                    log.info("按厂商方言补写 VLAN: sn={}, 参数={}={}", sn, resolved[0], vlan.trim());
+                    plan = new IntentPlan(plan.bizObject(), plan.instance(),
+                            plan.objectsToAdd(), items, plan.errors());
+                    hasVlan = true;
+                    break;
+                }
             }
         }
-        if (paths.isEmpty()) {
+        // 华为：补 VLAN 生效开关
+        if (hasVlan && dialect.vlanEnableLeaf() != null
+                && plan.parameters().stream().noneMatch(p ->
+                        leafOf(p.path()).equalsIgnoreCase(dialect.vlanEnableLeaf()))) {
+            String[] resolved = resolveReal(sn, parent + dialect.vlanEnableLeaf());
+            if (resolved != null) {
+                List<PlanItem> items = new ArrayList<>(plan.parameters());
+                items.add(new PlanItem(plan.bizObject(), "vlan_enable", resolved[0], "1",
+                        resolved[1] != null ? resolved[1] : "boolean"));
+                log.info("华为 VLAN 必须配套生效开关，补写: sn={}, 参数={}", sn, resolved[0]);
+                plan = new IntentPlan(plan.bizObject(), plan.instance(),
+                        plan.objectsToAdd(), items, plan.errors());
+            }
+        }
+        return plan;
+    }
+
+    /** 厂商方言补写无线模块硬件开关 */
+    private IntentPlan ensureVendorWifiModule(String sn, IntentPlan plan,
+                                              Map<String, String> overrides, Device model) {
+        if (!"WiFi_2G".equals(plan.bizObject()) && !"WiFi_5G".equals(plan.bizObject())) {
+            return plan;
+        }
+        if (plan.parameters().isEmpty()) {
+            return plan;
+        }
+        VendorDialect dialect = VendorDialect.of(model);
+        if (dialect == VendorDialect.NONE) {
+            return plan;
+        }
+        String raw = overrides.get("radio_hardware_enable");
+        if (!activated(raw)) {
+            return plan;
+        }
+        String first = plan.parameters().get(0).path();
+        int cut = first.lastIndexOf('.');
+        String parent = cut < 0 ? first : first.substring(0, cut + 1);
+        // 已有模块开关条目就不重复补
+        for (PlanItem item : plan.parameters()) {
+            for (String leaf : dialect.wifiModuleLeaves()) {
+                if (item.path() != null && item.path().toLowerCase(Locale.ROOT)
+                        .endsWith(leaf.toLowerCase(Locale.ROOT))) {
+                    return plan;
+                }
+            }
+        }
+        for (String leaf : dialect.wifiModuleLeaves()) {
+            String[] resolved = resolveReal(sn, parent + leaf);
+            if (resolved == null) {
+                continue;
+            }
+            List<PlanItem> items = new ArrayList<>(plan.parameters());
+            items.add(new PlanItem(plan.bizObject(), "radio_hardware_enable", resolved[0],
+                    boolText(raw), resolved[1] != null ? resolved[1] : "boolean"));
+            log.info("按厂商方言补写无线模块开关: sn={}, 参数={}", sn, resolved[0]);
+            return new IntentPlan(plan.bizObject(), plan.instance(),
+                    plan.objectsToAdd(), items, plan.errors());
+        }
+        return plan;
+    }
+
+    /** 渲染器"需按型号适配"报错的前缀 */
+    private static final String MGMT_UNMAPPED_PREFIX = "设备管理字段要按型号适配映射后才能下发";
+
+    /** Device_Mgmt 意图按厂商方言拼装私有参数（Telnet/超管/解除限制） */
+    private IntentPlan ensureVendorMgmt(String sn, IntentPlan plan, Map<String, Object> values,
+                                        Map<String, String> overrides, CpeDevice device) {
+        if (!"Device_Mgmt".equals(plan.bizObject()) || !plan.parameters().isEmpty()) {
+            return plan;
+        }
+        if (activated(values == null ? null : values.get("reboot_after"))
+                || activated(overrides == null ? null : overrides.get("reboot_after"))) {
+            return plan;
+        }
+        VendorDialect dialect = VendorDialect.detect(device);
+        if (dialect == VendorDialect.NONE) {
+            return plan;
+        }
+        String root = device.getRootNode() == null || device.getRootNode().isBlank()
+                ? "InternetGatewayDevice." : device.getRootNode();
+        List<PlanItem> items = new ArrayList<>();
+        List<String> unresolved = new ArrayList<>();
+        for (String field : List.of("telnet_enable", "super_account", "super_password", "unlock_limit")) {
+            String value = overrides.get(field);
+            if (!activated(value)) {
+                continue;
+            }
+            List<PlanItem> produced = vendorMgmtItems(sn, dialect, root, field, value.trim());
+            if (produced.isEmpty()) {
+                unresolved.add(field);
+            } else {
+                items.addAll(produced);
+            }
+        }
+        if (items.isEmpty()) {
+            return plan;
+        }
+        // 拼装成功的字段已覆盖，替换渲染器的报错
+        List<String> errors = new ArrayList<>(plan.errors().stream()
+                .filter(e -> !e.startsWith(MGMT_UNMAPPED_PREFIX)).toList());
+        if (!unresolved.isEmpty()) {
+            errors.add("以下设备管理字段在 " + dialect.label()
+                    + " 上没有可靠的私有参数路径且未做型号适配，暂不下发: "
+                    + String.join(", ", unresolved));
+        }
+        log.info("按厂商方言拼装设备管理参数: sn={}, vendor={}, 条目={}", sn, dialect.label(), items.size());
+        return new IntentPlan(plan.bizObject(), plan.instance(), plan.objectsToAdd(), items, errors);
+    }
+
+    /** 单个设备管理字段的厂商拼装 */
+    private List<PlanItem> vendorMgmtItems(String sn, VendorDialect dialect, String root,
+                                           String field, String value) {
+        return switch (field) {
+            case "telnet_enable" -> spliceVendor(sn, "Device_Mgmt", field,
+                    dialect.telnetEnablePaths().stream().map(root::concat).toList(),
+                    boolText(value), "boolean");
+            case "super_password" -> spliceAdminAccount(sn, dialect, root, "Password", value);
+            case "super_account" -> spliceAdminAccount(sn, dialect, root, "UserName", value);
+            case "unlock_limit" -> spliceVendor(sn, "Device_Mgmt", field,
+                    dialect.limitModePaths().stream().map(root::concat).toList(), "0", "unsignedInt");
+            default -> List.of();
+        };
+    }
+
+    /** 超管账号/口令：节点候选 + 叶子拼装 */
+    private List<PlanItem> spliceAdminAccount(String sn, VendorDialect dialect, String root,
+                                              String leaf, String value) {
+        for (String node : dialect.adminAccountNodes()) {
+            String[] resolved = resolveReal(sn, root + node + leaf);
+            if (resolved == null) {
+                continue;
+            }
+            return List.of(new PlanItem("Device_Mgmt",
+                    "Password".equals(leaf) ? "super_password" : "super_account",
+                    resolved[0], value, resolved[1] != null ? resolved[1] : "string"));
+        }
+        return List.of();
+    }
+
+    /** 候选逐个验证，命中第一条就落计划项 */
+    private List<PlanItem> spliceVendor(String sn, String bizObject, String field,
+                                        List<String> paths, String value, String fallbackType) {
+        for (String path : paths) {
+            String[] resolved = resolveReal(sn, path);
+            if (resolved == null) {
+                continue;
+            }
+            return List.of(new PlanItem(bizObject, field, resolved[0], value,
+                    resolved[1] != null ? resolved[1] : fallbackType));
+        }
+        return List.of();
+    }
+
+    /** 树上存在该节点才返回 [真实路径, 声明类型]，否则返回 null */
+    private String[] resolveReal(String sn, String path) {
+        try {
+            ModelTreeStore.PathResolution resolved = modelTreeStore.resolvePaths(sn, List.of(path));
+            if (resolved.getUnsupported().contains(path)) {
+                return null;
+            }
+            boolean exists = resolved.getTypes().containsKey(path)
+                    || resolved.getCurrentValues().containsKey(path)
+                    || resolved.getRewritten().containsKey(path);
+            if (!exists) {
+                return null;
+            }
+            String real = resolved.getRewritten().getOrDefault(path, path);
+            String type = resolved.getTypes().get(real);
+            return new String[]{real, type};
+        } catch (Exception e) {
+            log.warn("验证厂商私有参数节点失败，跳过该候选: sn={}, path={}, err={}", sn, path, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 意图开关值是否激活 */
+    private static boolean activated(Object value) {
+        if (value == null) {
+            return false;
+        }
+        String s = String.valueOf(value).trim();
+        return !s.isEmpty() && !"false".equalsIgnoreCase(s) && !"0".equals(s)
+                && !"否".equals(s) && !"no".equalsIgnoreCase(s) && !"ignore".equalsIgnoreCase(s);
+    }
+
+    /** 布尔写法归一成 true/false */
+    private static String boolText(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String s = raw.trim().toLowerCase(Locale.ROOT);
+        switch (s) {
+            case "1", "true", "yes", "y", "是", "开", "启用", "enable", "enabled":
+                return "true";
+            case "0", "false", "no", "n", "否", "关", "禁用", "disable", "disabled":
+                return "false";
+            default:
+                return raw.trim();
+        }
+    }
+
+    /** 把本次刚写下去的参数读回来落库，并核对设备上的实际值 */
+    private void refreshDeliveredValues(String sn, IntentPlan plan) {
+        Map<String, String> expected = new LinkedHashMap<>();
+        for (PlanItem item : plan.parameters()) {
+            if (item.path() != null && !item.path().isBlank()) {
+                expected.put(item.path(), item.value());
+            }
+        }
+        if (expected.isEmpty()) {
             return;
         }
         try {
-            capabilityService.readPathValues(sn, paths)
+            Map<String, String> actual = capabilityService
+                    .readPathValues(sn, new ArrayList<>(expected.keySet()))
                     .get(READBACK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            log.info("已回读下发参数: sn={}, 参数={}", sn, paths.size());
+            log.info("已回读下发参数: sn={}, 参数={}", sn, expected.size());
+            verifyDelivered(sn, expected, actual, 0);
         } catch (TimeoutException e) {
-            log.warn("回读下发参数超时，等后续全量采集: sn={}, 参数={}", sn, paths.size());
+            log.warn("回读下发参数超时，等后续全量采集: sn={}, 参数={}", sn, expected.size());
         } catch (Exception e) {
             log.warn("回读下发参数失败: sn={}, err={}", sn, e.getMessage());
         }
+    }
+
+    /** 核对回读值：不一致的排到下一轮会话复核，不判任务失败 */
+    private void verifyDelivered(String sn, Map<String, String> expected,
+                                 Map<String, String> actual, int round) {
+        Map<String, String> mismatched = new LinkedHashMap<>();
+        List<String> unreadable = new ArrayList<>();
+        for (Map.Entry<String, String> entry : expected.entrySet()) {
+            String readBack = actual == null ? null : actual.get(entry.getKey());
+            if (readBack == null) {
+                // 密码、密钥类设备不回读，该路径也可能读不到：无从判定，不计不一致
+                unreadable.add(entry.getKey());
+            } else if (!sameValue(entry.getValue(), readBack)) {
+                mismatched.put(entry.getKey(), readBack);
+            }
+        }
+        if (!unreadable.isEmpty()) {
+            // 凭据类不回读，改由「连接请求能不能连上」间接反证
+            log.info("这些参数不回读，靠连接请求可达性反证: sn={}, 参数={}", sn, unreadable);
+        }
+        if (mismatched.isEmpty()) {
+            if (pendingVerify.remove(sn) != null) {
+                persistPendingVerify();
+            }
+            log.info("下发核对通过: sn={}, 一致={}, 未回读={}",
+                    sn, expected.size() - unreadable.size(), unreadable.size());
+            return;
+        }
+        if (round < VERIFY_ROUNDS) {
+            pendingVerify.put(sn, expected);
+            persistPendingVerify();
+            log.info("回读值与下发值不一致，{} 秒后再核对: sn={}, 参数={}",
+                    VERIFY_DELAY_SECONDS, sn, mismatched.keySet());
+            scheduleVerify(sn, expected, round + 1);
+            return;
+        }
+        pendingVerify.remove(sn);
+        persistPendingVerify();
+        String detail = describeMismatch(expected, mismatched);
+        log.warn("参数下发后回读仍不一致（设备可能未生效）: sn={}, 明细={}", sn, detail);
+        coreLog.verify(sn, false, detail);
+    }
+
+    /** 延迟到设备下一轮会话再读一次，给异步生效的参数留出时间 */
+    private void scheduleVerify(String sn, Map<String, String> expected, int round) {
+        CompletableFuture.delayedExecutor(VERIFY_DELAY_SECONDS, TimeUnit.SECONDS, EXECUTOR)
+                .execute(() -> {
+                    // 期间又下了新的一批：以新批次为准，本轮作废
+                    if (round > 0 && pendingVerify.get(sn) != expected) {
+                        return;
+                    }
+                    try {
+                        Map<String, String> actual = capabilityService
+                                .readPathValues(sn, new ArrayList<>(expected.keySet()))
+                                .get(READBACK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                        verifyDelivered(sn, expected, actual, round);
+                    } catch (Exception e) {
+                        log.debug("延迟核对未取到值，等下次采集: sn={}, err={}", sn, e.getMessage());
+                    }
+                });
+    }
+
+    /** 重启后接着核：待复核列表在配置根目录下，进程重启不丢结论 */
+    @PostConstruct
+    void loadPendingVerify() {
+        Path file = pendingFile();
+        if (!Files.exists(file)) {
+            return;
+        }
+        try {
+            Map<String, Map<String, String>> saved = objectMapper.readValue(Files.readString(file),
+                    new TypeReference<Map<String, Map<String, String>>>() {
+                    });
+            saved.forEach((sn, expected) -> {
+                if (sn != null && expected != null && !expected.isEmpty()) {
+                    pendingVerify.put(sn, expected);
+                    scheduleVerify(sn, expected, 0);
+                }
+            });
+            log.info("已恢复待复核的下发参数: {} 台设备", pendingVerify.size());
+        } catch (Exception e) {
+            log.warn("待复核列表读取失败，忽略: {}", e.getMessage());
+        }
+    }
+
+    private synchronized void persistPendingVerify() {
+        Path file = pendingFile();
+        try {
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, objectMapper.writeValueAsString(pendingVerify),
+                    StandardCharsets.UTF_8, StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        } catch (Exception e) {
+            log.debug("待复核列表落盘失败: {}", e.getMessage());
+        }
+    }
+
+    private Path pendingFile() {
+        String root = worklistProperties.getRootPath();
+        return Paths.get(root == null || root.isBlank() ? "./configuration" : root,
+                "verify", "pending.json");
+    }
+
+    private static String describeMismatch(Map<String, String> expected, Map<String, String> actual) {
+        List<String> items = new ArrayList<>();
+        for (Map.Entry<String, String> entry : actual.entrySet()) {
+            items.add(entry.getKey() + " 期望=" + expected.get(entry.getKey())
+                    + " 实际=" + entry.getValue());
+        }
+        return String.join(" | ", items);
+    }
+
+    /** 两个值是否等价：忽略大小写与空白，布尔、数字按语义比 */
+    static boolean sameValue(String expected, String actual) {
+        if (expected == null || actual == null) {
+            return false;
+        }
+        String e = expected.trim();
+        String a = actual.trim();
+        if (e.equalsIgnoreCase(a)) {
+            return true;
+        }
+        Boolean eb = asBoolean(e);
+        Boolean ab = asBoolean(a);
+        if (eb != null && ab != null) {
+            return eb.equals(ab);
+        }
+        try {
+            return new BigDecimal(e).compareTo(new BigDecimal(a)) == 0;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
+    }
+
+    /** 布尔写法归一，认不出返回 null */
+    private static Boolean asBoolean(String raw) {
+        return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+            case "true", "1", "是", "开", "启用", "enable", "enabled" -> Boolean.TRUE;
+            case "false", "0", "否", "关", "禁用", "disable", "disabled" -> Boolean.FALSE;
+            default -> null;
+        };
     }
 
     /** 下发完成后补采一次能力树，让新实例出现在设备列表里 */
@@ -909,7 +1321,7 @@ public class IntentDeliveryService {
         }
     }
 
-    /** 重排下发顺序：先写「定身份」的 VLAN 参数，剩下的按原序，{@code Enable} 一律放最后 */
+    /** 重排下发顺序：先写「定身份」的 VLAN 参数，剩下的按原序，{@code Enable} 与诊断状态一律放最后 */
     static List<PlanItem> orderByDependency(List<PlanItem> items) {
         if (items == null || items.size() < 2) {
             return items;
@@ -918,8 +1330,11 @@ public class IntentDeliveryService {
         List<PlanItem> binding = new ArrayList<>();
         List<PlanItem> middle = new ArrayList<>();
         List<PlanItem> trailing = new ArrayList<>();
+        List<PlanItem> last = new ArrayList<>();
         for (PlanItem item : items) {
-            if (isEnable(item)) {
+            if (isDiagnosticsState(item)) {
+                last.add(item);
+            } else if (isEnable(item)) {
                 trailing.add(item);
             } else if (isVlan(item)) {
                 leading.add(item);
@@ -929,7 +1344,7 @@ public class IntentDeliveryService {
                 middle.add(item);
             }
         }
-        if (leading.isEmpty() && binding.isEmpty() && trailing.size() == items.size()) {
+        if (leading.isEmpty() && binding.isEmpty() && last.isEmpty() && trailing.size() == items.size()) {
             // 全是 Enable（不太可能）：照原序返回，不要把一整单都当成要挪到末尾的
             return items;
         }
@@ -938,7 +1353,13 @@ public class IntentDeliveryService {
         ordered.addAll(binding);
         ordered.addAll(middle);
         ordered.addAll(trailing);
+        ordered.addAll(last);
         return ordered;
+    }
+
+    /** 诊断状态：设备看到 Requested 就开跑，前面的 Host 等参数必须先写进去 */
+    private static boolean isDiagnosticsState(PlanItem item) {
+        return "DiagnosticsState".equalsIgnoreCase(leafOfPath(item.path()));
     }
 
     /** 业务字段就叫 enable（WiFi / LAN / WAN 各模板一致）；字段名不可靠时退到参数末段名 */

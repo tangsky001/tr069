@@ -45,4 +45,9 @@ public class AcsCoreLog {
         LOG.info("机型适配 | {} | {} | 结果={} | {}",
                 modelKey, action, success ? "成功" : "失败", detail);
     }
+
+    /** 下发后回读核对：值是否真的写进设备 */
+    public void verify(String sn, boolean matched, String detail) {
+        LOG.info("下发核对 | sn={} | 结果={} | {}", sn, matched ? "一致" : "不一致", detail);
+    }
 }

@@ -32,6 +32,29 @@ public final class XmlUtils {
         return String.valueOf(RANDOM.nextInt(1000000) + 1);
     }
 
+    /** xsd 类型名规范化：设备常全小写上报，原样回写会被严格的设备拒收 */
+    public static String canonicalType(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String type = raw.trim();
+        int cut = type.indexOf(':');
+        if (cut >= 0) {
+            type = type.substring(cut + 1);
+        }
+        String lower = type.toLowerCase(java.util.Locale.ROOT);
+        return switch (lower) {
+            case "unsignedint" -> "unsignedInt";
+            case "unsignedlong" -> "unsignedLong";
+            case "datetime" -> "dateTime";
+            case "base64binary" -> "base64Binary";
+            case "hexbinary" -> "hexBinary";
+            case "byte", "boolean", "string", "int", "long", "short", "integer",
+                 "float", "double", "decimal" -> lower;
+            default -> type;
+        };
+    }
+
     public static Document newDocument() {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -68,12 +91,13 @@ public final class XmlUtils {
         return el;
     }
 
-    /** 追加带 xsi:type 的子元素 */
+    /** 追加带 xsi:type 的子元素（类型名统一规范化） */
     public static Element appendTyped(Document doc, Element parent, String nsUri, String prefix,
                                       String localName, String value, String xsdType) {
         Element el = element(doc, nsUri, prefix, localName);
         el.setAttributeNS(SoapNamespace.XSI, SoapNamespace.PREFIX_XSI + ":type",
-                SoapNamespace.PREFIX_XSD + ":" + (xsdType == null || xsdType.isEmpty() ? "string" : xsdType));
+                SoapNamespace.PREFIX_XSD + ":" + (xsdType == null || xsdType.isEmpty()
+                        ? "string" : canonicalType(xsdType)));
         el.setTextContent(value == null ? "" : value);
         parent.appendChild(el);
         return el;

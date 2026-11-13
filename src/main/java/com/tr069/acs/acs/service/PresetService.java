@@ -11,14 +11,17 @@ import com.tr069.acs.cwmp.model.InformRequest;
 import com.tr069.acs.cwmp.model.ParameterValueStruct;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.domain.entity.CpePreset;
+import com.tr069.acs.domain.entity.CpeProvisionState;
 import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.mapper.CpePresetMapper;
+import com.tr069.acs.mapper.CpeProvisionStateMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -46,6 +49,13 @@ public class PresetService {
 
     private static final String DEFAULT_CR_PASSWORD = "itms";
 
+    /**
+     * 内置纳管预设的执行间隔（小时）：0 = 快照永久有效。
+     * 纳管参数是否重发只由 {@code cpe_provision_state} 快照决定——
+     * 目标值变化或 BOOTSTRAP（恢复出厂/首上线）才重发，其余一律静默跳过
+     */
+    private static final int BUILTIN_INTERVAL_HOURS = 0;
+
     private static final String BUILTIN_NAME = "纳管（内置）";
 
     /** 内置纳管的动作：把 ACS 地址、上报间隔与连接请求凭据写回设备 */
@@ -62,9 +72,14 @@ public class PresetService {
 
     private final CpeDeviceMapper deviceMapper;
 
+    private final CpeProvisionStateMapper provisionStateMapper;
+
     private final CwmpRpcService cwmpRpcService;
 
     private final ObjectMapper objectMapper;
+
+    /** 连接请求派生凭据：配置了主密钥时，纳管写进设备的就是按序列号派生的凭据（与反连侧同一算法） */
+    private final ConnectionRequestGuard connReqGuard;
 
     /** 下发给设备的周期上报间隔(秒)，0 表示不改这一项 */
     @Value("${acs.device.provision.inform-interval-seconds:300}")
@@ -108,6 +123,11 @@ public class PresetService {
         boolean bootstrap = hasBootstrap(inform);
         Map<String, String> known = new LinkedHashMap<>();
         collectReported(inform, known);
+        // 恢复出厂/深度恢复出厂（BOOTSTRAP）：设备的纳管配置已被清掉，
+        // 先清除这台设备的下发快照，让预设重新收敛一轮并重新入库
+        if (bootstrap) {
+            clearProvisionState(sn);
+        }
         List<CpePreset> presets = listEnabled();
         if (presets.isEmpty()) {
             return;
@@ -115,6 +135,8 @@ public class PresetService {
         for (int round = 1; round <= MAX_ROUNDS; round++) {
             List<ParameterValueStruct> values = new ArrayList<>();
             List<Action> others = new ArrayList<>();
+            // 本轮各预设的下发快照（presetId → path=value）：下发成功后落库
+            Map<Long, Map<String, String>> snapshots = new LinkedHashMap<>();
             for (CpePreset preset : presets) {
                 if (!due(sn, preset, bootstrap)) {
                     continue;
@@ -122,17 +144,19 @@ public class PresetService {
                 if (!matches(preset, session, known)) {
                     continue;
                 }
-                collect(preset, session, known, values, others);
+                collect(preset, session, known, values, others, snapshots);
                 markRun(sn, preset);
             }
             for (Action action : others) {
                 sendOther(sn, action);
             }
-            // 没有要改的参数就到此为止：本轮没产生变化，下一轮也不会
+            // 没有要改的参数就到此为止：本轮没产生变化，下一轮也不会。
+            // 设备值已对上但快照还没记的（Inform 恰好带了这些参数），补记快照，之后静默跳过
             if (values.isEmpty()) {
+                persistSnapshots(sn, snapshots);
                 return;
             }
-            send(sn, values, known);
+            send(sn, values, known, snapshots);
         }
     }
 
@@ -172,12 +196,24 @@ public class PresetService {
                     preset.setEnabled(1);
                     preset.setConditionsJson("[]");
                     preset.setActionsJson(BUILTIN_ACTIONS);
-                    preset.setReprovisionIntervalHours(24);
+                    preset.setReprovisionIntervalHours(BUILTIN_INTERVAL_HOURS);
                     preset.setForceOnBootstrap(1);
                     preset.setBuiltIn(1);
                     preset.setRemark("上报后把 ACS 地址、上报间隔与连接请求凭据写回设备");
                     presetMapper.insert(preset);
                     log.info("已初始化内置纳管预设");
+                } else {
+                    // 内置预设的执行间隔跟随配置文件：存量库里是旧值时同步一次
+                    CpePreset builtin = presetMapper.selectOne(new LambdaQueryWrapper<CpePreset>()
+                            .eq(CpePreset::getBuiltIn, 1).last("LIMIT 1"));
+                    if (builtin != null && !Integer.valueOf(BUILTIN_INTERVAL_HOURS)
+                            .equals(builtin.getReprovisionIntervalHours())) {
+                        CpePreset patch = new CpePreset();
+                        patch.setId(builtin.getId());
+                        patch.setReprovisionIntervalHours(BUILTIN_INTERVAL_HOURS);
+                        presetMapper.updateById(patch);
+                        log.info("内置纳管预设执行间隔已同步为 {}（快照永久有效）", BUILTIN_INTERVAL_HOURS);
+                    }
                 }
                 builtinReady = true;
             } catch (Exception e) {
@@ -186,10 +222,20 @@ public class PresetService {
         }
     }
 
-    /** 收集一条预设要下的参数，已经对得上的跳过 */
+    /**
+     * 收集一条预设要下的参数，已经下发过的跳过。
+     * <p>跳过依据（按序列号寻库，重启不丢）：
+     * ① Inform 里设备上报的值与目标一致；② {@code cpe_provision_state} 快照里的值与目标一致
+     * 且还在校正时效内（快照只在该预设下发成功后写入）。命中即静默跳过，不打日志。
+     * 超过校正时效（预设的 reprovisionIntervalHours 小时）后强制重发一遍并刷新快照，
+     * 防止设备侧配置被人为改动后 ACS 永远发现不了。</p>
+     */
     private void collect(CpePreset preset, CpeSession session, Map<String, String> known,
-                         List<ParameterValueStruct> values, List<Action> others) {
+                         List<ParameterValueStruct> values, List<Action> others,
+                         Map<Long, Map<String, String>> snapshots) {
         String root = rootOf(session);
+        Snapshot stored = null;
+        Map<String, String> target = new LinkedHashMap<>();
         for (Action action : actionCache(preset)) {
             if (action == null || action.getType() == null) {
                 continue;
@@ -200,8 +246,18 @@ public class PresetService {
                 if (path == null || value == null) {
                     continue;
                 }
+                target.put(path, value);
                 // 已经对得上的不重复下发：设备每次上报都下发一遍只会占住下发窗口
                 if (value.equals(knownValue(known, action.getPath()))) {
+                    continue;
+                }
+                // 快照命中且还在校正时效内：之前下发成功过，静默跳过；
+                // 时效已过就放行重发，下发成功后快照随之刷新，进入下一个校正周期
+                if (stored == null) {
+                    stored = storedTargets(session.getSn(), preset.getId());
+                }
+                if (stored != null && value.equals(stored.targets().get(path))
+                        && withinWindow(stored, preset)) {
                     continue;
                 }
                 put(values, ParameterValueStruct.of(path, value));
@@ -209,17 +265,103 @@ public class PresetService {
                 others.add(action);
             }
         }
+        if (!target.isEmpty()) {
+            snapshots.put(preset.getId(), target);
+        }
+    }
+
+    /** 下发快照：目标参数值 + 落库时间（用于判断校正时效） */
+    private record Snapshot(Map<String, String> targets, LocalDateTime updatedAt) {
+    }
+
+    /** 快照是否还在校正周期内；hours<=0 表示快照永久有效（仅 BOOTSTRAP/目标变化时重发） */
+    private boolean withinWindow(Snapshot snapshot, CpePreset preset) {
+        Integer hours = preset.getReprovisionIntervalHours();
+        if (hours == null || hours <= 0) {
+            return true;
+        }
+        if (snapshot.updatedAt() == null) {
+            return false;
+        }
+        return snapshot.updatedAt().isAfter(LocalDateTime.now().minusHours(hours));
+    }
+
+    /** 按序列号 + 预设 ID 读下发快照，没有记录或读不出来返回 null（按未下发处理） */
+    private Snapshot storedTargets(String sn, Long presetId) {
+        if (sn == null || presetId == null) {
+            return null;
+        }
+        try {
+            CpeProvisionState state = provisionStateMapper.selectOne(
+                    new LambdaQueryWrapper<CpeProvisionState>()
+                            .eq(CpeProvisionState::getSn, sn)
+                            .eq(CpeProvisionState::getPresetId, presetId)
+                            .last("LIMIT 1"));
+            if (state == null || state.getTargetsJson() == null || state.getTargetsJson().isBlank()) {
+                return null;
+            }
+            Map<String, String> targets = objectMapper.readValue(state.getTargetsJson(),
+                    new TypeReference<Map<String, String>>() { });
+            return new Snapshot(targets, state.getUpdatedAt());
+        } catch (Exception e) {
+            log.warn("读取纳管下发快照失败，按未下发处理: sn={}, preset={}, err={}", sn, presetId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 下发成功后回写快照（sn + presetId 唯一），之后这台设备这组参数就静默跳过 */
+    private void persistSnapshots(String sn, Map<Long, Map<String, String>> snapshots) {
+        if (snapshots == null || snapshots.isEmpty() || sn == null) {
+            return;
+        }
+        for (Map.Entry<Long, Map<String, String>> entry : snapshots.entrySet()) {
+            try {
+                CpeProvisionState state = new CpeProvisionState();
+                state.setSn(sn);
+                state.setPresetId(entry.getKey());
+                state.setTargetsJson(objectMapper.writeValueAsString(entry.getValue()));
+                CpeProvisionState exist = provisionStateMapper.selectOne(
+                        new LambdaQueryWrapper<CpeProvisionState>()
+                                .eq(CpeProvisionState::getSn, sn)
+                                .eq(CpeProvisionState::getPresetId, entry.getKey()));
+                if (exist == null) {
+                    provisionStateMapper.insert(state);
+                } else {
+                    state.setId(exist.getId());
+                    provisionStateMapper.updateById(state);
+                }
+            } catch (Exception e) {
+                log.warn("记录纳管下发快照失败: sn={}, preset={}, err={}", sn, entry.getKey(), e.getMessage());
+            }
+        }
+    }
+
+    /** BOOTSTRAP（恢复出厂/首次上线）时清除这台设备的全部下发快照，让预设重新收敛 */
+    private void clearProvisionState(String sn) {
+        if (sn == null) {
+            return;
+        }
+        try {
+            provisionStateMapper.delete(new LambdaQueryWrapper<CpeProvisionState>()
+                    .eq(CpeProvisionState::getSn, sn));
+        } catch (Exception e) {
+            log.warn("清除纳管下发快照失败: sn={}, err={}", sn, e.getMessage());
+        }
     }
 
     /** 合并成一条 SetParameterValues 下发，并按新值继续收敛 */
-    private void send(String sn, List<ParameterValueStruct> values, Map<String, String> known) {
+    private void send(String sn, List<ParameterValueStruct> values, Map<String, String> known,
+                      Map<Long, Map<String, String>> snapshots) {
         log.info("预设下发: sn={}, 参数={}", sn, describe(values));
         List<ParameterValueStruct> copy = new ArrayList<>(values);
         cwmpRpcService.setParameterValues(sn, values, null)
                 .whenComplete((resp, ex) -> {
                     logResult(sn, resp, ex);
                     if (ex == null && !CwmpRpcService.isSessionFault(resp)) {
+                        // 设备应答成功才算"已下发"：落快照，之后同参数静默跳过；
+                        // 下发失败不落快照，设备下次上报会重新收敛
                         rememberCredentials(sn, copy);
+                        persistSnapshots(sn, snapshots);
                     }
                 });
         // 乐观更新：不等回应就按新值继续，失败的话下次上报会用设备真实值重新匹配
@@ -425,8 +567,8 @@ public class PresetService {
         String out = text
                 .replace("${acsUrl}", acsUrl())
                 .replace("${informInterval}", interval())
-                .replace("${crUsername}", crUser())
-                .replace("${crPassword}", crPassword())
+                .replace("${crUsername}", crUser(session))
+                .replace("${crPassword}", crPassword(session))
                 .replace("${sn}", nz(session.getSn()))
                 .replace("${productClass}", nz(session.getProductClass()))
                 .replace("${rootNode}", rootOf(session));
@@ -448,11 +590,19 @@ public class PresetService {
         return informIntervalSeconds > 0 ? String.valueOf(informIntervalSeconds) : "";
     }
 
-    private String crUser() {
+    private String crUser(CpeSession session) {
+        // 派生模式（conn-req-master-secret 已配置）：写进设备的用户名就是序列号，
+        // 密码按序列号派生——反连侧按同一算法算出，天然对上，不再依赖全局 itms
+        if (connReqGuard.derivedCredentialsEnabled()) {
+            return session.getSn();
+        }
         return isAuto(crUsername) ? DEFAULT_CR_USER : crUsername.trim();
     }
 
-    private String crPassword() {
+    private String crPassword(CpeSession session) {
+        if (connReqGuard.derivedCredentialsEnabled()) {
+            return connReqGuard.deriveConnReqPassword(session.getSn());
+        }
         return isAuto(crPassword) ? DEFAULT_CR_PASSWORD : crPassword.trim();
     }
 

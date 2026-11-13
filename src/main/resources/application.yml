@@ -173,15 +173,11 @@ acs:
 
   auth:
     # CPE -> ACS 认证的默认账号，设备级配置优先
-    # 免认证：写成 auto 或留空（含删除该配置项），任何账号密码都放行，
-    # 联调阶段设备侧账号密码写法不一时用它先跑通链路，上线前改回真实账号
+
     cpe-to-acs-username: auto
     cpe-to-acs-password: auto
-    # ACS -> CPE 反向连接（唤醒设备）用的账号密码，与上面「光猫连 ACS」那对不是一回事。
-    # 不同批次的光猫出厂 CR 密码各不相同，ACS 猜不出来，所以默认 itms/itms——
-    # 纳管时会把设备上的 CR 凭据统一改成这个值（见 acs.device.provision），
-    # 改成功后登记进台账，唤醒就以台账为准，不再靠猜。
-    # 某批次确定用别的密码就在这里改；留空或 auto 同样按 itms 处理
+    # ACS -> CPE 反向连接（唤醒设备）用的账号密码。
+
     acs-to-cpe-username: itms
     acs-to-cpe-password: itms
     # Digest nonce 有效期（秒），过期 nonce 认证失败；同一 nonce 只允许成功一次防重放
@@ -203,13 +199,8 @@ acs:
       # 下发给设备的 ACS 上报地址。留空则按 http://{acs.public-host}:{上报端口}{cpe-path} 拼
       acs-url: http://10.101.125.100:9090/ACS-server/ACS
       # 一并下发给设备的连接请求凭据，默认跟随 acs.auth.acs-to-cpe-*（即 itms/itms）。
-      # 各批次光猫出厂的 CR 密码不一样，ACS 拿不到就唤不醒它，所以纳管时统一改写，
-      # 写成功后同步登记进台账。这一项留空或 auto 时同样按 itms 处理
       connection-request-username: ${acs.auth.acs-to-cpe-username}
       connection-request-password: ${acs.auth.acs-to-cpe-password}
-      # 距上次下发超过该小时数才重发，0 表示每次 Inform 都发。
-      # 设备已被纳管时每次上报都写一遍纯属浪费下发窗口，由它控制校正频率
-      reprovision-interval-hours: 24
       # BOOTSTRAP 事件是否强制重发：设备恢复出厂后地址会变回原厂平台
       force-on-bootstrap: true
     # 业务信息（WAN/WLAN/SIP）采集：向在线设备下发 GetParameterValues 后回库解析，
@@ -256,6 +247,26 @@ acs:
       collect-timeout-ms: 900000
       # 手动采集前是否先用连接请求把设备叫起来。不需要（靠周期上报就够了）就设 false
       wakeup-enabled: true
+      # 连接请求目标 CIDR 白名单（逗号分隔，如 10.0.0.0/8,192.168.0.0/16）。
+      # 留空 = 不限网段（回环/组播/链路本地等受限地址始终拒绝）；
+      # ACS 与设备同内网时建议配成设备网段，防止设备上报的 URL 把请求引向别的目标（SSRF 防护）
+      conn-req-allowed-cidrs: ""
+      # 连接请求派生密码主密钥（≥16 字符）。配置后反连凭据按序列号一台一密：
+      # password = Base64URL(HMAC-SHA256(密钥, sn))。纳管下发（PresetService 内置预设）会自动把
+      # 派生凭据写进设备的 ManagementServer.ConnectionRequestUsername/Password，反连按同一算法算出，
+      # 无需手工同步。配置前已纳管的存量设备会先走一次常规凭据链回退（401 后自动降级），
+      # 待设备下一轮纳管校正后生效。留空 = 沿用常规凭据链（台账 → 已采参数 → acs.auth.acs-to-cpe-* → itms/itms）
+      conn-req-master-secret: ""
+      # 设备在线看门狗：台账上"在线"但超时未上报的设备先反向唤醒（默认 3 轮），
+      # 仍无上报才置离线。关掉后设备超时直接由台账清扫置离线
+      watchdog:
+        enabled: true
+        # 巡检间隔（毫秒）
+        interval-millis: 600000
+        # 唤醒多少轮仍无上报才置离线
+        max-retries: 3
+        # 判定"超时未上报"的门槛（秒）：0 = 按在线窗口（acs.session.online-window-seconds）自动判定
+        stale-after-seconds: 0
       # 按运营商的采集标准（子树 / GPN 策略 / 实例探测）与运营商自动识别都写死在代码里，
       # 见 CapabilityProfiles#builtin 与 DeviceCapabilityService，这里不落配置
       # 启动时自动补建 cpe_parameter 表，存量库升级时不用手工执行 DDL

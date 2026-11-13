@@ -495,7 +495,7 @@ public class DeviceBusinessService {
 
     /** 地址协议类型：{@code IPv4} / {@code IPv6} / {@code IPv4+IPv6}，空串表示判不出来 */
     private static String ipProtocolOf(Map<String, String> params, IspAdaptation adaptation) {
-        // 桥接也有地址族：真机页面上这条能改，别替设备决定，IPMode 是多少就显示多少
+        // 桥接也有地址族：IPMode 是多少就显示多少，不替设备决定
         String mode = firstNonBlank(params, adaptation.ipModeNames().toArray(String[]::new));
         switch (mode) {
             case "1":

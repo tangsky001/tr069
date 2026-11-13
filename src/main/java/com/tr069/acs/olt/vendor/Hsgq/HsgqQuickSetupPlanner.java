@@ -8,7 +8,7 @@ public final class HsgqQuickSetupPlanner {
     private HsgqQuickSetupPlanner() {
     }
 
-    /** 占位：鸿升光还没有一键开局的命令编排，需要时参考 hw 包里的华为实现补齐 */
+    /** 占位：鸿升光还没有一键开局的命令编排 */
     public static List<String> plan() {
         return List.of();
     }

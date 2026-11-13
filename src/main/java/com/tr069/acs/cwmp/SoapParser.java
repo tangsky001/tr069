@@ -201,10 +201,8 @@ public final class SoapParser {
             String valueType = null;
             if (valueEl != null) {
                 String type = valueEl.getAttributeNS(SoapNamespace.XSI, "type");
-                if (type != null && type.contains(":")) {
-                    valueType = type.substring(type.indexOf(':') + 1);
-                } else if (type != null && !type.isEmpty()) {
-                    valueType = type;
+                if (type != null && !type.isEmpty()) {
+                    valueType = XmlUtils.canonicalType(type);
                 }
             }
             result.add(ParameterValueStruct.builder()

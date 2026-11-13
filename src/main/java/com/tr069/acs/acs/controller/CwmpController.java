@@ -16,6 +16,7 @@ import com.tr069.acs.cwmp.CwmpFaultCode;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.cwmp.SoapEnvelopeBuilder;
 import com.tr069.acs.cwmp.SoapParser;
+import com.tr069.acs.cwmp.model.FaultStruct;
 import com.tr069.acs.cwmp.model.InformRequest;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.queue.ReportQueueService;
@@ -326,6 +327,14 @@ public class CwmpController {
             return;
         }
 
+        // 不认识的方法（非 Inform、非 CPE 主动请求、也非已知 RPC 响应）：按 CWMP 规范回 Fault 8000，
+        // 让设备明确收到"方法不支持"，而不是对着一个不带响应的 400 反复重试
+        if (message.getMethod() == null && !message.isFault()) {
+            log.warn("收到不支持的方法, conn={}, method={}", connId, methodName);
+            sendSoapFault(response, message.getCwmpId(), "8000", "Method not supported");
+            return;
+        }
+
         // 其余均为 CPE 对我方下发的响应
         String sn = resolveSn(connId, request);
         if (sn == null) {
@@ -382,6 +391,20 @@ public class CwmpController {
         session.setState(SessionState.READY);
         // 在同一响应里捎带下一条指令：设备收到 204 就认为本轮结束，不一定再发空 POST
         deliverOrSuspend(sn, session, request, response);
+    }
+
+    /** 给设备回一条 SOAP Fault（报文层面就声明不支持，用于无法识别的方法） */
+    private void sendSoapFault(HttpServletResponse response, String cwmpId,
+                               String faultCode, String faultString) throws IOException {
+        FaultStruct fault = FaultStruct.builder()
+                .soapFaultCode("SOAP-ENV:Client")
+                .faultString("CWMP fault")
+                .faultCode(faultCode)
+                .faultString(faultString)
+                .setParameterValuesFaultList(java.util.List.of())
+                .build();
+        writeXml(response, SoapEnvelopeBuilder.buildFault(fault, cwmpId,
+                SoapEnvelopeBuilder.DEFAULT_CWMP_VERSION));
     }
 
     /** 抢占这一轮会话的操作权；被别的实例抢到时回 400，让设备下次再来 */

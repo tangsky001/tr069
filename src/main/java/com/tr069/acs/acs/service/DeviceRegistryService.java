@@ -40,6 +40,16 @@ public class DeviceRegistryService implements ApplicationRunner {
     /** 在线判定窗口（秒）：最近一次上报落在窗口内就算在线 */
     @Value("${acs.session.online-window-seconds:900}")
     private long onlineWindowSeconds;
+
+    /** 看门狗是否启用（与 DeviceOnlineWatchdog 同口径）：启用时清扫窗口放宽，先给看门狗几轮唤醒机会 */
+    @Value("${acs.device.watchdog.enabled:true}")
+    private boolean watchdogEnabled;
+
+    @Value("${acs.device.watchdog.max-retries:3}")
+    private int watchdogMaxRetries;
+
+    @Value("${acs.device.watchdog.interval-millis:600000}")
+    private long watchdogIntervalMillis;
     private final ModelMappingService modelMappingService;
 
     private final AcsCoreLog coreLog;
@@ -127,6 +137,10 @@ public class DeviceRegistryService implements ApplicationRunner {
                 long effWindow = interval == null || interval <= 0
                         ? onlineWindowSeconds
                         : Math.max(onlineWindowSeconds, interval * 3);
+                // 看门狗开着：多留几轮唤醒时间（轮数 × 巡检间隔），唤醒救不活再离线
+                if (watchdogEnabled) {
+                    effWindow += watchdogMaxRetries * watchdogIntervalMillis / 1000;
+                }
                 if (device.getLastContactTime() == null
                         || device.getLastContactTime().isBefore(now.minusSeconds(effWindow))) {
                     markOffline(device.getSn());
@@ -138,7 +152,7 @@ public class DeviceRegistryService implements ApplicationRunner {
     }
 
     /** 批量取设备实际生效的 PeriodicInformInterval（秒），取不到的设备不在返回里 */
-    private Map<String, Long> loadInformIntervals(List<String> sns) {
+    public Map<String, Long> loadInformIntervals(List<String> sns) {
         Map<String, Long> result = new HashMap<>();
         try {
             List<CpeParameter> rows = cpeParameterMapper.selectList(

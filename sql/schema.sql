@@ -628,6 +628,17 @@ CREATE TABLE IF NOT EXISTS `cpe_preset` (
     KEY `idx_preset_run` (`enabled`, `priority`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '设备预设';
 
+-- ---------------------------- 纳管下发快照 ----------------------------
+CREATE TABLE IF NOT EXISTS `cpe_provision_state` (
+    `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `sn`           VARCHAR(64)  NOT NULL COMMENT '设备序列号（唯一标识）',
+    `preset_id`    BIGINT       NOT NULL DEFAULT 0 COMMENT '预设 ID',
+    `targets_json` TEXT         COMMENT '下发快照：path=value 的 JSON',
+    `updated_at`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_sn_preset` (`sn`, `preset_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '纳管下发快照';
+
 -- ---------------------------- 文件 ----------------------------
 CREATE TABLE IF NOT EXISTS `cpe_file` (
     `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',

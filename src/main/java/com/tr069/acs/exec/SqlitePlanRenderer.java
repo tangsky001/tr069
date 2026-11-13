@@ -356,6 +356,7 @@ public class SqlitePlanRenderer {
             errors.add("参数路径仍有未替换的实例号: " + realPath);
             return;
         }
+        value = ParamEnums.align(realPath, value);
         String type = valueTypeOf(realPath, value);
         if ("boolean".equalsIgnoreCase(type)) {
             value = IntentDeliveryService.booleanValue(value);

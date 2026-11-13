@@ -26,19 +26,19 @@ public class TemplateBuilder {
     /** TR-098 下 SSID 实例的挂载位置（目前这个型号只用到 TR-098） */
     private static final String TR098_WLAN = "LANDevice.1.WLANConfiguration.";
 
-    /** 2.4G 频段的 SSID 起始实例号（厂商约定，非推测） */
+    /** 2.4G 频段的 SSID 起始实例号 */
     public static final int SSID_24G = 1;
 
-    /** 5.8G 频段的 SSID 起始实例号（厂商约定，非推测） */
+    /** 5.8G 频段的 SSID 起始实例号 */
     public static final int SSID_58G = 5;
 
     /** 语音业务挂载位置，中兴 P22g-CIac 实测只有 1 个 VoiceService / VoiceProfile 实例 */
     private static final String VOICE_BASE = "Services.VoiceService.1.VoiceProfile.1.";
 
-    /** 一路 SIP 账号的起始 Line 实例号（厂商约定，非推测） */
+    /** 一路 SIP 账号的起始 Line 实例号 */
     public static final int LINE_FIRST = 1;
 
-    /** WAN 业务连接挂载位置，取自真实下发报文（权威参考，非推测） */
+    /** WAN 业务连接挂载位置 */
     public static final String WAN_BASE = "WANDevice.1.WANConnectionDevice.2.";
 
     /** AddObject 的对象名末段，末尾不带实例号——实例号由设备分配，事后才知道 */
