@@ -37,6 +37,8 @@ public enum RpcMethod {
     GET_ALL_QUEUED_TRANSFERS("GetAllQueuedTransfers"),
     SET_VOUCHERS("SetVouchers", false),
     GET_OPTIONS("GetOptions"),
+    /** 取设备自身的参数模型定义，返回 base64 XML */
+    GET_PARAMETER_VALUES_XML("GetParameterValuesXML"),
 
     // ---------------- CPE -> ACS（请求） ----------------
 
@@ -46,6 +48,8 @@ public enum RpcMethod {
     DU_STATE_CHANGE_COMPLETE("DUStateChangeComplete"),
     AUTONOMOUS_TRANSFER_COMPLETE("AutonomousTransferComplete"),
     AUTONOMOUS_DU_STATE_CHANGE_COMPLETE("AutonomousDUStateChangeComplete"),
+    /** 厂商私有：设备被本地操作唤醒时上报 */
+    KICKED("Kicked"),
 
     // ---------------- 响应 ----------------
 
@@ -107,5 +111,14 @@ public enum RpcMethod {
             }
         }
         return sb.toString();
+    }
+
+    /** 是否为 CPE 主动请求：ACS 必须回对应响应，否则设备会反复重报 */
+    public boolean isRequestFromCpe() {
+        return switch (this) {
+            case INFORM, TRANSFER_COMPLETE, REQUEST_DOWNLOAD, DU_STATE_CHANGE_COMPLETE,
+                    AUTONOMOUS_TRANSFER_COMPLETE, AUTONOMOUS_DU_STATE_CHANGE_COMPLETE, KICKED -> true;
+            default -> false;
+        };
     }
 }

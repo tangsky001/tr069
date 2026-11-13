@@ -3,6 +3,8 @@ package com.tr069.acs.acs.adaptation;
 import com.tr069.acs.acs.model.Isp;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /**
  * 通用档：未识别出运营商的设备走这里。
  * <p>
@@ -15,5 +17,12 @@ public class StandardAdaptation implements IspAdaptation {
     @Override
     public Isp isp() {
         return Isp.STANDARD;
+    }
+
+    // ==================== Telnet 使能参数 ====================
+
+    @Override
+    public List<String> telnetEnableNodes() {
+        return List.of("UserInterface.TelnetServer.", "DeviceInfo.X_HW_Telnet.");
     }
 }

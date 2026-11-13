@@ -182,9 +182,7 @@ public class TemplateBuilder {
         r.setPathPwd(line + "SIP.AuthPassword");
         r.setValPwd(TemplateVariables.SIP_PWD);
         r.setPathUri(line + "SIP.URI");
-        // URI 只放号码，不再拼 @代理：设备上「号码/用户名」两栏直接读 URI，
-        // 带上 @192.168.x.x 会被当成号码的一部分，运维看着像账号开错了。
-        // 注册/代理用的服务器由 ProxyServer、RegistrarServer 单独下发，不需要塞进 URI。
+        // URI 只放号码不拼 @代理：设备会把 @host 当成号码一部分；服务器由 ProxyServer/Registrar 单独下发
         r.setValUri(TemplateVariables.SIP_NUM);
         // 代理服务器挂在 VoiceProfile 一级，不是每个 Line 各一份
         r.setPathProxy(profile + "SIP.ProxyServer");
@@ -268,8 +266,7 @@ public class TemplateBuilder {
         wan.setValGw(TemplateVariables.WAN_GW);
         wan.setPathDns(p + "DNSServers");
         wan.setValDns(TemplateVariables.WAN_DNS);
-        // 静态与 DHCP 同为 WANIPConnection，绑定端口也一样要能绑：
-        // 漏了这条 path，静态连接就永远绑不上 LAN，以前是 Take("没登记端口") 当成不支持
+        // 静态与 DHCP 同为 WANIPConnection，漏了绑定端口这条 path，静态连接永远绑不上 LAN
         wan.setPathBindPort(p + "X_CMCC_BindLANPort");
         wan.setValBindPort("");
         deviceWanDao.upsert(wan);
@@ -352,8 +349,7 @@ public class TemplateBuilder {
         wan.setValConnType("IP_Routed");
         wan.setPathMtu(p + "MaxMTUSize");
         wan.setValMtu("");
-        // IP 协议版本三种业务共用同一个节点，与 MTU 一样放在公共部分；
-        // 值留空＝不改设备的现有地址族，只有模板上明确选了才下发
+        // IP 协议版本三种业务共用节点；值留空＝不改设备现有地址族，明确选了才下发
         wan.setPathIpMode(p + WAN_IP_MODE);
         wan.setValIpMode("");
         return wan;

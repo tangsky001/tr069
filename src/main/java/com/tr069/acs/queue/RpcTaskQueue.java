@@ -35,12 +35,7 @@ public class RpcTaskQueue {
     @Autowired(required = false)
     private RpcDeliveryWaiter waiter;
 
-    /**
-     * 原子入队 + 容量检查的 Lua 脚本。
-     * KEYS[1] = 队列 key
-     * ARGV[1] = max pending, ARGV[2] = ttl seconds, ARGV[3] = task json
-     * 返回: 1 成功, 0 队列已满
-     */
+    /** 原子入队 + 容量检查的 Lua 脚本：队列满返回 0，成功返回 1 */
     private static final DefaultRedisScript<Long> ENQUEUE_SCRIPT = new DefaultRedisScript<>(
             "local n = redis.call('LLEN', KEYS[1]) "
             + "if tonumber(n) >= tonumber(ARGV[1]) then return 0 end "
@@ -49,14 +44,7 @@ public class RpcTaskQueue {
             + "return 1",
             Long.class);
 
-    /**
-     * 原子清理过期采集指令的 Lua 脚本。
-     * 遍历整个列表，删除所有 batch 与当前批次不匹配的元素，
-     * 整个过程在 Redis 单线程内原子完成，不会误删并发入队的新指令。
-     * KEYS[1] = 队列 key
-     * ARGV[1] = currentBatch
-     * 返回: 删除的条数
-     */
+    /** 原子清理过期采集指令的 Lua 脚本：删掉 batch 不匹配的元素，Redis 单线程内完成不误删并发入队的新指令 */
     private static final DefaultRedisScript<Long> DROP_STALE_SCRIPT = new DefaultRedisScript<>(
             "local current = ARGV[1] "
             + "local all = redis.call('LRANGE', KEYS[1], 0, -1) "
@@ -85,6 +73,32 @@ public class RpcTaskQueue {
             + "  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) "
             + "end "
             + "return dropped",
+            Long.class);
+
+    /** 按 taskId 摘除队列元素的 Lua 脚本：读全部→过滤→回写，与 DROP_STALE 同套路 */
+    private static final DefaultRedisScript<Long> REMOVE_TASK_SCRIPT = new DefaultRedisScript<>(
+            "local all = redis.call('LRANGE', KEYS[1], 0, -1) "
+            + "local keep = {} "
+            + "local removed = 0 "
+            + "local marker = '\"taskId\":' .. ARGV[1] .. ',' "
+            + "for i, v in ipairs(all) do "
+            + "  if string.find(v, marker, 1, true) ~= nil "
+            + "    or string.find(v, '\"taskId\": ' .. ARGV[1] .. ',', 1, true) ~= nil then "
+            + "    removed = removed + 1 "
+            + "  else "
+            + "    table.insert(keep, v) "
+            + "  end "
+            + "end "
+            + "if removed > 0 then "
+            + "  redis.call('DEL', KEYS[1]) "
+            + "  for i, v in ipairs(keep) do "
+            + "    redis.call('RPUSH', KEYS[1], v) "
+            + "  end "
+            + "  if #keep > 0 then "
+            + "    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) "
+            + "  end "
+            + "end "
+            + "return removed",
             Long.class);
 
     /** 提交一条指令到设备队列 */
@@ -123,10 +137,7 @@ public class RpcTaskQueue {
         }
     }
 
-    /**
-     * 取出该设备下一条待下发指令，供空 POST 捎带。
-     * 跳过尚在退避期的指令（放回队尾），避免退避指令霸占队首阻塞后续指令。
-     */
+    /** 取该设备下一条待下发指令供空 POST 捎带；跳过退避期未到的指令（放回队尾），避免霸占队首 */
     public RpcTask poll(String sn) {
         String key = deviceKey(sn);
         List<RpcTask> skipped = new ArrayList<>();
@@ -138,18 +149,15 @@ public class RpcTaskQueue {
                 }
                 RpcTask task = objectMapper.readValue(json, RpcTask.class);
                 if (task.getNotBefore() > System.currentTimeMillis()) {
-                    // 退避期未结束：暂存，继续取下一条
                     skipped.add(task);
                     continue;
                 }
-                // 取到可下发的指令，先把跳过的放回队尾
                 requeueSkipped(key, skipped);
                 return task;
             }
         } catch (Exception e) {
             logFailure("读取指令队列", e);
         }
-        // 队列空了或异常：把跳过的放回去
         requeueSkipped(key, skipped);
         return null;
     }
@@ -173,10 +181,7 @@ public class RpcTaskQueue {
         }
     }
 
-    /**
-     * 把指令放回队尾（退避重试场景）。
-     * 旧实现放回队首会导致退避指令反复霸占队首，阻塞后续指令。
-     */
+    /** 把指令放回队尾（退避重试场景）：旧实现放队首会让退避指令反复霸占队首 */
     public void pushBack(RpcTask task) {
         try {
             redis.opsForList().rightPush(deviceKey(task.getSn()), toJson(task));
@@ -188,11 +193,7 @@ public class RpcTaskQueue {
         }
     }
 
-    /**
-     * 丢弃上一轮采集压在队列里的旧指令：只丢带批次号且不是当前批次的。
-     * 用 Lua 脚本原子完成「读全部 -> 过滤 -> DEL + RPUSH 回写」，
-     * 避免遍历期间并发入队的新指令被误删。
-     */
+    /** 丢弃上一轮采集压在队列里的旧指令：Lua 原子完成读全部→过滤→回写，不误删并发入队的新指令 */
     public int dropStale(String sn, String currentBatch) {
         if (currentBatch == null || currentBatch.isBlank()) {
             return 0;
@@ -223,28 +224,51 @@ public class RpcTaskQueue {
         }
     }
 
-    /**
-     * 扫描 Redis 队列中所有指令，返回仍在排队（非 running/非终态）的 taskId 列表。
-     * 进程重启后 RpcTaskRegistry 的内存 Map 清空，需要用此方法重建 pending 表，
-     * 否则这些指令的 CompletableFuture 永远不会完成。
-     */
+    /** 扫描仍在排队的 taskId：进程重启后内存 pending 表清空，需据此重建，否则 CompletableFuture 永不完成 */
     public List<Long> scanPendingTaskIds(String sn) {
         List<Long> ids = new ArrayList<>();
+        for (RpcTask task : scanPendingTasks(sn)) {
+            ids.add(task.getTaskId());
+        }
+        return ids;
+    }
+
+    /** 扫描仍在排队的任务全量信息（含 sn/rpc/提交时间），重建与清扫用 */
+    public List<RpcTask> scanPendingTasks(String sn) {
+        List<RpcTask> tasks = new ArrayList<>();
         try {
             List<String> all = redis.opsForList().range(deviceKey(sn), 0, -1);
             if (all == null || all.isEmpty()) {
-                return ids;
+                return tasks;
             }
             for (String json : all) {
                 RpcTask task = parseTask(json);
                 if (task != null && task.getTaskId() > 0) {
-                    ids.add(task.getTaskId());
+                    tasks.add(task);
                 }
             }
         } catch (Exception e) {
             logFailure("扫描排队指令", e);
         }
-        return ids;
+        return tasks;
+    }
+
+    /** 把指定任务从设备队列里摘掉（清扫判死时必须同步摘除，否则重启后又被重建、又被清扫，永远循环） */
+    public void remove(String sn, long taskId) {
+        if (sn == null || sn.isBlank()) {
+            return;
+        }
+        try {
+            Long removed = redis.execute(REMOVE_TASK_SCRIPT,
+                    Collections.singletonList(deviceKey(sn)),
+                    String.valueOf(taskId),
+                    String.valueOf(properties.getRpc().getQueueTtlSeconds()));
+            if (removed != null && removed > 0) {
+                log.info("已从队列摘除指令: sn={}, taskId={}", sn, taskId);
+            }
+        } catch (Exception e) {
+            logFailure("摘除排队指令", e);
+        }
     }
 
     /** 获取所有有指令排队的设备 SN */

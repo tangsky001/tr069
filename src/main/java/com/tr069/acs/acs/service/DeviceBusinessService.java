@@ -85,6 +85,8 @@ public class DeviceBusinessService {
             data.put(section.key(), groupInstances(params, section));
         }
         data.put("pon", ponParams(sn));
+        // 电信机型的 VLAN / 封装模式挂在 WANConnectionDevice.{i}.X_CT-COM_WANGponLinkConfig 上，按实例聚合会漏掉，先并回 WAN 行
+        mergeWanDeviceParams(params, data);
         enrichDevice(data);
         enrichWan(data, adaptation);
         enrichWifi(data);
@@ -165,9 +167,10 @@ public class DeviceBusinessService {
         log.info("采集设备业务参数: sn={}, pathCount={}", sn, paths.size());
         // PON/光模块参数不在业务分区实例下，单独补进采集清单
         paths.addAll(ponParams(sn).keySet());
-        // 点刷新要的是「现在的值」：先把它叫上来建立会话，不然指令只能在队列里
-        // 等它下一次周期上报，等满 collect-timeout-seconds 拿到的还是库里的旧值
+        // 点刷新要的是「现在的值」：先叫上来建立会话，不然指令在队列里等下一轮周期上报，等满超时拿到的还是库里的旧值
         capabilityService.wakeUpAndAwait(sn);
+        // WAN 多实例发现：库里可能只有实例 1（电信机对 NumberOfEntries 拒答），按实例 1 叶子模板盲探 2..N，探到就补整组叶子，否则「重新采集」永远只读到旧的一条
+        paths.addAll(discoverWanInstances(sn, paths));
         CompletableFuture<Map<String, String>> future =
                 capabilityService.readPathValues(sn, paths);
         String status;
@@ -176,7 +179,9 @@ public class DeviceBusinessService {
             status = "success";
         } catch (TimeoutException e) {
             status = "timeout";
-            log.warn("业务参数采集超时，返回已落库的部分结果: sn={}, paths={}", sn, paths.size());
+            // 半成品不落库：超时先返回库内旧快照；后台链把全部路径测完（读到或明确拒答）才统一落库
+            log.warn("业务参数采集超时，先返回库内快照，后台测完后统一落库: sn={}, paths={}",
+                    sn, paths.size());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             status = "fail";
@@ -187,6 +192,85 @@ public class DeviceBusinessService {
         Map<String, Object> data = summary(sn);
         data.put("collectStatus", status);
         return data;
+    }
+
+    /** WAN 多实例发现：按实例 1 叶子模板生成 2..N 探测路径（每实例读一条叶子），探到值再把整组叶子补回采集清单；读不到的由 readPathValues 二分容错自然跳过 */
+    private List<String> discoverWanInstances(String sn, List<String> paths) {
+        List<String> ipTpls = new ArrayList<>();
+        List<String> pppTpls = new ArrayList<>();
+        List<String> linkTpls = new ArrayList<>();
+        for (String path : paths) {
+            if (path.contains("WANConnectionDevice.1.WANIPConnection.1.")) {
+                ipTpls.add(path);
+            } else if (path.contains("WANConnectionDevice.1.WANPPPConnection.1.")) {
+                pppTpls.add(path);
+            } else if (path.contains("WANConnectionDevice.1.X_CT-COM_WANGponLinkConfig.")) {
+                linkTpls.add(path);
+            }
+        }
+        if (ipTpls.isEmpty() && pppTpls.isEmpty() && linkTpls.isEmpty()) {
+            return List.of();
+        }
+        // 探测路径 → {cd, ci, 类型(0=IP/1=PPP/2=GPON链路层)}：命中后按类型展开整组叶子
+        Map<String, int[]> probes = new LinkedHashMap<>();
+        for (int cd = 1; cd <= 8; cd++) {
+            for (int ci = 1; ci <= (cd == 1 ? 2 : 1); ci++) {
+                if (cd == 1 && ci == 1) {
+                    continue; // 实例 1 已在采集清单里
+                }
+                if (!ipTpls.isEmpty()) {
+                    probes.put(expandWanTpl(ipTpls.get(0), cd, ci), new int[]{cd, ci, 0});
+                }
+                if (!pppTpls.isEmpty()) {
+                    probes.put(expandWanTpl(pppTpls.get(0), cd, ci), new int[]{cd, ci, 1});
+                }
+            }
+            if (!linkTpls.isEmpty()) {
+                probes.put(expandWanTpl(linkTpls.get(0), cd, 1), new int[]{cd, 1, 2});
+            }
+        }
+        if (probes.isEmpty()) {
+            return List.of();
+        }
+        log.info("盲探 WAN 多实例: sn={}, probeCount={}", sn, probes.size());
+        Map<String, String> found;
+        try {
+            found = capabilityService.readPathValues(sn, new ArrayList<>(probes.keySet()))
+                    .get(collectTimeoutSeconds, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        } catch (Exception e) {
+            log.warn("盲探 WAN 多实例失败: sn={}, err={}", sn, e.getMessage());
+            return List.of();
+        }
+        List<String> extra = new ArrayList<>();
+        int hit = 0;
+        for (Map.Entry<String, int[]> entry : probes.entrySet()) {
+            String value = found.get(entry.getKey());
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            hit++;
+            int cd = entry.getValue()[0];
+            int ci = entry.getValue()[1];
+            List<String> tplsByType = entry.getValue()[2] == 0 ? ipTpls
+                    : entry.getValue()[2] == 1 ? pppTpls : linkTpls;
+            for (String tpl : tplsByType) {
+                extra.add(expandWanTpl(tpl, cd, ci));
+            }
+        }
+        if (hit > 0) {
+            log.info("盲探命中 {} 个 WAN 实例，追加 {} 条采集路径: sn={}", hit, extra.size(), sn);
+        }
+        return extra;
+    }
+
+    /** 实例 1 的路径模板 → 指定 (ConnectionDevice.cd, 连接.ci) 的路径 */
+    private static String expandWanTpl(String tpl, int cd, int ci) {
+        return tpl.replace("WANConnectionDevice.1.", "WANConnectionDevice." + cd + ".")
+                .replace("WANIPConnection.1.", "WANIPConnection." + ci + ".")
+                .replace("WANPPPConnection.1.", "WANPPPConnection." + ci + ".");
     }
 
     /** 挑出需要向设备重新读取的路径：命中分区实例对象的叶子参数 */
@@ -299,6 +383,55 @@ public class DeviceBusinessService {
     /** WAN 分区 key，与 SECTIONS 里的定义对应 */
     private static final String WAN_KEY = "wan";
 
+    /** 把 WANConnectionDevice 直属子对象（电信 X_CT-COM_WANGponLinkConfig 等）的参数并回同前缀 WAN 连接行；WAN(IP|PPP)Connection 自身也是直属子对象但排除——并给兄弟实例就是串数据 */
+    private void mergeWanDeviceParams(List<CpeParameter> params, Map<String, Object> data) {
+        if (!(data.get(WAN_KEY) instanceof List<?> list) || list.isEmpty()) {
+            return;
+        }
+        Pattern linkObject = Pattern.compile("\\.WANConnectionDevice\\.\\d+\\.[^.]+\\.$");
+        Map<String, Map<String, String>> byDevice = new TreeMap<>();
+        for (CpeParameter row : params) {
+            String parent = parentOf(row);
+            if (parent.isEmpty() || WAN_CONN_INSTANCE.matcher(parent).find()
+                    || !linkObject.matcher(parent).find()) {
+                continue;
+            }
+            String device = wanDevicePath(parent);
+            byDevice.computeIfAbsent(device, k -> new LinkedHashMap<>())
+                    .putIfAbsent(normalizeLeaf(DeviceCapabilityService.nameOf(row.getParamPath())),
+                            row.getParamValue());
+        }
+        if (byDevice.isEmpty()) {
+            return;
+        }
+        for (Object raw : list) {
+            if (!(raw instanceof Map<?, ?>)) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> item = (Map<String, Object>) raw;
+            Map<String, String> rowParams = paramsOf(item);
+            if (rowParams.isEmpty()) {
+                continue;
+            }
+            Map<String, String> extra = byDevice.get(wanDevicePath(
+                    String.valueOf(item.getOrDefault("path", ""))));
+            if (extra != null) {
+                extra.forEach(rowParams::putIfAbsent);
+            }
+        }
+    }
+
+    /** 从对象路径剥掉最后一段，得到父对象路径（保留结尾句点） */
+    private static String wanDevicePath(String objectPath) {
+        if (objectPath == null || objectPath.isEmpty()) {
+            return "";
+        }
+        String s = objectPath.endsWith(".") ? objectPath.substring(0, objectPath.length() - 1) : objectPath;
+        int idx = s.lastIndexOf('.');
+        return idx < 0 ? "" : s.substring(0, idx + 1);
+    }
+
 
     /** 给 WAN 连接补业务语义，并算出设备的管理地址 */
     @SuppressWarnings("unchecked")
@@ -314,6 +447,11 @@ public class DeviceBusinessService {
             }
             Map<String, Object> item = (Map<String, Object>) raw;
             Map<String, String> params = paramsOf(item);
+            // 电信私有名 X_CT-COM_VLANID 归一化后叫 VLANID，页面读标准名 VLANIDMark：补别名，VLAN ID 才不会恒显示 "-"
+            String vlan = firstNonBlank(params, "VLANIDMark", "VLANID");
+            if (vlan != null) {
+                params.put("VLANIDMark", vlan);
+            }
             String path = String.valueOf(item.getOrDefault("path", ""));
             String service = serviceOf(params, path);
             item.put("service", service);
@@ -357,8 +495,7 @@ public class DeviceBusinessService {
 
     /** 地址协议类型：{@code IPv4} / {@code IPv6} / {@code IPv4+IPv6}，空串表示判不出来 */
     private static String ipProtocolOf(Map<String, String> params, IspAdaptation adaptation) {
-        // 桥接也有地址族：真机页面上这条能改（IPv4 / IPv6 / IPv4+IPv6），
-        // 别替设备决定，IPMode 是多少就显示多少
+        // 桥接也有地址族：真机页面上这条能改，别替设备决定，IPMode 是多少就显示多少
         String mode = firstNonBlank(params, adaptation.ipModeNames().toArray(String[]::new));
         switch (mode) {
             case "1":
@@ -411,6 +548,10 @@ public class DeviceBusinessService {
             return "桥接";
         }
         String addr = firstNonBlank(params, "IPAddressingType", "AddressingType");
+        if (addr.isBlank()) {
+            // 电信定制机把获取地址方式放在 X_CT-COM_IPMode（GPON 链路对象上，随 WAN 行合并进来的）
+            addr = firstNonBlank(params, "IPMode");
+        }
         if (addr.isBlank()) {
             addr = typeLower.contains("ppp") ? "PPPoE" : "-";
         }
@@ -511,14 +652,10 @@ public class DeviceBusinessService {
             item.put("enabled", isWifiEnabled(params));
             item.put("encrypted", isWifiEncrypted(params));
             item.put("ssid", firstNonBlank(params, "SSID"));
-            // WLAN 的开关是 Enable，但状态是 Status，两个字段说的不是一回事：
-            // 页面上行状态灯看 up，芯片开关看 enabled
+            // WLAN 的开关是 Enable、状态是 Status，两个字段不是一回事：页面上行状态灯看 up，芯片开关看 enabled
             item.put("up", isUp(params));
             item.put("statusText", wifiStatusText(params));
-            // 编辑弹窗要填的是「真正可写的那个参数」：不同固件参数名不同，
-            // 拿 BeaconType 的值（Basic / 11i / WPAand11i）填进 IEEE11iEncryptionModes
-            // 设备会回 9003，所以这里按优先级把参数名和当前值一起下发，
-            // 前端不做任何协议参数的猜测
+            // 编辑弹窗要的是「真正可写的那个参数」：拿 BeaconType 的值填进 IEEE11iEncryptionModes 设备会回 9003，这里按优先级把参数名和当前值一起下发，前端不猜协议参数
             String[] encryption = pickParam(params,
                     "IEEE11iEncryptionModes", "BasicEncryptionModes", "WPAEncryptionModes");
             item.put("encryptionParam", encryption[0]);
@@ -663,7 +800,7 @@ public class DeviceBusinessService {
         }
     }
 
-    /** CWMP 的布尔写法不统一：{@code 1/0}、{@code true/false}、{@code Up/Down}、 */
+    /** CWMP 的布尔写法不统一：{@code 1/0}、{@code true/false}、{@code Up/Down} */
     private static boolean boolOf(String value, boolean fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
@@ -723,9 +860,7 @@ public class DeviceBusinessService {
             String mac = params.get("MACAddress");
             mac = mac == null ? "" : mac.trim();
             item.put("mac", mac);
-            // 铭牌 MAC = LAN 侧第一个网口的地址：设备标签上印的就是这个。
-            // WAN 的 MACAddress 是每条连接各自的，会随通道变，不能拿来认设备；
-            // 所以先在本分区取，WAN 段不再覆盖
+            // 铭牌 MAC = LAN 侧第一个网口的地址（设备标签印的就是它）；WAN 的 MACAddress 随通道变不能认设备，所以先在本分区取、WAN 段不覆盖
             if (faceplateMac.isEmpty()) {
                 faceplateMac = mac;
             }
@@ -811,8 +946,7 @@ public class DeviceBusinessService {
                 filtered.add(row);
             }
         }
-        // 服务器地址要先补再算语义：statusText / number / server 都读 params，
-        // 顺序反了的话 server 会先被判成「-」再也没机会改回来
+        // 服务器地址要先补再算语义：statusText/number/server 都读 params，顺序反了 server 会先被判成「-」再也没机会改回来
         Map<String, String> profileParams = profileSipParams(list);
         for (Map<String, Object> row : filtered) {
             mergeServerParams(row, profileParams);
@@ -867,8 +1001,7 @@ public class DeviceBusinessService {
             row.put("enabled", boolOf(params.get("Enable"), true));
             // 第几路：页面开编辑弹窗、按路下工单都要它，别让页面再拿路径做正则
             row.put("line", lineNoOf(String.valueOf(row.getOrDefault("path", ""))));
-            // 编辑表单要的字段一次给全（服务器参数已在上面按 VoiceProfile 补过），
-            // 端口没配的设备按 5060 显示，页面不再自己兜默认值
+            // 编辑表单要的字段一次给全（服务器参数已在上面按 VoiceProfile 补过）；端口没配按 5060 显示，页面不再自己兜默认值
             row.put("authUser", firstNonBlank(params, "AuthUserName", "UserName"));
             row.put("password", firstNonBlank(params, "AuthPassword"));
             row.put("registrar", firstNonBlank(params, "RegistrarServer"));
@@ -1127,8 +1260,7 @@ public class DeviceBusinessService {
             if (device != null) {
                 data.put("registerTime", device.getCreatedAt());
                 data.put("lastContactTime", device.getLastContactTime());
-                // 台账登记的型号一起带上：PON 类型判定要读它。
-                // 能力树没采到 ProductClass 时，台账里登记的型号是唯一线索
+                // 台账登记的型号一起带上：PON 类型判定要读它，能力树没采到 ProductClass 时台账是唯一线索
                 data.put("deviceType", device.getDeviceType());
                 data.put("productClass", device.getProductClass());
             }
@@ -1138,7 +1270,7 @@ public class DeviceBusinessService {
         return data;
     }
 
-    /** PON / 光模块参数：能力快照里路径含 PON 的参数（MySQL 排序规则大小写不敏感 */
+    /** PON / 光模块参数：能力快照里路径含 PON 的参数 */
     private Map<String, String> ponParams(String sn) {
         try {
             List<CpeParameter> rows = parameterMapper.selectList(new LambdaQueryWrapper<CpeParameter>()

@@ -84,6 +84,7 @@ public final class SoapParser {
     /** 解析 CPE 主动上报的 Inform */
     public static InformRequest parseInform(String xml) {
         Document doc = toDocument(xml);
+        String cwmpVersion = extractCwmpVersion(doc);
         Element body = firstChildElement(doc.getDocumentElement(), "Body");
         if (body == null) {
             throw new SoapException("Inform 报文缺少 Body");
@@ -92,7 +93,9 @@ public final class SoapParser {
         if (root == null || !"Inform".equals(localName(root))) {
             throw new SoapException("报文不是 Inform");
         }
-        return toInformRequest(root);
+        InformRequest req = toInformRequest(root);
+        req.setCwmpVersion(cwmpVersion);
+        return req;
     }
 
     /** 判断报文是否为空 POST（CPE 无内容上报） */
@@ -122,6 +125,34 @@ public final class SoapParser {
         }
         Element id = firstChildElement(header, "ID");
         return id == null ? "" : text(id);
+    }
+
+    /**
+     * 从 SOAP Envelope 的命名空间声明里提取设备声明的 CWMP 版本号。
+     * <p>设备 Inform 报文里 Envelope 会带 {@code xmlns:cwmp="urn:dslforum-org:cwmp-1-X"}，
+     * X 就是设备支持的 CWMP 版本（0~5）。取不到或格式不符则返回默认 {@code cwmp-1-0}，
+     * 保证向下兼容——老设备只认 cwmp-1-0 命名空间，ACS 回同样的版本不会出问题。
+     */
+    private static String extractCwmpVersion(Document doc) {
+        Element envelope = doc.getDocumentElement();
+        // 遍历 Envelope 上的所有 xmlns:* 声明
+        org.w3c.dom.NamedNodeMap attrs = envelope.getAttributes();
+        for (int i = 0; i < attrs.getLength(); i++) {
+            Node attr = attrs.item(i);
+            String nsUri = attr.getNamespaceURI();
+            if (nsUri != null && nsUri.equals(javax.xml.XMLConstants.XMLNS_ATTRIBUTE_NS_URI)) {
+                String prefix = attr.getLocalName();
+                String value = attr.getNodeValue();
+                if ("cwmp".equals(prefix) && value != null && value.startsWith(SoapNamespace.CWMP_PREFIX)) {
+                    String version = value.substring(SoapNamespace.CWMP_PREFIX.length());
+                    // 校验格式：cwmp-1-X（X=0~5，覆盖 TR-069 Amendment 1~6 全部版本）
+                    if (version.matches("cwmp-1-[0-5]")) {
+                        return version;
+                    }
+                }
+            }
+        }
+        return SoapEnvelopeBuilder.DEFAULT_CWMP_VERSION;
     }
 
     private static InformRequest toInformRequest(Element root) {
@@ -270,11 +301,47 @@ public final class SoapParser {
                 }
                 dict.put("OptionList", entries);
             }
+            case "GetParameterValuesXMLResponse" ->
+                    dict.put("XmlContent", textOfChild(root, "Content"));
             default -> {
                 // Inform 等 CPE 主动请求由专门逻辑处理
             }
         }
+        // CPE 主动请求（TransferComplete / RequestDownload / Kicked 等）拍平简单子节点，
+        // 供控制器取 CommandKey / FaultCode / FileType 等字段
+        RpcMethod reqMethod = RpcMethod.of(methodName);
+        if (reqMethod != null && reqMethod.isRequestFromCpe()) {
+            flattenSimpleChildren(root, dict);
+        }
         return dict;
+    }
+
+    /** 把无子元素的子节点拍平进字典 */
+    private static void flattenSimpleChildren(Element root, Map<String, Object> dict) {
+        NodeList children = root.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node n = children.item(i);
+            if (!(n instanceof Element e)) {
+                continue;
+            }
+            if (e.getChildNodes().getLength() > 0) {
+                boolean hasElement = false;
+                NodeList inner = e.getChildNodes();
+                for (int j = 0; j < inner.getLength(); j++) {
+                    if (inner.item(j) instanceof Element) {
+                        hasElement = true;
+                        break;
+                    }
+                }
+                if (hasElement) {
+                    continue;
+                }
+            }
+            String key = localName(e);
+            if (!dict.containsKey(key)) {
+                dict.put(key, text(e));
+            }
+        }
     }
 
     private static List<Map<String, Object>> transferList(Element root, boolean all) {
@@ -335,6 +402,12 @@ public final class SoapParser {
                     .append("; Value = ").append(p.getValue())
                     .append("; Value_Type = ").append(p.getValueType())
                     .append("\n");
+        }
+        if ("GetParameterValuesXMLResponse".equals(methodName)) {
+            String xml = textOfChild(root, "Content");
+            if (!xml.isEmpty()) {
+                sb.append("XmlContent = ").append(xml).append("\n");
+            }
         }
         return sb.toString();
     }

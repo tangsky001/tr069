@@ -314,8 +314,7 @@ public final class OltInfoParser {
         if (!TEMPERATURE_WORD.matcher(text).find() && !TEMPERATURE_SENSOR_HEADER.matcher(text).find()) {
             return temperatures;
         }
-        // 华为 MA5600T/MA5683T 走「Slot Card Sensor Status Current」这块表，
-        // 一块板卡多个传感器时取最高温，避免把传感器号当成温度
+        // 华为 MA5600T/MA5683T 走「Slot Card Sensor Status Current」表，多传感器取最高温，避免把传感器号当成温度
         if (TEMPERATURE_SENSOR_HEADER.matcher(text).find()) {
             Matcher sensor = TEMPERATURE_SENSOR_ROW.matcher(text);
             while (sensor.find()) {
@@ -666,9 +665,7 @@ public final class OltInfoParser {
             int online = summary.group(5) == null ? countOnline(text, portNo) : Integer.parseInt(summary.group(5));
             counts.put(portNo, new int[]{total, online});
         }
-        // 明细行兜底：整段没有汇总行（部分版本只有表格），或者只有部分端口带汇总行
-        // （分页截断、只在有 ONT 的口打汇总）时，用表格行数补上——否则这些口会被当成 0 个 ONT，
-        // 页面就把明明有 ONT 在线的口画成离线。
+        // 明细行兜底：整段或部分端口没有汇总行（分页截断、只在有 ONT 的口打汇总）时用表格行数补上，否则有 ONT 在线的口会被画成离线
         Map<Integer, int[]> fromRows = new LinkedHashMap<>();
         Matcher row = ONT_ROW.matcher(text);
         while (row.find()) {
@@ -838,13 +835,7 @@ public final class OltInfoParser {
     private static final Pattern PORT_STATE_ALL_PORT = Pattern.compile(
             "(?i)^\\s*Port\\s*[:：]?\\s*(\\d+)\\b");
 
-    /**
-     * 解析 {@code display port state all}（接口视图）的多口合并回显。
-     * 每个口的字段块以 "Port N" 行开头连续输出，按此分割后逐块复用
-     * {@link #parsePortStateOptics} 解析。
-     *
-     * @return 端口号 → 光模块数值 的映射，空回显返回空 Map
-     */
+    /** 解析 {@code display port state all}（接口视图）的多口合并回显：按 "Port N" 行分割口块，逐块复用 {@link #parsePortStateOptics}；返回端口号 → 光模块数值 */
     public static Map<Integer, OltPort> parsePortStateOpticsAll(String text) {
         Map<Integer, OltPort> result = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -982,10 +973,7 @@ public final class OltInfoParser {
     private static final Pattern PORT_VLAN_CONFIG = Pattern.compile(
             "(?im)^\\s*port\\s+vlan\\s+(\\d{1,4})(?:\\s+to\\s+(\\d{1,4}))?\\s+0/(\\d{1,2})/(\\d{1,2})\\s*$");
 
-    /**
-     * 从配置脚本解析 VLAN 定义列表。
-     * 配置脚本 {@code [vlan-config]} 段的 {@code vlan N smart} / {@code vlan N to M smart} 行。
-     */
+    /** 从配置脚本 {@code [vlan-config]} 段的 {@code vlan N smart} / {@code vlan N to M smart} 行解析 VLAN 定义列表 */
     public static List<OltVlan> parseVlansFromConfig(String text) {
         List<OltVlan> vlans = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -1008,17 +996,12 @@ public final class OltInfoParser {
         return vlans;
     }
 
-    /**
-     * 从配置脚本解析端口 VLAN 放通。
-     * 配置脚本 {@code [vlan-config]} 段的 {@code port vlan N 0/slot/port} 行，
-     * 按 (slot, port) 聚合成 {@link OltPortVlan}，返回的列表每个端口一条。
-     */
+    /** 从配置脚本 {@code [vlan-config]} 段的 {@code port vlan N 0/slot/port} 行解析端口 VLAN 放通，按 (slot, port) 聚合，每端口一条 */
     public static List<OltPortVlan> parsePortVlansFromConfig(String text) {
         List<OltPortVlan> result = new ArrayList<>();
         if (text == null || text.isBlank()) {
             return result;
         }
-        // key: slot/port
         Map<String, OltPortVlan> byIface = new LinkedHashMap<>();
         Matcher m = PORT_VLAN_CONFIG.matcher(text);
         while (m.find()) {
@@ -1122,7 +1105,6 @@ public final class OltInfoParser {
     private static final Pattern LINE_TCONT_ROW = Pattern.compile(
             "(?i)t-?cont\\s+(\\d{1,4})\\s+DBA-profile(?:-id)?\\s+(\\d{1,4})");
 
-    /** {@code GEM port 1  T-CONT 1  Mapping mode VLAN  41} */
     /** GEM port 行：回显 {@code GEM port 1 ...} 与配置脚本 {@code gem add 0 eth tcont 1} */
     private static final Pattern LINE_GEM_ROW = Pattern.compile(
             "(?i)^\\s*(?:GEM\\s+port\\s+|gem\\s+add\\s+)(\\d{1,4})\\b");
@@ -1245,8 +1227,7 @@ public final class OltInfoParser {
             if (line.isEmpty() || line.startsWith("-")) {
                 continue;
             }
-            // 概要表头（Profile-ID Profile-name Binding times）与统计行跳过；
-            // 明细回显的 "Profile-ID :100" 带冒号，是块头，不能跳
+            // 概要表头与统计行跳过；明细回显的 "Profile-ID :100" 带冒号是块头，不能跳
             String lowerLine = line.toLowerCase(Locale.ROOT);
             if ((lowerLine.startsWith("profile") && !line.contains(":"))
                     || lowerLine.startsWith("total") || lowerLine.startsWith("notes:")) {
@@ -1442,7 +1423,6 @@ public final class OltInfoParser {
 
     // ------------------------------------------------------------ 业务流 / ONT 能力模板
 
-    /** 业务流行：{@code INDEX VLAN VLAN PORT F/S/P ONT GEM ...} */
     /** 配置脚本里的 service-port 行（{@code display current-configuration}） */
     private static final Pattern SERVICE_PORT_CONFIG = Pattern.compile(
             "(?im)^\\s*service-port\\s+(\\d{1,4})\\s+vlan\\s+(\\d{1,4})\\s+gpon\\s+(\\d{1,2})/(\\d{1,2})/(\\d{1,3})"
@@ -1559,8 +1539,7 @@ public final class OltInfoParser {
         if (text == null || text.isBlank()) {
             return pairs;
         }
-        // 回显是「<Gem Index N> + 表头两行 + 分隔线 + 数据行」；表头第二行（index/type/ID...）
-        // 不含数字，所以按「表头 → 分隔线 → 数据行」三段走，别在表头第二行就判定表结束了
+        // 回显是「<Gem Index N> + 表头两行 + 分隔线 + 数据行」；表头第二行不含数字，按三段走，别在表头第二行就判表结束
         boolean header = false;
         boolean rows = false;
         int currentGem = -1;
@@ -1826,9 +1805,7 @@ public final class OltInfoParser {
             return blocks;
         }
         LinkedHashMap<String, String> current = null;
-        // 没冒号的行暂存：可能是折断的标签前半段（"ONT optical module power" +
-        // 下一行 "control capability: ..."），也可能是值的续行（"the TX and RX power can be"
-        // + 下一行 "controlled separately"），等下一行到了再判断归谁。
+        // 没冒号的行暂存：可能是折断的标签前半段（"ONT optical module power" + 下一行 "control capability: ..."），也可能是值的续行，等下一行到了再判断归谁
         StringBuilder carry = new StringBuilder();
         for (String rawLine : text.split("\\R")) {
             String line = rawLine.trim();
@@ -1871,9 +1848,7 @@ public final class OltInfoParser {
                 } else if (current.get(lastKey).endsWith(fragment)) {
                     // 已经拼过，别重复
                 } else {
-                    // 上一条键的值有内容：暂存行要么是值的续行（贴回去），
-                    // 要么是下一条键的前半段（拼回键名）。值续行的特征是当前键值非空且
-                    // 暂存行以小写字母开头（英文回显的标签都以大写/数字开头）
+                    // 暂存行要么是值的续行（贴回去），要么是下一条键的前半段（拼回键名）；值续行以小写字母开头（英文标签以大写/数字开头）
                     if (Character.isLowerCase(fragment.charAt(0))) {
                         current.put(lastKey, current.get(lastKey) + ' ' + fragment);
                     } else {
@@ -1924,8 +1899,7 @@ public final class OltInfoParser {
         info.setIp(ontField(text,
                 "ONT IP 0 address/mask",
                 "ONT IP 0 地址/掩码", "ONT IP 0地址/掩码"));
-        // MAC：不同版本写法不一，具体的在前、笼统的在后；都没有就是设备不给，采集侧按认证码还原。
-        // 标签匹配落空时再试 ASCII 锚定（标签中文部分被字符集解成乱码时照样能取到值）
+        // MAC 各版本写法不一，具体的在前笼统的在后；标签匹配落空再试 ASCII 锚定（中文标签被解成乱码时照样能取到值）
         String mac = ontField(text,
                 "MAC address", "MAC 地址", "MAC地址", "ONT MAC address", "MAC");
         if (mac == null) {
@@ -1967,9 +1941,7 @@ public final class OltInfoParser {
         if (text == null || text.isBlank()) {
             return info;
         }
-        // MAC 不按中文标签匹配：ONT MAC 这段永远是 ASCII，后面的「地址」两个字
-        // 在字符集解错时就是乱码，标签匹配会整个丢掉——锚定 ONT MAC、懒跳过 ≤10 个
-        // 任意字符（中文/英文/乱码都行）再取冒号后的值，稳得多
+        // MAC 不按中文标签匹配：ONT MAC 永远是 ASCII，字符集解错时中文标签就是乱码——锚定 ONT MAC、懒跳过 ≤10 个任意字符再取值，稳得多
         Matcher mac = ONT_IPCONFIG_MAC.matcher(text);
         info.setMac(mac.find() ? normalizeMac(mac.group(1)) : null);
         // ONT IP 后必须紧跟空白：这样不会误配到第一行的「ONT IP索引 : 0」
@@ -2119,8 +2091,7 @@ public final class OltInfoParser {
             return true;
         }
         String lower = text.toLowerCase(Locale.ROOT);
-        // 只认「没有待注册 ONT」这几种说法，不能写成宽泛的 not exist：
-        // "command does not exist" 是命令不支持，那个是要报错上去的
+        // 只认「没有待注册 ONT」这几种说法，不能写成宽泛的 not exist——"command does not exist" 是命令不支持，要报错上去的
         return lower.contains("automatically found")
                 || lower.contains("no ont") || lower.contains("0 ont");
     }
@@ -2138,8 +2109,7 @@ public final class OltInfoParser {
             if (trimmed.isEmpty()) {
                 continue;
             }
-            // 分隔线纯装饰：表格上下各一根，中间也可能有。清列宽会把已经认好的表头丢掉，
-            // 所以直接跳过；真换了表时会再次识别到新表头
+            // 分隔线纯装饰直接跳过：清列宽会把已认好的表头丢掉；真换表时会再次识别到新表头
             if (trimmed.matches("[-= ]+")) {
                 continue;
             }
@@ -2148,8 +2118,7 @@ public final class OltInfoParser {
                 continue;
             }
             List<String> cells = autofindCells(line, candidate);
-            // 每行都试一下像不像表头，命中就按它定列。不限定「分隔线后第一行」，
-            // 是因为回显里常常还夹着命令原样回打的一行
+            // 每行都试像不像表头，不限「分隔线后第一行」——回显里常夹着命令原样回打的一行
             if (autofindIsHeader(cells)) {
                 bounds = candidate;
                 headers = autofindHeaders(cells);
@@ -2164,9 +2133,7 @@ public final class OltInfoParser {
             }
         }
         if (items.isEmpty()) {
-            // 表格认不出来还有第二种格式：部分版本（以及自定义厂商的光猫，如 CIOT/RCOM）
-            // 回的是竖排键值，一台一段——Number : 1 / F/S/P : 0/2/0 / Ont SN : ...，
-            // 段间用分隔线隔开。表格解析对它一行都收不到，这里兜底按段拆。
+            // 表格认不出来还有第二种格式：部分版本回竖排键值一台一段（Number : 1 / F/S/P : 0/2/0 / Ont SN : ...），表格解析收不到，兜底按段拆
             items = autofindFromBlocks(text);
         }
         return items;

@@ -263,6 +263,26 @@
                             </resources>
                         </configuration>
                     </execution>
+                    
+                    <execution>
+                        <id>copy-application-yml-to-target</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/main/resources</directory>
+                                    <includes>
+                                        <include>application.yml</include>
+                                    </includes>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>copy-web-dist-into-classes</id>
                         <phase>prepare-package</phase>
@@ -291,6 +311,16 @@
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
                         </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+            <!--复制配置文件不在打包进jar            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>application.yml</exclude>
                     </excludes>
                 </configuration>
             </plugin>

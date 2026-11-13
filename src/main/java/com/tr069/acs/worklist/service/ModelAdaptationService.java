@@ -53,13 +53,16 @@ public class ModelAdaptationService {
     private final DeviceDao deviceDao;
     private final AdaptationManager adaptationManager;
 
-    /** 测试时等待光猫返回参数树的最长时间，秒 */
-    @Value("${acs.adapt.test-timeout-seconds:120}")
+    /** 测试时等待光猫返回参数树的最长时间，秒。上千参数按批串行读，120s 经常不够 */
+    @Value("${acs.adapt.test-timeout-seconds:300}")
     private int testTimeoutSeconds;
 
     /** 单次试探下发等待设备响应的时间，秒 */
     @Value("${acs.adapt.probe-timeout-seconds:30}")
     private int probeTimeoutSeconds;
+
+    /** 算「采到了数据」的采集状态：partial（GPN 回 9002 只能 GPV 兜底读值，电信定制固件均如此且读回真实参数）也算成功 */
+    private static final Set<String> COLLECTED_OK = Set.of("success", "partial");
 
     // ==================== 适配状态 ====================
 
@@ -78,9 +81,7 @@ public class ModelAdaptationService {
                 device.getManufacturer(), device.getProductClass(),
                 device.getSoftwareVersion(), device.getHardwareVersion(), sn);
         if (model == null) {
-            // 型号表登记不上（库不可用 / 唯一键冲突回查也没查到）时不能抛异常：
-            // status 是批量接口，一台抛了整页拿不到结果，列表会把所有设备都显示成未适配。
-            // 适配结果在 SQLite 模板库里，照旧能判
+            // 型号表登记不上时不能抛异常：status 是批量接口，一台抛了整页拿不到结果；适配结果在 SQLite 模板库里照旧能判
             Device only = adaptedInTemplateLib(device.getIsp(), ModelMappingService.buildModelKey(
                     device.getProductClass(), device.getSoftwareVersion()));
             data.put("isp", device.getIsp());
@@ -118,8 +119,7 @@ public class ModelAdaptationService {
             data.put("adaptedIsp", adaptedIsp);
             data.put("templateLibId", tpl.getId());
         }
-        // 二、模板库里没有（老库迁移前）才退到同名 YML 适配档：
-        // 已适配看 adapted 标记，XML 只是能力档案，存在不算适配过
+        // 二、模板库里没有（老库迁移前）才退到 YML 适配档：已适配看 adapted 标记，XML 只是能力档案，存在不算适配过
         if (!adapted) {
             adapted = profileStore.isAdapted(model);
             if (adapted) {
@@ -127,9 +127,7 @@ public class ModelAdaptationService {
             }
         }
         if (!adapted) {
-            // 设备上报的 isp 可能与适配申报的 isp 不同（上报为空/standard 而适配给了 CMCC），
-            // 同型号只要在任意运营商下有 adapted: true 的档案就视为已适配——
-            // 不然适配完列表永远还挂着红色的「适配」入口
+            // 设备上报的 isp 可能与适配申报的不同，同型号在任意运营商下有 adapted:true 档案即视为已适配——不然适配完列表永远挂着红色「适配」入口
             adaptedIsp = profileStore.findAdaptedIsp(model.getModelKey());
             if (adaptedIsp != null) {
                 adapted = true;
@@ -139,9 +137,7 @@ public class ModelAdaptationService {
             }
         }
         if (!adapted) {
-            // 兜底：适配文件没生成或没找到时，以数据库里的状态为准。
-            // 只要库里有 config_path 且状态 READY，就视为已适配——配置已经落库，
-            // 用户明确说"适配后配置已经在数据库中保存了，可以直接调库"
+            // 兜底：适配文件没生成或没找到时以库为准——有 config_path 且状态 READY 就视为已适配，配置已落库
             if (model.getConfigPath() != null && !model.getConfigPath().isBlank()
                     && CpeModel.STATUS_READY.equals(model.getStatus())) {
                 adapted = true;
@@ -155,8 +151,7 @@ public class ModelAdaptationService {
         data.put("configPath", model.getConfigPath());
         data.put("adaptPath", model.getAdaptPath());
         data.putIfAbsent("profile", profileStore.read(model));
-        // 运营商中文名与能力串：设备详情弹窗原来自己拿码表翻、自己拼「网口 4×千兆、SIP 2路…」，
-        // 列表页与北向也在拼同一段文字，口径应只在这里
+        // 运营商中文名与能力串：设备详情/列表页/北向都在拼同一段文字，口径只在这里
         data.put("ispText", ispTextOf(data));
         data.put("capabilityText", adapted ? capabilityTextOf(data) : null);
         return data;
@@ -279,8 +274,9 @@ public class ModelAdaptationService {
     public Map<String, Object> test(String sn, AdaptRequest request) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("requested", request.asMap());
-        CollectResult collect = collectTree(sn);
+        CollectResult collect = collectTree(sn, request.getIsp());
         data.put("collectStatus", collect.status);
+        data.put("collectInterrupted", collect.interrupted);
         if (collect.error != null) {
             data.put("collectError", collect.error);
         }
@@ -290,27 +286,36 @@ public class ModelAdaptationService {
                         .orderByAsc(CpeParameter::getParamPath));
         Detection detected = detect(params);
         data.put("detected", detected.asMap());
+        List<Check> checks = checks(detected, request);
+        data.put("checks", checks.stream().map(Check::asMap).toList());
         List<String> reasons = new ArrayList<>(compare(detected, request));
-        // 采集没成功的话，解析结果不可信，也不再做试探下发
-        boolean collected = "success".equals(collect.status);
-        if (!collected && reasons.isEmpty()) {
-            reasons.add("能力采集未成功(" + collect.status + ")"
-                    + (collect.error == null ? "" : "：" + collect.error));
+        List<String> notes = new ArrayList<>(notes(detected, request));
+        // 采集状态判定：partial 也算数——电信定制固件 GPN 对父对象一律 9002 只能 GPV 兜底读值，照样读回真实参数，判失败等于把电信设备挡在门外。
+        // running 是「还没采完」不是失败：等待超时但能力比对全过时按通过处理，结论基于已采到的参数
+        boolean collected = COLLECTED_OK.contains(collect.status);
+        if ("running".equals(collect.status)) {
+            if (reasons.isEmpty()) {
+                notes.add("采集仍在进行（等待超时未结束），本次结论基于已采到的参数，能力比对全部通过");
+            }
+            collected = false;
+        } else if (!COLLECTED_OK.contains(collect.status) && reasons.isEmpty()) {
+            if (collect.interrupted) {
+                reasons.add("设备会话中断，采集未完成（不是能力不满足），请重新测试");
+            } else {
+                reasons.add("能力采集未成功(" + collect.status + ")"
+                        + (collect.error == null ? "" : "：" + collect.error));
+            }
         }
         // 真下发一次：把参数当前值原样写回，验证光猫确实能执行这些能力
         List<Probe> probes = collected ? probeCapabilities(sn, params, request) : List.of();
         data.put("probes", probes.stream().map(Probe::asMap).toList());
-        // 试探失败只作提示：Writable 未知时候选面本来就宽，写回同值被拒常常只是值域
-        // 问题（MaxBitRate 上报「1000M」，标准是 bps 数字或 Auto），不代表能力缺失，
-        // 拿它拦人会让这类固件永远适不上
-        List<String> notes = new ArrayList<>(notes(detected, request));
+        // 试探失败只作提示：Writable 未知时候选面本来就宽，写回同值被拒常只是值域问题（MaxBitRate 报「1000M」），不代表能力缺失
         for (Probe p : probes) {
             if (p.failed) {
                 notes.add("参数下发未通过：" + p.capability + " " + p.path + " -> " + p.status);
             }
         }
-        // 没挑到候选的组要说清原因。表格里那个「-」容易被读成「这台没有这块能力」，
-        // 其实多数时候是这条路径压根没采到，或参数当前值是空的
+        // 没挑到候选的组要说清原因：表格里的「-」多数时候是路径没采到或值为空，不是没有这块能力
         for (ProbeGroup group : PROBE_GROUPS) {
             if (!group.required(request)) {
                 continue;
@@ -363,12 +368,12 @@ public class ModelAdaptationService {
         modelMappingService.update(model.getId(), pathPatch);
         // 导出能力树 XML 并回写 config_path（能力档案，不代表已适配）
         ModelTreeStore.ExportResult export = modelTreeStore.export(sn, true, isp);
+        // 落库存申报值而非实测值：申报是目标、实测只是验证，实测受固件参数树完整度影响可能偏低，存实测会拖累同型号设备
         CpeModel patch = new CpeModel();
         patch.setCapLanPorts(request.getLanPorts());
         patch.setCapLanSpeed(request.getLanSpeed());
         patch.setCapSipCount(request.getSipCount());
-        // 实测有 5.8G 但申报只勾了 2.4G 时按实测补齐：申报漏掉 5G 会让模板库里根本
-        // 没有 wlan_b 那张表，后面想改一次 5G 的 SSID 一律报「5G 模板里没有实例」
+        // 实测有 5.8G 但申报只勾 2.4G 时按实测补齐：漏报 5G 会让模板库里没有 wlan_b 表，改 5G SSID 一律报「模板里没有实例」
         String wifiSpec = request.getWifiSpec();
         if (detected.wifiBands.contains("5.8G") && wifiSpec != null
                 && wifiSpec.contains("2.4") && !wifiSpec.contains("5")) {
@@ -382,16 +387,13 @@ public class ModelAdaptationService {
             patch.setSampleSn(sn);
         }
         CpeModel updated = modelMappingService.update(model.getId(), patch);
-        // 申报值必须同步进 SQLite 模板库：上面的 export 发生在申报之前，
-        // 那一刻库里还没有能力字段，生成不出模板；这里回写一次并按申报重新生成
+        // 申报值必须同步进 SQLite 模板库：上面 export 发生在申报之前，库里还没有能力字段生成不出模板；这里回写并按申报重新生成
         modelTreeStore.applyCapability(isp, updated.getModelKey(), updated);
         // 测试通过才写适配档：adapted: true，同型号设备上线读它判定已适配
         String adaptPath = profileStore.writeAdapted(updated, isp, sn, request);
         updated = modelMappingService.update(model.getId(),
                 solePath(adaptPath));
-        // 适配时选定的运营商就是这台设备的运营商：光猫上报通常不带运营商（或只带
-        // 通用值），人工申报的归属才是生效值，写回台账后列表、详情、能力树归档
-        // 都按它走，不必再从适配档反推
+        // 适配时选定的运营商写回台账：光猫上报通常不带运营商，人工申报的归属才是生效值，列表/详情/能力树归档都按它走
         if (!isp.equals(device.getIsp())) {
             CpeDevice devicePatch = new CpeDevice();
             devicePatch.setId(device.getId());
@@ -421,10 +423,15 @@ public class ModelAdaptationService {
 
     /** 强制采集并等待结束，返回采集状态与首条错误 */
     private CollectResult collectTree(String sn) {
+        return collectTree(sn, null);
+    }
+
+    /** 强制采集并等待结束，可指定采集标准所用运营商：适配页选了运营商就按这档采，台账还是 standard 时走通用档采不到私有参数、测出的能力偏低 */
+    private CollectResult collectTree(String sn, String isp) {
         CollectResult result = new CollectResult();
         DeviceCapabilityService.CollectStatus status;
         try {
-            status = capabilityService.collect(sn, true);
+            status = capabilityService.collectWithIsp(sn, isp);
         } catch (Exception e) {
             result.status = "fail";
             result.error = e.getMessage();
@@ -446,9 +453,18 @@ public class ModelAdaptationService {
             return result;
         }
         result.status = status.getStatus();
+        // 会话中断（设备中途不再回应）不是能力问题：单独立标记，测试结果按「请重测」呈现而不是「不满足」
+        result.interrupted = status.isAborted()
+                || (status.getMessage() != null && status.getMessage().contains("采集中断"));
         List<String> errors = status.getErrors();
         if (errors != null && !errors.isEmpty()) {
-            result.error = errors.get(errors.size() - 1);
+            // 倒序找第一条真实故障：单条路径被拒「已跳过」是探测的正常保护动作，不该当成采集失败的原因展示
+            for (int i = errors.size() - 1; i >= 0; i--) {
+                if (!errors.get(i).contains("已跳过")) {
+                    result.error = errors.get(i);
+                    break;
+                }
+            }
         }
         return result;
     }
@@ -456,6 +472,7 @@ public class ModelAdaptationService {
     private static class CollectResult {
         String status = "unknown";
         String error;
+        boolean interrupted;
     }
 
     // ==================== 能力解析 ====================
@@ -499,9 +516,7 @@ public class ModelAdaptationService {
         Set<String> bands = new LinkedHashSet<>();
         // 自己报出过频段证据的射频：用来判断「还有几个射频没标频段」
         Set<String> bandedWlan = new LinkedHashSet<>();
-        // 设备自报的条目数。有些固件不建 LANEthernetInterfaceConfig（只给个
-        // LANHostConfigManagement），语音只建一路 Line，靠数实例会把 4 口 8 路
-        // 误判成 0 口 1 路，申报怎么填都比不过
+        // 设备自报的条目数：有些固件不建 LANEthernetInterfaceConfig、语音只建一路 Line，光数实例会把 4 口 8 路误判成 0 口 1 路
         int lanEntries = 0;
         int wlanEntries = 0;
         int profileEntries = 0;
@@ -564,15 +579,11 @@ public class ModelAdaptationService {
             }
         }
         int radioCount = Math.max(Math.max(wlans.size(), radios.size()), wlanEntries);
-        // 只标 5G、不标 2.4G 是行业惯例：CMCC-xxxx-5G 配一个什么都不标的 CMCC-xxxx。
-        // 所以认出 5.8G 却还剩射频没标出频段时，没标的那个按 2.4G 认定——
-        // 反过来不成立，只有一个射频且它标了 5G 就是纯 5G 设备
+        // 只标 5G 不标 2.4G 是行业惯例：认出 5.8G 还有射频没标频段时，没标的按 2.4G 认定；反过来不成立（单射频标 5G 就是纯 5G）
         if (bands.contains("5.8G") && !bands.contains("2.4G") && radioCount > bandedWlan.size()) {
             bands.add("2.4G");
         }
-        // 频段一个都识别不出时按射频数推断：单射频基本都是 2.4G，双射频才是双频。
-        // 老固件不报 OperatingFrequencyBand，SSID 也不带频段（ChinaNet-xxxx 这种），
-        // 不兜底的话「实测 WIFI 无」，申报 2.4G 永远过不了
+        // 频段一个都识别不出时按射频数推断（单射频 2.4G、双射频双频）：老固件不报 OperatingFrequencyBand、SSID 也不带频段，不兜底申报永远过不了
         if (bands.isEmpty() && radioCount >= 1) {
             bands.add("2.4G");
             if (radioCount >= 2) {
@@ -580,14 +591,12 @@ public class ModelAdaptationService {
             }
         }
         Detection d = new Detection();
-        // 语音容量有没有证据：条目数可读，或者本身就能数出多路实例。
-        // 一个 VoiceProfile、一条 Line、条目数全 9005 的设备，攒出的「1 路」不算证据
+        // 语音容量有没有证据：条目数可读或能数出多路实例才算；一个 VoiceProfile、一条 Line、条目数全 9005 攒出的「1 路」不算
         d.sipCapacityKnown = profileEntries > 0 || lineEntries > 0 || phyEntries > 0
                 || voiceProfiles.size() > 1 || voicePhys.size() > 1 || vendorSips.size() > 1;
         d.lanPortCount = Math.max(Math.max(lanIfs.size(), ethIfs.size()), lanEntries);
         d.lanSpeedMbps = maxSpeedMbps > 0 ? maxSpeedMbps : null;
-        // SIP 数量按「能打几路电话」口径：VoiceProfile / PhyInterface / 厂商私有对象 /
-        // Line 条目数取最大——只有一路 Line 实例但 LineNumberOfEntries=8 的机型很常见
+        // SIP 数量按「能打几路电话」口径：各来源取最大——只有一路 Line 实例但 LineNumberOfEntries=8 的机型很常见
         d.sipCount = Math.max(
                 Math.max(Math.max(voiceProfiles.size(), voicePhys.size()), vendorSips.size()),
                 Math.max(Math.max(profileEntries, lineEntries), phyEntries));
@@ -601,14 +610,45 @@ public class ModelAdaptationService {
         if (leaf.isEmpty() || !SPEED_LEAF.matcher(leaf).find()) {
             return -1;
         }
-        double v;
-        try {
-            v = Double.parseDouble(row.getParamValue() == null ? "" : row.getParamValue().trim());
-        } catch (NumberFormatException e) {
+        Double parsed = parseSpeedValue(row.getParamValue());
+        if (parsed == null) {
             return -1;
         }
+        double v = parsed;
         // MaxBitRate 常见单位为 Mbps，个别厂商报 kbps（>=10000 视为 kbps）
         return v >= 10000 ? v / 1000.0 : v;
+    }
+
+    /** 速率值转数字：认 1000 / "1000M" / "1G" / "Auto"；早先只用 parseDouble，电信固件把 MaxBitRate 报成 "1000M" 一律解析失败、速率恒 null */
+    private static Double parseSpeedValue(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String text = raw.trim().toLowerCase(Locale.ROOT);
+        if (text.isEmpty()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(text);
+        } catch (NumberFormatException ignored) {
+            // 不是纯数字，走带单位的解析
+        }
+        // 剥掉单位后缀再试：1000M / 1000Mb / 1000Mbps / 1G / 1Gb
+        String digits = text.replaceAll("[^0-9.]", "");
+        if (digits.isEmpty()) {
+            return null;
+        }
+        double v;
+        try {
+            v = Double.parseDouble(digits);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        // 带 G 后缀的换算成 Mbps；带 M 的就是 Mbps 原样
+        if (text.contains("g") && !text.contains("m")) {
+            return v * 1000.0;
+        }
+        return v;
     }
 
     /** 从频段字段、信道列表或 802.11 制式推断 WIFI 频段，返回这条参数是否给出了频段证据 */
@@ -637,11 +677,20 @@ public class ModelAdaptationService {
             } else if (lower.contains("b") || lower.contains("g")) {
                 bands.add("2.4G");
             }
-        } else if ("SSID".equalsIgnoreCase(leaf)) {
-            // SSID 只有在带频段字样时才作数：CMCC-5G 认得出，CMCC-0002 认不出
+        } else if (isSsidLeaf(leaf)) {
+            // SSID 只有带频段字样才作数（CMCC-5G 认得出，CMCC-0002 认不出）；叶子按后缀匹配，厂商私有变体同样能认出
             collectBandsFromText(lower, bands);
         }
         return bands.size() > before;
+    }
+
+    /** SSID 类叶子：标准 SSID 及厂商私有 X_CT-COM_SSID / X_CMCC_SSID 变体；早先只全等比较 SSID，电信定制机的频段字样全被漏掉 */
+    private static boolean isSsidLeaf(String leaf) {
+        if (leaf == null || leaf.isEmpty()) {
+            return false;
+        }
+        String lower = leaf.toLowerCase(Locale.ROOT);
+        return lower.equals("ssid") || lower.endsWith("_ssid");
     }
 
     /** 从文本里找频段字样。两个频段分开判断，多值字段才能都认出来 */
@@ -714,34 +763,130 @@ public class ModelAdaptationService {
     }
 
     /** 逐项比对申报能力与实测能力，返回不满足的原因列表，空列表即全部支持 */
-    List<String> compare(Detection d, AdaptRequest req) {
-        List<String> reasons = new ArrayList<>();
-        int lanRequired = parseCount(req.getLanPorts());
-        if (lanRequired > 0 && d.lanPortCount < lanRequired) {
-            reasons.add("网口数量不足：申报 " + req.getLanPorts() + "，实测 " + d.lanPortCount);
+    /** 单项能力比对结论，前端按 ✓/✗ 逐项渲染 */
+    @Data
+    static class Check {
+
+        /** 能力项名称：网口数量 / 网口速率 / SIP 数量 / WIFI 规格 */
+        private String label;
+
+        /** 是否参与比对：申报「无 / 自动」时不比对 */
+        private boolean checked;
+
+        /** 比对结论：true 满足 */
+        private boolean pass;
+
+        /** 申报与实测的对照说明 */
+        private String detail;
+
+        /** 不满足时的原因；满足时为 null */
+        private String reason;
+
+        Map<String, Object> asMap() {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("label", label);
+            data.put("checked", checked);
+            data.put("pass", pass);
+            data.put("detail", detail);
+            data.put("reason", reason);
+            return data;
         }
-        double speedRequired = parseSpeed(req.getLanSpeed());
-        if (speedRequired > 0) {
-            if (d.lanSpeedMbps == null) {
-                reasons.add("未采集到网口速率参数，无法确认申报的 " + req.getLanSpeed());
-            } else if (d.lanSpeedMbps < speedRequired) {
-                reasons.add(String.format("网口速率不足：申报 %s，实测最高 %.0fMbps",
-                        req.getLanSpeed(), d.lanSpeedMbps));
+    }
+
+    /** 逐项比对申报与实测，每项独立给结论 */
+    List<Check> checks(Detection d, AdaptRequest req) {
+        List<Check> result = new ArrayList<>();
+
+        int lanRequired = parseCount(req.getLanPorts());
+        Check lan = new Check();
+        lan.setLabel("网口数量");
+        lan.setChecked(lanRequired > 0);
+        lan.setDetail(lanRequired > 0
+                ? "申报 " + req.getLanPorts() + "，实测 " + d.lanPortCount
+                : "未申报，不比对");
+        if (lanRequired > 0) {
+            lan.setPass(d.lanPortCount >= lanRequired);
+            if (!lan.isPass()) {
+                lan.setReason("网口数量不足：申报 " + req.getLanPorts() + "，实测 " + d.lanPortCount);
             }
         }
+        result.add(lan);
+
+        double speedRequired = parseSpeed(req.getLanSpeed());
+        Check speed = new Check();
+        speed.setLabel("网口速率");
+        speed.setChecked(speedRequired > 0);
+        if (speedRequired > 0) {
+            if (d.lanSpeedMbps == null) {
+                speed.setPass(false);
+                speed.setDetail("申报 " + req.getLanSpeed() + "，实测未采集到速率参数");
+                speed.setReason("未采集到网口速率参数，无法确认申报的 " + req.getLanSpeed());
+            } else {
+                speed.setPass(d.lanSpeedMbps >= speedRequired);
+                speed.setDetail(String.format("申报 %s，实测最高 %.0fMbps",
+                        req.getLanSpeed(), d.lanSpeedMbps));
+                if (!speed.isPass()) {
+                    speed.setReason(String.format("网口速率不足：申报 %s，实测最高 %.0fMbps",
+                            req.getLanSpeed(), d.lanSpeedMbps));
+                }
+            }
+        } else {
+            speed.setDetail("未申报，不比对");
+        }
+        result.add(speed);
+
         int sipRequired = parseCount(req.getSipCount());
-        // 只有设备确实报了语音容量（条目数或可数的多路实例）才谈得上「不足」。
-        // 有的固件一个容量参数都不给、只暴露 Line.1，攒出来的「1 路」并不是证据，
-        // 按实物（8 个语音口）申报 8 路反倒会被它挡住
-        if (sipRequired > 0 && d.sipCount < sipRequired && d.sipCapacityKnown) {
-            reasons.add("SIP 数量不足：申报 " + req.getSipCount() + "，实测 " + d.sipCount);
+        Check sip = new Check();
+        sip.setLabel("SIP 数量");
+        sip.setChecked(sipRequired > 0);
+        sip.setDetail(sipRequired > 0
+                ? "申报 " + req.getSipCount() + "，实测 " + d.sipCount + " 路"
+                : "未申报，不比对");
+        if (sipRequired > 0) {
+            // 只有设备确实报了语音容量才谈「不足」：有的固件只暴露 Line.1，攒出的「1 路」不是证据，按实物申报 8 路反倒被挡
+            boolean pass = !(d.sipCount < sipRequired && d.sipCapacityKnown);
+            sip.setPass(pass);
+            if (!pass) {
+                sip.setReason("SIP 数量不足：申报 " + req.getSipCount() + "，实测 " + d.sipCount);
+            }
         }
+        result.add(sip);
+
         String wifi = req.getWifiSpec();
-        if (wifi != null && wifi.contains("2.4") && !d.wifiBands.contains("2.4G")) {
-            reasons.add("未检测到 2.4G WIFI");
+        boolean wifiChecked = wifi != null && (wifi.contains("2.4") || wifi.contains("5.8"));
+        Check wifiCheck = new Check();
+        wifiCheck.setLabel("WIFI 规格");
+        wifiCheck.setChecked(wifiChecked);
+        wifiCheck.setDetail(wifiChecked
+                ? "申报 " + wifi + "，实测 " + (d.wifiBands.isEmpty() ? "无" : String.join("+", d.wifiBands))
+                : "未申报，不比对");
+        if (wifiChecked) {
+            boolean pass = true;
+            StringBuilder reason = new StringBuilder();
+            if (wifi.contains("2.4") && !d.wifiBands.contains("2.4G")) {
+                pass = false;
+                reason.append("未检测到 2.4G WIFI");
+            }
+            if (wifi.contains("5.8") && !d.wifiBands.contains("5.8G")) {
+                if (!reason.isEmpty()) {
+                    reason.append("；");
+                }
+                reason.append("未检测到 5.8G WIFI");
+            }
+            wifiCheck.setPass(pass);
+            wifiCheck.setReason(pass ? null : reason.toString());
         }
-        if (wifi != null && wifi.contains("5.8") && !d.wifiBands.contains("5.8G")) {
-            reasons.add("未检测到 5.8G WIFI");
+        result.add(wifiCheck);
+
+        return result;
+    }
+
+    List<String> compare(Detection d, AdaptRequest req) {
+        List<String> reasons = new ArrayList<>();
+        for (Check c : checks(d, req)) {
+            if (c.isChecked() && !c.isPass() && c.getReason() != null) {
+                reasons.add(c.getReason());
+            }
         }
         return reasons;
     }
@@ -806,8 +951,7 @@ public class ModelAdaptationService {
                 if (row.getParamPath() == null) {
                     continue;
                 }
-                // 0 = 设备明确说只读；null / -1（只能走 GetParameterValues 兜底读参数的
-                // 固件，Writable 属性无从而知）都放行——真能不能写，由这次下发自己证明
+                // 0=设备明确说只读；null/-1（Writable 无从而知）都放行——真能不能写由这次下发自己证明
                 Integer writable = row.getWritable();
                 if (writable != null && writable == 0) {
                     continue;
@@ -903,9 +1047,7 @@ public class ModelAdaptationService {
 
     /** 试探分组：能力名 -> 命中该能力的子树正则 + 倾向试探的叶子名 + 申报了才测 */
     private static final List<ProbeGroup> PROBE_GROUPS = List.of(
-            // 网口只拿开关类参数做试探。速率（MaxBitRate）刻意排除：厂商对它的值域
-            // 各行其是（bps 数字 / Mbps 数字 / 枚举 Auto /「1000M」这种自由文本），
-            // 把上报值原样写回也常被判 9003，拿它当「能不能写」的证据只会误伤
+            // 网口只拿开关类参数做试探，速率 MaxBitRate 刻意排除：厂商值域各行其是（bps/Mbps/Auto/"1000M"），原样写回也常 9003，当「能不能写」的证据只会误伤
             new ProbeGroup("网口", Pattern.compile(
                     "(?:LANDevice\\.\\d+\\.)?(?:LANEthernetInterfaceConfig|EthernetInterface)\\.\\d+\\."
                             + "|(?:^|\\.)Ethernet\\.Interface\\.\\d+\\."),

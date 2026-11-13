@@ -111,8 +111,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
 
     @Override
     public List<String> boardCommands() {
-        // 整机设备没有板卡命令：这条只是「按 show 风格试一下」，采到了也用不上，
-        // 真正的数据在配置视图的 pon-info / onu-info 里
+        // 整机设备没有板卡命令：这条只是按 show 风格试一下，真正数据在配置视图的 pon-info / onu-info 里
         return List.of("show pon-info");
     }
 
@@ -362,8 +361,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         if (vlans.isEmpty()) {
             notes.add("VLAN 未采到：show running-config / show vlan 无有效回显");
         }
-        // 端口清单是「创建 VLAN」弹窗的勾选项。注意 show port state all 在这家设备上只列上联电口，
-        // PON 口不在这条回显里，得按型号/板卡补上，否则弹窗里只有 GE 没有 PON
+        // 端口清单是「创建 VLAN」弹窗的勾选项：show port state all 只列上联电口，PON 口得按型号/板卡补上，否则弹窗里只有 GE 没有 PON
         String portStateText = cli.run("show port state all", timeoutMs);
         List<OltVlanPort> memberPorts = vlanMemberPorts(snapshot, portStateText);
         if (memberPorts.stream().noneMatch(HsgqOltProfile::isUplinkPort)) {
@@ -447,8 +445,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         if (tr069 != null && tr069.getProfileId() != null) {
             commands.addAll(createTr069ProfileCommands(tr069));
         }
-        // 开局配完必须存盘：这台设备只写运行配置，不 save 的话重启/掉电全回到开局前，
-        // 现场看到的就是「配了个寂寞」
+        // 开局配完必须存盘：这台设备只写运行配置，不 save 重启/掉电全回到开局前
         if (!commands.isEmpty()) {
             commands.add(cmdSave());
         }
@@ -630,8 +627,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         if (taggedCommands.isEmpty() && untaggedCommands.isEmpty()) {
             return createVlanCommands(startVlanId, endVlanId);
         }
-        // 一段多个 VLAN 时先批量建一条，省得逐个建；单个 VLAN 就别重复进视图了
-        // （页面上「新增 VLAN」和「一键开局」的预览都是按最小命令数画的，这里要对得上）
+        // 一段多个 VLAN 时先批量建一条省得逐个建；单个 VLAN 就别重复进视图了（页面预览按最小命令数画，这里要对得上）
         List<String> commands = new ArrayList<>();
         if (endVlanId > startVlanId) {
             commands.addAll(createVlanCommands(startVlanId, endVlanId));
@@ -893,8 +889,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return existing + "," + ports;
     }
 
-    // ------------------------------------------------ 配置命令（《EPON OLT 配置命令》V3）
-    // 文档里给的写法，页面上的 VLAN / 端口下发功能接上来时直接用这些，别在别处拼字符串
+    // ------------------------------------------------ 配置命令（《EPON OLT 配置命令》V3）：文档里的写法，页面 VLAN / 端口下发直接用，别在别处拼字符串
 
     /** 创建单个 VLAN：{@code vlan standard 100}（进入 vlan 视图，退出来用 exit） */
     public static String cmdCreateVlan(int vlanId) {

@@ -1,6 +1,7 @@
 package com.tr069.acs.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tr069.acs.cwmp.CwmpFaultCode;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.cwmp.model.FaultStruct;
 import com.tr069.acs.cwmp.model.SoapMessage;
@@ -41,11 +42,18 @@ public class RpcDispatchService {
     private final QueueProperties queueProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /** 唤醒服务的延迟引用：DeviceCapabilityService 依赖本类，直接注入会成环 */
+    private final org.springframework.beans.factory.ObjectProvider<
+            com.tr069.acs.acs.service.DeviceCapabilityService> capabilityProvider;
+
     /** RPC 审计流水号，入库失败时兜底 */
     private final AtomicLong rpcSequence = new AtomicLong(1);
 
     /** 方法名非法时的故障码：不是设备返回的 CWMP 故障，属 ACS 内部错误 */
-    private static final String FAULT_BAD_METHOD = "8005";
+    private static final String FAULT_BAD_METHOD = CwmpFaultCode.BAD_METHOD.getCode();
+
+    /** ACS 内部错误故障码 */
+    private static final String FAULT_INTERNAL = CwmpFaultCode.INTERNAL_ERROR.getCode();
 
     @Value("${acs.agent.rpc-timeout:510}")
     private long rpcTimeout;
@@ -71,16 +79,29 @@ public class RpcDispatchService {
                 return;
             }
             int rebuilt = 0;
+            int dead = 0;
+            long staleMillis = pendingTimeoutSeconds * 1000L;
+            long now = System.currentTimeMillis();
             for (String sn : devices) {
-                for (Long taskId : rpcTaskQueue.scanPendingTaskIds(sn)) {
-                    // 只重建尚未在 Registry 里的（重启后全是新的）
-                    if (rpcTaskRegistry.createIfAbsent(taskId) != null) {
+                for (RpcTaskQueue.RpcTask task : rpcTaskQueue.scanPendingTasks(sn)) {
+                    // 排队时长按队列里的真实提交时间算：超过阈值的不进 pending 表干等一轮，
+                    // 当场判死并摘出队列——否则每次重启都重建一遍、10 分钟后再集体失败一遍，永远循环
+                    if (now - task.getCreatedAt() >= staleMillis) {
+                        rpcTaskQueue.remove(sn, task.getTaskId());
+                        failTask(task.getTaskId(), FAULT_INTERNAL, "排队超过阈值仍未被设备取走（重启清扫）");
+                        dead++;
+                        continue;
+                    }
+                    if (rpcTaskRegistry.createIfAbsent(task.getTaskId(), task.getCreatedAt()) != null) {
                         rebuilt++;
                     }
                 }
             }
             if (rebuilt > 0) {
                 log.info("进程重启后从 Redis 队列重建 pending 指令: 数量={}", rebuilt);
+            }
+            if (dead > 0) {
+                log.warn("进程重启后清理排队超过阈值的残留指令: 数量={}, 阈值={}s", dead, pendingTimeoutSeconds);
             }
         } catch (Exception e) {
             log.warn("重建 pending 指令失败，等待 sweepPendingTasks 兜底: {}", e.getMessage());
@@ -125,11 +146,13 @@ public class RpcDispatchService {
 
         boolean queued = rpcTaskQueue.enqueue(task);
         if (!queued) {
-            rpcTaskRegistry.fail(taskId, "8003", "指令入队失败：队列不可用或该设备队列已满");
+            rpcTaskRegistry.fail(taskId, CwmpFaultCode.QUEUE_FAILURE.getCode(), "指令入队失败：队列不可用或该设备队列已满");
             finishRecord(taskId, null);
             return new DispatchHandle(taskId, future, false);
         }
         rpcTaskQueue.saveQueued(task);
+        // 设备不在下发窗口时发一次连接请求（内部带节流，不阻塞调用方）：设备建链后的下一跳空 POST 会把指令取走
+        capabilityProvider.ifAvailable(capability -> capability.wakeUp(sn));
         log.debug("指令已入队: taskId={}, sn={}, rpc={}", taskId, sn, rpcName);
         return new DispatchHandle(taskId, future, true);
     }
@@ -139,22 +162,22 @@ public class RpcDispatchService {
                                 Map<String, Object> args, String worklistId) {
         DispatchHandle handle = submitAsync(sn, rpcName, args, worklistId);
         if (!handle.isQueued()) {
-            return faultSoap("8003", "指令入队失败：队列不可用或该设备队列已满");
+            return faultSoap(CwmpFaultCode.QUEUE_FAILURE.getCode(), "指令入队失败：队列不可用或该设备队列已满");
         }
         try {
             return handle.getFuture().get(rpcTimeout, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
             log.warn("RPC 执行超时: sn={}, rpc={}, taskId={}", sn, rpcName, handle.getTaskId());
-            failTask(handle.getTaskId(), "8002", "RPC 执行超时");
-            return faultSoap("8002", "RPC 执行超时");
+            failTask(handle.getTaskId(), FAULT_INTERNAL, "RPC 执行超时");
+            return faultSoap(FAULT_INTERNAL, "RPC 执行超时");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            failTask(handle.getTaskId(), "8002", "RPC 执行被中断");
-            return faultSoap("8002", "RPC 执行被中断");
+            failTask(handle.getTaskId(), FAULT_INTERNAL, "RPC 执行被中断");
+            return faultSoap(FAULT_INTERNAL, "RPC 执行被中断");
         } catch (ExecutionException e) {
             log.error("RPC 执行异常: sn={}, rpc={}", sn, rpcName, e);
-            failTask(handle.getTaskId(), "8002", String.valueOf(e.getMessage()));
-            return faultSoap("8002", String.valueOf(e.getMessage()));
+            failTask(handle.getTaskId(), FAULT_INTERNAL, String.valueOf(e.getMessage()));
+            return faultSoap(FAULT_INTERNAL, String.valueOf(e.getMessage()));
         }
     }
 
@@ -202,11 +225,25 @@ public class RpcDispatchService {
             result.setRpcName(stored.getRpcName());
             result.setSubmitTime(stored.getSubmitTime());
         }
+        // Redis 结果哈希过期时（老任务）从审计记录兜底，核心日志不再出现 sn=null
+        if (result.getSn() == null || result.getRpcName() == null) {
+            try {
+                RpcRecord record = rpcRecordMapper.selectById(taskId);
+                if (record != null) {
+                    result.setSn(record.getSn());
+                    result.setRpcName(record.getRpcName());
+                }
+            } catch (Exception ignored) {
+            }
+        }
         result.setStatus("fail");
         result.setFaultCode(faultCode);
         result.setFaultString(faultString);
         result.setFinishTime(System.currentTimeMillis());
         rpcTaskQueue.saveResult(result);
+
+        // 判死的同时把任务从设备队列摘掉，否则它一直留在队列里，重启后被重建、再被清扫，永远循环
+        rpcTaskQueue.remove(result.getSn(), taskId);
 
         // 核心日志：超时、会话关闭等失败同样记一行
         coreLog.rpcResult(result.getSn(), result.getRpcName(), taskId, false, faultCode, faultString);
@@ -232,7 +269,7 @@ public class RpcDispatchService {
         if (!stale.isEmpty()) {
             log.warn("清理超时未执行的指令: 数量={}, 阈值={}s", stale.size(), pendingTimeoutSeconds);
             for (Long taskId : stale) {
-                failTask(taskId, "8002", "指令超时未执行：设备未取走");
+                failTask(taskId, FAULT_INTERNAL, "指令超时未执行：设备未取走");
             }
         }
     }

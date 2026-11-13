@@ -56,7 +56,6 @@ public interface OltVendorProfile {
     /** 厂商专属的深度采集：配置视图里要问的那一堆数据 */
     default void collectDetails(OltCli cli, OltSnapshot snapshot, List<OltBoard> boards,
                                 List<String> notes, int timeoutMs) {
-        // 默认没有厂商专属采集
     }
 
     /** 页面能不能对这台设备新建 / 删除 VLAN */
@@ -250,10 +249,7 @@ public interface OltVendorProfile {
         return null;
     }
 
-    /**
-     * 查一个 ONT（或整个端口，ontId 传 null）名下业务虚口的命令（config 视图执行）。
-     * 删 ONT 前必须先把它的业务虚口拆干净，否则 ont delete 会被引用顶回来。
-     */
+    /** 查一个 ONT（ontId 传 null 查整个端口）名下业务虚口的命令；删 ONT 前必须先拆干净业务虚口 */
     default String servicePortListCommand(int frame, int slot, int port, Integer ontId) {
         return null;
     }

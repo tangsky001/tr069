@@ -86,12 +86,7 @@ public final class SoapEnvelopeBuilder {
         }
 
         String soap = XmlUtils.toXml(doc);
-        // 临时关闭：完整 SOAP 报文太长，采集/下发一轮就刷屏，掩盖了真正要看的日志。
-        // 需要排查报文内容时再打开，或改用配置开关：
-        // logging.level.com.tr069.acs.cwmp.SoapEnvelopeBuilder: debug
-        // if (log.isDebugEnabled()) {
-        //     log.debug("构造 CWMP 报文 [{}]: {}", method.getValue(), soap);
-        // }
+        // 完整报文的 debug 日志临时关闭（太长刷屏）；排查报文时打开本类 debug 级别并恢复下方 log.debug
         return soap;
     }
 
@@ -150,6 +145,7 @@ public final class SoapEnvelopeBuilder {
         switch (method) {
             // ---------- 无参数结构 ----------
             case GET_RPC_METHODS:
+            case GET_PARAMETER_VALUES_XML:
             case FACTORY_RESET:
             case GET_QUEUED_TRANSFERS:
             case GET_ALL_QUEUED_TRANSFERS:
@@ -354,7 +350,8 @@ public final class SoapEnvelopeBuilder {
                 str(args, "FailureURL"));
     }
 
-    /** Upload：CommandKey FileType URL Username(nil) Password(nil) DelaySeconds */
+    /** Upload：CommandKey FileType URL Username(nil) Password(nil) DelaySeconds
+     *  后三个是 Amd5+ 新增字段，空值不写，旧设备忽略 */
     private static void buildUpload(Document doc, Element body, String cwmpNs,
                                     Map<String, Object> args) {
         Element root = appendCwmpRoot(doc, body, cwmpNs, RpcMethod.UPLOAD.getValue());
@@ -369,6 +366,22 @@ public final class SoapEnvelopeBuilder {
                 str(args, "Password"));
         XmlUtils.appendText(doc, root, cwmpNs, SoapNamespace.PREFIX_CWMP, "DelaySeconds",
                 str(args, "DelaySeconds"));
+        // Amd5+ 新增：TransferType / FileSize / IsDelayEnabled（空则不写，旧设备忽略）
+        String transferType = str(args, "TransferType");
+        if (!transferType.isEmpty()) {
+            XmlUtils.appendText(doc, root, cwmpNs, SoapNamespace.PREFIX_CWMP, "TransferType",
+                    transferType);
+        }
+        String fileSize = str(args, "FileSize");
+        if (!fileSize.isEmpty()) {
+            XmlUtils.appendText(doc, root, cwmpNs, SoapNamespace.PREFIX_CWMP, "FileSize",
+                    fileSize);
+        }
+        String isDelayEnabled = str(args, "IsDelayEnabled");
+        if (!isDelayEnabled.isEmpty()) {
+            XmlUtils.appendText(doc, root, cwmpNs, SoapNamespace.PREFIX_CWMP, "IsDelayEnabled",
+                    isDelayEnabled);
+        }
     }
 
     /** Reboot / CancelTransfer：仅 CommandKey（空则 nil） */

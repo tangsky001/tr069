@@ -1,14 +1,18 @@
 package com.tr069.acs.acs.auth;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** CPE -> ACS 的 HTTP 认证 */
@@ -41,6 +45,16 @@ public class CpeAuthenticator {
 
     /** 免认证标记：账号或密码填 auto，即不校验凭据，任何设备都放行 */
     public static final String AUTO_CREDENTIAL = "auto";
+
+    /** nonce 有效期（秒），设备要在这段时间内带它完成认证 */
+    @Value("${acs.auth.nonce-ttl-seconds:300}")
+    private long nonceTtlSeconds;
+
+    /** 已签发的 nonce -> 过期时间戳（秒），设备回传的 nonce 必须是这边签出去的 */
+    private final Map<String, Long> issuedNonces = new ConcurrentHashMap<>();
+
+    /** 已用过的 nonce+nc/response 组合，命中即判重放 */
+    private final Map<String, Long> usedNonces = new ConcurrentHashMap<>();
 
     private final AtomicBoolean openAccessWarned = new AtomicBoolean(false);
 
@@ -123,13 +137,81 @@ public class CpeAuthenticator {
         fields.put("method", method);
         fields.put("uri", uri);
 
+        // nonce 必须是这边签发的且未过期：过期或伪造的 nonce 直接拒绝
+        if (!isNonceValid(fields.get("nonce"))) {
+            log.warn("Digest nonce 无效或已过期, uri={}", uri);
+            return AuthResult.FAIL;
+        }
+        // 同一 nonce + nc/response 只允许成功一次：命中已用记录即判重放
+        if (isReplay(fields)) {
+            log.warn("Digest 认证疑似重放, uri={}", uri);
+            return AuthResult.FAIL;
+        }
+
         if (tryUsernamePassword(fields, user, password)) {
+            markNonceUsed(fields);
             return AuthResult.PASS;
         }
         if (tryUsernamePassword(fields, fallbackUser, fallbackPassword)) {
+            markNonceUsed(fields);
             return AuthResult.PASS;
         }
         return AuthResult.FAIL;
+    }
+
+    /** nonce 是否由本方签发且未过期 */
+    private boolean isNonceValid(String nonce) {
+        if (nonce == null || nonce.isBlank()) {
+            return false;
+        }
+        Long expireAt = issuedNonces.get(nonce);
+        if (expireAt == null) {
+            return false;
+        }
+        if (currentSeconds() > expireAt) {
+            issuedNonces.remove(nonce);
+            return false;
+        }
+        return true;
+    }
+
+    /** 是否命中已用记录：qop 有 nc 用 nonce+nc，无 nc 用 nonce+response */
+    private boolean isReplay(Map<String, String> fields) {
+        String key = replayKey(fields);
+        return key != null && usedNonces.containsKey(key);
+    }
+
+    private void markNonceUsed(Map<String, String> fields) {
+        String key = replayKey(fields);
+        if (key != null) {
+            usedNonces.put(key, currentSeconds() + nonceTtlSeconds);
+            pruneExpired(usedNonces);
+        }
+    }
+
+    private String replayKey(Map<String, String> fields) {
+        String nonce = fields.get("nonce");
+        if (nonce == null) {
+            return null;
+        }
+        String nc = fields.get("nc");
+        return nc == null || nc.isBlank()
+                ? nonce + ":" + fields.get("response")
+                : nonce + ":" + nc;
+    }
+
+    /** 顺手清掉过期条目，避免两张缓存无限增长 */
+    private void pruneExpired(Map<String, Long> cache) {
+        if (cache.size() < 1000) {
+            return;
+        }
+        long now = currentSeconds();
+        Iterator<Map.Entry<String, Long>> it = cache.entrySet().iterator();
+        while (it.hasNext()) {
+            if (it.next().getValue() < now) {
+                it.remove();
+            }
+        }
     }
 
     /** 校验凭据：先比用户名，再比 realm 与 response */
@@ -189,10 +271,12 @@ public class CpeAuthenticator {
         return method + ":" + uri + ":" + md5(body);
     }
 
-    /** 构造 Digest challenge 响应头 */
+    /** 构造 Digest challenge 响应头，签发并登记 nonce */
     public String digestChallenge() {
         String realm = DEFAULT_DIGEST_REALM;
-        String nonce = md5(currentSeconds() + ":" + realm);
+        String nonce = md5(currentSeconds() + ":" + realm + ":" + UUID.randomUUID());
+        issuedNonces.put(nonce, currentSeconds() + nonceTtlSeconds);
+        pruneExpired(issuedNonces);
         String opaque = md5(currentSeconds() + realm);
         return String.format("Digest realm=\"%s\", nonce=\"%s\", opaque=\"%s\", qop=\"%s\"",
                 realm, nonce, opaque, "auth");

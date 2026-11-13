@@ -53,6 +53,24 @@ public class Worklist {
 
     private String username;
 
+    /** 工单类型：normal 普通 / reset 恢复出厂 / reboot 重启 */
+    private String bizType;
+
+    /** 设备分组 id（分组台账建好后挂进来） */
+    private Long groupId;
+
+    /** 房间号：建单录入，同时同步设备台账 cpe_device.room_no */
+    private String roomNo;
+
+    /** 扩展属性 */
+    private String extra;
+
+    /** 备注 */
+    private String remark;
+
+    /** 是否激活：0 否（只建单不下发）/ 1 是 */
+    private Integer active;
+
     private LocalDateTime timeInit;
 
     private LocalDateTime timeBind;
@@ -79,9 +97,17 @@ public class Worklist {
     @TableField(exist = false)
     private String timeInitText;
 
+    /** 执行开始时间文本，没执行是「-」 */
+    @TableField(exist = false)
+    private String timeExecStartText;
+
     /** 完成时间文本，没完成是「-」 */
     @TableField(exist = false)
     private String timeExecFinishText;
+
+    /** 设备 MAC 文本，从能力树参数里带出，工单页「设备标识」列的副行展示 */
+    @TableField(exist = false)
+    private String macText;
 
     /** 是否已到终态（成功 / 失败 / 异常 / 过期） */
     @TableField(exist = false)
@@ -96,10 +122,11 @@ public class Worklist {
             case "build" -> "构建中";
             case "bind" -> "绑定中";
             case "reserve" -> "预约中";
-            case "standby" -> "待执行";
+            case "standby" -> "等待执行";
             case "running" -> "执行中";
+            case "sending" -> "下发中";
             case "success" -> "成功";
-            case "fail" -> "失败";
+            case "fail", "failed" -> "失败";
             case "abnormal" -> "异常";
             case "expire" -> "已过期";
             default -> status;
@@ -112,8 +139,8 @@ public class Worklist {
         }
         return switch (status) {
             case "success" -> "success";
-            case "fail", "abnormal" -> "danger";
-            case "running" -> "warning";
+            case "fail", "failed", "abnormal" -> "danger";
+            case "running", "sending" -> "warning";
             default -> "info";
         };
     }
@@ -134,6 +161,7 @@ public class Worklist {
         record.setStatusText(statusTextOf(record.getStatus()));
         record.setStatusLevel(statusLevelOf(record.getStatus()));
         record.setTimeInitText(timeTextOf(record.getTimeInit()));
+        record.setTimeExecStartText(timeTextOf(record.getTimeExecStart()));
         record.setTimeExecFinishText(timeTextOf(record.getTimeExecFinish()));
         // 终态集合与 STATUSES 一致：除建造/绑定/预约/待执行/执行中外都算跑完
         String status = record.getStatus();

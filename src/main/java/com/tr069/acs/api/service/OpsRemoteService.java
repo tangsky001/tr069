@@ -57,7 +57,7 @@ public class OpsRemoteService {
     private static final String DOMAIN_SUFFIX = "i-ddns.com";
 
     /** 内网穿透公网端口（写死，不可配置） */
-    private static final int PUBLIC_PORT = 443;
+    private static final int PUBLIC_PORT = 9443;
 
     private final SecureRandom random = new SecureRandom();
 
@@ -152,12 +152,12 @@ public class OpsRemoteService {
         return "http://" + host + ":" + serverPort;
     }
 
-    /** 外网穿透地址：有子域名拼 https://{subdomain}.{DOMAIN_SUFFIX}:{PUBLIC_PORT}，没有返回占位 */
+    /** 外网穿透地址：有子域名拼 http://{subdomain}.{DOMAIN_SUFFIX}:{PUBLIC_PORT}，没有返回占位（服务器未启用 HTTPS，用明文 HTTP） */
     private String cloudBaseUrl(String subdomain) {
         if (subdomain == null || subdomain.isBlank()) {
             return "https://acs.example.com";
         }
-        return "https://" + subdomain.trim() + "." + DOMAIN_SUFFIX + ":" + PUBLIC_PORT;
+        return "http://" + subdomain.trim() + "." + DOMAIN_SUFFIX + ":" + PUBLIC_PORT;
     }
 
     /** 生成 10 位随机子域名 [a-z0-9] */

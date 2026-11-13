@@ -1070,8 +1070,12 @@ ACS 会回 `TransferCompleteResponse`——不回的话设备会以为 ACS 没�
 | --- | --- |
 | `GET /api/device/**` | `device:view` |
 | `POST` / `PUT` / `DELETE /api/device/**` | `device:update`（写）/ `device:delete`（删） |
+| `POST .../delete`、`.../delete-all` | `模块:delete`（历史删除接口用 POST 实现，语义仍按删除校验） |
+| `/openapi/v1/**`（北向） | 归 `device` 模块：GET 要 `device:view`，POST/PUT 要 `device:update`，DELETE 要 `device:delete` |
 
-认不出模块的路径（如 `/api/user/info`）不拦——登进来就能看自己是谁，没必要再配权限。
+**认不出模块的路径一律 403**（`code=403`，`message` 里写明「接口未登记权限」）——新接口忘了在
+`PermissionCodes` 登记模块时宁可打不开，也不放行。唯一的例外是登录、登出、取当前用户信息三个接口，
+它们在免检名单里。
 
 模块一共十个：dashboard / device / template / biz / model / worklist / olt / file / ops / system，
 每个三级（查看 / 修改 / 删除），共 30 个权限点。

@@ -86,8 +86,7 @@ public class TelnetClient implements Closeable {
                     + "|<---\\s*More\\s*--->"
                     + "|--More--"
                     + "|----\\s*More\\s*\\(\\s*[^)]*\\)\\s*----"
-                    // 华为 OLT 的写法：提示打在行首或行中，破折号在后面，如
-                    // "( Press 'Q' to break ) ----  0/ 1/0  32  534B..."（后面紧跟下一页内容）
+                    // 华为 OLT 的写法：提示打在行首或行中，破折号在后面（提示后紧跟下一页内容）
                     + "|\\(\\s*Press\\s*'[Qq]'\\s*to\\s*break\\s*\\)\\s*-{0,}"
                     // 其它常见分页写法
                     + "|<\\s*More\\s*>"
@@ -113,7 +112,6 @@ public class TelnetClient implements Closeable {
     /** 单条命令最多主动按几次：设备真沉默（不是分页）时不能无限灌按键 */
     private static final int PAGE_PRESS_LIMIT = 60;
 
-    /** 匹配到「提示符」后还要静默这么久才算真的结束 */
     /** 提示符匹配到后的静默确认：50ms 覆盖局域网 TCP 包间间隔（OLT 回显流式到达，提示符是末尾包） */
     private static final int PROMPT_SETTLE_MS = 50;
 
@@ -158,7 +156,7 @@ public class TelnetClient implements Closeable {
     private long lastPagePressAt;
     /** 本次命令已经主动按了几次（resetBuffer 时清零） */
     private int pagePresses;
-    /** 连续按了几次都没换来新回显：分页器一按就有数据，一直没数据说明设备是在算、 */
+    /** 连续按了几次都没换来新回显：分页器一按就有数据，一直没数据说明设备是在算 */
     private int fruitlessPresses;
 
     private TelnetClient(Charset charset, int maxChars) {
@@ -193,8 +191,7 @@ public class TelnetClient implements Closeable {
 
                                     @Override
                                     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-                                        // 收数据途中出错不能再往管道尾丢：那样数据静静丢掉，
-                                        // 业务侧只看到「回显超时」，排查时完全没有线索
+                                        // 收数据途中出错不能再往管道尾丢：那样数据静静丢掉，业务侧只看到「回显超时」没有线索
                                         log.warn("Telnet 收数据异常，关闭连接：{}", cause.toString());
                                         client.onInactive();
                                         ctx.close();
@@ -210,8 +207,9 @@ public class TelnetClient implements Closeable {
         if (!future.awaitUninterruptibly(Math.max(1, connectTimeoutMs)) || !future.isSuccess()) {
             Throwable cause = future.cause();
             future.channel().close();
-            throw new OltTelnetException("连接 " + host + ":" + port + " 失败："
-                    + (cause == null ? "连接超时(" + connectTimeoutMs + "ms)" : cause.getMessage()), cause);
+            throw new OltTelnetException(cause == null
+                    ? "连接 " + host + ":" + port + " 连接超时"
+                    : "连接 " + host + ":" + port + " 失败：" + cause.getMessage(), cause);
         }
         client.channel = future.channel();
         return client;
@@ -251,8 +249,7 @@ public class TelnetClient implements Closeable {
                     throw new OltTelnetException("设备已关闭连接，已收到：" + tail(180));
                 }
                 handlePagination();
-                // 还没等到提示符、回显又停住了：十有八九卡在分页上，主动按键推进
-                // 分页已被 screen-length 0 关闭时跳过：此时不可能卡在 More 提示
+                // 还没等到提示符、回显又停住了：十有八九卡在分页上，主动按键推进（分页已被 screen-length 0 关闭时跳过）
                 if (pageAssist && !matched && !pagingDisabled) {
                     pressPageIfStalled();
                 }
@@ -360,8 +357,7 @@ public class TelnetClient implements Closeable {
         if (closed || ch == null || !ch.isActive()) {
             throw new OltTelnetException("连接已关闭");
         }
-        // 刚发出去就算「有活动」：看门狗至少等满 PAGE_STALL_MS 才按键，
-        // 免得设备还在算（没回显）就先塞一个空格进去
+        // 刚发出去就算「有活动」：看门狗至少等满 PAGE_STALL_MS 才按键，免得设备还在算就先塞一个空格
         lastByteAt = System.currentTimeMillis();
         // Netty 写入线程安全，且回压由其内部出站缓冲消化，业务线程不会被 TCP 零窗口卡住
         ch.writeAndFlush(Unpooled.wrappedBuffer(data.getBytes(charset)))
@@ -403,9 +399,8 @@ public class TelnetClient implements Closeable {
                 bigger.put(pending);
                 pending = bigger;
             }
-            // ByteBuf 直读进 ByteBuffer 的写入区，不再为每包 new 一个 byte[]。
-            // 注意：Netty 的 readBytes(ByteBuffer) 按 dst.remaining() 整段读、不做截断，
-            // 这里必须先把 limit 收到「刚好本包 n 字节」，否则小包会因读不够而抛异常丢数据
+            // ByteBuf 直读进 ByteBuffer 写入区：Netty 的 readBytes(ByteBuffer) 按 dst.remaining() 整段读不截断，
+            // 必须先把 limit 收到「刚好本包 n 字节」，否则小包读不够会抛异常丢数据
             int writePos = pending.position();
             pending.limit(writePos + n);
             buf.readBytes(pending);
@@ -523,16 +518,14 @@ public class TelnetClient implements Closeable {
                 end = matcher.end();
             }
             if (start < 0) {
-                // 完整提示没认出来：尾部只是「---- Mo」「( Press」这类残段也要翻页，
-                // 否则等提示符会一直等到超时（现场 MA5683T 就有提示被拆包的情况）
+                // 完整提示没认出来：尾部是「---- Mo」「( Press」这类残段也要翻页，否则等到超时（MA5683T 有提示被拆包的情况）
                 if (MORE_TAIL.matcher(window).find()) {
                     pressPageOnce();
                 }
                 return;
             }
             boolean atTail = isBlankAfter(window, end);
-            // 分页提示不是正文，先删掉；华为 OLT 的提示常和下一页内容挤在同一行，
-            // 那种情况设备已经在继续输出，只清提示不送空格
+            // 分页提示不是正文先删掉；华为 OLT 提示常和下一页内容挤同一行，此时设备已在继续输出，只清提示不送空格
             text.delete(from + start, from + end);
             if (!atTail) {
                 continue;
@@ -581,8 +574,7 @@ public class TelnetClient implements Closeable {
 
     // ---------------------------------------------------------------- 匹配
 
-    /** 只在末尾 512 字符里匹配：提示符一定在尾部，全量扫会让长回显变成 O(n²)。
-     *  尾窗走零拷贝视图，等待循环每 200ms 轮询一次也不再复制字符串 */
+    /** 只在末尾 512 字符里匹配：提示符一定在尾部，全量扫会让长回显变成 O(n²)；尾窗走零拷贝视图不再复制字符串 */
     private boolean matchesAny(List<Pattern> patterns) {
         CharSequence window = matchWindow.of(512);
         for (Pattern pattern : patterns) {

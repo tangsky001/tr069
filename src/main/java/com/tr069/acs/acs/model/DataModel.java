@@ -17,10 +17,12 @@ public enum DataModel {
     private static final java.util.Map<String, List<String>> SECTION_VARIANTS =
             java.util.Map.of(
                     "device", List.of("DeviceInfo."),
-                    "wan", List.of("WANDevice.", "WAN."),
+                    "wan", List.of("WANDevice.", "WAN.", "IP.Interface."),
                     "wifi", List.of("LANDevice.", "LAN.", "WiFi."),
-                    "lan", List.of("LANDevice.", "Ethernet.Interface."),
-                    "sip", List.of("Services.VoiceService.", "VoiceService."));
+                    "lan", List.of("LANDevice.", "Ethernet.Interface.", "Hosts."),
+                    "sip", List.of("Services.VoiceService.", "VoiceService."),
+                    "bridge", List.of("WANConnectionDevice.", "Bridging."),
+                    "diag", List.of("IPPingDiagnostics.", "IP.Diagnostics."));
 
     private final String root;
 

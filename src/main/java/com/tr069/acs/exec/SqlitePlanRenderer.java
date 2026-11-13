@@ -211,13 +211,10 @@ public class SqlitePlanRenderer {
                 && !row.getObjectPath().isBlank()) {
             objectsToAdd.add(row.getObjectPath());
         }
-        // 实例号必须用渲染时定的那个（plan.instance()），不能写死 1：
-        // AddObject 返回的实例号是设备分配的，下发前还要按它回填参数路径，
-        // 两处对不上就会把参数写到别的连接上去
+        // 实例号必须用渲染时定的那个：AddObject 返回的实例号是设备分配的，对不上会把参数写到别的连接
         put(items, errors, biz, "enable", row.getPathEnable(), row.getValEnable(), values, instance, overrides);
         if (bridge) {
-            // 桥接只有连接类型可写：IP→IP_Bridged、PPPoE→PPPoE_Bridged。
-            // 地址获取方式、NAT、拨号账号在桥接下不存在，带上会让设备整批回 9007
+            // 桥接下地址获取方式、NAT、拨号账号不存在，带上会让设备整批回 9007
             put(items, errors, biz, "bridge_type",
                     row.getPathConnType(), row.getValConnType(), values, instance, overrides);
         } else {
@@ -242,8 +239,7 @@ public class SqlitePlanRenderer {
             put(items, errors, biz, "vlan_mode", vlan.getPathVlanMode(), vlan.getValVlanMode(), values, instance, overrides);
         }
 
-        // 桥接类型选了 PPPoE：对象与整条前缀一起换成 WANPPPConnection。
-        // 只改 ConnectionType 会写到一台没有该对象的设备上，回 9005
+        // 桥接类型选了 PPPoE：对象与整条前缀一起换成 WANPPPConnection，只改 ConnectionType 会回 9005
         if (bridge && isPppoeBridge(items, itemStart)) {
             swapConnObject(items, objectsToAdd, itemStart, addStart);
         }
@@ -302,9 +298,7 @@ public class SqlitePlanRenderer {
         }
         String path = row.getPathMtu();
         if (path == null || path.isBlank()) {
-            // 适配库里登记过的最准（实测参数名，可能是厂商私有写法）；
-            // 没登记的按标准路径兜底：MaxMTUSize 在 TR-098 与 TR-181 下同名，
-            // 而 objectPath 已经带了根节点，两个数据模型都直接拼得出来
+            // 没登记 MTU 路径就按标准路径兜底：MaxMTUSize 在 TR-098 与 TR-181 下同名，两个模型都能拼出
             if (row.getObjectPath() == null || row.getObjectPath().isBlank()) {
                 log.warn("该型号没有 MTU 登记也没有 WAN 对象路径，跳过 MTU 下发: model={}",
                         device.getModelKey());
@@ -345,8 +339,7 @@ public class SqlitePlanRenderer {
                      String path, String val, Map<String, Object> values, int instance,
                      Map<String, String> overrides) {
         if (path == null || path.isBlank()) {
-            // 模板上明明填了值、型号却没登记这条路径（如 802.1p / 组播 VLAN 还没做映射）：
-            // 静默跳过会让「填了不生效」查不到原因，这里留一条能落地的告警
+            // 型号没登记路径但模板填了值时告警，静默跳过会让「填了不生效」查不到原因
             String wanted = effectiveValue(null, overrides, field);
             if (wanted != null && !wanted.isBlank()) {
                 log.warn("模板上填了 {}={}，但该型号没有登记对应的参数路径，本次不下发", field, wanted);
@@ -392,9 +385,7 @@ public class SqlitePlanRenderer {
             "sip_port", List.of("proxy_port"),
             "sip_registrar", List.of("registrar"),
             "sip_registrar_port", List.of("registrar_port"),
-            // 渲染器内部叫 bind_port / vlan_8021p，配置模板与语义映射里叫 bind_ports /
-            // vlan_priority。少了这两个别名，页面上勾的端口与填的 QoS 优先级一个都传不进去：
-            // 取不到覆盖值就回退到 SQLite 里的空默认，绑定端口整条被跳过
+            // 渲染器叫 bind_port / vlan_8021p，配置模板里叫 bind_ports / vlan_priority；少了别名端口与 QoS 传不进去
             "bind_port", List.of("bind_ports"),
             "vlan_8021p", List.of("vlan_priority"));
 
@@ -504,8 +495,7 @@ public class SqlitePlanRenderer {
             return val.trim();
         }
         String out = val;
-        // 最多解两层：变量的值本身可能还是变量。SIP 账号常按房间号开，模板上写 %room%，
-        // 第一层解出 sip_num=%room%，不解第二层就把字面量 %room% 发给了设备（实测 9007）
+        // 变量的值本身可能还是变量（SIP 账号按房间号开），最多解两层，否则把字面量 %room% 发给设备
         for (int depth = 0; depth < 2; depth++) {
             Matcher it = VAR.matcher(out);
             if (!it.find()) {
@@ -532,8 +522,7 @@ public class SqlitePlanRenderer {
     private static final Pattern NUMERIC_LEAF = Pattern.compile(
             "(?i)(channel|port|count|numberofentries|index|interval|seconds|"
                     + "timeout|priority|gain|tail|vlanid|status|mode|level|length|rate|limit|"
-                    // MaxMTUSize 不在这个清单里就会被当成 string 下发 1500，
-                    // 设备不认字符串形式的 MTU，直接回 9007
+                    // MaxMTUSize 不在清单会被当 string 下发 1500，设备不认字符串 MTU 直接回 9007
                     + "mtusize)$");
 
     /** 设备参数名里这些是布尔：{@code Enable} / {@code SSIDAdvertisementEnabled} 等 */
@@ -589,8 +578,7 @@ public class SqlitePlanRenderer {
                 return !sipDao.findByDeviceId(id).isEmpty();
             case "Internet_WAN":
                 return !deviceWanDao.findByDeviceId(id).isEmpty();
-            // 桥接模板行就在同一张表里（slot 4）。这里认不出 Bridge_WAN 的话，
-            // 每次下发桥接都会先跑一遍全量补生成，再在渲染时报「没有适配模板」
+            // 桥接模板行就在同一张表里（slot 4）；认不出 Bridge_WAN 的话每次都会先跑全量补生成
             case "Bridge_WAN":
                 return deviceWanDao.findOne(id, TemplateBuilder.WAN_SLOT_BRIDGE).isPresent();
             case "LAN":

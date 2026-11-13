@@ -5,12 +5,14 @@ import com.tr069.acs.acs.auth.CpeAuthenticator;
 import com.tr069.acs.acs.service.DeviceCapabilityService;
 import com.tr069.acs.acs.service.InformProvisionService;
 import com.tr069.acs.acs.service.InformService;
+import com.tr069.acs.acs.service.SoapTraceService;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.CwmpSessionMutex;
 import com.tr069.acs.acs.session.PendingRpc;
 import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.acs.session.SessionState;
 import com.tr069.acs.agent.RpcDispatchService;
+import com.tr069.acs.cwmp.CwmpFaultCode;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.cwmp.SoapEnvelopeBuilder;
 import com.tr069.acs.cwmp.SoapParser;
@@ -33,7 +35,9 @@ import jakarta.servlet.AsyncEvent;
 import jakarta.servlet.AsyncListener;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -61,6 +65,7 @@ public class CwmpController {
     private final ObjectMapper objectMapper;
     private final RpcDeliveryWaiter deliveryWaiter;
     private final CwmpSessionMutex sessionMutex;
+    private final SoapTraceService soapTraceService;
 
     /** 留空即免认证，任何设备凭据都放行；填真实账号才校验，见 {@link CpeAuthenticator#isOpenAccess} */
     @Value("${acs.auth.cpe-to-acs-username:}")
@@ -82,6 +87,10 @@ public class CwmpController {
     /** 会话 Cookie 的路径。留空则不写 Path 属性，部分固件对带 Path 的 Cookie 认不全 */
     @Value("${acs.cwmp.cookies-path:}")
     private String cookiesPath;
+
+    /** 单个请求报文大小上限（字节），异常设备或超大报文不再全量吃进内存 */
+    @Value("${acs.cwmp.max-body-bytes:5242880}")
+    private int maxBodyBytes;
 
     /** 会话号 Cookie 的宽松解析，分隔符认逗号也认分号：部分设备不合规范 */
     private static final Pattern SESSION_COOKIE = Pattern.compile(
@@ -117,7 +126,12 @@ public class CwmpController {
         String body = readBody(request);
 
         try {
-            if (body == null || body.isBlank()) {
+            if (body == null) {
+                log.warn("CPE 请求报文超过大小上限: conn={}, limit={}bytes", connId, maxBodyBytes);
+                sendStatus(response, 413);
+                return;
+            }
+            if (body.isBlank()) {
                 handleEmptyPost(connId, request, response);
                 return;
             }
@@ -177,8 +191,7 @@ public class CwmpController {
     /** 把这一跳请求挂起，等指令入队信号把它叫起来 */
     private void suspendForNextRpc(String sn, HttpServletRequest request, HttpServletResponse response) {
         if (request == null || !request.isAsyncSupported()) {
-            // 拿不到原生请求（降级处理、内嵌调用）或容器不支持异步，
-            // 就按老办法收尾，不值得为等一条指令把链路搞复杂
+            // 容器不支持异步时按老办法收尾，不为等一条指令把链路搞复杂
             log.debug("该请求不支持异步挂起，本轮直接结束: sn={}", sn);
             endSessionRound(sn, sessionManager.find(sn), response);
             return;
@@ -273,7 +286,8 @@ public class CwmpController {
                 log.error("待下发指令的 CWMP 方法无法识别，丢弃该指令: sn={}, taskId={}, rpc={}",
                         sn, rpc.getRpcId(), rpc.getRpcName());
                 if (rpc.getRpcId() > 0) {
-                    rpcDispatchService.failTask(rpc.getRpcId(), "8005", "未知 CWMP 方法: " + rpc.getRpcName());
+                    rpcDispatchService.failTask(rpc.getRpcId(),
+                            CwmpFaultCode.BAD_METHOD.getCode(), "未知 CWMP 方法: " + rpc.getRpcName());
                 } else {
                     rpc.getResponse().complete(null);
                 }
@@ -305,10 +319,10 @@ public class CwmpController {
             handleInform(connId, body, request, response, message.getCwmpId());
             return;
         }
-        // TransferComplete 是设备下载完文件后的主动上报，与 Inform 一样由 CPE 发起，
-        // 必须给回应，否则设备会认为 ACS 没收到而反复重报
-        if ("TransferComplete".equals(methodName)) {
-            handleTransferComplete(connId, message, request, response);
+        // 其余 CPE 主动请求（TransferComplete / RequestDownload / Kicked / Autonomous* 等）
+        // 必须回对应响应，否则设备会反复重报
+        if (message.isRequestFromCpe()) {
+            handleCpeRequest(connId, message, request, response);
             return;
         }
 
@@ -326,8 +340,7 @@ public class CwmpController {
         }
         session.touch();
 
-        // 会话顺序校验：没在等回应却来了响应，说明两边进度已不一致。
-        // 默认只告警，回绝只在 strictStateCheck 打开时做
+        // 没在等回应却来了响应：进度不一致，默认只告警，strictStateCheck 打开才回绝
         if (session.getState() != SessionState.WAIT_RPC_RESPONSE) {
             log.warn("会话状态与报文不匹配: sn={}, state={}, 收到={}",
                     sn, session.getState(), methodName);
@@ -342,12 +355,26 @@ public class CwmpController {
             log.info("收到 RPC 响应: sn={}, rpc={}, fault={}",
                     sn, completed.getRpcName(), message.isFault());
             if (message.isFault() && message.getStrResult() != null) {
-                // 设备给的故障明细（含逐参数失败）只在这一刻拿得到，打出来便于定位是哪一个参数不对
-                log.warn("设备故障明细: sn={}, rpc={}, {}",
-                        sn, completed.getRpcName(),
-                        message.getStrResult().replace("\n", " | "));
+                String faultCode = message.getFault().getFaultCode();
+                // 采集探测路径被拒是预期动作（二分剔除重试）：降为 info 且不落留证，避免刷屏
+                boolean probeReject = "GetParameterValues".equals(methodName)
+                        && ("9003".equals(faultCode) || "9005".equals(faultCode));
+                if (probeReject) {
+                    log.info("探测路径被设备拒绝（采集按跳过处理）: sn={}, rpc={}, fault={}",
+                            sn, completed.getRpcName(), faultCode);
+                } else {
+                    // 设备给的故障明细（含逐参数失败）只在这一刻拿得到，打出来便于定位是哪一个参数不对
+                    log.warn("设备故障明细: sn={}, rpc={}, fault={} {} ({})",
+                            sn, completed.getRpcName(), faultCode,
+                            message.getFault().getFaultString(),
+                            CwmpFaultCode.describe(faultCode));
+                    log.warn("设备故障明细内容: sn={}, rpc={}, {}",
+                            sn, completed.getRpcName(),
+                            message.getStrResult().replace("\n", " | "));
+                    // 故障原始报文落 soap_message 表留证
+                    soapTraceService.recordFault(sn, completed.getRpcId(), methodName, body);
+                }
             }
-            // 回填结果并唤醒排在该指令后面的工单步骤
             rpcDispatchService.completeTask(completed.getRpcId(), message);
         } else {
             log.warn("收到未预期的 RPC 响应: sn={}, method={}", sn, methodName);
@@ -379,13 +406,14 @@ public class CwmpController {
         sendStatus(response, 204);
     }
 
-    /** 处理 TransferComplete：设备下载完文件后的主动上报 */
-    private void handleTransferComplete(String connId, SoapMessage message,
-                                        HttpServletRequest request,
-                                        HttpServletResponse response) throws IOException {
+    /** 处理 CPE 主动请求：回对应响应并把会话推进到等待空 POST */
+    private void handleCpeRequest(String connId, SoapMessage message,
+                                  HttpServletRequest request,
+                                  HttpServletResponse response) throws IOException {
+        String methodName = message.getMethodName();
         String sn = resolveSn(connId, request);
         if (sn == null) {
-            log.warn("TransferComplete 无法定位设备, conn={}", connId);
+            log.warn("{} 无法定位设备, conn={}", methodName, connId);
             sendStatus(response, 400);
             return;
         }
@@ -399,14 +427,37 @@ public class CwmpController {
         String commandKey = message.stringValue("CommandKey");
         String faultCode = nested(message, "FaultCode");
         String faultString = nested(message, "FaultString");
-        if (faultCode.isEmpty() || "0".equals(faultCode)) {
-            log.info("设备下载完成: sn={}, commandKey={}", sn, commandKey);
-        } else {
-            log.warn("设备下载失败: sn={}, commandKey={}, fault={} {}",
-                    sn, commandKey, faultCode, faultString);
+        switch (methodName) {
+            case "TransferComplete", "AutonomousTransferComplete" -> {
+                if (faultCode.isEmpty() || "0".equals(faultCode)) {
+                    log.info("设备下载完成: sn={}, commandKey={}", sn, commandKey);
+                } else {
+                    log.warn("设备下载失败: sn={}, commandKey={}, fault={} {} ({})",
+                            sn, commandKey, faultCode, faultString, CwmpFaultCode.describe(faultCode));
+                }
+            }
+            case "RequestDownload" ->
+                    log.info("设备请求下载: sn={}, commandKey={}, fileType={}",
+                            sn, commandKey, message.stringValue("FileType"));
+            case "DUStateChangeComplete", "AutonomousDUStateChangeComplete" ->
+                    log.info("软件模块状态变更完成: sn={}, commandKey={}, fault={} {} ({})",
+                            sn, commandKey, faultCode, faultString, CwmpFaultCode.describe(faultCode));
+            case "Kicked" ->
+                    log.info("设备被本地操作唤醒(Kicked): sn={}, commandKey={}", sn, commandKey);
+            default ->
+                    log.info("收到 CPE 主动请求: sn={}, method={}", sn, methodName);
         }
 
-        String soap = SoapEnvelopeBuilder.build(RpcMethod.TRANSFER_COMPLETE_RESPONSE, Map.of(),
+        RpcMethod responseMethod = RpcMethod.of(methodName + "Response");
+        if (responseMethod == null) {
+            log.warn("无对应的 CPE 请求响应方法: method={}", methodName);
+            sendStatus(response, 400);
+            return;
+        }
+        // KickedResponse 带 NextURL，其余请求响应均为空结构
+        Map<String, Object> args = "Kicked".equals(methodName)
+                ? Map.of("NextURL", message.stringValue("NextURL")) : Map.of();
+        String soap = SoapEnvelopeBuilder.build(responseMethod, args,
                 message.getCwmpId(), session.getCwmpVersion());
         writeXml(response, soap);
         session.setState(SessionState.WAIT_POST_NULL);
@@ -440,7 +491,6 @@ public class CwmpController {
         String oui = inform.getDeviceId().getOui();
         String sn = inform.getDeviceId().getSerialNumber();
 
-        // CPE -> ACS 认证
         CpeAuthenticator.AuthResult auth = authenticator.authenticate(
                 request.getHeader("Authorization"),
                 request.getMethod(),
@@ -461,8 +511,7 @@ public class CwmpController {
             return;
         }
 
-        // 疑似双会话检测。连接变了属于正常的会话接管，因此只记日志：关掉会话会把
-        // 排队中的指令一并作废，是否离线交给 SessionManager 按无通信时长判定
+        // 连接变了属于正常会话接管，只记日志：关会话会作废排队指令，离线交给 SessionManager 判定
         if (sessionManager.detectDuplicateSession(sn, connId)) {
             log.warn("疑似双会话，按会话接管处理: sn={}, connId={}", sn, connId);
         }
@@ -473,8 +522,26 @@ public class CwmpController {
 
         CpeSession session = sessionManager.getOrCreate(oui, sn, connId);
 
+        // 后续 ACS 回复都用设备声明的 CWMP 版本，保证向下兼容
+        if (inform.getCwmpVersion() != null && !inform.getCwmpVersion().isBlank()) {
+            session.setCwmpVersion(inform.getCwmpVersion());
+        }
+
         if (!acquireSession(sn, session.getSessionId(), previousSessionId, response)) {
             return;
+        }
+
+        // 设备换新连接说明上一条 RPC 已执行完，旧 awaiting 不会被回应却会卡住空 POST：
+        // 直接清除，查询类重排下一轮再取，写操作不重排不判失败
+        if (session.hasPendingAwaiting()) {
+            PendingRpc stale = session.failAwaiting("设备换新连接，旧 RPC 未被回应");
+            if (stale != null) {
+                log.info("设备换新连接，清理旧 RPC: sn={}, rpc={}", sn, stale.getRpcName());
+                RpcMethod method = RpcMethod.of(stale.getRpcName());
+                if (method != null && method.isRetriable() && stale.getRpcId() > 0) {
+                    settleUndelivered(session, stale, "设备换新连接，旧 RPC 未被回应");
+                }
+            }
         }
 
         // 采集指令必须在回响应之前入队，紧接着的空 POST 才取得到
@@ -537,6 +604,12 @@ public class CwmpController {
             if (rpc != null) {
                 log.warn("等待 RPC 响应超时: sn={}, rpc={}", session.getSn(), rpc.getRpcName());
                 settleUndelivered(session, rpc, "等待 RPC 响应超时");
+                // 设备不再回应 = 本轮下发窗口已经死了。会话由 CPE 驱动，ACS 无法保持，
+                // 显式收尾让同批后续任务不再往死窗口上挂，留在队列等设备下次上报
+                if (session.getState() == SessionState.WAIT_RPC_RESPONSE) {
+                    session.setState(SessionState.READY);
+                    log.info("本轮下发窗口异常终止（设备不再回应）: sn={}", session.getSn());
+                }
             }
         }, waitRpcResponseTimeout, TimeUnit.SECONDS));
     }
@@ -549,13 +622,13 @@ public class CwmpController {
             log.warn("{}，本次不作处理: sn={}, rpc={}", reason, sn, rpc.getRpcName());
             return;
         }
-        // 没收到回应时并不知道设备执行了没有：设值与取值重发一次结果一样，
-        // 重启 / 下载这类重发就是真干了第二次，只能直接按失败结
+        // 没收到回应时不知设备执行了没有：查询类重发无害，重启/下载重发就是真干第二次
         RpcMethod method = RpcMethod.of(rpc.getRpcName());
         if (!queueProperties.isEnabled()
                 || rpc.getAttempts() >= maxDeliveryAttempts
                 || (method != null && !method.isRetriable())) {
-            rpcDispatchService.failTask(rpc.getRpcId(), "8002", reason);
+            rpcDispatchService.failTask(rpc.getRpcId(),
+                    CwmpFaultCode.INTERNAL_ERROR.getCode(), reason);
             return;
         }
         // 退避：下一次延迟是这一次的两倍
@@ -699,12 +772,21 @@ public class CwmpController {
         return sessionManager.findSnByConnection(connId);
     }
 
+    /** 读请求体；超过上限返回 null，调用方回 413 */
     private String readBody(HttpServletRequest request) throws IOException {
-        byte[] bytes = request.getInputStream().readAllBytes();
-        if (bytes.length == 0) {
-            return "";
+        InputStream in = request.getInputStream();
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        byte[] chunk = new byte[8192];
+        long total = 0;
+        int n;
+        while ((n = in.read(chunk)) != -1) {
+            total += n;
+            if (total > maxBodyBytes) {
+                return null;
+            }
+            buf.write(chunk, 0, n);
         }
-        return new String(bytes, StandardCharsets.UTF_8);
+        return total == 0 ? "" : buf.toString(StandardCharsets.UTF_8);
     }
 
     private void writeXml(HttpServletResponse response, String soap) throws IOException {

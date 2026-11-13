@@ -7,10 +7,11 @@
 
 | 运营商 | 厂家型号 |
 | --- | --- |
-| CMCC（移动） | CIOT P22g-CIac |
-| CMCC（移动） | CIOT ZNM802 |
-| CMCC（移动） | MSG2200C-UP-4E4V |
-| CMCC（移动） | CMDC H5-9 |
+| CMCC（移动） | CIOT P22g-CIac         |
+| CMCC（移动） | CIOT ZNM802            |
+| CMCC（移动） | MSG2200C-UP-4E4V       |
+| CMCC（移动） | CMDC H5-9              |
+| CMCC（移动） | SKYW SK-D849N          |
 | CT（电信） | B866-S1-4E1P3W1-Ethernet |
 
 > `B866-S1-4E1P3W1` 硬件是 **XGPON** 上行；这台改成 **Ethernet 上行**后上报的 ProductClass

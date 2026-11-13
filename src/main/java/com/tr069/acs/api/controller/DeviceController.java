@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tr069.acs.acs.model.DataModel;
 import com.tr069.acs.acs.service.DeviceAccountService;
 import com.tr069.acs.acs.service.DeviceBusinessService;
+import com.tr069.acs.acs.service.DeviceTelnetService;
+import com.tr069.acs.acs.service.DirectDispatchService;
 import com.tr069.acs.acs.session.CpeSession;
 import com.tr069.acs.acs.session.SessionManager;
 import com.tr069.acs.agent.RpcDispatchService;
@@ -13,11 +15,13 @@ import com.tr069.acs.common.PageResult;
 import com.tr069.acs.common.Result;
 import com.tr069.acs.cwmp.RpcMethod;
 import com.tr069.acs.exec.DeviceTaskProgressService;
+import com.tr069.acs.exec.entity.DeviceTask;
 import com.tr069.acs.cwmp.model.SoapMessage;
 import com.tr069.acs.queue.RpcTaskQueue;
 import com.tr069.acs.domain.entity.CpeDevice;
 import com.tr069.acs.mapper.CpeDeviceMapper;
 import com.tr069.acs.api.service.DeviceListService;
+import com.tr069.acs.worklist.model.WifiEdit;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,8 +52,70 @@ public class DeviceController {
     private final RpcTaskQueue rpcTaskQueue;
     private final DeviceBusinessService businessService;
     private final DeviceAccountService accountService;
+    private final DeviceTelnetService telnetService;
     private final DeviceTaskProgressService taskProgressService;
     private final DeviceListService deviceListService;
+    private final DirectDispatchService directDispatchService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    /** 设备页直接下发：逐台受理即发，不建工单；入参 sns / category / values / templateId / wifi / username */
+    @PostMapping("/dispatch")
+    public Result<Map<String, Object>> dispatch(@RequestBody Map<String, Object> body) {
+        List<String> sns = new ArrayList<>();
+        Object snsRaw = body.get("sns");
+        if (snsRaw instanceof List) {
+            for (Object s : (List<?>) snsRaw) {
+                if (s != null && !s.toString().isBlank()) {
+                    sns.add(s.toString().trim());
+                }
+            }
+        } else if (snsRaw != null) {
+            for (String s : snsRaw.toString().split("[,;\\s]+")) {
+                if (!s.isBlank()) {
+                    sns.add(s.trim());
+                }
+            }
+        }
+        if (sns.isEmpty()) {
+            return Result.failure("缺少设备序列号");
+        }
+        String category = body.get("category") == null ? "" : body.get("category").toString();
+        Long templateId = body.get("templateId") == null ? null
+                : Long.valueOf(String.valueOf(body.get("templateId")));
+        String username = body.get("username") == null ? "admin" : body.get("username").toString();
+        Map<String, String> values = new LinkedHashMap<>();
+        if (body.get("values") instanceof Map) {
+            // lambda 捕获要求事实终值，先落到局部变量再填
+            final Map<String, String> captured = values;
+            ((Map<?, ?>) body.get("values")).forEach((k, v) ->
+                    captured.put(String.valueOf(k), v == null ? null : String.valueOf(v)));
+        }
+        // WLAN 编辑的业务字段：翻译成业务类型与意图键，与工单通道同款
+        if (body.get("wifi") instanceof Map) {
+            WifiEdit wifi = objectMapper.convertValue(body.get("wifi"), WifiEdit.class);
+            if (wifi.getSsid() == null || wifi.getSsid().isBlank()) {
+                return Result.failure("SSID 名称不能为空");
+            }
+            category = wifi.toCategory();
+            values = wifi.toValues();
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        int failed = 0;
+        for (String sn : sns) {
+            Map<String, Object> row = directDispatchService.dispatchOne(sn, category, templateId,
+                    values, username);
+            Object status = row.get("status");
+            if (DeviceTask.STATUS_REJECTED.equals(status) || "fail".equals(status)) {
+                failed++;
+            }
+            rows.add(row);
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("submitted", rows.size() - failed);
+        data.put("failed", failed);
+        data.put("rows", rows);
+        return Result.success(data);
+    }
 
     /** 一批设备当前正在进行的下发任务，列表页每行用它显示「正在下发 xxx」 */
     @GetMapping("/tasks/active")
@@ -239,8 +305,7 @@ public class DeviceController {
         CpeDevice device = cpeDeviceMapper.selectOne(
                 new LambdaQueryWrapper<CpeDevice>().eq(CpeDevice::getSn, sn));
         if (device == null) {
-            // 带上 SN：清过型号档案、设备还没重新上报时这里会命中，
-            // 前端提示和日志里都得能看出是哪台
+            // 日志带上 SN：前端提示和日志里都得能看出是哪台
             log.info("设备详情查询不到台账: sn={}", sn);
             return Result.failure("设备不存在: " + sn);
         }
@@ -329,12 +394,79 @@ public class DeviceController {
     @GetMapping("/{sn}/admin-account")
     public Result<Map<String, Object>> adminAccount(@PathVariable String sn) {
         Map<String, Object> data = new LinkedHashMap<>(accountService.queryAdminAccount(sn));
-        // 状态中文与标签色在此统一补：查询结果有 offline / timeout / fail / empty / success 五个分支，
-        // 页面原来自己维护一张码表，后端加一个分支就显示成「未知」
+        // 状态中文与标签色在此统一补：页面原来自己维护码表，后端加分支就会显示成「未知」
         String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
         data.put("statusText", adminStatusText(status));
         data.put("statusLevel", adminStatusLevel(status));
         return Result.success(data);
+    }
+
+    /** 查询设备 Telnet 使能状态 */
+    @GetMapping("/{sn}/telnet")
+    public Result<Map<String, Object>> telnetStatus(@PathVariable String sn) {
+        Map<String, Object> data = new LinkedHashMap<>(telnetService.queryTelnetStatus(sn));
+        String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
+        data.put("statusText", telnetStatusText(status));
+        data.put("statusLevel", telnetStatusLevel(status));
+        return Result.success(data);
+    }
+
+    /** 开启或关闭设备 Telnet */
+    @PostMapping("/{sn}/telnet")
+    public Result<Map<String, Object>> telnetSwitch(@PathVariable String sn,
+                                                    @RequestBody(required = false) TelnetRequest request) {
+        boolean enabled = request != null && Boolean.TRUE.equals(request.getEnabled());
+        Map<String, Object> data = telnetService.setTelnetEnabled(sn, enabled);
+        String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
+        data.put("statusText", telnetStatusText(status));
+        data.put("statusLevel", telnetStatusLevel(status));
+        return Result.success(data);
+    }
+
+    /**
+     * 查询 Telnet 状态及默认账号密码。
+     * 未开启时会自动下发开启指令，开启成功后再读取账号 / 密码 / 端口。
+     */
+    @GetMapping("/{sn}/telnet/credentials")
+    public Result<Map<String, Object>> telnetCredentials(@PathVariable String sn) {
+        Map<String, Object> data = new LinkedHashMap<>(telnetService.queryTelnetCredentials(sn));
+        String status = data.get("status") == null ? "" : String.valueOf(data.get("status"));
+        data.put("statusText", telnetStatusText(status));
+        data.put("statusLevel", telnetStatusLevel(status));
+        String credStatus = data.get("credentialStatus") == null ? ""
+                : String.valueOf(data.get("credentialStatus"));
+        data.put("credentialStatusText", telnetStatusText(credStatus));
+        data.put("credentialStatusLevel", telnetStatusLevel(credStatus));
+        return Result.success(data);
+    }
+
+    /** Telnet 状态中文：已开启 / 已关闭 / 未读到 / 超时 / 失败 / 离线 */
+    private static String telnetStatusText(String status) {
+        return switch (status) {
+            case "success" -> "已读取";
+            case "queued" -> "已下发";
+            case "empty" -> "未读到";
+            case "timeout" -> "超时";
+            case "fail" -> "失败";
+            case "offline" -> "离线";
+            default -> status;
+        };
+    }
+
+    private static String telnetStatusLevel(String status) {
+        return switch (status) {
+            case "success", "queued" -> "success";
+            case "empty", "offline" -> "info";
+            case "timeout" -> "warning";
+            case "fail" -> "danger";
+            default -> "info";
+        };
+    }
+
+    /** Telnet 开关入参 */
+    @Data
+    public static class TelnetRequest {
+        private Boolean enabled;
     }
 
     /** 超管账号查询结果的中文：查到了 / 没账号 / 超时 / 失败 / 设备离线 */
@@ -365,8 +497,7 @@ public class DeviceController {
     public Result<Map<String, Object>> rpc(@PathVariable String sn,
                                            @PathVariable String rpcName,
                                            @RequestBody(required = false) Map<String, Object> args) {
-        // 提交即返回，不再挂起请求线程等设备回应：
-        // 设备可能几十秒后才来空 POST 把指令取走
+        // 提交即返回，设备可能几十秒后才来空 POST 取走指令，不挂请求线程等回应
         RpcDispatchService.DispatchHandle handle = rpcDispatchService.submitAsync(
                 sn, rpcName, args == null ? Map.of() : args, null);
         Map<String, Object> data = new HashMap<>();
@@ -380,6 +511,12 @@ public class DeviceController {
 
     /** IPPing 诊断对象在 TR-098 下的挂载位置（直接挂在根节点下，没有 IP.Diagnostics 这一层） */
     private static final String PING_BASE_TR098 = "InternetGatewayDevice.IPPingDiagnostics.";
+
+    /** TraceRoute 诊断对象在 TR-181 下的挂载位置 */
+    private static final String TRACE_BASE_TR181 = "Device.IP.Diagnostics.TraceRoute.";
+
+    /** TraceRoute 诊断对象在 TR-098 下的挂载位置 */
+    private static final String TRACE_BASE_TR098 = "InternetGatewayDevice.TraceRouteDiagnostics.";
 
     /** 下发 IPPing 诊断 */
     @PostMapping("/{sn}/diagnostics/ping")
@@ -409,6 +546,37 @@ public class DeviceController {
     /** 诊断对象挂载位置，按设备登记的数据模型选 */
     private String pingBase(String sn) {
         return DataModel.TR181 == DataModel.ofRoot(rootNodeOf(sn)) ? PING_BASE_TR181 : PING_BASE_TR098;
+    }
+
+    /** TraceRoute 诊断对象挂载位置 */
+    private String traceBase(String sn) {
+        return DataModel.TR181 == DataModel.ofRoot(rootNodeOf(sn)) ? TRACE_BASE_TR181 : TRACE_BASE_TR098;
+    }
+
+    /** 下发 TraceRoute 诊断（TR-143） */
+    @PostMapping("/{sn}/diagnostics/trace")
+    public Result<Map<String, Object>> traceDiagnostics(@PathVariable String sn,
+                                                         @RequestBody(required = false) PingRequest request) {
+        String host = request == null ? null : request.getHost();
+        if (host == null || host.isBlank()) {
+            return Result.failure("缺少诊断目标地址");
+        }
+        String target = host.trim();
+        String base = traceBase(sn);
+        List<Map<String, String>> params = new ArrayList<>();
+        params.add(paramEntry(base + "Host", target, "string"));
+        params.add(paramEntry(base + "DiagnosticsState", "Requested", "string"));
+        params.add(paramEntry(base + "NumberOfTries", "3", "unsignedInt"));
+        params.add(paramEntry(base + "Timeout", "5000", "unsignedInt"));
+        params.add(paramEntry(base + "DataBlockSize", "32", "unsignedInt"));
+        RpcDispatchService.DispatchHandle handle =
+                rpcDispatchService.submitAsync(sn, "SetParameterValues",
+                        spvArgs("acs-trace", params), null);
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", handle.getTaskId());
+        data.put("target", target);
+        data.put("path", base);
+        return Result.success(data);
     }
 
     private String rootNodeOf(String sn) {

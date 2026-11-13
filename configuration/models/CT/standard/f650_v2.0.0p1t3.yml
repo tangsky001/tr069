@@ -1,0 +1,11 @@
+# 型号适配档：只有能力测试通过才会写 adapted: true
+model_key: F650_V2.0.0P1T3
+isp: CT
+adapted: true
+config_file: models/CT/standard/f650_v2.0.0p1t3.xml
+lan_ports: 4
+lan_speed: 自动
+sip_count: 1
+wifi_spec: 2.4G
+sample_sn: 328330C3747D59060
+adapted_at: 2026-11-12 01:09:37

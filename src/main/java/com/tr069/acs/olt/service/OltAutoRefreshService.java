@@ -79,7 +79,6 @@ public class OltAutoRefreshService {
         devicePool = new ThreadPoolExecutor(MAX_CONCURRENCY, MAX_CONCURRENCY,
                 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), daemon("olt-refresh"));
         devicePool.allowCoreThreadTimeOut(true);
-        log.info("OLT 自动刷新已就绪：并行度跟库中设备数走，上限 {} 路", MAX_CONCURRENCY);
     }
 
     @PreDestroy
@@ -149,7 +148,7 @@ public class OltAutoRefreshService {
                     }
                 }
             }
-            log.info("OLT 自动刷新完成: 成功={}, 失败={}, 退避跳过={}, 超时延后={}", ok, failed, skipped, deferred);
+            log.info("OLT 自动刷新完成: 成功={}, 失败={}", ok, failed);
         } catch (Exception e) {
             log.warn("OLT 自动刷新本轮异常: {}", e.getMessage(), e);
         } finally {

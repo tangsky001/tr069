@@ -127,10 +127,7 @@ public class OltCliSession implements Closeable {
 
     private volatile String prompt;
 
-    /**
-     * 会话当前停留的视图。长连接不退出登录，所以必须自己记住停在哪一层：
-     * 下次要用 config 就直接发命令，已经在 config 里就连 enable/config 都不发。
-     */
+    /** 会话当前停留的视图：长连接不退出登录，必须自己记住停在哪层——已在 config 就连 enable/config 都不发 */
     private volatile CliView view = CliView.ROOT;
 
     /** 视图层级：根视图（用户/特权）、配置视图、接口/模板等子视图、位置不明 */
@@ -198,7 +195,6 @@ public class OltCliSession implements Closeable {
         return com.tr069.acs.olt.util.OltCrypto.decrypt(password);
     }
 
-    /** 采集信息 */
     /** 按页签同步的采集段：页面点进哪个页签就只采对应段，不再一次采全部 */
     public enum Section {
         /** 板卡温度（OLT 状态页签的板卡卡片） */
@@ -223,19 +219,16 @@ public class OltCliSession implements Closeable {
         OltSnapshot snapshot = new OltSnapshot();
         List<String> notes = new ArrayList<>();
 
-        // 长连接可能停在上一次任务留下的 config/接口视图：版本/板卡命令要在根视图发，
-        // 已经在根视图时这里不发任何命令
+        // 长连接可能停在上次任务留下的 config/接口视图：版本/板卡命令要在根视图发，已在根视图时不发命令
         ensureRootView(Math.min(commandTimeoutMs, 5000));
         // 先关分页，否则版本/板卡回显都可能停在第一页
         prepareTerminal(vendorHint);
 
-        // 第一步：判定命令风格与厂商。display version 有回显说明命令走 display 那一套
-        // （华为用它，第三方也有用的），show version 有回显就走 show；厂商另外按回显关键字认
+        // 第一步：判定命令风格与厂商。display version 有回显走 display 风格（华为用它），show version 有回显走 show；厂商按回显关键字认
         VersionProbe probe = probeVersion();
         OltVendor vendor = detectVendor(probe.text());
         if (vendor == OltVendor.GENERIC && vendorHint != OltVendor.GENERIC) {
-            // 这次没认出来（版本命令没回显之类）就沿用台账里上次认出的厂商，
-            // 不然页面会当场从华为界面掉到第三方界面
+            // 这次没认出来（版本命令没回显之类）就沿用台账里上次认出的厂商，不然页面会当场从华为界面掉到第三方界面
             vendor = vendorHint;
         }
         String versionText = probe.text();
@@ -293,8 +286,7 @@ public class OltCliSession implements Closeable {
             // sections 为空时只采版本与板卡，不进配置视图
             if (!sections.isEmpty()) {
                 if (vendor == OltVendor.HUAWEI && !boards.isEmpty()) {
-                    // 华为那套（温度 / 逐板端口与光模块 / ONT / VLAN / 模板）还在这里逐条编排，
-                    // 没搬到 profile 里；别的新厂商在自己的 profile.collectDetails 里接管
+                    // 华为那套（温度/端口/ONT/VLAN/模板）还在这里逐条编排没搬进 profile；其他厂商由 profile.collectDetails 接管
                     collectFromConfigView(boards, notes, snapshot, sections, true);
                 } else if (!boards.isEmpty()) {
                     OltVendorProfiles.of(vendor)
@@ -302,9 +294,7 @@ public class OltCliSession implements Closeable {
                 }
             }
             if (snapshot.getBackplane() == null && vendor == OltVendor.HUAWEI) {
-                // MA5683T 这类设备的 display version 不带 PCB/Backplane 段，
-                // display board 0 的回显里也没有背板行，背板型号要单独问：
-                // display version backplane 0 →「Backplane: H802MAB0」
+                // MA5683T 这类 display version 与 display board 0 都不带背板行，要单独问 display version backplane 0 →「Backplane: H802MAB0」
                 String backplaneText = runCommand("display version backplane 0");
                 if (backplaneText != null && !backplaneText.isBlank()) {
                     snapshot.setBackplane(OltInfoParser.extractBackplane(backplaneText));
@@ -314,8 +304,7 @@ public class OltCliSession implements Closeable {
                 snapshot.setBackplane(OltInfoParser.extractBackplaneBoard(boardText));
             }
             snapshot.setBoards(boards);
-            // 机框槽位数跟着 display board 0 的槽位表走（空槽位也在表里），页面按它画整框；
-            // 一体化整机由 profile 给（那类设备没有槽位表，也不该画成一圈空槽位围一台机器）
+            // 机框槽位数跟 display board 0 槽位表走（空槽位也在表里）；一体化整机由 profile 给（没有槽位表）
             snapshot.setSlotCount(OltVendorProfiles.of(vendor).slotCount(boardText, boards));
         }
 
@@ -439,8 +428,7 @@ public class OltCliSession implements Closeable {
             notes.add("进不了配置视图（enable → config），温度/ONT/VLAN 未采到");
             return;
         }
-        // 任务结束就停在 config 里，不再多退一层：下个任务照样在 config 里干活，
-        // enterConfigView 会直接短路；真要回根视图（版本/板卡命令）由 ensureRootView 按需退
+        // 任务结束就停在 config 里：下个任务 enterConfigView 直接短路；回根视图由 ensureRootView 按需退
         if (sections.contains(Section.TEMPERATURES)) {
             applyTemperatures(boards, timeout);
         }
@@ -449,8 +437,7 @@ public class OltCliSession implements Closeable {
             collectBoardPortStates(boards, timeout);
         }
         boolean ontOk = !sections.contains(Section.ONTS) || collectOnts(boards, timeout, notes, enrichOntDetails);
-        // ONT 采到后批量补模板号：拉一次 display current-configuration，从 ont add 行按位置对回。
-        // 一次命令搞定所有 ONT 的模板号，替代原来逐台 display ont ipconfig（一台一条、设备侧秒级）
+        // ONT 采到后批量补模板号：拉一次 current-configuration 从 ont add 行按位置对回，替代逐台 display ont ipconfig（一台一条）
         if (ontOk && sections.contains(Section.ONTS)) {
             fillOntProfilesFromConfig(boards, notes);
         }
@@ -577,8 +564,7 @@ public class OltCliSession implements Closeable {
                 continue;
             }
             try {
-                // 优先用 display port state all 一条拿全部口（MA5683T 支持），
-                // 不支持时退回逐口——但只查在位的口，空口直接跳过
+                // 优先 display port state all 一条拿全部口（MA5683T 支持）；不支持退回逐口，只查在位口
                 int portTimeout = Math.min(timeout, 3000);
                 String allText = runCommand("display port state all", portTimeout);
                 Map<Integer, OltPort> allOptics = OltInfoParser.parsePortStateOpticsAll(allText);
@@ -673,8 +659,7 @@ public class OltCliSession implements Closeable {
     /** VLAN：优先从配置脚本一次拿到 VLAN 定义和端口放通，fallback 到 display vlan all + 逐口 */
     private void collectVlans(List<OltBoard> boards, OltSnapshot snapshot, int timeout) {
         OltVlanInfo info = new OltVlanInfo();
-        // 优先用配置脚本：display current-configuration 的 [vlan-config] 段一次拿全 VLAN 定义和端口放通
-        // 不支持分段写法时退回全量配置；都拿不到再退回 display vlan all + 逐口
+        // 优先配置脚本 [vlan-config] 段一次拿全 VLAN 定义与端口放通；不支持分段写法退回全量配置，再退回 display vlan all + 逐口
         String configText = runCommand("display current-configuration section vlan-config", timeout);
         if (configText == null || OltInfoParser.looksUnsupported(configText) || !configText.contains("vlan")) {
             configText = runCommand("display current-configuration", timeout);
@@ -822,8 +807,7 @@ public class OltCliSession implements Closeable {
         if (ports.isEmpty()) {
             return result;
         }
-        // 先在 config 视图把这块板上所有业务虚口拆干净：带着 service-port 引用的
-        // ont delete 会被设备顶回来，就算删掉也会留下一堆指向空 ONT 的死流
+        // 先在 config 视图把业务虚口拆干净：带着 service-port 引用的 ont delete 会被设备顶回来，删掉也留死流
         List<String> undoCommands = new ArrayList<>();
         for (int port : ports) {
             if (profile.servicePortListCommand(0, slot, port, null) == null) {
@@ -889,8 +873,7 @@ public class OltCliSession implements Closeable {
 
     /** DBA 模板与线路模板：{@code display dba-profile all} + */
     private void collectTemplates(OltSnapshot snapshot, int timeout) {
-        // 总表没有模板名，先拿块状详情（含 Profile-name），名字按 ID 对回总表；
-        // 版本不支持 detail 参数时命令报错、解析为空，就只靠总表
+        // 总表没有模板名，先拿块状详情（含 Profile-name）按 ID 对回；版本不支持 detail 参数时只靠总表
         List<OltDbaProfile> dbaDetails = OltInfoParser.parseDbaDetails(
                 runCommand("display dba-profile all detail", timeout));
         List<OltDbaProfile> dbaProfiles = OltInfoParser.parseDbaProfiles(
@@ -924,8 +907,7 @@ public class OltCliSession implements Closeable {
                 profile.setType(lineType);
             }
         });
-        // all 只给模板概要，T-CONT / GEM 映射明细在 profile-id 详情里：逐条取回补齐
-        // 0 号是系统内置默认模板（line-profile_default_0），页面不展示
+        // all 只给概要，T-CONT / GEM 映射明细在 profile-id 详情里逐条补齐；0 号是系统内置默认模板，页面不展示
         lineProfiles.removeIf(profile -> Integer.valueOf(0).equals(profile.getProfileId()));
         for (OltLineProfile profile : lineProfiles) {
             if (profile.getProfileId() == null) {
@@ -938,9 +920,7 @@ public class OltCliSession implements Closeable {
                     .findFirst()
                     .ifPresent(d -> mergeLineProfile(profile, d));
         }
-        // 配置脚本兜底：部分版本 display ont-lineprofile profile-id 的明细回显认不出
-        // GEM 映射（页面映射关系一列全是「-」），而 current-configuration 的脚本行
-        // （tcont / gem add / gem mapping）字段含义固定不随版本变，缺什么从这补
+        // 配置脚本兜底：部分版本 ont-lineprofile 明细回显认不出 GEM 映射，而 current-configuration 脚本行（tcont/gem add/gem mapping）字段含义固定，缺什么从这补
         String configScript = runCommand("display current-configuration section global-config", timeout);
         if (OltInfoParser.looksUnsupported(configScript)) {
             configScript = runCommand("display current-configuration", timeout);
@@ -968,8 +948,7 @@ public class OltCliSession implements Closeable {
                 lineProfiles.add(fromConfig);
             }
         }
-        // 业务流与 ONT 能力模板同在 config 视图下认，顺这两条一起采（采不到就留空）
-        // service-port 主用配置脚本段：字段含义固定（表格回显各版本列序不一，端口列老对不上）
+        // 业务流与能力模板同在 config 视图下，顺路一起采（采不到留空）；service-port 主用配置脚本段（表格回显各版本列序不一）
         List<OltServicePort> servicePorts = OltInfoParser.parseServicePortsFromConfig(
                 runCommand("display current-configuration section service-port", timeout));
         if (servicePorts.isEmpty()) {
@@ -999,8 +978,7 @@ public class OltCliSession implements Closeable {
                     .findFirst()
                     .ifPresent(d -> mergeSrvProfile(profile, d));
         }
-        // 配置脚本兜底：all 概要表行没认出来（回显格式变了）时，脚本里的
-        // ont-srvprofile 行就是全部能力模板；已有的补齐网口/电话口数量与名字
+        // 配置脚本兜底：all 概要表没认出来时，脚本里的 ont-srvprofile 行就是全部能力模板；已有的补齐网口/电话口数量与名字
         for (OltSrvProfile from : configScript.isBlank()
                 ? new ArrayList<OltSrvProfile>() : OltInfoParser.parseSrvProfiles(configScript)) {
             if (from.getProfileId() == null) {
@@ -1139,11 +1117,7 @@ public class OltCliSession implements Closeable {
                 || OltInfoParser.BoardKind.CONTROL.name().equals(boardKind);
     }
 
-    /** 进配置视图，写法由厂商 profile 决定（华为 {@code enable}→{@code config} 后还要补一条 */
-    /**
-     * 进配置视图：会话已经停在 config 里就直接返回，连 enable / config 都不发；
-     * 停在接口/模板等子视图就先按层级退回根视图再进。长连接下这是省命令的关键。
-     */
+    /** 进配置视图：已停在 config 直接返回（连 enable/config 都不发）；停在子视图先按层级退回根视图再进，长连接下省命令的关键 */
     private boolean enterConfigView(int timeout) {
         if (view == CliView.CONFIG) {
             return true;
@@ -1259,8 +1233,7 @@ public class OltCliSession implements Closeable {
             throw new IllegalStateException("进不了 config 视图，无法下发配置");
         }
         List<String> outputs = new ArrayList<>();
-        // 命令和它的应答要一起发：交互式命令（terminal user name）发完会停在
-        // 追问上等输入，逐条独立下发的话中间隔着一个等不来的提示符
+        // 命令和应答要一起发：交互式命令发完会停在追问上等输入，逐条独立下发中间隔着一个等不来的提示符
         for (List<String> group : groupWithAnswers(commands)) {
             String command = group.get(0);
             List<String> answers = group.subList(1, group.size());
@@ -1281,11 +1254,7 @@ public class OltCliSession implements Closeable {
         return outputs;
     }
 
-    /**
-     * 存盘专用：华为的 {@code save} 先停在「Are you sure ... (y/n)[n]:」上，
-     * 答完写 flash 好几十秒（期间设备不接任何命令），直到提示符回来才算完。
-     * 不专门等完就返回的话，下一条任务会在设备还在写 flash 时发进去，必然被拒。
-     */
+    /** 存盘专用：华为 save 先停在 y/n 确认，答完写 flash 几十秒（期间不接任何命令）；不等完就返回的话下一条任务必然被拒 */
     private String runSave() {
         long start = System.currentTimeMillis();
         saving = true;
@@ -1439,13 +1408,7 @@ public class OltCliSession implements Closeable {
 
     /** 设备说「这个东西已经有了」 */
     private static final Pattern ALREADY_EXISTS = Pattern.compile(
-            // 设备说「这件事已经做过了」的几种说法，实测遇到的：
-            //   Failure: VLAN has existed                        重复建 VLAN
-            //   Failure: The port is already in the VLAN         重复把口加进 VLAN
-            //   Failure: The dba profile already exists          重复建模板
-            //   Failure: Make configuration repeatedly           重复下发同一条配置
-            // already / has been 后面跟的动词不枚举了——设备版本之间措辞不一样
-            // （added / created / configured / bound），漏一个就得再跑一趟。
+            // 设备「已存在」的实测说法：VLAN has existed / port is already in the VLAN / dba profile already exists / Make configuration repeatedly；动词不枚举（版本间措辞不一）
             "(?i)(has\\s+existed|has\\s+been\\s+\\w+|already\\s+\\w+|repeat\\w*|exsits|已存在|已经存在)");
 
     /** 「失败数为 0」不是失败 */
@@ -1485,8 +1448,7 @@ public class OltCliSession implements Closeable {
                 continue;
             }
             if (details.isEmpty() && !counts.isEmpty()) {
-                // 汇总行认到了、明细行一条没拆出来：回显格式可能变了。
-                // 写库时这种「有数量没明细」的端口会沿旧明细（不被抹），这里把异常亮出来
+                // 汇总行认到、明细一条没拆出来：回显格式可能变了；写库时会沿旧明细，这里把异常亮出来
                 notes.add("0/" + board.getSlotNo() + " ONT 明细未解析出（汇总行认到 "
                         + counts.size() + " 个口，数量正常）：明细表回显格式可能变了，明细列沿用上次数据");
             }
@@ -1890,10 +1852,7 @@ public class OltCliSession implements Closeable {
         return view;
     }
 
-    /**
-     * 探活：只发一个回车看提示符回不回得来，不改视图、不发业务命令。
-     * 保活巡检用它，比 {@code display client} 轻，而且任何视图下都成立。
-     */
+    /** 探活：只发一个回车看提示符回不回得来，不改视图、不发业务命令；保活巡检用它，比 display client 轻 */
     public boolean ping(int timeoutMs) {
         return probeView(timeoutMs);
     }
@@ -1917,10 +1876,7 @@ public class OltCliSession implements Closeable {
         }
     }
 
-    /**
-     * 退回根视图（特权/用户视图）。已经在根视图时一条命令都不发——
-     * 多发的那个 quit 会直接退出登录，白丢一次 OLT 的登录名额。
-     */
+    /** 退回根视图（特权/用户视图）：已在根视图时一条命令都不发——多发的 quit 会直接退出登录，白丢一次登录名额 */
     private boolean ensureRootView(int timeoutMs) {
         for (int round = 0; round < 4 && view != CliView.ROOT; round++) {
             if (view == CliView.UNKNOWN && !probeView(timeoutMs)) {
@@ -2255,8 +2211,7 @@ public class OltCliSession implements Closeable {
         }
         // 每条命令的提示符都在回显末尾：顺手更新视图，下一次就知道自己停在哪一层
         view = viewOf(out, view);
-        // 设备把空闲连接踢回登录界面时 TCP 不一定断：识别出来标记失效，让会话池重建，
-        // 否则后续命令永远发在登录提示符上，自动注册这类后台任务会一直失败且不恢复
+        // 设备把空闲连接踢回登录界面时 TCP 不一定断：标记失效让会话池重建，否则后续命令永远发在登录提示符上
         if (USERNAME_PROMPT.matcher(out).find() || PASSWORD_PROMPT.matcher(out).find()) {
             sessionLost = true;
             view = CliView.UNKNOWN;

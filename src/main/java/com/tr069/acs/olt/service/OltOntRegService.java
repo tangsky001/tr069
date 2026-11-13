@@ -150,9 +150,7 @@ public class OltOntRegService {
             if (exists.getOltId() != null && !exists.getOltId().equals(oltId)) {
                 throw new IllegalArgumentException("模板不属于这台 OLT，无权修改");
             }
-            // 不能用 updateById：它默认跳过 null 字段，页面上「清空」的字段
-            // （业务 VLAN、绑定端口这类可空文本）传上来是 null，原样留在库里，
-            // 清了等于没清。这里把这些列显式 set，空值才写得进去。
+            // updateById 跳过 null 字段，页面上清空的列写不进去，须显式 set
             templateMapper.update(template, new LambdaUpdateWrapper<OltOntRegTemplate>()
                     .eq(OltOntRegTemplate::getId, template.getId())
                     .set(OltOntRegTemplate::getBindPorts, template.getBindPorts())
@@ -170,7 +168,6 @@ public class OltOntRegService {
         if (ids == null || ids.isEmpty()) {
             return;
         }
-        // 校验归属：每条模板必须属于这台 OLT 或为全局模板
         for (Long id : ids) {
             OltOntRegTemplate template = templateMapper.selectById(id);
             if (template == null) {
@@ -463,8 +460,7 @@ public class OltOntRegService {
             result.setMessage("端口格式不对：" + row.getFsp() + "（要形如 0/2/0）");
             return result;
         }
-        // 自动发现编号不再是命令的一部分（设备按 SN 认光猫、ONT ID 自己分配），
-        // 缺编号照样能注册，不再卡在这一步
+        // 设备按 SN 认光猫、ONT ID 自己分配，命令里不再需要自动发现编号
         String authProblem = authProblem(template, row);
         if (authProblem != null) {
             result.setSuccess(false);
@@ -538,11 +534,7 @@ public class OltOntRegService {
     /** GEM Port 兜底号：线路模板读不出来时才用它（一键开局建的是 gem add 1） */
     private static final int DEFAULT_GEM_PORT = 1;
 
-    /**
-     * 注册成功后把光猫型号写进 ONT 描述（页面上看到的「备注 / 型号」就是设备侧的 desc），
-     * 例如 P22g-Clac。写失败只记在结果说明里，不能把已经注册成功的 ONT 报成失败——
-     * 描述只是备注，跟能不能上网无关。
-     */
+    /** 注册成功后把型号写进 ONT 描述（设备侧 desc）；写失败只记说明，不影响注册结果 */
     private String applyOntModelRemark(OltDevice device, OltVendorProfile profile, int[] fsp,
                                        OltOntRegisterRequest.Row row) {
         String model = blankToNull(row.getModel());
@@ -801,11 +793,7 @@ public class OltOntRegService {
         }
     }
 
-    /**
-     * 删 ONT 前先查它名下的业务虚口，编出逐条 undo service-port（config 视图执行）。
-     * 带着 service-port 引用的 ont delete 会被设备顶回来；就算删掉了也会留下指向
-     * 空 ONT 的死流。返回的命令要排在 ont delete 之前下发。
-     */
+    /** 删 ONT 前编出逐条 undo service-port（要排在 ont delete 之前）：带引用的 ont delete 会被设备顶回 */
     private List<String> servicePortDeleteCommands(OltDevice device, OltVendorProfile profile,
                                                    int[] fsp, int ontId) {
         if (!profile.supportsServicePorts()) {
@@ -935,7 +923,6 @@ public class OltOntRegService {
         if (base == null || Duration.between(base, LocalDateTime.now()).getSeconds() < saveSeconds) {
             return;
         }
-        // 连续失败超过阈值则暂停存盘（不暂停注册，但持续告警）
         java.util.concurrent.atomic.AtomicInteger streak = saveFailStreaks.computeIfAbsent(oltId, k -> new java.util.concurrent.atomic.AtomicInteger());
         if (streak.get() >= MAX_SAVE_FAIL_STREAK) {
             log.error("ONT 自动注册存盘连续失败 {} 次，已暂停存盘 id={}，需人工检查设备", streak.get(), oltId);
@@ -1083,8 +1070,7 @@ public class OltOntRegService {
 
     private void saveRecord(Long oltId, OltOntRegisterRequest.Row row, OltOntRegisterResult result,
                             String operator, String source, boolean auto) {
-        // 自动注册每轮都跑，同一台光猫因为同一个原因失败时不重复记：
-        // 否则 30 秒一条，记录表很快就只剩同一句话
+        // 自动注册同一台光猫因同一原因失败时不重复记，否则记录表很快被刷满
         if (auto && !result.isSuccess() && sameAsLast(oltId, row.getSn(), result.getMessage())) {
             return;
         }

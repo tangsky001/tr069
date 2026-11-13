@@ -8,6 +8,10 @@ import com.tr069.acs.biz.mapper.BizTemplateExecutionMapper;
 import com.tr069.acs.biz.mapper.BizTemplateMapper;
 import com.tr069.acs.biz.model.BizTemplateItemView;
 import com.tr069.acs.common.exception.BizException;
+import com.tr069.acs.domain.entity.CpeDevice;
+import com.tr069.acs.domain.entity.Worklist;
+import com.tr069.acs.mapper.CpeDeviceMapper;
+import com.tr069.acs.mapper.WorklistMapper;
 import com.tr069.acs.exec.IntentDeliveryService;
 import com.tr069.acs.exec.TaskFinishedEvent;
 import com.tr069.acs.exec.entity.DeviceTask;
@@ -43,6 +47,9 @@ public class BizTemplateExecutionService {
     private final BizTemplateMapper templateMapper;
     private final BizTemplateService bizTemplateService;
     private final IntentDeliveryService intentDeliveryService;
+    private final CpeDeviceMapper deviceMapper;
+    private final WorklistMapper worklistMapper;
+    private final com.tr069.acs.worklist.service.DeviceIdentifierResolver identifierResolver;
     private final ObjectMapper objectMapper;
 
     /** 正在跑的整包，按执行记录 id 索引 */
@@ -73,14 +80,26 @@ public class BizTemplateExecutionService {
         return executionMapper.selectList(query);
     }
 
-    /** 对一台设备整包下发业务模板 */
+    /** 对一台设备整包下发业务模板（老调用入口，不带房间号） */
     public BizTemplateExecution execute(Long templateId, String sn,
                                         Map<String, String> params, String username) {
+        return execute(templateId, sn, params, username, null);
+    }
+
+    /** 对一台设备整包下发业务模板；房间号填了就同步写进设备台账 */
+    public BizTemplateExecution execute(Long templateId, String sn,
+                                        Map<String, String> params, String username, String roomNo) {
         if (templateId == null) {
             throw new BizException("业务模板 id 不能为空");
         }
         if (sn == null || sn.isBlank()) {
             throw new BizException("设备序列号不能为空");
+        }
+        // 设备标识支持 SN / OUI-SN / MAC / LOID，整包下发给台账里归一后的 SN
+        CpeDevice device = identifierResolver.resolve(sn);
+        String snReal = device != null ? device.getSn() : sn.trim();
+        if (device != null && roomNo != null && !roomNo.isBlank()) {
+            syncRoomNo(device, roomNo.trim());
         }
         BizTemplate template = templateMapper.selectById(templateId);
         if (template == null) {
@@ -97,7 +116,7 @@ public class BizTemplateExecutionService {
         BizTemplateExecution execution = new BizTemplateExecution();
         execution.setTemplateId(templateId);
         execution.setTemplateName(template.getName());
-        execution.setSn(sn.trim());
+        execution.setSn(snReal);
         execution.setStatus(STATUS_RUNNING);
         execution.setUsername(username);
         execution.setTotalCount(items.size());
@@ -108,7 +127,60 @@ public class BizTemplateExecutionService {
         execution.setCreatedAt(LocalDateTime.now());
         executionMapper.insert(execution);
 
-        Progress progress = new Progress(execution, template, items, sn.trim(), params, username);
+        // 管理页 / 设备页的直接整包下发：不建工单，进度看执行记录本身；
+        // 工单通道（工单管理页建单）走 executeForWorklist，由调度复用已登记的工单记录
+        return startExecution(execution, template, items, snReal, params, username, null);
+    }
+
+    /**
+     * 调度器入口：工单已确认设备在线并预留 10 秒，这里直接开跑；
+     * 复用工单页登记的那张 worklist 记录，不再新开一张。
+     * 校验失败不抛异常，把工单置为 failed 让页面看得到原因。
+     */
+    public BizTemplateExecution executeForWorklist(Long templateId, String sn,
+                                                   Map<String, String> params, String username,
+                                                   String roomNo, Long worklistId) {
+        try {
+            BizTemplate template = templateMapper.selectById(templateId);
+            if (template == null) {
+                markWorklistFailed(worklistId, "业务模板不存在: " + templateId);
+                return null;
+            }
+            if (!Boolean.TRUE.equals(template.getEnabled())) {
+                markWorklistFailed(worklistId, "业务模板已停用: " + template.getName());
+                return null;
+            }
+            List<BizTemplateItemView> items = bizTemplateService.viewsOf(templateId);
+            if (items.isEmpty()) {
+                markWorklistFailed(worklistId, "业务模板未配置成员: " + template.getName());
+                return null;
+            }
+            BizTemplateExecution execution = new BizTemplateExecution();
+            execution.setTemplateId(templateId);
+            execution.setTemplateName(template.getName());
+            execution.setSn(sn);
+            execution.setStatus(STATUS_RUNNING);
+            execution.setUsername(username);
+            execution.setTotalCount(items.size());
+            execution.setFinishedCount(0);
+            execution.setSuccessCount(0);
+            execution.setFailCount(0);
+            execution.setResult("[]");
+            execution.setCreatedAt(LocalDateTime.now());
+            executionMapper.insert(execution);
+            return startExecution(execution, template, items, sn, params, username, worklistId);
+        } catch (Exception e) {
+            markWorklistFailed(worklistId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 整包下发公共入口：登记推进状态并开始跑第一个成员 */
+    private BizTemplateExecution startExecution(BizTemplateExecution execution, BizTemplate template,
+                                                List<BizTemplateItemView> items, String sn,
+                                                Map<String, String> params, String username,
+                                                Long worklistId) {
+        Progress progress = new Progress(execution, template, items, sn, params, username, worklistId);
         running.put(execution.getId(), progress);
         log.info("业务模板整包下发开始: executionId={}, 模板={}, sn={}, 成员={}",
                 execution.getId(), template.getName(), sn, items.size());
@@ -116,7 +188,44 @@ public class BizTemplateExecutionService {
         return execution;
     }
 
+    /** 整包在调度通道里起跑失败：工单置为 failed，页面看得到原因 */
+    private void markWorklistFailed(Long worklistId, String error) {
+        if (worklistId == null) {
+            return;
+        }
+        try {
+            Worklist w = worklistMapper.selectById(worklistId);
+            if (w != null && !"success".equals(w.getStatus()) && !"failed".equals(w.getStatus())) {
+                w.setStatus("failed");
+                w.setResult(error);
+                w.setTimeExecFinish(LocalDateTime.now());
+                w.setUpdatedAt(LocalDateTime.now());
+                worklistMapper.updateById(w);
+            }
+        } catch (Exception e) {
+            log.warn("整包工单失败回写出错: worklistId={}, err={}", worklistId, e.getMessage());
+        }
+    }
+
     // ==================== 串行推进 ====================
+
+    /** 房间号同步设备台账：与工单建单的口径一致，台账 cpe_device.room_no 是权威 */
+    private void syncRoomNo(CpeDevice device, String roomNo) {
+        try {
+            if (device == null || roomNo == null || roomNo.isBlank()
+                    || roomNo.equals(device.getRoomNo())) {
+                return;
+            }
+            CpeDevice patch = new CpeDevice();
+            patch.setId(device.getId());
+            patch.setRoomNo(roomNo.trim());
+            deviceMapper.updateById(patch);
+            log.info("业务模板下发同步设备房间号: sn={}, roomNo={}", device.getSn(), roomNo.trim());
+        } catch (Exception e) {
+            log.warn("同步设备房间号失败（不影响下发）: sn={}, err={}",
+                    device == null ? null : device.getSn(), e.getMessage());
+        }
+    }
 
     /** 下发下一个成员 */
     private synchronized void startNext(Progress progress) {
@@ -225,6 +334,22 @@ public class BizTemplateExecutionService {
         }
         executionMapper.updateById(execution);
         running.remove(execution.getId());
+        // 工单跟整包一起收口：成功绿、部分失败/失败红，与执行记录页一个口径
+        if (progress.worklistId() != null) {
+            try {
+                Worklist w = worklistMapper.selectById(progress.worklistId());
+                if (w != null && !"success".equals(w.getStatus()) && !"failed".equals(w.getStatus())) {
+                    w.setStatus(error == null && progress.failCount() == 0 ? "success" : "failed");
+                    w.setResult(error != null ? error
+                            : (progress.failCount() > 0 ? progress.failCount() + " 个成员下发失败" : null));
+                    w.setTimeExecFinish(execution.getFinishedAt());
+                    w.setUpdatedAt(LocalDateTime.now());
+                    worklistMapper.updateById(w);
+                }
+            } catch (Exception e) {
+                log.warn("整包下发工单终态回写失败: worklistId={}, err={}", progress.worklistId(), e.getMessage());
+            }
+        }
         log.info("业务模板整包下发结束: executionId={}, status={}, 成功={}, 失败={}, err={}",
                 execution.getId(), execution.getStatus(),
                 progress.successCount(), progress.failCount(), error);
@@ -262,6 +387,8 @@ public class BizTemplateExecutionService {
         private final String sn;
         private final Map<String, String> params;
         private final String username;
+        /** 整包对应的工单记录 id，结束时回写工单终态 */
+        private final Long worklistId;
         private final List<Map<String, Object>> results = new ArrayList<>();
 
         private int index;
@@ -271,13 +398,14 @@ public class BizTemplateExecutionService {
 
         Progress(BizTemplateExecution execution, BizTemplate template,
                  List<BizTemplateItemView> items, String sn,
-                 Map<String, String> params, String username) {
+                 Map<String, String> params, String username, Long worklistId) {
             this.execution = execution;
             this.continueOnError = Boolean.TRUE.equals(template.getContinueOnError());
             this.items = items;
             this.sn = sn;
             this.params = params;
             this.username = username;
+            this.worklistId = worklistId;
         }
 
         /** 记录一个成员的结局 */
@@ -320,6 +448,10 @@ public class BizTemplateExecutionService {
 
         String username() {
             return username;
+        }
+
+        Long worklistId() {
+            return worklistId;
         }
 
         boolean continueOnError() {

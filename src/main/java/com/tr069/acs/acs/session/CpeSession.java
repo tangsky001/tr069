@@ -52,6 +52,9 @@ public class CpeSession {
     /** 反向连接地址，取自 ManagementServer.ConnectionRequestURL */
     private volatile String connectionRequestUrl;
 
+    /** UDP 反向连接地址（TR-111），取自 ManagementServer.UDPConnectionRequestAddress */
+    private volatile String udpConnectionRequestAddress;
+
     private volatile String softwareVersion;
 
     private volatile String hardwareVersion;
@@ -117,7 +120,7 @@ public class CpeSession {
         if (rpc != null && !rpc.getResponse().isDone()) {
             SoapMessage failure = SoapMessage.builder()
                     .fault(com.tr069.acs.cwmp.model.FaultStruct.builder()
-                            .faultCode("8002")
+                            .faultCode(com.tr069.acs.cwmp.CwmpFaultCode.INTERNAL_ERROR.getCode())
                             .faultString(reason)
                             .build())
                     .build();

@@ -290,7 +290,8 @@ public class OpenApiDocConfig {
         // 系统管理
         doc("GET /api/system/permissions", "权限点清单",
                 "按模块分组返回全部权限点，每个模块三格：查看 / 修改 / 删除。\n"
-                        + "GET 需要 `:view`，POST / PUT 需要 `:update`，DELETE 需要 `:delete`。\n"
+                        + "GET 需要 `:view`，POST / PUT 需要 `:update`，DELETE 需要 `:delete`；\n"
+                        + "个别历史接口用 `POST .../delete`、`.../delete-all` 表达删除，同样按 `:delete` 校验。\n"
                         + "**权限点不落库，也不允许用户增删**；老库存的 `:manage` 读取时自动按 修改+删除 展开。");
         doc("GET /api/system/roles", "角色列表",
                 "带每个角色的权限点与人数。\n"
@@ -316,9 +317,13 @@ public class OpenApiDocConfig {
                 "记时间、登录名、IP、来源、结果。**失败的也记**，连着一片失败是有人在试密码。\n"
                         + "传 userId 只看某一个人，默认看全部最近 100 条。\n"
                         + "IP 取自 X-Forwarded-For 的第一段，其次 X-Real-IP，都没有才用连接的地址。");
+        doc("GET /api/system/password-policy", "账号与密码策略",
+                "新建 / 改密弹窗的提示与校验值都由后端给，前端不要写死：\n"
+                        + "`minLength` 6、`maxLength` 64、`usernamePattern`（字母数字下划线 4-32 位）、\n"
+                        + "`passwordHint`（提示文案）、`needCurrentPassword`（改别人的口令要先验证操作者自己的口令）。");
         doc("DELETE /api/system/users/{id}", "删用户",
-                "不能删自己。**初始系统账号 admin 删不掉**，返回「系统用户禁止删除」；\\n"
-                        + "最后一个系统管理员也删不掉。这两条在数据库里都有触发器兜底，\\n"
+                "不能删自己。**初始系统账号 admin 删不掉**，返回「系统用户禁止删除」；\n"
+                        + "最后一个系统管理员也删不掉。这两条在数据库里都有触发器兜底，\n"
                         + "直接在 MySQL 里 delete 同样会被拦。");
 
         // 运维管理
@@ -377,6 +382,44 @@ public class OpenApiDocConfig {
         doc("GET /api/device/{sn}/admin-account", "现读超管账号", "到在线设备上读取超管账号与明文口令，带超时，可能读不到。");
         doc("POST /api/device/{sn}/rpc/{rpcName}", "手动下发一条 CWMP 指令", "提交即返回任务号，结果用 `/api/rpc/{taskId}` 查。");
 
+        // 设备页动作：直接下发 / 诊断 / 参数设置 / SIP 语音
+        doc("POST /api/device/dispatch", "设备页直接下发",
+                "逐台受理即发，不建工单，进度看下发任务本身。\n"
+                        + "入参：`sns`（数组或逗号/分号分隔）、`category`（业务类型）、`values`（业务变量）、\n"
+                        + "`templateId`、`username`，传了 `wifi` 就走 WLAN 编辑通道（`ssid` 必填，且覆盖 category 与 values）。\n"
+                        + "返回 `submitted` / `failed` / `rows`，`rows` 是逐台结果。");
+        doc("GET /api/device/tasks/active", "一批设备正在进行的下发任务",
+                "`sns` 逗号分隔。返回 `sn → 任务状态`，列表页每行用它显示「正在下发 xxx」，建议 5 秒轮询。");
+        doc("GET /api/device/rpc/methods", "可下发的 CWMP 方法清单",
+                "下拉建议项（GetParameterValues / SetParameterValues / Reboot / FactoryReset / Download 等），\n"
+                        + "只是建议列表，`{rpcName}` 仍允许手工输入其它方法。");
+        doc("GET /api/device/rpc/quick-commands", "快捷操作与 RPC 方法的对应关系",
+                "返回 `probe` / `reboot` / `batch-reboot` / `factoryReset` / `deep-factory-reset` 等键 → CWMP 方法名，\n"
+                        + "页面按钮只传这个键，由它决定下发什么。");
+        doc("GET /api/device/poll-config", "列表页轮询节奏",
+                "一次给全前端的刷新间隔：`listSeconds` 15、`taskSeconds` 5、`bizSeconds` 300、\n"
+                        + "`rpcSeconds` 3 + `rpcMaxAttempts` 60、`detailRpcSeconds` 2 + `detailRpcMaxAttempts` 150。");
+        doc("GET /api/device/rpc/progress-labels", "RPC 行内提示措辞",
+                "`Reboot` / `FactoryReset` 各自的 running / success / fail 文案，另有 `default` 兜底，\n"
+                        + "页面不再自己拼「正在重启」这类句子。");
+        doc("GET /api/device/export", "导出台账 CSV",
+                "`sns` 指定设备（逗号分隔），或按 `sn` / `isp` / `deviceType` / `roomNo` 筛选，最多 5000 条。\n"
+                        + "返回 `fileName` / `content` / `count`，`content` 就是 CSV 文本（含表头，逗号引号换行已转义）。");
+        doc("POST /api/device/{sn}/diagnostics/ping", "下发 IPPing 诊断",
+                "请求体 `host` 必填。按设备数据模型自动选挂载路径：\n"
+                        + "TR-181 是 `Device.IP.Diagnostics.IPPing.`，TR-098 是 `InternetGatewayDevice.IPPingDiagnostics.`，重复 4 次。\n"
+                        + "返回 `taskId` / `target` / `path`，结果用 `GET /api/rpc/{taskId}` 轮询；诊断没结果时先看 `path` 对不对得上型号。");
+        doc("POST /api/device/{sn}/diagnostics/trace", "下发 TraceRoute 诊断",
+                "请求体 `host` 必填，固定次数 3、超时 5000ms、报文 32 字节。\n"
+                        + "TR-181 用 `Device.IP.Diagnostics.TraceRoute.`，TR-098 用 `InternetGatewayDevice.TraceRouteDiagnostics.`。");
+        doc("POST /api/device/{sn}/params/set", "手动设置若干 CWMP 参数",
+                "请求体 `key`（ParameterKey，可空）+ `items[{name,value,type}]`，`name` 必填，`type` 默认 string。\n"
+                        + "提交即返回 `taskId` / `count`，不等待设备回应。");
+        doc("GET /api/device/{sn}/sip/lines", "SIP 语音线路清单",
+                "每条线路带当前生效的账号、服务器、端口（没配的按 5060），用于编辑表单回填。");
+        doc("POST /api/device/{sn}/sip", "下发 SIP 语音配置",
+                "按线路下发，返回 `submitted` / `failed` / `worklists` / `failures`，逐路说明成功失败原因。");
+
         // 设备能力树
         doc("GET /api/device/{sn}/capability", "能力汇总", "路径数、对象数、参数数、最近采集时间与进度。");
         doc("POST /api/device/{sn}/capability/collect", "触发能力采集", "`force=true` 时忽略最小间隔立即重采。");
@@ -416,12 +459,19 @@ public class OpenApiDocConfig {
         // 型号适配与工单
         doc("GET /api/device/{sn}/adaptation/status", "查单台设备适配状态", "库里有没有这个型号的能力树。");
         doc("GET /api/models/adapt-status", "批量查适配状态", "`sns` 逗号分隔，一次查整页设备。");
+        doc("GET /api/models/capability-options", "能力申报候选值",
+                "型号适配表单的下拉选项：运营商、网口数量、网口速率、WIFI 规格。前端缓存即可。");
         doc("POST /api/device/{sn}/adaptation/test", "实测能力比对", "按申报的运营商、网口、速率、SIP、WIFI 逐项比对。");
         doc("POST /api/device/{sn}/adaptation/save", "导出能力树并落库", "测试通过后导出 XML，同型号之后免适配。");
         doc("GET /api/worklist/variables", "取模板变量清单", "按业务类型返回下发表单要填哪些变量。");
         doc("POST /api/worklist/instances", "提交开通工单", "用 `worklistDesc` 作幂等键防重复开通。");
         doc("GET /api/worklist/instances", "工单分页查询", "可按设备序列号与状态过滤。");
         doc("GET /api/worklist/instances/{id}", "查工单执行进度", "提交后轮询这个接口看结果。");
+        doc("PUT /api/worklist/instances/{id}", "修改工单",
+                "房间号 / 备注 / 扩展属性随时可改；设备标识（sn）与工单类型只有**还没执行**的单能改。");
+        doc("DELETE /api/worklist/instances/{id}", "删除工单",
+                "执行中的单拒删；逻辑删除，历史记录仍可查。需要 `worklist:delete` 权限。");
+        doc("GET /api/worklist/statuses", "工单状态全集", "返回所有状态码，前端做筛选下拉用。");
         doc("GET /api/worklist/instances/device/{sn}", "查某台设备的历史工单", "最多返回一百条。");
         doc("GET /api/worklist/instances/{id}/steps", "查工单各步骤明细", "每一步的执行情况。");
 

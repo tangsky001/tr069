@@ -42,10 +42,7 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
 
     @Override
     public List<String> pagingCommands() {
-        // undo smart 在部分版本会弹交互确认，反而拖慢采集，不发。
-        // scroll 必须带参数：现场实测 MA5683T 的 scroll 是 { <cr>|number<U><10,512> }，
-        // 无参会被参数提示卡住、补回车后按默认行数翻屏——几千行的 ONT 明细照样一页页
-        // 停下来等按键，一次同步几分钟全耗在这。512 是参数上限，一屏 512 行最接近不分页
+        // 不发 undo smart（部分版本会弹交互确认）；scroll 必须带参数，无参会卡在翻屏提示等按键，512 行一屏最接近不分页
         return List.of("scroll 512", "screen-length 0 temporary");
     }
 
@@ -75,8 +72,7 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
         if (out == null || !out.contains("(config)#")) {
             return false;
         }
-        // scroll 在特权视图才生效（登录后的用户视图发了也不认），进 config 后补一次，
-        // 后面 display ont info / service-port 这类长回显就不分页了
+        // scroll 只在特权视图生效（用户视图发了也不认），进 config 后补一次，长回显就不分页
         cli.run("scroll", timeoutMs);
         return true;
     }
