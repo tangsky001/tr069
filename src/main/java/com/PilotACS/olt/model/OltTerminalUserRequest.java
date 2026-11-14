@@ -1,24 +1,25 @@
 package com.PilotACS.olt.model;
 
-/** 建 OLT 本地用户要填的东西 */
+import io.swagger.v3.oas.annotations.media.Schema;
+
 public class OltTerminalUserRequest {
 
-    /** 用户名：设备要求 6~15 位 */
+    @Schema(description = "用户名：设备要求 6~15 位")
     private String username;
 
-    /** 密码：设备要求 6~15 位 */
+    @Schema(description = "密码：设备要求 6~15 位")
     private String password;
 
-    /** 权限级别：{@code 1}=Common User（只能看），{@code 2}=Operator（能改配置） */
+    @Schema(description = "权限级别：1=Common User（只能看），2=Operator（能改配置）")
     private Integer level;
 
-    /** 用户模板（profile）；留空走设备的默认值，一般是 root */
+    @Schema(description = "用户模板（profile）；留空走设备的默认值，一般是 root")
     private String profile;
 
-    /** 允许重复登录的次数，0~4 */
+    @Schema(description = "允许重复登录的次数，0~4")
     private Integer reenter;
 
-    /** 备注，<=30 个字符 */
+    @Schema(description = "备注，<=30 个字符")
     private String appendedInfo;
 
     public String getUsername() {

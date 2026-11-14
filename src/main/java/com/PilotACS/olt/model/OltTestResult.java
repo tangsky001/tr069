@@ -1,11 +1,12 @@
 package com.PilotACS.olt.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import lombok.Data;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** 诊断测试结果 */
 @Data
 public class OltTestResult {
 
@@ -17,7 +18,7 @@ public class OltTestResult {
 
     private String vendorLabel;
 
-    /** 命令风格：DISPLAY（华为）/ SHOW（第三方），探测不出来为 null */
+    @Schema(description = "命令风格：DISPLAY（华为）/ SHOW（第三方），探测不出来为 null")
     private String cliStyle;
 
     private String model;
@@ -28,12 +29,11 @@ public class OltTestResult {
 
     private Integer boardCount;
 
-    /** 本次交互回显（截断），页面可折叠查看 */
+    @Schema(description = "本次交互回显（截断），页面可折叠查看")
     private String rawOutput;
 
     private long costMs;
 
-    /** 结果一行话：「登录成功；提示符：&lt;Huawei&gt;；耗时 1200 ms」 */
     public String getSummary() {
         List<String> parts = new ArrayList<>();
         if (message != null && !message.isBlank()) {

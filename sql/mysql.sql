@@ -254,3 +254,75 @@ CREATE TABLE IF NOT EXISTS `olt_quick_setup_config` (
     PRIMARY KEY (`id`),
     KEY `idx_olt` (`olt_id`)
 ) ENGINE = InnoDB COMMENT '快速开通参数';
+
+-- 分组成员绑定关系：分组树骨架来自 civilCode.csv，不落库
+CREATE TABLE IF NOT EXISTS `res_group_member` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `group_code`  VARCHAR(12)  NOT NULL COMMENT '分组节点编号（行政区划 2/4/6 位）',
+    `member_type` VARCHAR(16)  NOT NULL DEFAULT 'OLT' COMMENT '成员类型：OLT（预留 DEVICE）',
+    `member_id`   BIGINT       NOT NULL COMMENT '成员主键：OLT 为 olt_device.id',
+    `member_label` VARCHAR(128) DEFAULT NULL COMMENT '绑定时的成员名称快照',
+    `remark`      VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '操作人',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_group_member` (`group_code`, `member_type`, `member_id`),
+    KEY `idx_member` (`member_type`, `member_id`)
+) ENGINE = InnoDB COMMENT '分组成员绑定关系'
+-- 自定义分组：手动创建的树，节点可关联区划（civilCode）
+CREATE TABLE IF NOT EXISTS `res_group` (
+    `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `parent_id`  BIGINT       DEFAULT NULL COMMENT '父分组 id，null=根分组',
+    `name`       VARCHAR(64)  NOT NULL COMMENT '分组名称',
+    `civil_code` VARCHAR(12)  DEFAULT NULL COMMENT '关联区划编号（civilCode，可选）',
+    `sort`       INT          DEFAULT 0 COMMENT '排序号，同级从小到大',
+    `remark`     VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `created_by` VARCHAR(64)  DEFAULT NULL COMMENT '创建人',
+    `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_parent` (`parent_id`)
+) ENGINE = InnoDB COMMENT '自定义分组'
+
+-- 分组成员绑定关系（改挂 res_group.id）
+CREATE TABLE IF NOT EXISTS `res_group_member` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `group_id`    BIGINT       NOT NULL COMMENT '分组 id（res_group.id）',
+    `member_type` VARCHAR(16)  NOT NULL DEFAULT 'OLT' COMMENT '成员类型：OLT（预留 DEVICE）',
+    `member_id`   BIGINT       NOT NULL COMMENT '成员主键：OLT 为 olt_device.id',
+    `member_label` VARCHAR(128) DEFAULT NULL COMMENT '绑定时的成员名称快照',
+    `remark`      VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '操作人',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_member` (`member_type`, `member_id`),
+    KEY `idx_group` (`group_id`)
+) ENGINE = InnoDB COMMENT '分组成员绑定关系'
+-- 自定义分组（挂在区划树上）：骨架来自 civilCode.csv，不落库
+CREATE TABLE IF NOT EXISTS `res_group` (
+    `id`                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `parent_id`         BIGINT       DEFAULT NULL COMMENT '父自定义分组 id；挂在区划下时为 null',
+    `parent_civil_code` VARCHAR(12)  DEFAULT NULL COMMENT '父区划编号（civilCode）；挂在自定义分组下时为 null',
+    `name`              VARCHAR(64)  NOT NULL COMMENT '分组名称',
+    `sort`              INT          DEFAULT 0 COMMENT '排序号，同级从小到大',
+    `remark`            VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `created_by`        VARCHAR(64)  DEFAULT NULL COMMENT '创建人',
+    `created_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_parent` (`parent_id`),
+    KEY `idx_parent_civil` (`parent_civil_code`)
+) ENGINE = InnoDB COMMENT '自定义分组（挂在区划树上）'
+
+-- 分组成员绑定关系（group_ref 统一引用：C:区划编号 / G:自定义分组 id）
+CREATE TABLE IF NOT EXISTS `res_group_member` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `group_ref`   VARCHAR(32)  NOT NULL COMMENT '分组节点引用：C:区划编号 或 G:自定义分组 id',
+    `member_type` VARCHAR(16)  NOT NULL DEFAULT 'OLT' COMMENT '成员类型：OLT（预留 DEVICE）',
+    `member_id`   BIGINT       NOT NULL COMMENT '成员主键：OLT 为 olt_device.id',
+    `member_label` VARCHAR(128) DEFAULT NULL COMMENT '绑定时的成员名称快照',
+    `remark`      VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '操作人',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_member` (`member_type`, `member_id`),
+    KEY `idx_group_ref` (`group_ref`)
+) ENGINE = InnoDB COMMENT '分组成员绑定关系'

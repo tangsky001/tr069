@@ -1,5 +1,7 @@
 package com.PilotACS.olt.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -7,31 +9,30 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
-/** DBA 模板与线路模板的快照，随同步整体覆盖，JSON 存在 olt_device.template_json */
 @Data
 public class OltTemplateInfo {
 
     private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    /** display dba-profile all */
+    @Schema(description = "display dba-profile all")
     private List<OltDbaProfile> dbaProfiles = new ArrayList<>();
 
-    /** display ont-lineprofile gpon all */
+    @Schema(description = "display ont-lineprofile gpon all")
     private List<OltLineProfile> lineProfiles = new ArrayList<>();
 
-    /** display service-port all：业务流（ONT 用户侧 VLAN ↔ 端口 ↔ GEM port） */
+    @Schema(description = "display service-port all：业务流（ONT 用户侧 VLAN ↔ 端口 ↔ GEM port）")
     private List<OltServicePort> servicePorts = new ArrayList<>();
 
-    /** display ont-srvprofile gpon all：ONT 能力模板（含 TR069 管理参数） */
+    @Schema(description = "display ont-srvprofile gpon all：ONT 能力模板（含 TR069 管理参数）")
     private List<OltSrvProfile> srvProfiles = new ArrayList<>();
 
-    /** display ont tr069-server-profile all：TR069 服务器模板（ACS 地址与账号） */
+    @Schema(description = "display ont tr069-server-profile all：TR069 服务器模板（ACS 地址与账号）")
     private List<OltTr069Profile> tr069Profiles = new ArrayList<>();
 
-    /** display traffic table ip all：流量限速模板（CIR 承诺 / PIR 峰值） */
+    @Schema(description = "display traffic table ip all：流量限速模板（CIR 承诺 / PIR 峰值）")
     private List<OltTrafficTable> trafficTables = new ArrayList<>();
 
-    /** 采集时间，页面显示「模板快照时间」 */
+    @Schema(description = "采集时间，页面显示「模板快照时间」")
     private String collectedAt;
 
     public void stamp() {

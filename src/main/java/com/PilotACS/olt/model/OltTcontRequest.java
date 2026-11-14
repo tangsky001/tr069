@@ -1,20 +1,21 @@
 package com.PilotACS.olt.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import lombok.Data;
 
-/** 线路模板里加一条 T-CONT：{@code tcont  dba-profile-id } */
 @Data
 public class OltTcontRequest {
 
-    /** 线路模板 ID */
+    @Schema(description = "线路模板 ID")
     private Integer profileId;
 
-    /** gpon / epon，留空按 gpon */
+    @Schema(description = "gpon / epon，留空按 gpon")
     private String ponType;
 
-    /** T-CONT 索引，华为 0-127 */
+    @Schema(description = "T-CONT 索引，华为 0-127")
     private Integer tcontId;
 
-    /** 引用的 DBA 模板 ID */
+    @Schema(description = "引用的 DBA 模板 ID")
     private Integer dbaProfileId;
 }

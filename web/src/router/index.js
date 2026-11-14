@@ -167,6 +167,32 @@ export const constantRoutes = [
     }]
   },
 
+  // 资源拓扑：OLT → PON 口 → 光猫 的链路可视化（建设中，先上一级菜单）
+  {
+    path: '/topology',
+    component: Layout,
+    redirect: '/topology/index',
+    children: [{
+      path: 'index',
+      name: 'Topology',
+      component: () => import('@/views/topology/index'),
+      meta: { title: '资源拓扑', icon: 'el-icon-share' }
+    }]
+  },
+
+  // 分组管理：按楼层/片区/客户把 OLT 与光猫归组，支持按组批量操作（建设中）
+  {
+    path: '/group',
+    component: Layout,
+    redirect: '/group/index',
+    children: [{
+      path: 'index',
+      name: 'GroupManage',
+      component: () => import('@/views/group/index'),
+      meta: { title: '分组管理', icon: 'el-icon-collection' }
+    }]
+  },
+
   // 系统管理：用户与角色权限，没配权限的人看不到这条
   {
     path: '/system',

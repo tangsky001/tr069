@@ -1,5 +1,7 @@
 package com.PilotACS.olt.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import com.PilotACS.olt.entity.OltDevice;
 import com.PilotACS.olt.telnet.OltVendor;
 import lombok.Data;
@@ -10,7 +12,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
-/** OLT 台账视图 */
 @Data
 public class OltDeviceView {
 
@@ -44,7 +45,7 @@ public class OltDeviceView {
 
     private String backplane;
 
-    /** 机框槽位数（来自 display board 0 的槽位表），机框视图按它画槽位 */
+    @Schema(description = "机框槽位数（来自 display board 0 的槽位表），机框视图按它画槽位")
     private Integer slotCount;
 
     private String macAddress;
@@ -53,26 +54,26 @@ public class OltDeviceView {
 
     private String status;
 
-    /** 状态中文：在线 / 离线 / 未探测。页面不再维护 {@code {ONLINE:'在线',...}} 码表 */
+    @Schema(description = "状态中文：在线 / 离线 / 未探测。页面不再维护 {ONLINE:'在线',...} 码表")
     private String statusText;
 
-    /** 状态标签色（Element UI 的 type）：success / danger / info */
+    @Schema(description = "状态标签色（Element UI 的 type）：success / danger / info")
     private String statusLevel;
 
-    /** 固件版本：「软件版本 / 补丁」拼好；两个都没有是「-」 */
+    @Schema(description = "固件版本：「软件版本 / 补丁」拼好；两个都没有是「-」")
     private String firmwareText;
 
-    /** Web 登录账号串：「a、b」；没有账号限制时是「不限制」 */
+    @Schema(description = "Web 登录账号串：「a、b」；没有账号限制时是「不限制」")
     private String webAccountText;
 
     private LocalDateTime lastConnectAt;
 
-    /** 最近连接展示文案：yyyy-MM-dd HH:mm:ss，没连过是「从未成功连接」 */
+    @Schema(description = "最近连接展示文案：yyyy-MM-dd HH:mm:ss，没连过是「从未成功连接」")
     private String lastConnectAtText;
 
     private LocalDateTime lastSyncAt;
 
-    /** 最近同步展示文案：没同步过是「未同步」 */
+    @Schema(description = "最近同步展示文案：没同步过是「未同步」")
     private String lastSyncAtText;
 
     private String lastError;
@@ -130,7 +131,6 @@ public class OltDeviceView {
         return view;
     }
 
-    /** 时间展示文案：yyyy-MM-dd HH:mm:ss，空值回退到占位文案 */
     public static String dateTimeText(LocalDateTime time, String placeholder) {
         if (time == null) {
             return placeholder;
@@ -138,7 +138,6 @@ public class OltDeviceView {
         return time.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
-    /** 状态中文：库里的状态码只有三种口径，其余一律按「未探测」说 */
     public static String statusTextOf(String status) {
         if ("ONLINE".equals(status)) {
             return "在线";
@@ -149,7 +148,6 @@ public class OltDeviceView {
         return "未探测";
     }
 
-    /** 状态标签色：在线绿、离线红、其余灰 */
     public static String statusLevelOf(String status) {
         if ("ONLINE".equals(status)) {
             return "success";
@@ -160,7 +158,6 @@ public class OltDeviceView {
         return "info";
     }
 
-    /** 固件版本按「版本 / 补丁」拼，和现场 OLT 的写法一致；一个都没有就是「-」 */
     public static String firmwareTextOf(String softwareVersion, String patchVersion) {
         List<String> parts = new ArrayList<>();
         if (softwareVersion != null && !softwareVersion.isBlank()) {
@@ -172,7 +169,6 @@ public class OltDeviceView {
         return parts.isEmpty() ? "-" : String.join(" / ", parts);
     }
 
-    /** Web 账号串：空列表表示不限制登录账号，不是「没配」 */
     public static String webAccountTextOf(List<String> accounts) {
         if (accounts == null || accounts.isEmpty()) {
             return "不限制";
@@ -180,7 +176,6 @@ public class OltDeviceView {
         return String.join("、", accounts);
     }
 
-    /** 逗号分隔的账号串转列表 */
     public static List<String> split(String value) {
         if (value == null || value.isBlank()) {
             return new ArrayList<>();

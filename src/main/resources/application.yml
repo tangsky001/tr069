@@ -27,6 +27,9 @@ spring:
 # 对外公布的主机地址：内网登录二维码用它 + 管理端端口拼链接
 acs:
   public-host: 127.0.0.1
+  group:
+    # 启动时自动补建 res_group_member 表
+    auto-create-table: true
   olt:
     # 启动时自动补建 olt_device / olt_board / olt_sync_record 等七张表
     auto-create-table: true

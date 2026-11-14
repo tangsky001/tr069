@@ -70,12 +70,12 @@
       </div>
 
       <div slot="footer">
-        <el-button @click="upgradeDialogVisible = false" :disabled="downloading || restarting">取消</el-button>
+        <el-button :disabled="downloading || restarting" @click="upgradeDialogVisible = false">取消</el-button>
         <el-button v-if="!downloadDone" type="primary" :loading="downloading" @click="handleStartDownload">
           {{ downloading ? '下载中...' : '确认升级（下载）' }}
         </el-button>
         <template v-else>
-          <el-button @click="upgradeDialogVisible = false" :disabled="restarting">稍后升级</el-button>
+          <el-button :disabled="restarting" @click="upgradeDialogVisible = false">稍后升级</el-button>
           <el-button type="danger" :loading="restarting" icon="el-icon-switch-button" @click="handleConfirmRestart">
             {{ restarting ? '正在退出...' : '确认升级并退出' }}
           </el-button>
@@ -104,7 +104,7 @@
       </div>
 
       <div slot="footer">
-        <el-button @click="handleCloseUploadDialog" :disabled="uploading">取消</el-button>
+        <el-button :disabled="uploading" @click="handleCloseUploadDialog">取消</el-button>
         <el-button v-if="!uploadDone" type="primary" :loading="uploading" @click="handleSubmitUpload">
           {{ uploading ? '上传中...' : '开始上传' }}
         </el-button>

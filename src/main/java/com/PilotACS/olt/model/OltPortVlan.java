@@ -1,30 +1,31 @@
 package com.PilotACS.olt.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import lombok.Data;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** 一个端口上放通的 VLAN，来自 {@code display port vlan 0/<槽位>/<端口>} */
 @Data
 public class OltPortVlan {
 
-    /** 机框号，华为固定 0 */
+    @Schema(description = "机框号，华为固定 0")
     private Integer frameNo;
 
     private Integer slotNo;
 
     private Integer portNo;
 
-    /** 接口标识，如 0/6/0，和命令行一致 */
+    @Schema(description = "接口标识，如 0/6/0，和命令行一致")
     private String iface;
 
-    /** 该口放通的 VLAN，升序 */
+    @Schema(description = "该口放通的 VLAN，升序")
     private List<Integer> vlans = new ArrayList<>();
 
-    /** 压好的 VLAN 串：「1、41、45-46」，与网管写法一致 */
+    @Schema(description = "压好的 VLAN 串：「1、41、45-46」，与网管写法一致")
     private String vlanText;
 
-    /** Native VLAN（PVID），回显里没有这一行时为 null */
+    @Schema(description = "Native VLAN（PVID），回显里没有这一行时为 null")
     private Integer nativeVlan;
 }

@@ -1,27 +1,28 @@
 package com.PilotACS.olt.model;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import java.util.ArrayList;
 import java.util.List;
 
-/** 一块业务板清空 ONT 的结果：哪些口删掉了、哪几个口被设备顶回来了 */
 public class OltOntDeleteResult {
 
-    /** 板卡槽位号 */
+    @Schema(description = "板卡槽位号")
     private Integer slot;
 
-    /** 端口类型：gpon / epon */
+    @Schema(description = "端口类型：gpon / epon")
     private String ponType;
 
-    /** 删成功的端口 */
+    @Schema(description = "删成功的端口")
     private List<Integer> deletedPorts = new ArrayList<>();
 
-    /** 设备拒绝了的端口 */
+    @Schema(description = "设备拒绝了的端口")
     private List<Integer> failedPorts = new ArrayList<>();
 
-    /** 每条删除命令的回显，写采集记录用 */
+    @Schema(description = "每条删除命令的回显，写采集记录用")
     private List<String> outputs = new ArrayList<>();
 
-    /** 这块板上删掉的 ONT 总数（服务层按库里快照算好后回填） */
+    @Schema(description = "这块板上删掉的 ONT 总数（服务层按库里快照算好后回填）")
     private Integer ontTotal;
 
     public Integer getSlot() {
