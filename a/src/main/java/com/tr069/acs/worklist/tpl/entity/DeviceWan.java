@@ -1,0 +1,68 @@
+package com.tr069.acs.worklist.tpl.entity;
+
+import lombok.Data;
+
+/** WAN 连接配置。一行 = 一个 WANIPConnection 实例（实际实例号由设备采集决定 */
+@Data
+public class DeviceWan {
+
+    private Long id;
+    private Long deviceId;
+    private Integer instanceNo;
+
+    /** 业务分类：IPoE / PPPoE / Bridge，下发入口据此选模板 */
+    private String connType;
+
+    /** ADD = 该实例需先 AddObject 创建；SET = 实例已存在，直接设值 */
+    private String action;
+
+    /** VERIFIED 已验证 / UNSUPPORTED 该型号不支持 / UNVERIFIED 未验证 */
+    private String verified;
+
+    /** action=ADD 时 AddObject 的父路径，末尾不带实例号（实例号由设备分配 */
+    private String objectPath;
+
+    private String pathEnable;
+    private String valEnable;
+
+    private String pathConnType;
+    private String valConnType;
+
+    /** IPAddressingType（DHCP / Static / PPPOE） */
+    private String pathAddrType;
+    private String valAddrType;
+
+    /** NATEnabled */
+    private String pathNat;
+    private String valNat;
+
+    /** X_CMCC_BindLANPort，空串表示不修改 */
+    private String pathBindPort;
+    private String valBindPort;
+
+    private String pathUsername;
+    private String valUsername;
+
+    private String pathPassword;
+    private String valPassword;
+
+    private String pathIp;
+    private String valIp;
+
+    private String pathMask;
+    private String valMask;
+
+    private String pathGw;
+    private String valGw;
+
+    private String pathDns;
+    private String valDns;
+
+    /** MaxMTUSize。值留空表示不修改该参数（各家现网 MTU 取值不同，不替现场做决定） */
+    private String pathMtu;
+    private String valMtu;
+
+    /** IP 协议版本，设备上多叫 {@code X_CMCC_IPMode}（int：1=IPv4 / 2=IPv6 / 3=IPv4+IPv6） */
+    private String pathIpMode;
+    private String valIpMode;
+}

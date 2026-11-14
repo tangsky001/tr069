@@ -1,15 +1,18 @@
 <template>
   <div class="sidebar-logo-container" :class="{'collapse':collapse}">
-    <transition name="sidebarLogoFade">
-      <router-link v-if="collapse" key="collapse" class="sidebar-logo-link" to="/">
-        <img v-if="logo" :src="logo" class="sidebar-logo">
-        <h1 v-else class="sidebar-title">{{ title }} </h1>
-      </router-link>
-      <router-link v-else key="expand" class="sidebar-logo-link" to="/">
-        <img v-if="logo" :src="logo" class="sidebar-logo">
-        <h1 class="sidebar-title">{{ title }} </h1>
-      </router-link>
-    </transition>
+    <router-link class="sidebar-logo-link" to="/">
+      <svg class="sidebar-logo-mark" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PilotACS">
+        <defs>
+          <linearGradient id="pilotAcsMark" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#2f7cf6" />
+            <stop offset="100%" stop-color="#14b8a6" />
+          </linearGradient>
+        </defs>
+        <rect width="32" height="32" rx="9" fill="url(#pilotAcsMark)" />
+        <path d="M11 27.5V8.5h4.6a5.4 5.4 0 0 1 0 10.8H11" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <span v-if="!collapse" class="sidebar-logo-text">Pilot<span class="accent">ACS</span></span>
+    </router-link>
   </div>
 </template>
 
@@ -21,61 +24,58 @@ export default {
       type: Boolean,
       required: true
     }
-  },
-  data() {
-    return {
-      title: 'Vue Admin Template',
-      logo: 'https://wpimg.wallstcn.com/69a1c46c-eb1c-4b46-8bd4-e9e686ef5251.png'
-    }
   }
 }
 </script>
 
 <style lang="scss" scoped>
-.sidebarLogoFade-enter-active {
-  transition: opacity 1.5s;
-}
-
-.sidebarLogoFade-enter,
-.sidebarLogoFade-leave-to {
-  opacity: 0;
-}
-
 .sidebar-logo-container {
-  position: relative;
   width: 100%;
   height: 50px;
-  line-height: 50px;
-  background: #2b2f3a;
-  text-align: center;
+  padding-left: 20px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  background: #304156;
   overflow: hidden;
 
   & .sidebar-logo-link {
-    height: 100%;
-    width: 100%;
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+    white-space: nowrap;
+    line-height: 26px;
 
-    & .sidebar-logo {
-      width: 32px;
-      height: 32px;
+    & .sidebar-logo-mark {
+      display: inline-block;
       vertical-align: middle;
-      margin-right: 12px;
+      width: 26px;
+      height: 26px;
+      margin-right: 9px;
+      flex-shrink: 0;
     }
 
-    & .sidebar-title {
+    & .sidebar-logo-text {
       display: inline-block;
-      margin: 0;
-      color: #fff;
-      font-weight: 600;
-      line-height: 50px;
-      font-size: 14px;
-      font-family: Avenir, Helvetica Neue, Arial, Helvetica, sans-serif;
       vertical-align: middle;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+      font-family: Avenir, 'Helvetica Neue', Arial, Helvetica, sans-serif;
+
+      & .accent {
+        color: #4dd0c4;
+      }
     }
   }
 
   &.collapse {
-    .sidebar-logo {
-      margin-right: 0px;
+    padding-left: 0;
+
+    & .sidebar-logo-link {
+      justify-content: center;
     }
   }
 }

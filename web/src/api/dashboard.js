@@ -1,21 +1,11 @@
 import request from '@/utils/request'
 
-export function summary() {
-  return request({ url: '/api/dashboard/summary', method: 'get' })
-}
+// 首页概览统计，后端前缀 /api/dashboard
 
-export function recentDevices() {
-  return request({ url: '/api/dashboard/recent', method: 'get' })
-}
-
-export function fileList() {
-  return request({ url: '/api/files', method: 'get' })
-}
-
-export function deleteFile(id) {
-  return request({ url: `/api/files/${id}`, method: 'delete' })
-}
-
-export function downloadUrl(id) {
-  return `/api/files/${id}/download`
+/** 概览：设备总量/在线/离线、品牌分布、已下发未下发、工单与模板统计 */
+export function fetchOverview() {
+  return request({
+    url: '/dashboard/overview',
+    method: 'get'
+  })
 }

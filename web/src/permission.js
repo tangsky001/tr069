@@ -10,6 +10,18 @@ NProgress.configure({ showSpinner: false }) // NProgress Configuration
 
 const whiteList = ['/login'] // no redirect whitelist
 
+/** 这条路要不要权限。系统管理员放行，没写权限点的路登录即可进。 */
+function allowed(route) {
+  const need = route.meta && route.meta.permission
+  if (!need) {
+    return true
+  }
+  if (store.getters.isSuperAdmin) {
+    return true
+  }
+  return (store.getters.permissions || []).indexOf(need) >= 0
+}
+
 router.beforeEach(async(to, from, next) => {
   // start progress bar
   NProgress.start()
@@ -28,7 +40,13 @@ router.beforeEach(async(to, from, next) => {
     } else {
       const hasGetUserInfo = store.getters.name
       if (hasGetUserInfo) {
-        next()
+        // 菜单里已经看不见了，但直接敲地址还是能进来，这里再拦一道
+        if (allowed(to)) {
+          next()
+        } else {
+          next({ path: '/404' })
+          NProgress.done()
+        }
       } else {
         try {
           // get user info

@@ -25,8 +25,8 @@ module.exports = {
    * Detail: https://cli.vuejs.org/config/#publicpath
    */
   publicPath: '/',
-  // 产物直接输出到后端 resources/public，随 jar 一起发布（单 jar 部署）
-  outputDir: '../src/main/resources/public',
+  // 构建产物直接输出到后端 resources，随 jar 一起打包（classpath:static）
+  outputDir: '../src/main/resources/static',
   assetsDir: 'static',
   lintOnSave: process.env.NODE_ENV === 'development',
   productionSourceMap: false,
@@ -37,11 +37,33 @@ module.exports = {
       warnings: false,
       errors: true
     },
-    // 开发环境把 /api 代理到后端 ACS 服务
+    // 只有显式设置 VUE_APP_USE_MOCK=true 时才拦截请求走本地 mock，
+    // 默认直连 PilotACS 后端，方便联调登录与设备接口
+    before: process.env.VUE_APP_USE_MOCK === 'true'
+      ? require('./mock/mock-server.js')
+      : undefined,
     proxy: {
-      '/api': {
+      // 把开发态前缀 /dev-api 转发到后端，并改写为后端实际前缀 /api
+      [process.env.VUE_APP_BASE_API]: {
+        target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
+        changeOrigin: true,
+        pathRewrite: { ['^' + process.env.VUE_APP_BASE_API]: '/api' }
+      },
+      // 接口文档（Swagger UI）由后端 8888 提供。不代理的话，
+      // 访问 /doc/index.html 会被前端路由兜成首页（地址栏变成 /doc/index.html#/dashboard/index）
+      '/doc': {
         target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
         changeOrigin: true
+      },
+      '/v3': {
+        target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
+        changeOrigin: true
+      },
+      // 首页概览 WebSocket：开发态转发到后端，ws:true 才能处理升级请求
+      '/ws': {
+        target: process.env.VUE_APP_PROXY_TARGET || 'http://127.0.0.1:8888',
+        changeOrigin: true,
+        ws: true
       }
     }
   },

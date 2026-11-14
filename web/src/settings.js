@@ -1,6 +1,6 @@
 module.exports = {
 
-  title: 'TR-069 ACS',
+  title: 'PilotACS TR069 管理端',
 
   /**
    * @type {boolean} true | false
@@ -12,5 +12,5 @@ module.exports = {
    * @type {boolean} true | false
    * @description Whether show the logo in sidebar
    */
-  sidebarLogo: false
+  sidebarLogo: true
 }

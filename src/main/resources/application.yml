@@ -1,126 +1,82 @@
 server:
   port: 8888
-  servlet:
-    encoding:
-      charset: UTF-8
-      force: true
-    session:
-      timeout: 5m
-      cookie:
-        http-only: true
-  tomcat:
-    uri-encoding: UTF-8
-    threads:
-      max: 400
-      min-spare: 40
-  max-http-request-header-size: 16KB
 
 spring:
   application:
-    name: acs
-  mvc:
-    servlet:
-      load-on-startup: 1
-  jackson:
-    default-property-inclusion: non_null
-    time-zone: Asia/Shanghai
+    name: PilotACS
   datasource:
-    # ---------- MySQL：台账 / 账号 / 任务 / 审计 / 日志 ----------
-    mysql:
-      type: com.zaxxer.hikari.HikariDataSource
-      driver-class-name: com.mysql.cj.jdbc.Driver
-      jdbc-url: jdbc:mysql://127.0.0.1:3306/tr_acs?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&autoReconnect=true&createDatabaseIfNotExist=true
-      username: root
-      password: Qq123456
-      hikari:
-        pool-name: mysqlPool
-        minimum-idle: 2
-        maximum-pool-size: 20
-        connection-test-query: SELECT 1
-    # ---------- SQLite：仅光猫适配数据（能力树 / 参数映射 / 命中记录）----------
-    sqlite:
-      type: com.zaxxer.hikari.HikariDataSource
-      driver-class-name: org.sqlite.JDBC
-      jdbc-url: jdbc:sqlite:./data/tr069_tpl.pack
-      username: ""
-      password: ""
-      hikari:
-        pool-name: sqlitePool
-        minimum-idle: 1
-        maximum-pool-size: 3
-        connection-test-query: SELECT 1
-  sql:
-    init:
-      mode: always
-      continue-on-error: true
-      schema-locations: classpath:db/schema-mysql.sql
-      data-locations: classpath:db/data-mysql.sql
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/acs?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: Qq123456
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 0
+      timeout: 5s
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+# 对外公布的主机地址：内网登录二维码用它 + 管理端端口拼链接
+acs:
+  public-host: 127.0.0.1
+  olt:
+    # 启动时自动补建 olt_device / olt_board / olt_sync_record 等七张表
+    auto-create-table: true
+    # 建连超时(毫秒)
+    connect-timeout-ms: 8000
+    # 登录超时(毫秒)，含等待账号/密码提示符
+    login-timeout-ms: 15000
+    # 单条命令等待提示符的超时(毫秒)
+    command-timeout-ms: 20000
+    # 每条命令的完整回显是否打进日志，true=开启
+    log-echo: false
+    # 单次采集留档的回显上限(字符)，超出截断
+    max-raw-output-chars: 60000
 
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
   global-config:
+    banner: false
     db-config:
       id-type: auto
 
-# ============================ ACS 业务配置 ============================
-acs:
-  # CPE 上报路径（多个入口都映射到同一个协议处理器）
-  cwmp-paths: /cwmp,/ACS-server/ACS,/tr069,/tr069/prov
-  # 对外可达地址，用于 Download 的 URL 拼接
-  public-url: http://127.0.0.1:8888
-  # 文件下载是否要求 CPE 带账号密码
-  file-auth-used: false
-  # 未适配型号是否自动采集能力树入库（SQLite）
-  discovery-mode: true
-  # 并发下载上限
-  concurrent-download-limit: 100
-  # 心跳超时宽限（秒）
-  periodic-timeout-margin: 120
-  # 云端同步（预留）
-  cloud-sync: false
-  auth:
-    # CPE -> ACS 认证：none | basic ；账号密码写成 auto/留空表示免认证
-    method: basic
-    cpe-to-acs-username: auto
-    cpe-to-acs-password: auto
-    # ACS -> CPE（连接请求 / kick）账号密码
-    acs-to-cpe-username: itms
-    acs-to-cpe-password: itms
-  # 会话与任务超时
-  session-timeout-seconds: 180
-  task-timeout-seconds: 600
-  # 默认管理员（首次启动自动创建）
-  default-admin-username: admin
-  default-admin-password: admin123
-  jwt:
-    secret: acs-tr069-secret-please-change-me-0123456789
-    expire-seconds: 86400
-
-device:
-  # 超过该时长没有任何通信则判定离线（秒）
-  online-check-interval: 120
-  provision:
-    # 收到 Inform 后把 ACS 地址与上报间隔写回设备
+springdoc:
+  api-docs:
     enabled: true
-    inform-interval-seconds: 300
-    acs-url: http://127.0.0.1:8888/ACS-server/ACS
-    connection-request-username: itms
-    connection-request-password: itms
-
-syslog:
-  enabled: true
-  # 非 root 运行建议用高端口，Windows 可直接用 514
-  port: 5141
-  bind: 0.0.0.0
-  # 日志保留天数
-  keep-days: 7
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
 
 logging:
   level:
-    root: INFO
-    com.acsr.acs: INFO
-    com.acsr.acs.cwmp: INFO
+    com.PilotACS: info
+    # 压掉框架噪音：DispatcherServlet 初始化、Tomcat 启动、连接池刷屏等只留 WARN 以上
+    org.springframework: warn
+    org.apache.catalina: warn
+    org.apache.tomcat: warn
+    org.apache.coyote: warn
+    com.baomidou.mybatisplus: warn
+    com.zaxxer.hikari: warn
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    # 去掉时间中的 T，改为空格分隔
+    dateformat: "yyyy-MM-dd HH:mm:ss.SSS"
+  file:
+    # 相对路径：以运行目录为基准，start.bat 在 target 下启动，即 target/logs/acs.log
+    name: logs/PilotACS-log.log
+  logback:
+    rollingpolicy:
+      # 按天滚动，单文件 20MB，保留 30 天
+      file-name-pattern: logs/PilotACS-%d{yyyy-MM-dd}.%i.log
+      max-file-size: 20MB
+      max-history: 30
+      total-size-cap: 1GB
