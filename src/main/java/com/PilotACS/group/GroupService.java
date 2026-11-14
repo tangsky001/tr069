@@ -5,8 +5,8 @@ import com.PilotACS.group.entity.ResGroup;
 import com.PilotACS.group.mapper.GroupMemberMapper;
 import com.PilotACS.group.mapper.ResGroupMapper;
 import com.PilotACS.group.model.GroupMemberView;
+import com.PilotACS.group.model.GroupMemberBrief;
 import com.PilotACS.group.model.GroupNodeView;
-import com.PilotACS.group.model.GroupOltOption;
 import com.PilotACS.olt.entity.OltDevice;
 import com.PilotACS.olt.mapper.OltDeviceMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 分组管理服务：默认只有固定根节点「资源根组」，分组节点逐级手动创建落库。
@@ -90,9 +91,31 @@ public class GroupService {
         }
         Long totalDevices = oltDeviceMapper.selectCount(new LambdaQueryWrapper<OltDevice>()
                 .eq(OltDevice::getDeleted, 0));
+        // 节点直属设备名称清单（悬停提示用）：member 表里存了 label，根节点取未归属设备名
+        Map<String, List<GroupMemberBrief>> membersByRef = new HashMap<>();
+        for (GroupMember member : memberMapper.selectList(null)) {
+            membersByRef.computeIfAbsent(member.getGroupRef(), k -> new ArrayList<>())
+                    .add(new GroupMemberBrief() {{ setId(member.getMemberId()); setName(member.getMemberLabel()); }});
+        }
+        List<GroupMemberBrief> rootMembers = new ArrayList<>();
+        if (totalDevices != null && totalDevices > boundCount) {
+            Set<Long> boundIds = new HashSet<>();
+            for (GroupMember member : memberMapper.selectList(null)) {
+                boundIds.add(member.getMemberId());
+            }
+            for (OltDevice device : oltDeviceMapper.selectList(new LambdaQueryWrapper<OltDevice>()
+                    .eq(OltDevice::getDeleted, 0))) {
+                if (!boundIds.contains(device.getId())) {
+                    rootMembers.add(new GroupMemberBrief() {{ setId(device.getId()); setName(device.getName()); }});
+                }
+            }
+        }
         fillCounts(root.getChildren(), counts);
+        fillMembers(root.getChildren(), membersByRef);
         root.setMemberCount(Math.max((totalDevices == null ? 0 : totalDevices) - boundCount, 0));
         root.setMemberTotal(totalDevices == null ? 0 : totalDevices);
+        root.setMemberNames(rootMembers.stream().map(GroupMemberBrief::getName).collect(Collectors.toList()));
+        root.setMembers(rootMembers);
         return List.of(root);
     }
 
@@ -132,6 +155,17 @@ public class GroupService {
             counts.merge(member.getGroupRef(), 1L, Long::sum);
         }
         return counts;
+    }
+
+    /** 节点直属设备清单（不向下累加） */
+    private void fillMembers(List<GroupNodeView> nodes, Map<String, List<GroupMemberBrief>> membersByRef) {
+        for (GroupNodeView node : nodes) {
+            List<GroupMemberBrief> members = membersByRef.get(node.getNodeRef());
+            node.setMembers(members == null ? new ArrayList<>() : members);
+            node.setMemberNames(members == null ? new ArrayList<>() :
+                    members.stream().map(GroupMemberBrief::getName).collect(Collectors.toList()));
+            fillMembers(node.getChildren(), membersByRef);
+        }
     }
 
     /** 汇总数自底向上累加 */
@@ -252,40 +286,6 @@ public class GroupService {
         return row;
     }
 
-    /** 可绑定的 OLT 选项：全部未删除台账 + 各自当前绑定位置，绑定弹窗用 */
-    public List<GroupOltOption> bindable(String keyword) {
-        List<GroupOltOption> options = new ArrayList<>();
-        List<OltDevice> devices = oltDeviceMapper.selectList(new LambdaQueryWrapper<OltDevice>()
-                .eq(OltDevice::getDeleted, 0)
-                .orderByAsc(OltDevice::getId));
-        // OLT 当前所在节点：member_id → group_ref
-        Map<Long, String> bound = new HashMap<>();
-        for (GroupMember member : memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
-                .eq(GroupMember::getMemberType, MEMBER_TYPE_OLT))) {
-            bound.put(member.getMemberId(), member.getGroupRef());
-        }
-        Map<String, String> pathCache = new HashMap<>();
-        for (OltDevice device : devices) {
-            if (keyword != null && !keyword.isBlank()
-                    && !device.getName().contains(keyword.trim())
-                    && !device.getHost().contains(keyword.trim())) {
-                continue;
-            }
-            GroupOltOption option = new GroupOltOption();
-            option.setId(device.getId());
-            option.setName(device.getName());
-            option.setHost(device.getHost());
-            option.setVendorText(vendorText(device.getVendor()));
-            String status = device.getStatus() == null ? "unknown" : device.getStatus();
-            option.setStatusText(statusText(status));
-            String boundRef = bound.get(device.getId());
-            option.setBoundCode(boundRef);
-            option.setBoundText(boundRef == null ? "" : pathCache.computeIfAbsent(boundRef, this::pathText));
-            options.add(option);
-        }
-        return options;
-    }
-
     /**
      * 创建分组（落库）：parentRef 指向父节点（null=根节点下）。
      * 选了区划（civilCode）必须与父节点区划层级衔接（省下选市、市下选区县），
@@ -381,19 +381,40 @@ public class GroupService {
         Long members = memberMapper.selectCount(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getGroupRef, nodeRef));
         if (members != null && members > 0) {
-            return "分组下还有绑定的设备，先解绑";
+            return "分组下还有设备，先把设备删除或重新添加到别的分组";
         }
         groupMapper.deleteById(id);
         return null;
     }
 
     /**
-     * 绑定：一台 OLT 同时只挂一个节点。
-     * 根节点是默认归属——绑到根节点 = 解除现有绑定回到根；已在别的节点时返回失败并带上现有路径文案。
+     * 设备添加即落组：OltService 新增 OLT 时调用。
+     * groupRef 为空或 ROOT = 挂在根节点（不写归属关系）；其余必须是已落库分组节点。
      */
-    public String bind(String nodeRef, Long oltId, String operator) {
-        if (!refExists(nodeRef)) {
-            return "分组节点不存在";
+    public String attachAfterCreate(String groupRef, Long oltId, String label) {
+        if (groupRef == null || groupRef.isBlank() || ROOT_REF.equals(groupRef)) {
+            return null;
+        }
+        if (!refExists(groupRef)) {
+            return "归属分组不存在：" + groupRef;
+        }
+        GroupMember member = new GroupMember();
+        member.setGroupRef(groupRef);
+        member.setMemberType(MEMBER_TYPE_OLT);
+        member.setMemberId(oltId);
+        member.setMemberLabel(label);
+        member.setCreatedAt(LocalDateTime.now());
+        memberMapper.insert(member);
+        return null;
+    }
+
+    /**
+     * 移动设备到目标分组：ROOT = 移回根节点（删除归属关系）。
+     * 与旧"绑定"不同：换分组直接改归属，不需要先解绑。
+     */
+    public String move(String targetRef, Long oltId, String operator) {
+        if (!refExists(targetRef)) {
+            return "目标分组不存在";
         }
         OltDevice device = oltDeviceMapper.selectById(oltId);
         if (device == null || (device.getDeleted() != null && device.getDeleted() == 1)) {
@@ -403,22 +424,24 @@ public class GroupService {
                 .eq(GroupMember::getMemberType, MEMBER_TYPE_OLT)
                 .eq(GroupMember::getMemberId, oltId)
                 .last("LIMIT 1"));
-        // 绑到根节点 = 回到默认归属：解除现有绑定即可
-        if (ROOT_REF.equals(nodeRef)) {
+        // 移回根节点 = 回到默认归属：删掉归属关系即可
+        if (ROOT_REF.equals(targetRef)) {
             if (existing == null) {
-                return "该 OLT 未绑定，本就在根节点";
+                return "该设备已在根节点";
             }
             memberMapper.deleteById(existing.getId());
             return null;
         }
         if (existing != null) {
-            if (nodeRef.equals(existing.getGroupRef())) {
-                return "该 OLT 已绑定在此节点";
+            if (targetRef.equals(existing.getGroupRef())) {
+                return "该设备已在此分组";
             }
-            return "该 OLT 已绑定在「" + pathText(existing.getGroupRef()) + "」，请先解绑再换";
+            existing.setGroupRef(targetRef);
+            memberMapper.updateById(existing);
+            return null;
         }
         GroupMember member = new GroupMember();
-        member.setGroupRef(nodeRef);
+        member.setGroupRef(targetRef);
         member.setMemberType(MEMBER_TYPE_OLT);
         member.setMemberId(oltId);
         member.setMemberLabel(device.getName());
@@ -428,14 +451,12 @@ public class GroupService {
         return null;
     }
 
-    /** 解绑：按绑定关系主键；解绑后设备回到根节点 */
-    public String unbind(Long id) {
-        if (id == null) {
-            return "绑定关系 id 不能为空";
-        }
-        return memberMapper.deleteById(id) > 0 ? null : "绑定关系不存在";
+    /** 设备删除时清理归属关系，避免孤儿记录 */
+    public void onDeviceDeleted(Long oltId) {
+        memberMapper.delete(new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, MEMBER_TYPE_OLT)
+                .eq(GroupMember::getMemberId, oltId));
     }
-
     private String vendorText(String vendor) {
         if (vendor == null || vendor.isBlank()) {
             return "—";

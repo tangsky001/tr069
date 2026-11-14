@@ -45,12 +45,12 @@
         </el-card>
       </div>
 
-      <!-- 右：组内成员 -->
+      <!-- 右：组内设备（添加 OLT 即归属当前分组） -->
       <div class="member-col">
         <el-card shadow="never" class="group-card">
           <div slot="header" class="panel-header">
             <span>
-              组内成员
+              组内设备
               <span v-if="currentPath" class="member-path">{{ currentPath }}</span>
             </span>
             <el-button
@@ -58,13 +58,13 @@
               size="small"
               icon="el-icon-plus"
               :disabled="!currentRef"
-              @click="openBind"
-            >绑定 OLT</el-button>
+              @click="openAddOlt"
+            >添加 OLT</el-button>
           </div>
 
           <div v-if="!currentRef" class="empty">左侧选择一个分组节点，查看组内 OLT</div>
           <template v-else>
-            <el-table :data="members" size="mini" border empty-text="该节点还没有绑定 OLT，点右上角「绑定 OLT」">
+            <el-table :data="members" size="mini" border empty-text="该节点还没有设备，点右上角「添加 OLT」，添加即归属此分组">
               <el-table-column prop="name" label="设备名称" min-width="130" show-overflow-tooltip />
               <el-table-column prop="host" label="地址" min-width="120" show-overflow-tooltip />
               <el-table-column prop="vendorText" label="厂商" width="80" align="center" />
@@ -73,13 +73,16 @@
                   <el-tag size="mini" :type="row.statusLevel">{{ row.statusText }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="绑定时间" width="150">
+              <el-table-column label="添加时间" width="150">
                 <template slot-scope="{ row }">{{ formatTime(row.boundAt) }}</template>
               </el-table-column>
               <el-table-column prop="createdBy" label="操作人" width="90" show-overflow-tooltip />
-              <el-table-column label="操作" width="70" align="center">
+              <el-table-column label="操作" width="160" align="center">
                 <template slot-scope="{ row }">
-                  <el-button type="text" size="mini" class="danger-text" @click="unbind(row)">解绑</el-button>
+                  <el-button type="text" size="mini" @click="openEditOlt(row)">编辑</el-button>
+                  <el-button type="text" size="mini" @click="openMove(row)">移动</el-button>
+                  <el-button type="text" size="mini" @click="jumpToOlt(row)">管理</el-button>
+                  <el-button type="text" size="mini" class="danger-text" @click="removeOlt(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -158,49 +161,47 @@
       </div>
     </el-dialog>
 
-    <!-- 绑定 OLT 弹窗 -->
-    <el-dialog title="绑定 OLT 到分组" :visible.sync="bindVisible" width="560px">
-      <div v-if="currentPath" class="bind-path">目标节点：{{ currentPath }}</div>
-      <el-input
-        v-model="bindKeyword"
-        size="small"
-        prefix-icon="el-icon-search"
-        placeholder="搜索 OLT 名称 / 地址"
-        clearable
-        class="bind-filter"
-      />
-      <div v-loading="bindLoading" class="bind-list">
-        <div
-          v-for="option in bindOptions"
-          :key="option.id"
-          class="bind-row"
-          :class="{ selected: bindOltId === option.id }"
-          @click="selectOlt(option)"
-        >
-          <div class="bind-main">
-            <span class="bind-name">{{ option.name }}</span>
-            <span class="bind-host">{{ option.host }}</span>
-            <span class="bind-vendor">{{ option.vendorText }}</span>
-          </div>
-          <div class="bind-state">
-            <el-tag v-if="option.boundCode" size="mini" type="warning">已绑定：{{ option.boundText }}</el-tag>
-            <el-tag v-else size="mini" type="info">在根节点</el-tag>
-          </div>
-        </div>
-        <div v-if="bindOptions.length === 0 && !bindLoading" class="empty">没有匹配的 OLT，去「OLT 管理」添加设备</div>
-      </div>
+    <!-- 移动设备到其他分组弹窗：树上点选目标节点，ROOT=移回根节点 -->
+    <el-dialog
+      :title="'移动「' + (moveDeviceName || '') + '」到其他分组'"
+      :visible.sync="moveVisible"
+      width="420px"
+      top="8vh"
+    >
+      <div class="move-tip">点击选择目标分组（选「资源根组」= 移回根节点）：</div>
+      <el-tree
+        :data="tree"
+        :props="{ label: 'name', children: 'children' }"
+        node-key="nodeRef"
+        highlight-current
+        default-expand-all
+        @node-click="onMovePick"
+      >
+        <span slot-scope="{ data }" class="move-node">
+          <i :class="nodeIcon(data)" />
+          <span>{{ data.name }}</span>
+        </span>
+      </el-tree>
       <div slot="footer">
-        <el-button size="small" @click="bindVisible = false">取消</el-button>
+        <el-button size="small" @click="moveVisible = false">取消</el-button>
         <el-button
           type="primary"
           size="small"
-          :disabled="!bindOltId"
-          :loading="binding"
-          @click="bind"
-        >绑定</el-button>
+          :disabled="!moveTarget"
+          :loading="moving"
+          @click="doMove"
+        >确定移动</el-button>
       </div>
     </el-dialog>
-  </div>
+
+    <!-- 添加 / 编辑 OLT：添加即归属当前选中分组（groupRef 为空 = 根节点） -->
+    <olt-form-dialog
+      :visible.sync="addVisible"
+      :olt="editingOlt"
+      :group-ref="currentRef"
+      :group-name="currentPath"
+      @saved="onOltSaved"
+    />  </div>
 </template>
 
 <script>
@@ -211,19 +212,20 @@ import {
   renameGroup,
   deleteGroup,
   fetchGroupMembers,
-  fetchBindableOlts,
-  bindGroupMember,
-  unbindGroupMember
+  moveGroupMember
 } from '@/api/group'
+import OltFormDialog from '@/views/olt/components/OltFormDialog'
+import { deleteOlt, fetchOltDetail } from '@/api/olt'
 
 /**
  * 分组管理：默认只有固定根节点「资源根组」（未绑定设备的默认归属）。
  * 右键节点新建子分组：弹窗按 civilCode.csv 列出该节点下级区划候选
  * （根→34 省，省→市，市→区县），选中确定才落库；区县级可手输名称建自定义组。
- * 右侧组内成员绑定/解绑 OLT；展示文案全部由后端算好，前端只渲染。
+ * 右侧组内设备列表：点「添加 OLT」把设备直接建在当前分组；「管理」跳 OLT 管理页并选中该设备。
  */
 export default {
   name: 'GroupManage',
+  components: { OltFormDialog },
   data() {
     return {
       loading: false,
@@ -251,22 +253,23 @@ export default {
       renameVisible: false,
       renameId: null,
       renameName: '',
-      // 绑定弹窗
-      bindVisible: false,
-      bindKeyword: '',
-      bindOptions: [],
-      bindOltId: null,
-      bindLoading: false,
-      binding: false
+      // 添加 / 编辑 OLT 弹窗（添加即归属当前分组）
+      addVisible: false,
+      editingOlt: null,
+      // 移动分组弹窗
+      moveVisible: false,
+      moveOltId: null,
+      moveDeviceName: '',
+      moveTarget: null,
+      moveTargetName: '',
+      moving: false
     }
   },
   watch: {
     keyword(val) {
       this.$refs.tree && this.$refs.tree.filter(val)
-    },
-    bindKeyword() {
-      this.loadBindOptions()
     }
+
   },
   created() {
     this.loadTree()
@@ -456,59 +459,72 @@ export default {
       }
     },
 
-    // ---------- 绑定 / 解绑 ----------
-    openBind() {
-      this.bindVisible = true
-      this.bindOltId = null
-      this.loadBindOptions()
+    // ---------- 添加 OLT：添加即归属当前选中分组 ----------
+    openAddOlt() {
+      this.editingOlt = null
+      this.addVisible = true
     },
-    async loadBindOptions() {
-      this.bindLoading = true
+    async openEditOlt(row) {
+      // 拉全量台账（含账号/端口/字符集等），表单回显才完整
       try {
-        const res = await fetchBindableOlts(this.bindKeyword)
-        this.bindOptions = res.data || []
-        this.bindOptions.forEach(option => {
-          if (this.currentRef === option.boundCode) {
-            option.boundText = '当前节点'
-          }
-        })
-      } finally {
-        this.bindLoading = false
-      }
-    },
-    selectOlt(option) {
-      // 根节点 = 默认归属：选任何设备都合法（绑定会把已绑定的解绑回根）
-      if (option.boundCode && this.currentRef !== option.boundCode && this.currentRef !== 'ROOT') {
-        this.$message.warning(`该 OLT 已绑定在「${option.boundText}」，先去解绑再换`)
-        return
-      }
-      this.bindOltId = option.id
-    },
-    async bind() {
-      this.binding = true
-      try {
-        await bindGroupMember(this.currentRef, this.bindOltId)
-        this.$message.success('已绑定')
-        this.bindVisible = false
-        await Promise.all([this.loadMembers(), this.loadTree()])
+        const res = await fetchOltDetail(row.oltId)
+        this.editingOlt = (res.data && res.data.device) || null
+        this.addVisible = true
       } catch (e) {
-        this.$message.error(e && e.message ? e.message : '绑定失败')
-      } finally {
-        this.binding = false
+        this.$message.error('设备信息加载失败')
       }
     },
-    async unbind(row) {
+    async removeOlt(row) {
       try {
-        await this.$confirm(`确定把「${row.name}」从分组解绑？`, '提示', { type: 'warning' })
+        await this.$confirm(`确定删除设备「${row.name}」？删除后该设备的采集数据同时清理。`, '提示', { type: 'warning' })
       } catch (e) {
         return
       }
       try {
-        await unbindGroupMember(row.id)
-        this.$message.success('已解绑')
+        await deleteOlt(row.oltId)
+        this.$message.success('设备已删除')
         await Promise.all([this.loadMembers(), this.loadTree()])
       } catch (e) {
-        this.$message.error(e && e.message ? e.message : '解绑失败')
+        this.$message.error(e && e.message ? e.message : '删除失败')
+      }
+    },
+    onOltSaved() {
+      this.$message.success(this.editingOlt ? '设备已更新' : '设备已添加，归属当前分组')
+      this.editingOlt = null
+      this.loadMembers()
+      this.loadTree()
+    },
+    /** 跳到 OLT 管理页并直接选中这台设备进行登录/管理 */
+    jumpToOlt(row) {
+      this.$router.push({ path: '/olt/management', query: { deviceId: row.oltId }})
+    },
+
+    // ---------- 移动设备到其他分组 ----------
+    openMove(row) {
+      this.moveOltId = row.oltId
+      this.moveDeviceName = row.name
+      this.moveTarget = null
+      this.moveTargetName = ''
+      this.moveVisible = true
+    },
+    onMovePick(data) {
+      this.moveTarget = data.nodeRef
+      this.moveTargetName = data.name
+    },
+    async doMove() {
+      if (!this.moveTarget || !this.moveOltId) {
+        return
+      }
+      this.moving = true
+      try {
+        await moveGroupMember(this.moveTarget, this.moveOltId)
+        this.$message.success('「' + this.moveDeviceName + '」已移动到「' + this.moveTargetName + '」')
+        this.moveVisible = false
+        await Promise.all([this.loadMembers(), this.loadTree()])
+      } catch (e) {
+        this.$message.error(e && e.message ? e.message : '移动失败')
+      } finally {
+        this.moving = false
       }
     },
     formatTime(value) {
@@ -724,4 +740,14 @@ export default {
   color: #909399;
   font-size: 12px;
 }
-</style>
+
+.move-tip {
+  color: #606266;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.move-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}</style>

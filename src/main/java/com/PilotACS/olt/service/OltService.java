@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.PilotACS.group.GroupService;
 import com.PilotACS.entity.SysUser;
 import com.PilotACS.mapper.SysUserMapper;
 import com.PilotACS.olt.entity.OltBoard;
@@ -181,6 +182,9 @@ public class OltService {
     private final OltStatusPublisher statusPublisher;
 
     private final ObjectMapper objectMapper;
+
+    /** 分组归属：新增设备落组、删除设备清理归属 */
+    private final GroupService groupService;
 
     /** 延迟注入避免循环依赖（OltOntRegService 注入了 OltService） */
     @org.springframework.beans.factory.annotation.Autowired
@@ -400,6 +404,11 @@ public class OltService {
             // 页面测试连接时识别出来的厂商，直接带上，添加完就能按厂商进对应页面
             device.setVendor(normalizeVendor(request.getVendor()));
             deviceMapper.insert(device);
+            // 分组页添加：设备添加即归属所选分组；groupRef 为空/ROOT 时挂在根节点
+            String groupError = groupService.attachAfterCreate(request.getGroupRef(), device.getId(), name);
+            if (groupError != null) {
+                throw new IllegalArgumentException(groupError);
+            }
             return OltDeviceView.from(deviceMapper.selectById(device.getId()));
         }
 
@@ -468,6 +477,8 @@ public class OltService {
         recordMapper.delete(new LambdaQueryWrapper<OltSyncRecord>().eq(OltSyncRecord::getOltId, id));
         // 清理 ONT 注册关联数据（模板、参数、记录）
         ontRegService.deleteByOltId(id);
+        // 清理设备在分组中的归属关系
+        groupService.onDeviceDeleted(id);
         // 清理内存中的锁和节流记录，避免内存泄漏
         syncLocks.remove(id);
         sectionSyncAt.keySet().removeIf(key -> key != null && key.startsWith(id + ":"));

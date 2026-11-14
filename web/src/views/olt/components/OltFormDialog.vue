@@ -9,6 +9,11 @@
     @open="handleOpen"
   >
     <el-form ref="form" :model="form" :rules="rules" label-width="165px" size="small" class="olt-form">
+      <el-form-item v-if="!isEdit" label="归属分组">
+        <el-input :value="groupName || '资源根组（根节点）'" disabled />
+        <span class="form-tip">添加后设备固定归属此分组，在「OLT 管理」按分组树筛选选择</span>
+      </el-form-item>
+
       <el-form-item label="OLT 名称">
         <el-input v-model="form.name" placeholder="留空则使用 OLT 地址作为名称" clearable />
       </el-form-item>
@@ -145,6 +150,16 @@ export default {
     olt: {
       type: Object,
       default: null
+    },
+    // 分组页添加时传入：设备保存即归属该分组（nodeRef）；编辑时忽略
+    groupRef: {
+      type: String,
+      default: null
+    },
+    // 归属分组展示名（仅提示用）
+    groupName: {
+      type: String,
+      default: ''
     }
   },
   data() {
@@ -331,7 +346,11 @@ export default {
       this.$refs.form.validate(valid => {
         if (!valid) return
         this.saving = true
-        saveOlt(this.form)
+        const payload = { ...this.form }
+        if (!this.isEdit && this.groupRef) {
+          payload.groupRef = this.groupRef
+        }
+        saveOlt(payload)
           .then(res => {
             this.$message.success(this.isEdit ? 'OLT 已更新' : 'OLT 已添加')
             this.$emit('saved', res.data)

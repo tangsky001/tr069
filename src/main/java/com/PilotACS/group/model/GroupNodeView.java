@@ -48,6 +48,12 @@ public class GroupNodeView {
     @Schema(description = "下级节点")
     private List<GroupNodeView> children = new ArrayList<>();
 
+    @Schema(description = "节点直属设备名称清单（树节点悬停提示用）")
+    private List<String> memberNames = new ArrayList<>();
+
+    @Schema(description = "节点直属设备清单（树里直接展示设备名）")
+    private List<com.PilotACS.group.model.GroupMemberBrief> members = new ArrayList<>();
+
     /** 建组候选行视图（来自 civilCode.csv 的下级区划） */
     public static GroupNodeView civil(String code, String name, int level) {
         GroupNodeView view = new GroupNodeView();

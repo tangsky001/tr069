@@ -2,14 +2,12 @@ package com.PilotACS.group;
 
 import com.PilotACS.common.result.Result;
 import com.PilotACS.common.security.UserContext;
-import com.PilotACS.group.model.GroupBindRequest;
 import com.PilotACS.group.model.GroupCreateRequest;
 import com.PilotACS.group.model.GroupDeleteRequest;
 import com.PilotACS.group.model.GroupMemberView;
+import com.PilotACS.group.model.GroupMoveRequest;
 import com.PilotACS.group.model.GroupNodeView;
-import com.PilotACS.group.model.GroupOltOption;
 import com.PilotACS.group.model.GroupRenameRequest;
-import com.PilotACS.group.model.GroupUnbindRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,9 +23,9 @@ import java.util.List;
 
 /**
  * 分组管理：分组树骨架来自 civilCode.csv（省→市→区县自动存在），
- * 自定义节点挂靠在区划或自定义父节点下；OLT 绑定关系在 res_group_member 表。
+ * 自定义节点挂靠在区划或自定义父节点下；设备归属关系在 res_group_member 表（添加设备时落组）。
  */
-@Tag(name = "分组管理", description = "区划骨架分组树（civilCode.csv）、自定义子分组（创建/重命名/删除）、OLT 绑定/解绑")
+@Tag(name = "分组管理", description = "区划骨架分组树（civilCode.csv）、自定义子分组（创建/重命名/删除）、组内设备台账")
 @RestController
 @RequestMapping("/group")
 @RequiredArgsConstructor
@@ -82,26 +80,12 @@ public class GroupController {
         return Result.ok(groupService.members(nodeRef));
     }
 
-    /** 可绑定的 OLT 选项：绑定弹窗用，带各自当前绑定位置 */
-    @Operation(summary = "可绑定的 OLT 选项：台账列表，keyword 匹配名称/地址，带当前绑定位置")
-    @GetMapping("/bindable")
-    public Result<List<GroupOltOption>> bindable(@RequestParam(value = "keyword", required = false) String keyword) {
-        return Result.ok(groupService.bindable(keyword));
-    }
 
-    /** 绑定 OLT 到分组节点 */
-    @Operation(summary = "绑定 OLT 到分组节点；一台 OLT 只挂一个节点，换节点先解绑")
-    @PostMapping("/bind")
-    public Result<Void> bind(@RequestBody GroupBindRequest request, HttpServletRequest httpRequest) {
-        String error = groupService.bind(request.getNodeRef(), request.getOltId(), operator(httpRequest));
-        return error == null ? Result.ok() : Result.fail(error);
-    }
-
-    /** 解绑成员 */
-    @Operation(summary = "解绑成员：按绑定关系主键")
-    @PostMapping("/unbind")
-    public Result<Void> unbind(@RequestBody GroupUnbindRequest request) {
-        String error = groupService.unbind(request.getId());
+    /** 移动设备到目标分组：换分组直接改归属；ROOT = 移回根节点 */
+    @Operation(summary = "移动设备到目标分组（ROOT=移回根节点），无需先解绑")
+    @PostMapping("/move")
+    public Result<Void> move(@RequestBody GroupMoveRequest request, HttpServletRequest httpRequest) {
+        String error = groupService.move(request.getNodeRef(), request.getOltId(), operator(httpRequest));
         return error == null ? Result.ok() : Result.fail(error);
     }
 

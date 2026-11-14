@@ -44,4 +44,7 @@ public class OltSaveRequest {
 
     @Schema(description = "备注")
     private String remark;
+
+    @Schema(description = "新增时的归属分组节点引用：ROOT 或 G:id，空 = 根节点；编辑时忽略")
+    private String groupRef;
 }

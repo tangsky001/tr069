@@ -36,18 +36,7 @@ export function deleteGroup(nodeRef) {
 export function fetchGroupMembers(nodeRef) {
   return request({ url: '/group/members', method: 'get', params: { nodeRef }})
 }
-
-// 可绑定的 OLT 选项：keyword 匹配名称/地址，带当前绑定位置
-export function fetchBindableOlts(keyword) {
-  return request({ url: '/group/bindable', method: 'get', params: { keyword }})
-}
-
-// 绑定 OLT 到分组节点（绑到 ROOT = 解绑回根节点）
-export function bindGroupMember(nodeRef, oltId) {
-  return request({ url: '/group/bind', method: 'post', data: { nodeRef, oltId }})
-}
-
-// 解绑成员：按绑定关系主键
-export function unbindGroupMember(id) {
-  return request({ url: '/group/unbind', method: 'post', data: { id }})
+// 移动设备到目标分组（ROOT=移回根节点）；换分组直接改归属，无需先解绑
+export function moveGroupMember(nodeRef, oltId) {
+  return request({ url: '/group/move', method: 'post', data: { nodeRef, oltId }})
 }

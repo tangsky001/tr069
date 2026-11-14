@@ -1,123 +1,134 @@
 <template>
-  <div class="app-container">
-    <!-- 顶部：OLT 资源信息，下拉切换哪一台 -->
-    <el-card shadow="never" class="olt-top-card">
-      <div slot="header" class="olt-top-head">
-        <span class="olt-title">OLT/ONU 管理</span>
-        <div>
-          <el-button v-if="$has('olt:update')" type="primary" size="mini" icon="el-icon-plus" @click="openCreate">添加 OLT</el-button>
-          <el-button type="success" size="mini" icon="el-icon-refresh" :loading="loading" @click="loadList">刷新</el-button>
+  <div class="app-container olt-layout">
+    <!-- 左：分组树筛选（只读复用分组管理的树，选中后右侧只出组内 OLT） -->
+    <olt-group-tree @node-select="onGroupSelect" @device-select="onDeviceSelect" />
+
+    <!-- 右：OLT 资源信息 + 厂商面板 -->
+    <div class="olt-main-col">
+      <!-- 顶部：OLT 资源信息，下拉切换哪一台 -->
+      <el-card shadow="never" class="olt-top-card">
+        <div slot="header" class="olt-top-head">
+          <span class="olt-title">OLT/ONU 管理</span>
+          <div class="olt-head-actions">
+            <el-tag
+              v-if="groupFilterName"
+              size="small"
+              type="warning"
+              closable
+              class="olt-group-tag"
+              @close="clearGroupFilter"
+            >分组：{{ groupFilterName }}</el-tag>
+            <el-button type="success" size="mini" icon="el-icon-refresh" :loading="loading" @click="loadList">刷新</el-button>
+          </div>
         </div>
-      </div>
 
-      <div v-if="!resources.length" class="olt-empty">
-        尚未添加 OLT。点击右上角「添加 OLT」填写地址与登录账号，保存时先用「测试连接」认厂商，
-        认出来后自动按厂商的面板展示。
-      </div>
+        <div v-if="!resources.length" class="olt-empty">
+          尚未添加 OLT。请到「分组管理」选择节点后点「添加 OLT」，添加后设备即归属该分组；
+          认出来后自动按厂商的面板展示。
+        </div>
 
-      <template v-else>
-        <div class="olt-res-row">
-          <span class="olt-label">OLT 资源信息：</span>
-          <el-select
-            v-model="selectedId"
-            size="small"
-            style="width:260px"
-            filterable
-            placeholder="请选择 OLT"
-          >
-            <el-option v-for="r in resources" :key="r.id" :label="r.name" :value="r.id" />
-          </el-select>
-          <el-input :value="selected.host" size="small" style="width:170px" disabled />
-          <el-button v-if="$has('olt:update')" type="primary" size="small" icon="el-icon-edit" :disabled="!selectedId" @click="openEdit">编辑</el-button>
-          <el-button
-            v-if="$has('olt:update')"
-            type="primary"
-            size="small"
-            icon="el-icon-refresh-right"
-            :loading="syncing"
-            :disabled="!selectedId"
-            @click="handleSync"
-          >同步</el-button>
-          <el-button
-            v-if="$has('olt:update')"
-            type="warning"
-            size="small"
-            icon="el-icon-cpu"
-            :loading="testing"
-            :disabled="!selectedId"
-            @click="handleTest"
-          >诊断测试</el-button>
-          <el-button v-if="$has('olt:delete')" type="danger" size="small" icon="el-icon-delete" :disabled="!selectedId" @click="handleDelete">删除</el-button>
-          <span class="olt-auto">
-            <el-switch v-model="autoRefresh" />
-            <span class="olt-auto-label">自动刷新</span>
-            <el-select v-model="pollSeconds" size="small" style="width:86px;margin-left:4px" :disabled="!autoRefresh">
-              <el-option :value="5" label="5 秒" />
-              <el-option :value="10" label="10 秒" />
-              <el-option :value="30" label="30 秒" />
-              <el-option :value="60" label="60 秒" />
+        <div v-else-if="!filteredResources.length" class="olt-empty">
+          当前分组「{{ groupFilterName }}」下没有 OLT，点左侧分组树的「全部」或标签上的 × 清除筛选。
+        </div>
+
+        <template v-else>
+          <div class="olt-res-row">
+            <span class="olt-label">OLT 资源信息：</span>
+            <el-select
+              v-model="selectedId"
+              size="small"
+              style="width:260px"
+              filterable
+              placeholder="请选择 OLT"
+            >
+              <el-option v-for="r in filteredResources" :key="r.id" :label="r.name" :value="r.id" />
             </el-select>
-          </span>
-          <span class="olt-auto">
-            <el-switch v-model="keepalive" :disabled="!keepaliveReady" @change="handleKeepaliveChange" />
-            <span class="olt-auto-label">会话保活</span>
-            <el-select v-model="keepaliveMinutes" size="small" style="width:86px;margin-left:4px" :disabled="!keepalive || !keepaliveReady" @change="handleKeepaliveChange">
-              <el-option v-for="m in keepaliveMinuteOptions" :key="m" :value="m" :label="m + ' 分钟'" />
-            </el-select>
-          </span>
-        </div>
+            <el-input :value="selected.host" size="small" style="width:170px" disabled />
+            <el-button
+              v-if="$has('olt:update')"
+              type="primary"
+              size="small"
+              icon="el-icon-refresh-right"
+              :loading="syncing"
+              :disabled="!selectedId"
+              @click="handleSync"
+            >同步</el-button>
+            <el-button
+              v-if="$has('olt:update')"
+              type="warning"
+              size="small"
+              icon="el-icon-cpu"
+              :loading="testing"
+              :disabled="!selectedId"
+              @click="handleTest"
+            >诊断测试</el-button>
+            <span class="olt-auto">
+              <el-switch v-model="autoRefresh" />
+              <span class="olt-auto-label">自动刷新</span>
+              <el-select v-model="pollSeconds" size="small" style="width:86px;margin-left:4px" :disabled="!autoRefresh">
+                <el-option :value="5" label="5 秒" />
+                <el-option :value="10" label="10 秒" />
+                <el-option :value="30" label="30 秒" />
+                <el-option :value="60" label="60 秒" />
+              </el-select>
+            </span>
+            <span class="olt-auto">
+              <el-switch v-model="keepalive" :disabled="!keepaliveReady" @change="handleKeepaliveChange" />
+              <span class="olt-auto-label">会话保活</span>
+              <el-select v-model="keepaliveMinutes" size="small" style="width:86px;margin-left:4px" :disabled="!keepalive || !keepaliveReady" @change="handleKeepaliveChange">
+                <el-option v-for="m in keepaliveMinuteOptions" :key="m" :value="m" :label="m + ' 分钟'" />
+              </el-select>
+            </span>
+          </div>
 
-        <div class="olt-meta-row">
-          <span>名称：<b>{{ selected.name || '-' }}</b></span>
-          <span>
-            厂商：
-            <el-tag v-if="selected.vendorLabel" size="mini" type="success">{{ selected.vendorLabel }}</el-tag>
-            <span v-else>未识别</span>
-          </span>
-          <span>型号：<b>{{ selected.model || '-' }}</b></span>
-          <span>背板型号：{{ selected.backplane || '-' }}</span>
-          <span>主控 MAC：{{ selected.macAddress || '-' }}</span>
-          <span>固件版本：{{ firmwareText }}</span>
-          <span>运行时长：{{ selected.uptime || '-' }}</span>
-          <span>
-            状态：
-            <el-tag :type="statusTag" size="mini">{{ statusText }}</el-tag>
-          </span>
-          <span>
-            最近同步：{{ selected.lastSyncAt || '未同步' }}
-            <span class="olt-auto-tip">（启动即采一次，之后每 5 分钟自动采集，页面自动刷新）</span>
-          </span>
-        </div>
+          <div class="olt-meta-row">
+            <span>名称：<b>{{ selected.name || '-' }}</b></span>
+            <span>
+              厂商：
+              <el-tag v-if="selected.vendorLabel" size="mini" type="success">{{ selected.vendorLabel }}</el-tag>
+              <span v-else>未识别</span>
+            </span>
+            <span>型号：<b>{{ selected.model || '-' }}</b></span>
+            <span>背板型号：{{ selected.backplane || '-' }}</span>
+            <span>主控 MAC：{{ selected.macAddress || '-' }}</span>
+            <span>固件版本：{{ firmwareText }}</span>
+            <span>运行时长：{{ selected.uptime || '-' }}</span>
+            <span>
+              状态：
+              <el-tag :type="statusTag" size="mini">{{ statusText }}</el-tag>
+            </span>
+            <span>
+              最近同步：{{ selected.lastSyncAt || '未同步' }}
+              <span class="olt-auto-tip">（启动即采一次，之后每 5 分钟自动采集，页面自动刷新）</span>
+            </span>
+          </div>
 
-        <div v-if="selected.lastError" class="olt-error">最近一次失败：{{ selected.lastError }}</div>
+          <div v-if="selected.lastError" class="olt-error">最近一次失败：{{ selected.lastError }}</div>
 
-        <div class="olt-foot-tip">
-          下面的面板按厂商自动切换面板，没认出来的先按通用视图展示
-          认出来后（「诊断测试」重新识别）会自己换过去。厂商是「测试连接」时用版本回显认出来的。
-        </div>
-      </template>
-    </el-card>
+          <div class="olt-foot-tip">
+            下面的面板按厂商自动切换面板，没认出来的先按通用视图展示
+            认出来后（「诊断测试」重新识别）会自己换过去。厂商是「测试连接」时用版本回显认出来的。
+          </div>
+        </template>
+      </el-card>
 
-    <!-- 主体：按下拉选中的厂商渲染对应视图，切设备当场换面板，不用来回跳页面 -->
-    <component
-      :is="vendorView"
-      v-if="selectedId"
-      :key="selectedId"
-      :device-id="selectedId"
-      embedded
-    />
+      <!-- 主体：按下拉选中的厂商渲染对应视图，切设备当场换面板，不用来回跳页面 -->
+      <component
+        :is="vendorView"
+        v-if="selectedId"
+        :key="selectedId"
+        :device-id="selectedId"
+        embedded
+      />
 
-    <olt-form-dialog
-      :visible.sync="formVisible"
-      :olt="editing"
-      @saved="handleSaved"
-    />
+    </div>
   </div>
 </template>
 
 <script>
-import OltFormDialog from './components/OltFormDialog'
-import { fetchOltList, deleteOlt, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive } from '@/api/olt'
+import OltGroupTree from './components/OltGroupTree'
+import { fetchOltList, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive } from '@/api/olt'
+import { fetchGroupMembers } from '@/api/group'
 import { componentOfVendor } from './vendors'
 
 /**
@@ -125,7 +136,7 @@ import { componentOfVendor } from './vendors'
  */
 export default {
   name: 'OltManagement',
-  components: { OltFormDialog },
+  components: { OltGroupTree },
   data() {
     return {
       loading: false,
@@ -133,8 +144,6 @@ export default {
       testing: false,
       resources: [],
       selectedId: null,
-      formVisible: false,
-      editing: null,
       // 台账列表的自动刷新（30 秒起），默认关；面板数据由视图自己按 10 秒拉
       autoRefresh: false,
       pollSeconds: 30,
@@ -145,13 +154,24 @@ export default {
       keepaliveMinutes: 2,
       // 可选的探活档位由后端给（后端只认这几档，页面不写死）
       keepaliveMinuteOptions: [],
-      keepaliveReady: false
+      keepaliveReady: false,
+      // 分组筛选：null = 全部；选中节点后只显示组内成员 OLT
+      groupFilterRef: null,
+      groupFilterName: '',
+      groupOltIds: null
     }
   },
   computed: {
     /** 下拉选中的那台；列表刷新后可能不在里面了（被删），退回空对象 */
     selected() {
-      return this.resources.find(item => String(item.id) === String(this.selectedId)) || {}
+      return this.filteredResources.find(item => String(item.id) === String(this.selectedId)) || {}
+    },
+    /** 按分组过滤后的台账；未选分组 = 全部 */
+    filteredResources() {
+      if (!this.groupOltIds) {
+        return this.resources
+      }
+      return this.resources.filter(item => this.groupOltIds.includes(String(item.id)))
     },
     /** 按厂商挑视图组件：华为出华为面板，其它厂商（鸿升光/中兴/烽火…）都出第三方面板 */
     vendorView() {
@@ -183,6 +203,8 @@ export default {
     }
   },
   created() {
+    // 分组页「管理」跳转：?deviceId= 预选设备
+    this.preselectId = this.$route.query.deviceId || null
     this.loadList()
     this.loadSessionPool()
   },
@@ -190,6 +212,39 @@ export default {
     this.stopPolling()
   },
   methods: {
+    /** 左侧分组树选中/清除：拉组内成员 id 清单，过滤右侧 OLT 下拉 */
+    onGroupSelect(node) {
+      if (!node) {
+        this.clearGroupFilter()
+        return
+      }
+      this.groupFilterRef = node.nodeRef
+      this.groupFilterName = node.name
+      this.groupOltIds = []
+      fetchGroupMembers(node.nodeRef)
+        .then(res => {
+          this.groupOltIds = (res.data || []).map(row => String(row.oltId))
+          // 筛选后当前选中的不在组内就退回组内第一台
+          if (this.selectedId && !this.groupOltIds.includes(String(this.selectedId))) {
+            this.selectedId = this.filteredResources.length ? this.filteredResources[0].id : null
+          }
+        })
+        .catch(() => {
+          this.clearGroupFilter()
+        })
+    },
+    clearGroupFilter() {
+      this.groupFilterRef = null
+      this.groupFilterName = ''
+      this.groupOltIds = null
+    },
+    /** 点树上的设备叶子：直接选中这台设备（不改变分组筛选） */
+    onDeviceSelect(node) {
+      const id = node.deviceId
+      if (id != null && this.filteredResources.some(item => String(item.id) === String(id))) {
+        this.selectedId = id
+      }
+    },
     startPolling() {
       this.stopPolling()
       this.pollTimer = setInterval(() => {
@@ -207,6 +262,12 @@ export default {
       return fetchOltList()
         .then(res => {
           this.resources = res.data || []
+          // 从分组页「管理」跳过来时带 deviceId，直接选中这台设备
+          if (this.preselectId && this.resources.some(item => String(item.id) === String(this.preselectId))) {
+            this.selectedId = this.preselectId
+            this.preselectId = null
+            return
+          }
           // 还没选、或者选的那台已经没了（被删），就默认选第一台
           if (!this.selectedId || !this.resources.some(item => String(item.id) === String(this.selectedId))) {
             this.selectedId = this.resources.length ? this.resources[0].id : null
@@ -248,30 +309,7 @@ export default {
           this.keepalive = !target
         })
     },
-    openCreate() {
-      this.editing = null
-      this.formVisible = true
-    },
-    openEdit() {
-      this.editing = this.selected
-      this.formVisible = true
-    },
-    /**
-     * 保存后刷新台账：新加的直接选中它（面板按刚认出的厂商出），
-     * 编辑的保持选中；厂商变了的话下面那块面板会自动换成新厂商那套。
-     */
-    handleSaved(saved) {
-      this.formVisible = false
-      const wasEdit = !!this.editing
-      this.loadList().then(() => {
-        if (saved) {
-          this.selectedId = saved.id
-        }
-        if (wasEdit) {
-          this.$message.success('已保存' + (saved && saved.vendorLabel ? '，当前面板：' + saved.vendorLabel : ''))
-        }
-      })
-    },
+
     handleTest() {
       if (!this.selectedId) return
       this.testing = true
@@ -302,22 +340,8 @@ export default {
         .finally(() => {
           this.syncing = false
         })
-    },
-    handleDelete() {
-      const name = this.selected.name || this.selected.host
-      this.$confirm('删除后该 OLT 的板卡与采集记录将一并清理，是否继续？', '删除 OLT：' + name, {
-        confirmButtonText: '删除',
-        cancelButtonText: '取消',
-        type: 'warning'
-      })
-        .then(() => deleteOlt(this.selectedId))
-        .then(() => {
-          this.$message.success('已删除')
-          this.selectedId = null
-          return this.loadList()
-        })
-        .catch(() => {})
     }
+
   }
 }
 </script>
@@ -325,6 +349,25 @@ export default {
 <style lang="scss" scoped>
 @import '~@/styles/olt.scss';
 
+/* 左树右面板布局：分组树固定宽并与右侧面板等高（flex 默认 stretch） */
+.olt-layout {
+  display: flex;
+  gap: 16px;
+}
+.olt-main-col {
+  flex: 1;
+  min-width: 0;
+}
+.olt-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.olt-group-tag {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .olt-foot-tip {
   margin-top: 10px;
   color: #909399;
