@@ -1,3 +1,9 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.639
+ *
+ */
+
 package com.PilotACS.conf;
 
 import com.PilotACS.common.ws.DashboardWsAuthInterceptor;

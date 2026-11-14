@@ -1,3 +1,9 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.630
+ *
+ */
+
 package com.PilotACS.olt.service;
 import com.PilotACS.common.log.Logs;
 
@@ -6,6 +12,9 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.PilotACS.acl.DeviceAclService;
+import com.PilotACS.common.security.LoginUser;
+import com.PilotACS.common.security.UserContext;
 import com.PilotACS.group.GroupService;
 import com.PilotACS.entity.SysUser;
 import com.PilotACS.mapper.SysUserMapper;
@@ -186,6 +195,9 @@ public class OltService {
     /** 分组归属：新增设备落组、删除设备清理归属 */
     private final GroupService groupService;
 
+    /** 设备级 ACL：list 过滤 / save·delete 校验 */
+    private final DeviceAclService deviceAclService;
+
     /** 延迟注入避免循环依赖（OltOntRegService 注入了 OltService） */
     @org.springframework.beans.factory.annotation.Autowired
     @Lazy
@@ -202,9 +214,15 @@ public class OltService {
                     .or().like(OltDevice::getModel, kw));
         }
         wrapper.orderByDesc(OltDevice::getId);
-        return deviceMapper.selectList(wrapper).stream()
+        List<OltDeviceView> views = deviceMapper.selectList(wrapper).stream()
                 .map(OltDeviceView::from)
                 .collect(Collectors.toList());
+        // 设备级 ACL：受限用户只看得到被授权的设备（null = 不限制）
+        Set<Long> hidden = deviceAclService.hiddenOltIds(UserContext.get());
+        if (hidden != null) {
+            views = views.stream().filter(v -> !hidden.contains(v.getId())).collect(Collectors.toList());
+        }
+        return views;
     }
 
     public OltDetail detail(Long id) {
@@ -355,6 +373,10 @@ public class OltService {
         if (request == null) {
             throw new IllegalArgumentException("请求体不能为空");
         }
+        // 编辑既有设备：需要该设备的 update 授权（新增不受 ACL 限制，走角色权限码）
+        if (request.getId() != null && !deviceAclService.allowed(UserContext.get(), request.getId(), "update")) {
+            throw new IllegalArgumentException("无该设备的编辑权限");
+        }
         String host = trimToNull(request.getHost());
         if (host == null) {
             throw new IllegalArgumentException("OLT 地址不能为空");
@@ -470,6 +492,9 @@ public class OltService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        if (!deviceAclService.allowed(UserContext.get(), id, "delete")) {
+            throw new IllegalArgumentException("无该设备的删除权限");
+        }
         requireDevice(id);
         boardMapper.delete(new LambdaQueryWrapper<OltBoard>().eq(OltBoard::getOltId, id));
         deviceMapper.deleteById(id);

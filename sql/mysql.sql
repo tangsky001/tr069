@@ -76,9 +76,9 @@ INSERT INTO `sys_role` (`code`, `name`, `builtin`) VALUES
 ('OPS_ADMIN',   '运维管理员', 0),
 ('INSTALLER',   '装维员',     0);
 
--- 种子用户（初始密码均为 123456）
+-- 种子用户（初始密码均为admin/admin 其他用户 123456）
 INSERT INTO `sys_user` (`id`, `username`, `password`, `salt`, `nickname`, `role_code`, `status`) VALUES
-(1, 'admin',     'b08535522768feeae612340b24bd3aa11e323be72a2c23daba893fa11d93ff53', 'f3a9c2e8d7b6', '超级管理员', 'SUPER_ADMIN', 1),
+(1, 'admin',     'dca9656aa5627e9800a47ff4409b50881f029cdd86d06135f8884b4be5518443', 'f3a9c2e8d7b6', '超级管理员', 'SUPER_ADMIN', 1),
 (2, 'opsadmin',  '5c2e8f6ac9afe1b3b62c2aaee56aa56554c68d702093fd30696baa4dadb02ae6', 'a1b2c3d4e5f6', '运维管理员', 'OPS_ADMIN',   1),
 (3, 'installer', 'd9ba3ad7f13422b0b7796f496fdea05624433a95f93b0953e8c8a050ab211faa', '9e8d7c6b5a4f', '装维员',     'INSTALLER',   1);
 
@@ -326,3 +326,21 @@ CREATE TABLE IF NOT EXISTS `res_group_member` (
     UNIQUE KEY `uk_member` (`member_type`, `member_id`),
     KEY `idx_group_ref` (`group_ref`)
 ) ENGINE = InnoDB COMMENT '分组成员绑定关系'
+
+-- ============ 设备/分组级 ACL（细到每台设备的看与操作授权） ============
+CREATE TABLE IF NOT EXISTS `res_acl` (
+    `id`           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `principal_id` BIGINT      NOT NULL COMMENT '授权对象：sys_user.id',
+    `scope_type`   VARCHAR(10) NOT NULL COMMENT '范围类型：device / group',
+    `scope_id`     VARCHAR(40) NOT NULL COMMENT '范围引用：设备为 olt_device.id；分组为 ROOT / G:id',
+    `perms`        VARCHAR(64) NOT NULL DEFAULT 'view' COMMENT '授予动作，逗号分隔：view,operate,update,delete',
+    `created_by`   VARCHAR(64) DEFAULT NULL COMMENT '创建人',
+    `created_at`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_principal_scope` (`principal_id`, `scope_type`, `scope_id`)
+) ENGINE = InnoDB COMMENT '设备/分组级 ACL';
+
+-- OPS_ADMIN 增加 ACL 管理权限码（幂等；老库手动执行一次即可）
+INSERT INTO `sys_role_permission` (`role_code`, `perm_code`)
+SELECT 'OPS_ADMIN', 'acl:manage' FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM `sys_role_permission` WHERE `role_code` = 'OPS_ADMIN' AND `perm_code` = 'acl:manage');

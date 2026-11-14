@@ -1,3 +1,9 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.863
+ *
+ */
+
 package com.PilotACS.common.log;
 
 import org.slf4j.Logger;
@@ -35,7 +41,11 @@ public final class Logs {
         /** 全局异常 */
         EXCEPTION("异常"),
         /** OLT（Telnet 采集） */
-        OLT("OLT");
+        OLT("OLT"),
+        /** 资源分组管理 */
+        GROUP("分组"),
+        /** 设备/分组级 ACL */
+        ACL("设备权限");
 
         private final String label;
 

@@ -1,3 +1,8 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.256
+ *
+ */
 package com.PilotACS.common.security;
 
 import java.lang.annotation.ElementType;

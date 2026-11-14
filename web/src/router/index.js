@@ -221,6 +221,12 @@ export const constantRoutes = [
         meta: { title: '登录日志', icon: 'el-icon-time', permission: 'system:view' }
       },
       {
+        path: 'oper-logs',
+        name: 'SystemOperLogs',
+        component: () => import('@/views/system/oper-logs'),
+        meta: { title: '操作日志', icon: 'el-icon-document', permission: 'system:view' }
+      },
+      {
         path: 'ops',
         name: 'SystemOps',
         component: () => import('@/views/system/ops'),

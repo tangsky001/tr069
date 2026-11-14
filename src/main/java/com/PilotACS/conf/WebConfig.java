@@ -1,5 +1,12 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.347
+ *
+ */
+
 package com.PilotACS.conf;
 
+import com.PilotACS.acl.OltAclInterceptor;
 import com.PilotACS.common.security.AuthInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
@@ -16,6 +23,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebConfig implements WebMvcConfigurer {
 
     private final AuthInterceptor authInterceptor;
+    private final OltAclInterceptor oltAclInterceptor;
 
     // 所有 RestController 统一加 /api 前缀（springdoc 文档控制器除外）
     @Override
@@ -47,6 +55,9 @@ public class WebConfig implements WebMvcConfigurer {
                         "/doc/index.html",
                         "/webjars/**",
                         "/knife4j/**");
+        // 设备级 ACL：认证之后按用户拦截 /olt/{id}** 的查看与操作（在 AuthInterceptor 之后执行）
+        registry.addInterceptor(oltAclInterceptor)
+                .addPathPatterns("/api/olt/**");
     }
 
     @Override

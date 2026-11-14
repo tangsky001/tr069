@@ -1,3 +1,8 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.492
+ *
+ */
 package com.PilotACS.group.config;
 
 import com.PilotACS.common.log.Logs;

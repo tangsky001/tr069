@@ -1,3 +1,9 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.357
+ *
+ */
+
 package com.PilotACS.common.constant;
 
 // 认证相关常量

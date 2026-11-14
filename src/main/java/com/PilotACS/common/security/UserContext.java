@@ -1,3 +1,9 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.252
+ *
+ */
+
 package com.PilotACS.common.security;
 
 // 当前登录用户上下文

@@ -1,9 +1,16 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.294
+ *
+ */
+
 package com.PilotACS.controller;
 
 import com.PilotACS.common.log.Logs;
 import com.PilotACS.common.result.Result;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -36,6 +43,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @RestController
 @RequestMapping("/upgrade")
+@Tag(name = "固件升级", description = "OLT/HGU 固件包上传、下发与升级进度")
 public class UpgradeController {
 
     /** hserver 地址（与统计上报一致） */

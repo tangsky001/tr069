@@ -1,3 +1,9 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.279
+ *
+ */
+
 package com.PilotACS.olt.vendor.zte;
 
 import com.PilotACS.olt.telnet.OltVendor;

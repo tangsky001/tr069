@@ -1,12 +1,23 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.415
+ *
+ */
+
 package com.PilotACS.group;
 
 import com.PilotACS.group.entity.GroupMember;
 import com.PilotACS.group.entity.ResGroup;
 import com.PilotACS.group.mapper.GroupMemberMapper;
 import com.PilotACS.group.mapper.ResGroupMapper;
+import com.PilotACS.acl.DeviceAclService;
+import com.PilotACS.common.security.LoginUser;
+import com.PilotACS.common.security.UserContext;
 import com.PilotACS.group.model.GroupMemberView;
 import com.PilotACS.group.model.GroupMemberBrief;
 import com.PilotACS.group.model.GroupNodeView;
+import com.PilotACS.common.log.Logs;
+import com.PilotACS.service.SysOperLogService;
 import com.PilotACS.olt.entity.OltDevice;
 import com.PilotACS.olt.mapper.OltDeviceMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -50,8 +61,14 @@ public class GroupService {
     private final OltDeviceMapper oltDeviceMapper;
     private final CivilCodeService civilCodeService;
 
+    /** 设备级 ACL：树/成员清单按用户可见性过滤 */
+    private final DeviceAclService deviceAclService;
+    private final SysOperLogService operLogService;
+
     /** 分组树：根节点 + 已落库的分组节点（区划节点只有创建过才出现） */
     public List<GroupNodeView> tree() {
+        // 设备级 ACL：受限用户看不到未授权设备（null = 不限制）
+        Set<Long> hidden = deviceAclService.hiddenOltIds(UserContext.get());
         List<ResGroup> groups = groupMapper.selectList(new LambdaQueryWrapper<ResGroup>()
                 .orderByAsc(ResGroup::getSort)
                 .orderByAsc(ResGroup::getId));
@@ -82,7 +99,7 @@ public class GroupService {
         root.setLevel(0);
         root.getChildren().addAll(topLevel);
         // 根节点直属成员 = 未绑定任何节点的设备（默认归根）
-        Map<String, Long> counts = countByRef();
+        Map<String, Long> counts = countByRef(hidden);
         long boundCount = 0;
         for (Map.Entry<String, Long> entry : counts.entrySet()) {
             if (!ROOT_REF.equals(entry.getKey())) {
@@ -92,28 +109,34 @@ public class GroupService {
         Long totalDevices = oltDeviceMapper.selectCount(new LambdaQueryWrapper<OltDevice>()
                 .eq(OltDevice::getDeleted, 0));
         // 节点直属设备名称清单（悬停提示用）：member 表里存了 label，根节点取未归属设备名
+        List<GroupMember> memberRows = memberMapper.selectList(null);
+        if (hidden != null) {
+            memberRows.removeIf(m -> hidden.contains(m.getMemberId()));
+        }
         Map<String, List<GroupMemberBrief>> membersByRef = new HashMap<>();
-        for (GroupMember member : memberMapper.selectList(null)) {
+        for (GroupMember member : memberRows) {
             membersByRef.computeIfAbsent(member.getGroupRef(), k -> new ArrayList<>())
                     .add(new GroupMemberBrief() {{ setId(member.getMemberId()); setName(member.getMemberLabel()); }});
         }
         List<GroupMemberBrief> rootMembers = new ArrayList<>();
         if (totalDevices != null && totalDevices > boundCount) {
             Set<Long> boundIds = new HashSet<>();
-            for (GroupMember member : memberMapper.selectList(null)) {
+            for (GroupMember member : memberRows) {
                 boundIds.add(member.getMemberId());
             }
             for (OltDevice device : oltDeviceMapper.selectList(new LambdaQueryWrapper<OltDevice>()
                     .eq(OltDevice::getDeleted, 0))) {
-                if (!boundIds.contains(device.getId())) {
+                if (!boundIds.contains(device.getId()) && (hidden == null || !hidden.contains(device.getId()))) {
                     rootMembers.add(new GroupMemberBrief() {{ setId(device.getId()); setName(device.getName()); }});
                 }
             }
         }
         fillCounts(root.getChildren(), counts);
         fillMembers(root.getChildren(), membersByRef);
-        root.setMemberCount(Math.max((totalDevices == null ? 0 : totalDevices) - boundCount, 0));
-        root.setMemberTotal(totalDevices == null ? 0 : totalDevices);
+        int visibleTotal = totalDevices == null ? 0
+                : (int) (totalDevices - (hidden == null ? 0 : hidden.size()));
+        root.setMemberCount(Math.max(visibleTotal - boundCount, 0));
+        root.setMemberTotal(Math.max(visibleTotal, 0));
         root.setMemberNames(rootMembers.stream().map(GroupMemberBrief::getName).collect(Collectors.toList()));
         root.setMembers(rootMembers);
         return List.of(root);
@@ -150,8 +173,16 @@ public class GroupService {
 
     /** 直接成员数按节点引用统计 */
     private Map<String, Long> countByRef() {
+        return countByRef(null);
+    }
+
+    private Map<String, Long> countByRef(Set<Long> hidden) {
         Map<String, Long> counts = new HashMap<>();
-        for (GroupMember member : memberMapper.selectList(null)) {
+        List<GroupMember> rows = memberMapper.selectList(null);
+        if (hidden != null) {
+            rows.removeIf(m -> hidden.contains(m.getMemberId()));
+        }
+        for (GroupMember member : rows) {
             counts.merge(member.getGroupRef(), 1L, Long::sum);
         }
         return counts;
@@ -233,10 +264,14 @@ public class GroupService {
             return rootMembers();
         }
         String groupText = pathText(nodeRef);
+        Set<Long> hidden = deviceAclService.hiddenOltIds(UserContext.get());
         List<GroupMember> bindings = memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getGroupRef, nodeRef)
                 .orderByDesc(GroupMember::getCreatedAt));
         for (GroupMember binding : bindings) {
+            if (hidden != null && hidden.contains(binding.getMemberId())) {
+                continue;
+            }
             OltDevice device = oltDeviceMapper.selectById(binding.getMemberId());
             if (device == null || (device.getDeleted() != null && device.getDeleted() == 1)) {
                 continue;
@@ -258,8 +293,9 @@ public class GroupService {
         List<OltDevice> devices = oltDeviceMapper.selectList(new LambdaQueryWrapper<OltDevice>()
                 .eq(OltDevice::getDeleted, 0)
                 .orderByAsc(OltDevice::getId));
+        Set<Long> hidden = deviceAclService.hiddenOltIds(UserContext.get());
         for (OltDevice device : devices) {
-            if (!boundIds.contains(device.getId())) {
+            if (!boundIds.contains(device.getId()) && (hidden == null || !hidden.contains(device.getId()))) {
                 rows.add(memberView(null, ROOT_REF, ROOT_NAME, device, null, null));
             }
         }
@@ -342,6 +378,8 @@ public class GroupService {
         group.setCreatedBy(operator);
         group.setCreatedAt(LocalDateTime.now());
         groupMapper.insert(group);
+        operLogService.log("分组", "新建分组", "「" + finalName + "」" + (parentId == null ? "（根节点下）" : "（父节点 id=" + parentId + "）") + "，创建人=" + operator);
+        Logs.info(Logs.Module.GROUP, "新建分组", "名称", finalName, "创建人", operator);
         return null;
     }
 
@@ -356,6 +394,8 @@ public class GroupService {
         }
         group.setName(name.trim());
         groupMapper.updateById(group);
+        operLogService.log("分组", "重命名分组", "id=" + id + " 「" + name.trim() + "」");
+        Logs.info(Logs.Module.GROUP, "重命名分组", "id", id, "新名称", name.trim());
         return null;
     }
 
@@ -384,6 +424,8 @@ public class GroupService {
             return "分组下还有设备，先把设备删除或重新添加到别的分组";
         }
         groupMapper.deleteById(id);
+        operLogService.log("分组", "删除分组", "「" + group.getName() + "」(id=" + id + ")");
+        Logs.info(Logs.Module.GROUP, "删除分组", "名称", group.getName(), "id", id);
         return null;
     }
 
@@ -430,6 +472,8 @@ public class GroupService {
                 return "该设备已在根节点";
             }
             memberMapper.deleteById(existing.getId());
+            operLogService.log("分组", "移动设备", "「" + device.getName() + "」→ 根节点，操作人=" + operator);
+            Logs.info(Logs.Module.GROUP, "移动设备", "设备", device.getName(), "目标", "根节点");
             return null;
         }
         if (existing != null) {
@@ -438,6 +482,8 @@ public class GroupService {
             }
             existing.setGroupRef(targetRef);
             memberMapper.updateById(existing);
+            operLogService.log("分组", "移动设备", "「" + device.getName() + "」→ " + targetRef + "，操作人=" + operator);
+            Logs.info(Logs.Module.GROUP, "移动设备", "设备", device.getName(), "目标", targetRef);
             return null;
         }
         GroupMember member = new GroupMember();
@@ -448,6 +494,8 @@ public class GroupService {
         member.setCreatedBy(operator);
         member.setCreatedAt(LocalDateTime.now());
         memberMapper.insert(member);
+        operLogService.log("分组", "移动设备", "「" + device.getName() + "」→ " + targetRef + "，操作人=" + operator);
+        Logs.info(Logs.Module.GROUP, "移动设备", "设备", device.getName(), "目标", targetRef);
         return null;
     }
 

@@ -1,6 +1,13 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.487
+ *
+ */
+
 package com.PilotACS.service;
 
 import com.PilotACS.common.constant.AuthConstant;
+import com.PilotACS.common.log.Logs;
 import com.PilotACS.common.constant.PermissionGroups;
 import com.PilotACS.common.enums.ClientType;
 import com.PilotACS.common.exception.BusinessException;
@@ -13,6 +20,7 @@ import com.PilotACS.entity.SysRole;
 import com.PilotACS.entity.SysUser;
 import com.PilotACS.mapper.SysRoleMapper;
 import com.PilotACS.mapper.SysUserMapper;
+import com.PilotACS.service.SysOperLogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -33,6 +41,7 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final SysRoleMapper roleMapper;
+    private final SysOperLogService operLogService;
 
     // 用户列表，字段与前端约定对齐
     public List<Map<String, Object>> listUsers() {
@@ -93,6 +102,8 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         this.save(user);
+        operLogService.log("用户", "新建用户", dto.getUsername() + "，角色=" + dto.getRole());
+        Logs.info(Logs.Module.USER, "新建用户", "用户", dto.getUsername(), "角色", dto.getRole());
     }
 
     // 编辑：role / status / password 任选其一组合
@@ -123,6 +134,8 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
             upd.setRoleCode(dto.getRole());
             upd.setUpdatedAt(LocalDateTime.now());
             this.updateById(upd);
+            operLogService.log("用户", "变更角色", target.getUsername() + " → " + dto.getRole());
+            Logs.info(Logs.Module.USER, "变更角色", "用户", target.getUsername(), "新角色", dto.getRole());
         }
         if (dto.getStatus() != null) {
             if (targetSuper) {
@@ -133,6 +146,8 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
             upd.setStatus(dto.getStatus());
             upd.setUpdatedAt(LocalDateTime.now());
             this.updateById(upd);
+            operLogService.log("用户", "变更状态", target.getUsername() + " → " + (dto.getStatus() == 1 ? "启用" : "禁用"));
+            Logs.info(Logs.Module.USER, "变更状态", "用户", target.getUsername(), "新状态", dto.getStatus() == 1 ? "启用" : "禁用");
         }
         if (dto.getPassword() != null && !dto.getPassword().isBlank()) {
             if (dto.getPassword().length() < 6) {
@@ -154,6 +169,8 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
             upd.setPassword(PasswordUtil.encrypt(dto.getPassword(), salt));
             upd.setUpdatedAt(LocalDateTime.now());
             this.updateById(upd);
+            operLogService.log("用户", "修改密码", "账号=" + target.getUsername());
+            Logs.info(Logs.Module.USER, "修改密码", "用户", target.getUsername());
         }
     }
 
@@ -172,6 +189,8 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
             throw new BusinessException("ITMS 对接账号禁止删除");
         }
         this.removeById(id);
+        operLogService.log("用户", "删除用户", target.getUsername());
+        Logs.info(Logs.Module.USER, "删除用户", "用户", target.getUsername());
     }
 
     public boolean isSuperAdmin(SysUser user) {

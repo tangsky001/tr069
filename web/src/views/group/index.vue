@@ -77,10 +77,11 @@
                 <template slot-scope="{ row }">{{ formatTime(row.boundAt) }}</template>
               </el-table-column>
               <el-table-column prop="createdBy" label="操作人" width="90" show-overflow-tooltip />
-              <el-table-column label="操作" width="160" align="center">
+              <el-table-column label="操作" width="200" align="center">
                 <template slot-scope="{ row }">
                   <el-button type="text" size="mini" @click="openEditOlt(row)">编辑</el-button>
                   <el-button type="text" size="mini" @click="openMove(row)">移动</el-button>
+                  <el-button v-if="$has('acl:manage')" type="text" size="mini" @click="openDeviceAcl(row)">权限</el-button>
                   <el-button type="text" size="mini" @click="jumpToOlt(row)">管理</el-button>
                   <el-button type="text" size="mini" class="danger-text" @click="removeOlt(row)">删除</el-button>
                 </template>
@@ -103,6 +104,7 @@
       <template v-else-if="menuNode">
         <div class="ctx-item" @click="openCreate(menuNode)"><i class="el-icon-plus" /> 新建子分组</div>
         <div class="ctx-item" @click="openRename(menuNode)"><i class="el-icon-edit" /> 重命名</div>
+        <div v-if="$has('acl:manage')" class="ctx-item" @click="openGroupAcl(menuNode)"><i class="el-icon-lock" /> 设备权限</div>
         <div class="ctx-item danger" @click="removeGroup(menuNode)"><i class="el-icon-delete" /> 删除</div>
       </template>
     </div>
@@ -194,6 +196,14 @@
       </div>
     </el-dialog>
 
+    <!-- 设备/分组级授权弹窗 -->
+    <acl-dialog
+      :visible.sync="aclVisible"
+      :scope-type="aclScopeType"
+      :scope-id="aclScopeId"
+      :title="aclTitle"
+    />
+
     <!-- 添加 / 编辑 OLT：添加即归属当前选中分组（groupRef 为空 = 根节点） -->
     <olt-form-dialog
       :visible.sync="addVisible"
@@ -215,6 +225,7 @@ import {
   moveGroupMember
 } from '@/api/group'
 import OltFormDialog from '@/views/olt/components/OltFormDialog'
+import AclDialog from './components/AclDialog'
 import { deleteOlt, fetchOltDetail } from '@/api/olt'
 
 /**
@@ -225,7 +236,7 @@ import { deleteOlt, fetchOltDetail } from '@/api/olt'
  */
 export default {
   name: 'GroupManage',
-  components: { OltFormDialog },
+  components: { OltFormDialog, AclDialog },
   data() {
     return {
       loading: false,
@@ -256,6 +267,11 @@ export default {
       // 添加 / 编辑 OLT 弹窗（添加即归属当前分组）
       addVisible: false,
       editingOlt: null,
+      // 设备/分组授权弹窗
+      aclVisible: false,
+      aclScopeType: 'device',
+      aclScopeId: null,
+      aclTitle: '',
       // 移动分组弹窗
       moveVisible: false,
       moveOltId: null,
@@ -497,6 +513,20 @@ export default {
     /** 跳到 OLT 管理页并直接选中这台设备进行登录/管理 */
     jumpToOlt(row) {
       this.$router.push({ path: '/olt/management', query: { deviceId: row.oltId }})
+    },
+
+    // ---------- 设备/分组级授权 ----------
+    openDeviceAcl(row) {
+      this.aclScopeType = 'device'
+      this.aclScopeId = String(row.oltId)
+      this.aclTitle = row.name
+      this.aclVisible = true
+    },
+    openGroupAcl(node) {
+      this.aclScopeType = 'group'
+      this.aclScopeId = node.nodeRef
+      this.aclTitle = node.name
+      this.aclVisible = true
     },
 
     // ---------- 移动设备到其他分组 ----------

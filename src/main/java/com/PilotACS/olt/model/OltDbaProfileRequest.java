@@ -1,3 +1,9 @@
+/**
+ * @author: tangsky001
+ * @date:   2026年11月15日 上午3:04:04.790
+ *
+ */
+
 package com.PilotACS.olt.model;
 
 import io.swagger.v3.oas.annotations.media.Schema;

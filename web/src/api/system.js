@@ -53,3 +53,8 @@ export function removeUser(id) {
 export function fetchLoginLogs(params) {
   return request({ url: '/system/login-logs', method: 'get', params })
 }
+
+// 操作日志：修改密码 / 分组管理 / 移动设备 / 设备权限授权等关键动作
+export function fetchOperLogs(params) {
+  return request({ url: '/system/oper-logs', method: 'get', params })
+}

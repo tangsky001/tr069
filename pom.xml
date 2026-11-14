@@ -12,9 +12,9 @@
 
     <groupId>com.PilotACS</groupId>
     <artifactId>PilotACS</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.2</version>
     <name>PilotACS</name>
-    <description>PilotACS TR-069 自动配置服务器</description>
+    <description>PilotACS TR-069 Server</description>
 
     <properties>
         <java.version>21</java.version>
