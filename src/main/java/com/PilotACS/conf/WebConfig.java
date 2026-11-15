@@ -7,6 +7,7 @@
 package com.PilotACS.conf;
 
 import com.PilotACS.acl.OltAclInterceptor;
+import com.PilotACS.cpe.config.CpeProperties;
 import com.PilotACS.common.security.AuthInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
@@ -24,6 +25,7 @@ public class WebConfig implements WebMvcConfigurer {
 
     private final AuthInterceptor authInterceptor;
     private final OltAclInterceptor oltAclInterceptor;
+    private final CpeProperties cpeProperties;
 
     // 所有 RestController 统一加 /api 前缀（springdoc 文档控制器除外）
     @Override
@@ -54,7 +56,10 @@ public class WebConfig implements WebMvcConfigurer {
                         "/doc.html",
                         "/doc/index.html",
                         "/webjars/**",
-                        "/knife4j/**");
+                        "/knife4j/**",
+                        // CPE 上报端点：设备直连，走设备侧 Basic 账号，不走登录态
+                        cpeProperties.getPath(),
+                        cpeProperties.getPath() + "/**");
         // 设备级 ACL：认证之后按用户拦截 /olt/{id}** 的查看与操作（在 AuthInterceptor 之后执行）
         registry.addInterceptor(oltAclInterceptor)
                 .addPathPatterns("/api/olt/**");

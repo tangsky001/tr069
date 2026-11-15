@@ -45,7 +45,7 @@
         </el-card>
       </div>
 
-      <!-- 右：光猫设备台账（设备模块未接入，先按分组归属展示一行一台光猫） -->
+      <!-- 右：光猫设备台账（ACS 真实台账 + 归属分组 + 资源组 ACL 过滤，后端一次算好） -->
       <div class="onu-main-col">
         <el-card ref="deviceCard" shadow="never" class="group-card">
           <div slot="header" class="panel-header">
@@ -77,43 +77,56 @@
             highlight-current-row
             style="width:100%"
           >
-            <!-- 设备标识：光猫业务标识（SN）为主，名称快照与归属时间在下面 -->
-            <el-table-column label="设备标识" min-width="220">
+            <!-- 设备标识：光猫 SN 为主，副行归属时间 -->
+            <el-table-column label="设备标识(SN)" min-width="200">
               <template slot-scope="{ row }">
-                <div class="cell-main">{{ row.memberRef || row.name || '—' }}</div>
+                <div class="cell-main">{{ row.memberRef || '—' }}</div>
                 <div class="cell-sub">
-                  <span v-if="row.name && row.name !== row.memberRef">{{ row.name }}</span>
                   <span v-if="row.boundAt" class="cell-time">归属 {{ fmtTime(row.boundAt) }}</span>
                 </div>
               </template>
             </el-table-column>
 
-            <el-table-column label="PON类型" width="110">
-              <template slot-scope="{ row }">{{ row.ponType || '—' }}</template>
+            <el-table-column label="终端型号" min-width="130">
+              <template slot-scope="{ row }">{{ row.name || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="终端型号" width="120">
-              <template slot-scope="{ row }">{{ row.model || '—' }}</template>
+            <el-table-column label="厂商" width="100">
+              <template slot-scope="{ row }">{{ row.vendorText || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="WAN连接" width="120">
-              <template slot-scope="{ row }">{{ row.wanText || '—' }}</template>
+            <el-table-column label="软件版本" width="130">
+              <template slot-scope="{ row }">{{ row.softwareVersion || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="设备状态" width="110">
+            <el-table-column label="运营商" width="90">
+              <template slot-scope="{ row }">{{ row.isp || '—' }}</template>
+            </el-table-column>
+
+            <el-table-column label="IP" width="130">
+              <template slot-scope="{ row }">{{ row.ip || '—' }}</template>
+            </el-table-column>
+
+            <el-table-column label="在线状态" width="100">
               <template slot-scope="{ row }">
                 <el-tag :type="row.statusLevel || 'info'" size="mini">{{ row.statusText || '未采集' }}</el-tag>
               </template>
             </el-table-column>
 
-            <el-table-column label="上线时间" width="170">
-              <template slot-scope="{ row }">{{ row.onlineAt ? fmtTime(row.onlineAt) : '—' }}</template>
+            <el-table-column label="最近上报" width="160">
+              <template slot-scope="{ row }">{{ row.lastInformText || '—' }}</template>
             </el-table-column>
 
-            <!-- 操作：把这台光猫移动到别的分组（ROOT=移回资源根组） -->
-            <el-table-column v-if="canMove" label="操作" width="90" fixed="right">
+            <!-- 操作：进详情做运维操作（改备注/重启/批量下发等），移动改归属分组 -->
+            <el-table-column label="操作" width="130" fixed="right">
               <template slot-scope="{ row }">
-                <el-button type="text" size="mini" icon="el-icon-position" @click="openMove(row)">移动</el-button>
+                <el-button
+                  type="text"
+                  size="mini"
+                  icon="el-icon-view"
+                  @click="goDetail(row)"
+                >详情</el-button>
+                <el-button v-if="canMove" type="text" size="mini" icon="el-icon-position" @click="openMove(row)">移动</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -251,10 +264,11 @@ import {
 import AclDialog from './components/AclDialog'
 
 /**
- * 设备根域 - 光猫：与 OLT 页共用同一棵资源分组树（根节点=资源根组），
- * 但树计数/成员按 memberType=ONU 单独统计，与 OLT 数据互不混入。
- * 右键节点新建子分组 / 重命名 / 删除 / 分组授权；光猫设备台账待设备模块接入后，
- * 通过 /group/attach、/group/move-member 落归属，即可在此展示。
+ * 设备根域 - 光猫设备（分配树）：全量光猫的主入口。
+ * 左侧资源分组树（memberType=ONU 独立成树，权限独立），右侧 ACS 真实台账：
+ * 后端按 SN 关联 cpe_device 出在线状态/版本/IP，并按光猫资源组 ACL 过滤可见性
+ * （归属分组 → 上级分组 → 资源根组，第一个有授权的层级决定；未归属=资源根组）。
+ * 归属/移动分组、分组授权在这里完成；改备注/重启/批量下发等运维操作进设备详情。
  */
 export default {
   name: 'GroupOnu',
@@ -306,12 +320,12 @@ export default {
     }
   },
   computed: {
-    /** 表格空态：区分「选中分组下没有」与「整体还没归属」 */
+    /** 表格空态：区分「选中分组下没有」与「整体还没有上报的光猫」 */
     memberEmptyText() {
       if (this.currentRef) {
-        return '当前分组下还没有归属的光猫，可到「设备管理」里给光猫选「归属分组」'
+        return '当前分组下还没有归属的光猫；上报的光猫默认在「资源根组」，可点「移动」调整归属'
       }
-      return '还没有光猫归属记录（光猫设备模块接入后按 SN 自动落归属）'
+      return '还没有 ACS 上报的光猫（设备配置 ACS 地址并上报后自动出现在这里）'
     },
     /** 移动光猫归属走设备管理权限，与「设备管理-归属分组」一致 */
     canMove() {
@@ -339,7 +353,7 @@ export default {
     async loadTree() {
       this.loading = true
       try {
-        // 光猫页按 ONU 类型统计：光猫设备模块接入前计数恒为 0
+        // 光猫页按 ONU 类型统计：计数来自 ACS 真实台账并按权限过滤
         const res = await fetchGroupTree('ONU')
         this.tree = res.data || []
         this.syncCurrentNode()
@@ -348,7 +362,7 @@ export default {
         this.loading = false
       }
     },
-    /** 拉当前节点（未选节点=根节点）直属光猫：设备模块未接入，返回的是归属记录快照 */
+    /** 拉当前节点（未选节点=根节点）直属光猫：后端关联真实台账并按资源组权限过滤 */
     async loadMembers() {
       this.membersLoading = true
       try {
@@ -360,6 +374,13 @@ export default {
         this.membersLoading = false
         this.calcTableHeight()
       }
+    },
+    /** 进光猫详情页：改备注、重启、下发等主要操作都在设备详情/设备管理里做 */
+    goDetail(row) {
+      if (!row.memberRef) {
+        return
+      }
+      this.$router.push('/device-detail/' + row.memberRef)
     },
     /** 取消节点选中：回到根节点视角 */
     clearNode() {

@@ -45,7 +45,9 @@ public final class Logs {
         /** 资源分组管理 */
         GROUP("分组"),
         /** 设备/分组级 ACL */
-        ACL("设备权限");
+        ACL("设备权限"),
+        /** CPE 光猫 CWMP（TR-069 会话/参数树/机型模板） */
+        CPE("光猫");
 
         private final String label;
 

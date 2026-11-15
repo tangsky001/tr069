@@ -69,6 +69,8 @@ public class GroupService {
     private final GroupMemberMapper memberMapper;
     private final OltDeviceMapper oltDeviceMapper;
     private final CivilCodeService civilCodeService;
+    /** 光猫台账（cpe_device，MySQL）：ONU 树/成员装配用 */
+    private final com.PilotACS.cpe.store.CpeStore cpeStore;
 
     /** 设备级 ACL：树/成员清单按用户可见性过滤 */
     private final DeviceAclService deviceAclService;
@@ -88,8 +90,10 @@ public class GroupService {
     }
 
     private List<GroupNodeView> doTree(String type) {
-        // 设备级 ACL：受限用户看不到未授权设备（null = 不限制）；目前只作用于 OLT
+        // 设备级 ACL：受限用户看不到未授权设备（null = 不限制）；OLT 按 id、ONU 按 SN
         Set<Long> hidden = MEMBER_TYPE_OLT.equals(type) ? deviceAclService.hiddenOltIds(UserContext.get()) : null;
+        Set<String> hiddenOnuRefs = MEMBER_TYPE_ONU.equals(type)
+                ? deviceAclService.hiddenOnuRefs(UserContext.get()) : null;
         List<ResGroup> groups = groupMapper.selectList(new LambdaQueryWrapper<ResGroup>()
                 .orderByAsc(ResGroup::getSort)
                 .orderByAsc(ResGroup::getId));
@@ -124,6 +128,9 @@ public class GroupService {
                 .eq(GroupMember::getMemberType, type));
         if (hidden != null) {
             memberRows.removeIf(m -> hidden.contains(m.getMemberId()));
+        }
+        if (hiddenOnuRefs != null) {
+            memberRows.removeIf(m -> m.getMemberRef() != null && hiddenOnuRefs.contains(m.getMemberRef()));
         }
         Map<String, Long> counts = countByRef(memberRows);
         Map<String, List<GroupMemberBrief>> membersByRef = new HashMap<>();
@@ -166,15 +173,34 @@ public class GroupService {
             root.setMemberCount(Math.max(visibleTotal - boundCount, 0));
             root.setMemberTotal(Math.max(visibleTotal, 0));
         } else {
-            // ONU：光猫设备模块尚未接入，没有台账可对照；根成员 = ROOT 引用下的归属记录
-            Long rootCount = counts.getOrDefault(ROOT_REF, 0L);
+            // ONU：台账在 cpe_device；根成员 = 未归属任何分组的光猫（含显式 ROOT 归属），全部走真实台账
+            List<Map<String, Object>> devices = cpeStore.allDevices();
+            Set<String> boundRefs = new HashSet<>();
+            for (GroupMember member : memberRows) {
+                if (member.getMemberRef() != null && !ROOT_REF.equals(member.getGroupRef())) {
+                    boundRefs.add(member.getMemberRef());
+                }
+            }
             for (GroupMember member : memberRows) {
                 if (ROOT_REF.equals(member.getGroupRef())) {
                     rootMembers.add(briefOf(member));
                 }
             }
-            root.setMemberCount(rootCount);
-            root.setMemberTotal(rootCount);
+            for (Map<String, Object> device : devices) {
+                String sn = String.valueOf(device.get("sn"));
+                if (!boundRefs.contains(sn)
+                        && (hiddenOnuRefs == null || !hiddenOnuRefs.contains(sn))) {
+                    rootMembers.add(new GroupMemberBrief() {{
+                        setRef(sn);
+                        setName(onuDisplayName(device, sn));
+                    }});
+                }
+            }
+            int visibleTotal = devices.size() - (hiddenOnuRefs == null ? 0
+                    : (int) devices.stream().map(d -> String.valueOf(d.get("sn")))
+                    .filter(hiddenOnuRefs::contains).count());
+            root.setMemberCount(rootMembers.size());
+            root.setMemberTotal(Math.max(visibleTotal, 0));
         }
         root.setMemberNames(rootMembers.stream().map(GroupMemberBrief::getName).collect(Collectors.toList()));
         root.setMembers(rootMembers);
@@ -340,9 +366,20 @@ public class GroupService {
                 .eq(GroupMember::getGroupRef, nodeRef)
                 .orderByDesc(GroupMember::getCreatedAt));
         if (MEMBER_TYPE_ONU.equals(type)) {
-            // ONU：光猫设备模块尚未接入，归属记录即全部信息（名称=label 快照，状态未知）
+            // ONU：按 SN 关联 cpe_device 真实台账（在线状态/版本/IP 等后端算好），并做 ACL 可见性过滤
+            Set<String> hiddenRefs = deviceAclService.hiddenOnuRefs(UserContext.get());
+            List<String> sns = bindings.stream()
+                    .map(GroupMember::getMemberRef).filter(java.util.Objects::nonNull).toList();
+            Map<String, Map<String, Object>> bySn = new HashMap<>();
+            for (Map<String, Object> device : cpeStore.devicesBySns(sns)) {
+                bySn.put(String.valueOf(device.get("sn")), device);
+            }
             for (GroupMember binding : bindings) {
-                rows.add(onuMemberView(binding, nodeRef, groupText));
+                String sn = binding.getMemberRef();
+                if (hiddenRefs != null && sn != null && hiddenRefs.contains(sn)) {
+                    continue;
+                }
+                rows.add(onuMemberView(binding, nodeRef, groupText, bySn.get(sn)));
             }
             return rows;
         }
@@ -381,36 +418,81 @@ public class GroupService {
         return rows;
     }
 
-    /** ONU 根节点成员 = ROOT 引用下的光猫归属记录（设备模块未接入，暂无"未归属台账"概念） */
+    /** ONU 根节点成员 = 未归属任何分组的光猫（含显式 ROOT 归属），真实台账展示 */
     private List<GroupMemberView> rootOnuMembers() {
         List<GroupMemberView> rows = new ArrayList<>();
         List<GroupMember> bindings = memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, MEMBER_TYPE_ONU)
-                .eq(GroupMember::getGroupRef, ROOT_REF)
                 .orderByDesc(GroupMember::getCreatedAt));
+        Map<String, GroupMember> rootBindings = new HashMap<>();
+        Set<String> boundElsewhere = new HashSet<>();
         for (GroupMember binding : bindings) {
-            rows.add(onuMemberView(binding, ROOT_REF, ROOT_NAME));
+            if (ROOT_REF.equals(binding.getGroupRef())) {
+                rootBindings.put(binding.getMemberRef(), binding);
+            } else if (binding.getMemberRef() != null) {
+                boundElsewhere.add(binding.getMemberRef());
+            }
+        }
+        Set<String> hiddenRefs = deviceAclService.hiddenOnuRefs(UserContext.get());
+        for (Map<String, Object> device : cpeStore.allDevices()) {
+            String sn = String.valueOf(device.get("sn"));
+            if (boundElsewhere.contains(sn) || (hiddenRefs != null && hiddenRefs.contains(sn))) {
+                continue;
+            }
+            rows.add(onuMemberView(rootBindings.get(sn), ROOT_REF, ROOT_NAME, device));
         }
         return rows;
     }
 
-    /** ONU 成员行组装：只有归属记录快照，状态恒为"未采集" */
-    private GroupMemberView onuMemberView(GroupMember binding, String nodeRef, String groupText) {
+    /** ONU 成员行组装：归属记录 + 真实台账（deviceRow 可能为 null，如台账已被清理） */
+    private GroupMemberView onuMemberView(GroupMember binding, String nodeRef, String groupText,
+                                          Map<String, Object> device) {
         GroupMemberView row = new GroupMemberView();
-        row.setId(binding.getId());
+        row.setId(binding == null ? null : binding.getId());
         row.setNodeRef(nodeRef);
         row.setGroupText(groupText);
         row.setOltId(null);
-        row.setMemberRef(binding.getMemberRef());
-        row.setName(binding.getMemberLabel() != null ? binding.getMemberLabel() : binding.getMemberRef());
-        row.setHost(null);
-        row.setVendorText("—");
-        row.setStatus(null);
-        row.setStatusText(statusText(null));
-        row.setStatusLevel(statusLevel(null));
-        row.setBoundAt(binding.getCreatedAt());
-        row.setCreatedBy(binding.getCreatedBy());
+        String sn = device != null ? String.valueOf(device.get("sn"))
+                : (binding == null ? null : binding.getMemberRef());
+        row.setMemberRef(sn);
+        row.setName(device != null ? onuDisplayName(device, sn)
+                : (binding != null && binding.getMemberLabel() != null ? binding.getMemberLabel() : sn));
+        row.setHost(device == null ? null : (String) device.get("connection_request_url"));
+        row.setVendorText(device == null || isBlank(device.get("manufacturer"))
+                ? "—" : String.valueOf(device.get("manufacturer")));
+        String status = device == null ? null : String.valueOf(device.get("status"));
+        row.setStatus(status);
+        row.setStatusText(statusText(status));
+        row.setStatusLevel(statusLevel(status));
+        if (device != null) {
+            row.setSoftwareVersion((String) device.get("software_version"));
+            row.setIsp((String) device.get("isp"));
+            Object last = device.get("last_inform_ms");
+            row.setLastInformText(last == null ? "—" : fmtMs(((Number) last).longValue()));
+            row.setIp(cpeStore.loadBizParams(sn).entrySet().stream()
+                    .filter(e -> e.getKey().endsWith("ExternalIPAddress"))
+                    .map(Map.Entry::getValue).findFirst().orElse(null));
+        }
+        row.setBoundAt(binding == null ? null : binding.getCreatedAt());
+        row.setCreatedBy(binding == null ? null : binding.getCreatedBy());
         return row;
+    }
+
+    /** 光猫显示名：优先终端型号，缺省 SN */
+    private String onuDisplayName(Map<String, Object> device, String sn) {
+        Object productClass = device.get("product_class");
+        return productClass == null || String.valueOf(productClass).isBlank() ? sn : String.valueOf(productClass);
+    }
+
+    private boolean isBlank(Object v) {
+        return v == null || String.valueOf(v).isBlank();
+    }
+
+    /** 毫秒时间戳 → 展示文案 */
+    private String fmtMs(long ms) {
+        return java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ms),
+                java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter
+                .ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
     /** 成员行组装：绑定关系 + 实时台账，展示文案这里算好 */

@@ -49,6 +49,18 @@ public class GroupMemberView {
     @Schema(description = "状态标签色：success / danger / info")
     private String statusLevel;
 
+    @Schema(description = "光猫软件版本（ONU 台账）")
+    private String softwareVersion;
+
+    @Schema(description = "光猫运营商（ONU 台账）")
+    private String isp;
+
+    @Schema(description = "光猫 IP（参数树派生，未采集为 null）")
+    private String ip;
+
+    @Schema(description = "最近上报时间文案（ONU 台账）")
+    private String lastInformText;
+
     @Schema(description = "绑定时间")
     private LocalDateTime boundAt;
 

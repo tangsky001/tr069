@@ -86,22 +86,35 @@ public class GroupSchemaInitializer implements InitializingBean {
         }
     }
 
-    /** 旧单表数据按 member_type 分流迁到各自新表（目标空才迁，幂等）；旧表保留不清 */
+
     private void migrateFromLegacyTables() {
         if (tableExists("res_group") && !tableExistsWithData("olt_res_group")) {
-            jdbcTemplate.update("INSERT INTO `olt_res_group` SELECT * FROM `res_group`");
+            jdbcTemplate.update("""
+                    INSERT INTO `olt_res_group`
+                        (`id`,`parent_id`,`parent_civil_code`,`civil_code`,`name`,`sort`,`remark`,`created_by`,`created_at`)
+                    SELECT `id`,`parent_id`,`parent_civil_code`,`civil_code`,`name`,`sort`,`remark`,`created_by`,
+                           IFNULL(`created_at`, CURRENT_TIMESTAMP)
+                    FROM `res_group`""");
             Logs.info(Logs.Module.SYSTEM, "旧分组表数据已迁至 olt_res_group", "行数",
                     jdbcTemplate.queryForObject("SELECT COUNT(*) FROM `olt_res_group`", Integer.class));
         }
         if (tableExists("res_group_member")) {
             if (!tableExistsWithData("olt_res_group_member")) {
-                jdbcTemplate.update("INSERT INTO `olt_res_group_member` " +
-                        "SELECT * FROM `res_group_member` WHERE `member_type` <> 'ONU'");
+                jdbcTemplate.update("""
+                        INSERT INTO `olt_res_group_member`
+                            (`id`,`group_ref`,`member_type`,`member_id`,`member_ref`,`member_label`,`remark`,`created_by`,`created_at`)
+                        SELECT `id`,`group_ref`,`member_type`,`member_id`,`member_ref`,`member_label`,`remark`,`created_by`,
+                               IFNULL(`created_at`, CURRENT_TIMESTAMP)
+                        FROM `res_group_member` WHERE `member_type` <> 'ONU'""");
                 Logs.info(Logs.Module.SYSTEM, "旧归属表 OLT 数据已迁至 olt_res_group_member");
             }
             if (!tableExistsWithData("onu_res_group_member")) {
-                jdbcTemplate.update("INSERT INTO `onu_res_group_member` " +
-                        "SELECT * FROM `res_group_member` WHERE `member_type` = 'ONU'");
+                jdbcTemplate.update("""
+                        INSERT INTO `onu_res_group_member`
+                            (`id`,`group_ref`,`member_type`,`member_id`,`member_ref`,`member_label`,`remark`,`created_by`,`created_at`)
+                        SELECT `id`,`group_ref`,`member_type`,`member_id`,`member_ref`,`member_label`,`remark`,`created_by`,
+                               IFNULL(`created_at`, CURRENT_TIMESTAMP)
+                        FROM `res_group_member` WHERE `member_type` = 'ONU'""");
                 Logs.info(Logs.Module.SYSTEM, "旧归属表光猫数据已迁至 onu_res_group_member");
             }
         }

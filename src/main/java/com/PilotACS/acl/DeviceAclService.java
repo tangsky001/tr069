@@ -7,6 +7,7 @@
 package com.PilotACS.acl;
 
 import com.PilotACS.common.log.Logs;
+import com.PilotACS.group.GroupService;
 import com.PilotACS.group.config.GroupScopeContext;
 import com.PilotACS.common.security.LoginUser;
 import com.PilotACS.common.security.UserContext;
@@ -66,7 +67,57 @@ public class DeviceAclService {
         if (user == null || isAdmin(user) || !ACTIONS.contains(action)) {
             return true;
         }
-        return !denied(aclMapper.selectList(null), user, oltId, action);
+        return !denied(aclMapper.selectList(null), user, "OLT", String.valueOf(oltId), action);
+    }
+
+    /**
+     * 光猫（ONU，按 SN）+ 动作是否允许。user 为 null（内部调用）视为放行。
+     * 判定链与 OLT 一致：设备级 ACL → 分组归属链自下而上（未归属光猫按资源根组 ROOT）。
+     */
+    public boolean allowedOnu(LoginUser user, String sn, String action) {
+        if (user == null || isAdmin(user) || !ACTIONS.contains(action)) {
+            return true;
+        }
+        return GroupScopeContext.with(GroupScopeContext.ONU, () ->
+                !denied(aclMapper.selectList(null), user, GroupService.MEMBER_TYPE_ONU, sn, action));
+    }
+
+    /**
+     * 返回该用户看不到（无 view 授权）的光猫 SN 集合；
+     * null = 不限制（管理员 / 全库无 ACL 配置），调用方据此跳过过滤。
+     */
+    public Set<String> hiddenOnuRefs(LoginUser user) {
+        if (user == null || isAdmin(user)) {
+            return null;
+        }
+        return GroupScopeContext.with(GroupScopeContext.ONU, () -> doHiddenRefs(user, GroupService.MEMBER_TYPE_ONU));
+    }
+
+    /** 通用可见性集合（须在对应表域上下文内调用）：设备级 + 分组归属链逐台判定 */
+    private Set<String> doHiddenRefs(LoginUser user, String memberType) {
+        List<ResAcl> all = aclMapper.selectList(null);
+        if (all.isEmpty()) {
+            return null;
+        }
+        Set<String> hidden = new HashSet<>();
+        for (ResAcl acl : all) {
+            if (SCOPE_DEVICE.equals(acl.getScopeType())) {
+                // 设备级 ACL 覆盖的设备，若用户无 view 授权则隐藏（不依赖设备表，被授权的 ref 也可能是已删除的）
+                if (denied(all, user, memberType, acl.getScopeId(), "view")) {
+                    hidden.add(acl.getScopeId());
+                }
+            }
+        }
+        // 分组/祖先链覆盖的设备也要逐台判定
+        for (GroupMember member : groupMemberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, memberType))) {
+            String ref = GroupService.MEMBER_TYPE_ONU.equals(memberType)
+                    ? member.getMemberRef() : String.valueOf(member.getMemberId());
+            if (ref != null && denied(all, user, memberType, ref, "view")) {
+                hidden.add(ref);
+            }
+        }
+        return hidden;
     }
 
     /**
@@ -87,7 +138,7 @@ public class DeviceAclService {
                 try {
                     // 设备级 ACL 覆盖的设备，若用户无 view 授权则隐藏（不依赖设备表，被授权的 id 也可能是即将删除的）
                     long oltId = Long.parseLong(acl.getScopeId());
-                    if (denied(all, user, oltId, "view")) {
+                    if (denied(all, user, "OLT", acl.getScopeId(), "view")) {
                         hidden.add(oltId);
                     }
                 } catch (NumberFormatException ignored) {
@@ -98,20 +149,20 @@ public class DeviceAclService {
         // 分组/祖先链覆盖的设备也要逐台判定
         for (GroupMember member : groupMemberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, "OLT"))) {
-            if (denied(all, user, member.getMemberId(), "view")) {
+            if (denied(all, user, "OLT", String.valueOf(member.getMemberId()), "view")) {
                 hidden.add(member.getMemberId());
             }
         }
         return hidden;
     }
 
-    /** ACL 判定核心：设备级 → 分组链自下而上，命中第一个覆盖层级即决定 */
-    private boolean denied(List<ResAcl> all, LoginUser user, Long oltId, String action) {
+    /** ACL 判定核心：设备级 → 分组链自下而上，命中第一个覆盖层级即决定（ref：OLT 为 id 串，ONU 为 SN） */
+    private boolean denied(List<ResAcl> all, LoginUser user, String memberType, String ref, String action) {
         Long uid = user.getUserId();
         boolean covered = false;
         boolean granted = false;
         for (ResAcl acl : all) {
-            if (SCOPE_DEVICE.equals(acl.getScopeType()) && acl.getScopeId().equals(String.valueOf(oltId))) {
+            if (SCOPE_DEVICE.equals(acl.getScopeType()) && acl.getScopeId().equals(ref)) {
                 covered = true;
                 if (uid != null && uid.equals(acl.getPrincipalId()) && hasAction(acl.getPerms(), action)) {
                     granted = true;
@@ -121,12 +172,12 @@ public class DeviceAclService {
         if (covered) {
             return !granted;
         }
-        String ref = groupRefOf(oltId);
-        while (ref != null) {
+        String nodeRef = groupRefOfRef(memberType, ref);
+        while (nodeRef != null) {
             covered = false;
             granted = false;
             for (ResAcl acl : all) {
-                if (SCOPE_GROUP.equals(acl.getScopeType()) && acl.getScopeId().equals(ref)) {
+                if (SCOPE_GROUP.equals(acl.getScopeType()) && acl.getScopeId().equals(nodeRef)) {
                     covered = true;
                     if (uid != null && uid.equals(acl.getPrincipalId()) && hasAction(acl.getPerms(), action)) {
                         granted = true;
@@ -136,7 +187,7 @@ public class DeviceAclService {
             if (covered) {
                 return !granted;
             }
-            ref = parentRefOf(ref);
+            nodeRef = parentRefOf(nodeRef);
         }
         return false;
     }
@@ -147,6 +198,25 @@ public class DeviceAclService {
                 .eq(GroupMember::getMemberType, "OLT")
                 .eq(GroupMember::getMemberId, oltId)
                 .last("LIMIT 1"));
+        return member == null ? ROOT_REF : member.getGroupRef();
+    }
+
+    /** 通用归属查询：OLT 按 member_id（ref 为 id 串），ONU 按 member_ref（SN） */
+    private String groupRefOfRef(String memberType, String ref) {
+        LambdaQueryWrapper<GroupMember> wrapper = new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, memberType);
+        if (GroupService.MEMBER_TYPE_ONU.equals(memberType)) {
+            wrapper.eq(GroupMember::getMemberRef, ref);
+        } else {
+            Long id;
+            try {
+                id = Long.parseLong(ref);
+            } catch (NumberFormatException e) {
+                return ROOT_REF;
+            }
+            wrapper.eq(GroupMember::getMemberId, id);
+        }
+        GroupMember member = groupMemberMapper.selectOne(wrapper.last("LIMIT 1"));
         return member == null ? ROOT_REF : member.getGroupRef();
     }
 
