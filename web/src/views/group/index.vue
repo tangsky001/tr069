@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading" class="app-container group-page">
     <div class="group-row">
-      <!-- 左：分组树，固定 300px -->
+      <!-- OLT分组树：固定 400px 宽，高度自适应撑满可视区 -->
       <div class="tree-col">
         <el-card shadow="never" class="group-card">
           <div slot="header" class="panel-header">
@@ -11,7 +11,7 @@
               size="mini"
               icon="el-icon-plus"
               @click="openCreate(currentNode)"
-            >新建</el-button>
+            >新建分组</el-button>
           </div>
 
           <el-input
@@ -47,7 +47,7 @@
 
       <!-- 右：组内设备（添加 OLT 即归属当前分组） -->
       <div class="member-col">
-        <el-card shadow="never" class="group-card">
+        <el-card shadow="never" class="group-card member-card">
           <div slot="header" class="panel-header">
             <span>
               组内设备
@@ -64,7 +64,7 @@
 
           <div v-if="!currentRef" class="empty">左侧选择一个分组节点，查看组内 OLT</div>
           <template v-else>
-            <el-table :data="members" size="mini" border empty-text="该节点还没有设备，点右上角「添加 OLT」，添加即归属此分组">
+            <el-table :data="members" size="mini" border empty-text="该节点还没有设备，点左侧「添加 OLT」，添加即归属此分组">
               <el-table-column prop="name" label="设备名称" min-width="130" show-overflow-tooltip />
               <el-table-column prop="host" label="地址" min-width="120" show-overflow-tooltip />
               <el-table-column prop="vendorText" label="厂商" width="80" align="center" />
@@ -211,7 +211,8 @@
       :group-ref="currentRef"
       :group-name="currentPath"
       @saved="onOltSaved"
-    />  </div>
+    />
+  </div>
 </template>
 
 <script>
@@ -229,10 +230,10 @@ import AclDialog from './components/AclDialog'
 import { deleteOlt, fetchOltDetail } from '@/api/olt'
 
 /**
- * 分组管理：默认只有固定根节点「资源根组」（未绑定设备的默认归属）。
+ * 分组管理（OLT）：默认只有固定根节点「资源根组」（未绑定设备的默认归属）。
  * 右键节点新建子分组：弹窗按 civilCode.csv 列出该节点下级区划候选
  * （根→34 省，省→市，市→区县），选中确定才落库；区县级可手输名称建自定义组。
- * 右侧组内设备列表：点「添加 OLT」把设备直接建在当前分组；「管理」跳 OLT 管理页并选中该设备。
+ * 点「添加 OLT」把设备直接建在当前选中分组。
  */
 export default {
   name: 'GroupManage',
@@ -300,24 +301,33 @@ export default {
       try {
         const res = await fetchGroupTree()
         this.tree = res.data || []
+        this.syncCurrentNode()
       } finally {
         this.loading = false
       }
     },
-    nodeIcon(data) {
-      if (data.kind === 'root') {
-        return 'el-icon-house'
+    /** 树重新加载后，用 currentRef 在新树里找回当前节点（保持选中态） */
+    syncCurrentNode() {
+      if (!this.currentRef) {
+        this.currentNode = null
+        this.currentPath = ''
+        return
       }
-      if (data.kind === 'civil') {
-        return data.level === 1 ? 'el-icon-location-information' : 'el-icon-location-outline'
+      const find = (nodes) => {
+        for (const node of nodes) {
+          if (node.nodeRef === this.currentRef) {
+            return node
+          }
+          const hit = find(node.children || [])
+          if (hit) {
+            return hit
+          }
+        }
+        return null
       }
-      return data.children && data.children.length ? 'el-icon-folder-opened' : 'el-icon-folder'
-    },
-    async onNodeClick(data) {
-      this.currentNode = data
-      this.currentRef = data.nodeRef
-      this.currentPath = ''
-      await this.loadMembers()
+      this.currentNode = find(this.tree)
+      this.currentPath = this.pathFromTree(this.currentRef)
+      this.loadMembers()
     },
     async loadMembers() {
       if (!this.currentRef) {
@@ -336,6 +346,21 @@ export default {
       } finally {
         this.loading = false
       }
+    },
+    nodeIcon(data) {
+      if (data.kind === 'root') {
+        return 'el-icon-house'
+      }
+      if (data.kind === 'civil') {
+        return data.level === 1 ? 'el-icon-location-information' : 'el-icon-location-outline'
+      }
+      return data.children && data.children.length ? 'el-icon-folder-opened' : 'el-icon-folder'
+    },
+    async onNodeClick(data) {
+      this.currentNode = data
+      this.currentRef = data.nodeRef
+      this.currentPath = ''
+      await this.loadMembers()
     },
     pathFromTree(ref) {
       const findPath = (nodes, trail) => {
@@ -445,9 +470,6 @@ export default {
         this.$message.success('已重命名')
         this.renameVisible = false
         await this.loadTree()
-        if (this.currentRef) {
-          await this.loadMembers()
-        }
       } catch (e) {
         this.$message.error(e && e.message ? e.message : '保存失败')
       } finally {
@@ -466,8 +488,9 @@ export default {
         this.$message.success('已删除')
         if (this.currentRef === node.nodeRef) {
           this.currentRef = ''
-          this.members = []
           this.currentPath = ''
+          this.currentNode = null
+          this.members = []
         }
         await this.loadTree()
       } catch (e) {
@@ -477,7 +500,10 @@ export default {
 
     // ---------- 添加 OLT：添加即归属当前选中分组 ----------
     openAddOlt() {
-      this.editingOlt = null
+      if (!this.currentRef) {
+        this.$message.warning('请先在左侧分组树选择一个分组节点')
+        return
+      }
       this.addVisible = true
     },
     async openEditOlt(row) {
@@ -507,7 +533,6 @@ export default {
     onOltSaved() {
       this.$message.success(this.editingOlt ? '设备已更新' : '设备已添加，归属当前分组')
       this.editingOlt = null
-      this.loadMembers()
       this.loadTree()
     },
     /** 跳到 OLT 管理页并直接选中这台设备进行登录/管理 */
@@ -565,22 +590,40 @@ export default {
 </script>
 
 <style scoped>
+/* 撑满可视区：navbar 50px + app-container 上下内边距 40px */
+.group-page {
+  height: calc(100vh - 90px);
+  display: flex;
+  flex-direction: column;
+}
 .group-row {
+  flex: 1;
+  min-height: 0;
   display: flex;
   gap: 16px;
-  align-items: flex-start;
 }
 .tree-col {
   flex: 0 0 300px;
   width: 300px;
   max-width: 300px;
+  min-height: 0;
 }
 .member-col {
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 .group-card {
-  margin-bottom: 16px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.group-card ::v-deep .el-card__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .panel-header {
   display: flex;
@@ -589,17 +632,15 @@ export default {
   gap: 12px;
   font-weight: 600;
 }
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .tree-filter {
+  flex: none;
   width: 100%;
   margin-bottom: 10px;
 }
 .tree-wrap {
-  min-height: 200px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 .tree-node {
   display: inline-flex;
@@ -614,11 +655,15 @@ export default {
   transform: none;
 }
 .tree-tip {
+  flex: none;
   color: #909399;
   font-size: 12px;
   padding: 8px 4px 0;
   border-top: 1px dashed #ebeef5;
   margin-top: 8px;
+}
+.member-card ::v-deep .el-card__body {
+  overflow: auto;
 }
 .member-path {
   margin-left: 10px;
@@ -780,4 +825,5 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}</style>
+}
+</style>

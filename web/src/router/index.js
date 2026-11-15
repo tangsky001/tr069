@@ -180,17 +180,26 @@ export const constantRoutes = [
     }]
   },
 
-  // 分组管理：按楼层/片区/客户把 OLT 与光猫归组，支持按组批量操作（建设中）
+  // 设备根域：OLT / 光猫 两个独立二级菜单（共用同一棵资源分组树，根节点=资源根组）
   {
     path: '/group',
     component: Layout,
-    redirect: '/group/index',
-    children: [{
-      path: 'index',
-      name: 'GroupManage',
-      component: () => import('@/views/group/index'),
-      meta: { title: '分组管理', icon: 'el-icon-collection' }
-    }]
+    redirect: '/group/olt',
+    meta: { title: '设备根域', icon: 'el-icon-collection' },
+    children: [
+      {
+        path: 'olt',
+        name: 'GroupOlt',
+        component: () => import('@/views/group/index'),
+        meta: { title: 'OLT设备', icon: 'el-icon-connection' }
+      },
+      {
+        path: 'onu',
+        name: 'GroupOnu',
+        component: () => import('@/views/group/onu'),
+        meta: { title: '光猫设备', icon: 'el-icon-monitor' }
+      }
+    ]
   },
 
   // 系统管理：用户与角色权限，没配权限的人看不到这条

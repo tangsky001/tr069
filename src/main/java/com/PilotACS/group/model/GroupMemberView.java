@@ -11,27 +11,30 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 组内成员行：绑定关系 + OLT 实时台账，展示字段全部在后端拼好 */
+/** 组内成员行：绑定关系 + 设备台账（OLT 实时；ONU 为归属快照），展示字段全部在后端拼好 */
 @Data
-@Schema(description = "组内成员（OLT）")
+@Schema(description = "组内成员（OLT / ONU）")
 public class GroupMemberView {
 
     @Schema(description = "绑定关系主键，解绑用")
     private Long id;
 
-    @Schema(description = "分组节点引用：C:区划编号 或 G:自定义分组 id")
+    @Schema(description = "分组节点引用：ROOT 或 G:自定义分组 id")
     private String nodeRef;
 
     @Schema(description = "分组节点全路径文案：北京市 / 市辖区 / 海淀区 / 北京其他区域")
     private String groupText;
 
-    @Schema(description = "OLT 设备 id")
+    @Schema(description = "OLT 设备 id；ONU 为 null")
     private Long oltId;
 
-    @Schema(description = "OLT 名称（实时台账）")
+    @Schema(description = "设备业务标识：OLT 为 id 字符串；ONU 为光猫标识（如 SN）")
+    private String memberRef;
+
+    @Schema(description = "设备名称（OLT 实时台账；ONU 为归属快照）")
     private String name;
 
-    @Schema(description = "OLT 地址")
+    @Schema(description = "设备地址；ONU 暂无")
     private String host;
 
     @Schema(description = "厂商文案：华为 / 鸿升光 / 中兴 / 烽火 / 通用")

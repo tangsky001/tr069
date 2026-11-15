@@ -43,13 +43,16 @@ import java.util.stream.Collectors;
  * 节点落库时记录 civil_code（所选区划编号），下一级的候选就由它决定。</p>
  *
  * <p>节点引用 nodeRef：{@code ROOT}（固定根，未绑定设备的默认归属）/ {@code G:id}（已落库分组）。
- * 约束：一台 OLT 只挂一个节点；区划候选必须与父节点的区划层级衔接（省下选市、市下选区县）。</p>
+ * 成员类型 memberType：{@code OLT}（OLT 台账，member_id=olt_device.id）/
+ * {@code ONU}（光猫，member_ref=光猫标识如 SN，设备模块接入前归属关系先行落库）。
+ * 同一棵分组树两类成员各自独立计数、互不混入。</p>
  */
 @Service
 @RequiredArgsConstructor
 public class GroupService {
 
-    private static final String MEMBER_TYPE_OLT = "OLT";
+    public static final String MEMBER_TYPE_OLT = "OLT";
+    public static final String MEMBER_TYPE_ONU = "ONU";
     private static final String GROUP_PREFIX = "G:";
 
     /** 固定根节点引用：未绑定设备的默认归属 */
@@ -65,10 +68,18 @@ public class GroupService {
     private final DeviceAclService deviceAclService;
     private final SysOperLogService operLogService;
 
-    /** 分组树：根节点 + 已落库的分组节点（区划节点只有创建过才出现） */
+    /**
+     * 分组树：根节点 + 已落库的分组节点（区划节点只有创建过才出现）。
+     * memberType 决定计数与成员清单按哪类设备统计（OLT/ONU 各自独立，互不混入）；null 默认 OLT。
+     */
     public List<GroupNodeView> tree() {
-        // 设备级 ACL：受限用户看不到未授权设备（null = 不限制）
-        Set<Long> hidden = deviceAclService.hiddenOltIds(UserContext.get());
+        return tree(MEMBER_TYPE_OLT);
+    }
+
+    public List<GroupNodeView> tree(String memberType) {
+        String type = normalizeMemberType(memberType);
+        // 设备级 ACL：受限用户看不到未授权设备（null = 不限制）；目前只作用于 OLT
+        Set<Long> hidden = MEMBER_TYPE_OLT.equals(type) ? deviceAclService.hiddenOltIds(UserContext.get()) : null;
         List<ResGroup> groups = groupMapper.selectList(new LambdaQueryWrapper<ResGroup>()
                 .orderByAsc(ResGroup::getSort)
                 .orderByAsc(ResGroup::getId));
@@ -98,48 +109,86 @@ public class GroupService {
         root.setName(ROOT_NAME);
         root.setLevel(0);
         root.getChildren().addAll(topLevel);
-        // 根节点直属成员 = 未绑定任何节点的设备（默认归根）
-        Map<String, Long> counts = countByRef(hidden);
-        long boundCount = 0;
-        for (Map.Entry<String, Long> entry : counts.entrySet()) {
-            if (!ROOT_REF.equals(entry.getKey())) {
-                boundCount += entry.getValue();
-            }
-        }
-        Long totalDevices = oltDeviceMapper.selectCount(new LambdaQueryWrapper<OltDevice>()
-                .eq(OltDevice::getDeleted, 0));
-        // 节点直属设备名称清单（悬停提示用）：member 表里存了 label，根节点取未归属设备名
-        List<GroupMember> memberRows = memberMapper.selectList(null);
+        // 节点直属设备名称清单（悬停提示用）：member 表里存了 label，按类型过滤
+        List<GroupMember> memberRows = memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, type));
         if (hidden != null) {
             memberRows.removeIf(m -> hidden.contains(m.getMemberId()));
         }
+        Map<String, Long> counts = countByRef(memberRows);
         Map<String, List<GroupMemberBrief>> membersByRef = new HashMap<>();
         for (GroupMember member : memberRows) {
             membersByRef.computeIfAbsent(member.getGroupRef(), k -> new ArrayList<>())
-                    .add(new GroupMemberBrief() {{ setId(member.getMemberId()); setName(member.getMemberLabel()); }});
-        }
-        List<GroupMemberBrief> rootMembers = new ArrayList<>();
-        if (totalDevices != null && totalDevices > boundCount) {
-            Set<Long> boundIds = new HashSet<>();
-            for (GroupMember member : memberRows) {
-                boundIds.add(member.getMemberId());
-            }
-            for (OltDevice device : oltDeviceMapper.selectList(new LambdaQueryWrapper<OltDevice>()
-                    .eq(OltDevice::getDeleted, 0))) {
-                if (!boundIds.contains(device.getId()) && (hidden == null || !hidden.contains(device.getId()))) {
-                    rootMembers.add(new GroupMemberBrief() {{ setId(device.getId()); setName(device.getName()); }});
-                }
-            }
+                    .add(briefOf(member));
         }
         fillCounts(root.getChildren(), counts);
         fillMembers(root.getChildren(), membersByRef);
-        int visibleTotal = totalDevices == null ? 0
-                : (int) (totalDevices - (hidden == null ? 0 : hidden.size()));
-        root.setMemberCount(Math.max(visibleTotal - boundCount, 0));
-        root.setMemberTotal(Math.max(visibleTotal, 0));
+        // 根节点直属成员 = 未绑定任何节点的设备（默认归根）
+        List<GroupMemberBrief> rootMembers = new ArrayList<>();
+        if (MEMBER_TYPE_OLT.equals(type)) {
+            // OLT：总数来自台账，根成员 = 台账里没写归属关系的设备
+            long boundCount = 0;
+            for (Map.Entry<String, Long> entry : counts.entrySet()) {
+                if (!ROOT_REF.equals(entry.getKey())) {
+                    boundCount += entry.getValue();
+                }
+            }
+            Long totalDevices = oltDeviceMapper.selectCount(new LambdaQueryWrapper<OltDevice>()
+                    .eq(OltDevice::getDeleted, 0));
+            if (totalDevices != null && totalDevices > boundCount) {
+                Set<Long> boundIds = new HashSet<>();
+                for (GroupMember member : memberRows) {
+                    boundIds.add(member.getMemberId());
+                }
+                for (OltDevice device : oltDeviceMapper.selectList(new LambdaQueryWrapper<OltDevice>()
+                        .eq(OltDevice::getDeleted, 0))) {
+                    if (!boundIds.contains(device.getId()) && (hidden == null || !hidden.contains(device.getId()))) {
+                        rootMembers.add(new GroupMemberBrief() {{
+                            setId(device.getId());
+                            setRef(String.valueOf(device.getId()));
+                            setName(device.getName());
+                        }});
+                    }
+                }
+            }
+            int visibleTotal = totalDevices == null ? 0
+                    : (int) (totalDevices - (hidden == null ? 0 : hidden.size()));
+            root.setMemberCount(Math.max(visibleTotal - boundCount, 0));
+            root.setMemberTotal(Math.max(visibleTotal, 0));
+        } else {
+            // ONU：光猫设备模块尚未接入，没有台账可对照；根成员 = ROOT 引用下的归属记录
+            Long rootCount = counts.getOrDefault(ROOT_REF, 0L);
+            for (GroupMember member : memberRows) {
+                if (ROOT_REF.equals(member.getGroupRef())) {
+                    rootMembers.add(briefOf(member));
+                }
+            }
+            root.setMemberCount(rootCount);
+            root.setMemberTotal(rootCount);
+        }
         root.setMemberNames(rootMembers.stream().map(GroupMemberBrief::getName).collect(Collectors.toList()));
         root.setMembers(rootMembers);
         return List.of(root);
+    }
+
+    /** 成员类型归一：空/未知 → OLT（老接口默认行为不变） */
+    public static String normalizeMemberType(String memberType) {
+        return MEMBER_TYPE_ONU.equalsIgnoreCase(memberType) ? MEMBER_TYPE_ONU : MEMBER_TYPE_OLT;
+    }
+
+    /** 成员简要信息：OLT 用 member_id，ONU 用 member_ref（光猫标识） */
+    private GroupMemberBrief briefOf(GroupMember member) {
+        GroupMemberBrief brief = new GroupMemberBrief();
+        if (MEMBER_TYPE_ONU.equals(member.getMemberType())) {
+            brief.setId(null);
+            brief.setRef(member.getMemberRef());
+            brief.setName(member.getMemberLabel() != null ? member.getMemberLabel() : member.getMemberRef());
+        } else {
+            brief.setId(member.getMemberId());
+            brief.setRef(member.getMemberRef() != null ? member.getMemberRef() : String.valueOf(member.getMemberId()));
+            brief.setName(member.getMemberLabel());
+        }
+        return brief;
     }
 
     /**
@@ -171,18 +220,10 @@ public class GroupService {
         return group == null ? null : group.getCivilCode();
     }
 
-    /** 直接成员数按节点引用统计 */
-    private Map<String, Long> countByRef() {
-        return countByRef(null);
-    }
-
-    private Map<String, Long> countByRef(Set<Long> hidden) {
+    /** 直接成员数按节点引用统计（入参行已按类型/可见性过滤） */
+    private Map<String, Long> countByRef(List<GroupMember> memberRows) {
         Map<String, Long> counts = new HashMap<>();
-        List<GroupMember> rows = memberMapper.selectList(null);
-        if (hidden != null) {
-            rows.removeIf(m -> hidden.contains(m.getMemberId()));
-        }
-        for (GroupMember member : rows) {
+        for (GroupMember member : memberRows) {
             counts.merge(member.getGroupRef(), 1L, Long::sum);
         }
         return counts;
@@ -254,20 +295,36 @@ public class GroupService {
         return String.join(" / ", names);
     }
 
-    /** 某节点的组内成员（OLT 实时台账 + 状态文案），按绑定时间倒序；根节点返回未绑定设备 */
+    /**
+     * 某节点的组内成员，按绑定时间倒序；根节点返回未绑定设备。
+     * OLT：join 实时台账出状态文案；ONU：光猫模块未接入，直接出归属记录快照（状态未知）。
+     */
     public List<GroupMemberView> members(String nodeRef) {
+        return members(nodeRef, MEMBER_TYPE_OLT);
+    }
+
+    public List<GroupMemberView> members(String nodeRef, String memberType) {
+        String type = normalizeMemberType(memberType);
         List<GroupMemberView> rows = new ArrayList<>();
         if (!refExists(nodeRef)) {
             return rows;
         }
         if (ROOT_REF.equals(nodeRef)) {
-            return rootMembers();
+            return MEMBER_TYPE_ONU.equals(type) ? rootOnuMembers() : rootMembers();
         }
         String groupText = pathText(nodeRef);
-        Set<Long> hidden = deviceAclService.hiddenOltIds(UserContext.get());
         List<GroupMember> bindings = memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, type)
                 .eq(GroupMember::getGroupRef, nodeRef)
                 .orderByDesc(GroupMember::getCreatedAt));
+        if (MEMBER_TYPE_ONU.equals(type)) {
+            // ONU：光猫设备模块尚未接入，归属记录即全部信息（名称=label 快照，状态未知）
+            for (GroupMember binding : bindings) {
+                rows.add(onuMemberView(binding, nodeRef, groupText));
+            }
+            return rows;
+        }
+        Set<Long> hidden = deviceAclService.hiddenOltIds(UserContext.get());
         for (GroupMember binding : bindings) {
             if (hidden != null && hidden.contains(binding.getMemberId())) {
                 continue;
@@ -302,6 +359,38 @@ public class GroupService {
         return rows;
     }
 
+    /** ONU 根节点成员 = ROOT 引用下的光猫归属记录（设备模块未接入，暂无"未归属台账"概念） */
+    private List<GroupMemberView> rootOnuMembers() {
+        List<GroupMemberView> rows = new ArrayList<>();
+        List<GroupMember> bindings = memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, MEMBER_TYPE_ONU)
+                .eq(GroupMember::getGroupRef, ROOT_REF)
+                .orderByDesc(GroupMember::getCreatedAt));
+        for (GroupMember binding : bindings) {
+            rows.add(onuMemberView(binding, ROOT_REF, ROOT_NAME));
+        }
+        return rows;
+    }
+
+    /** ONU 成员行组装：只有归属记录快照，状态恒为"未采集" */
+    private GroupMemberView onuMemberView(GroupMember binding, String nodeRef, String groupText) {
+        GroupMemberView row = new GroupMemberView();
+        row.setId(binding.getId());
+        row.setNodeRef(nodeRef);
+        row.setGroupText(groupText);
+        row.setOltId(null);
+        row.setMemberRef(binding.getMemberRef());
+        row.setName(binding.getMemberLabel() != null ? binding.getMemberLabel() : binding.getMemberRef());
+        row.setHost(null);
+        row.setVendorText("—");
+        row.setStatus(null);
+        row.setStatusText(statusText(null));
+        row.setStatusLevel(statusLevel(null));
+        row.setBoundAt(binding.getCreatedAt());
+        row.setCreatedBy(binding.getCreatedBy());
+        return row;
+    }
+
     /** 成员行组装：绑定关系 + 实时台账，展示文案这里算好 */
     private GroupMemberView memberView(Long bindingId, String nodeRef, String groupText,
                                        OltDevice device, LocalDateTime boundAt, String createdBy) {
@@ -310,6 +399,7 @@ public class GroupService {
         row.setNodeRef(nodeRef);
         row.setGroupText(groupText);
         row.setOltId(device.getId());
+        row.setMemberRef(String.valueOf(device.getId()));
         row.setName(device.getName());
         row.setHost(device.getHost());
         row.setVendorText(vendorText(device.getVendor()));
@@ -444,9 +534,43 @@ public class GroupService {
         member.setGroupRef(groupRef);
         member.setMemberType(MEMBER_TYPE_OLT);
         member.setMemberId(oltId);
+        member.setMemberRef(String.valueOf(oltId));
         member.setMemberLabel(label);
         member.setCreatedAt(LocalDateTime.now());
         memberMapper.insert(member);
+        return null;
+    }
+
+    /**
+     * 通用归属落库：光猫等设备模块接入时调用。
+     * memberRef = 设备业务标识（ONU 为光猫 SN）；groupRef 空/ROOT = 根节点（不写归属关系）。
+     */
+    public String attach(String memberType, String memberRef, String label, String groupRef) {
+        String type = normalizeMemberType(memberType);
+        if (memberRef == null || memberRef.isBlank()) {
+            return "设备标识不能为空";
+        }
+        if (groupRef == null || groupRef.isBlank() || ROOT_REF.equals(groupRef)) {
+            return null;
+        }
+        if (!refExists(groupRef)) {
+            return "归属分组不存在：" + groupRef;
+        }
+        Long count = memberMapper.selectCount(new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, type)
+                .eq(GroupMember::getMemberRef, memberRef));
+        if (count != null && count > 0) {
+            return "该设备已有归属分组，请先移动而不是重复添加";
+        }
+        GroupMember member = new GroupMember();
+        member.setGroupRef(groupRef);
+        member.setMemberType(type);
+        member.setMemberId(0L);
+        member.setMemberRef(memberRef);
+        member.setMemberLabel(label);
+        member.setCreatedAt(LocalDateTime.now());
+        memberMapper.insert(member);
+        Logs.info(Logs.Module.GROUP, "设备归属", "类型", type, "标识", memberRef, "分组", groupRef);
         return null;
     }
 
@@ -490,6 +614,7 @@ public class GroupService {
         member.setGroupRef(targetRef);
         member.setMemberType(MEMBER_TYPE_OLT);
         member.setMemberId(oltId);
+        member.setMemberRef(String.valueOf(oltId));
         member.setMemberLabel(device.getName());
         member.setCreatedBy(operator);
         member.setCreatedAt(LocalDateTime.now());
@@ -499,11 +624,87 @@ public class GroupService {
         return null;
     }
 
+    /**
+     * 通用移动：光猫等设备模块接入时调用。
+     * memberRef = 设备业务标识（ONU 为光猫 SN）；ROOT = 移回根节点（删归属关系）。
+     */
+    public String moveMember(String targetRef, String memberType, String memberRef, String operator) {
+        String type = normalizeMemberType(memberType);
+        if (!refExists(targetRef)) {
+            return "目标分组不存在";
+        }
+        if (memberRef == null || memberRef.isBlank()) {
+            return "设备标识不能为空";
+        }
+        if (MEMBER_TYPE_OLT.equals(type)) {
+            // OLT：标识就是 olt_device.id，走台账校验的老逻辑
+            try {
+                return move(targetRef, Long.valueOf(memberRef), operator);
+            } catch (NumberFormatException e) {
+                return "OLT 设备标识不合法：" + memberRef;
+            }
+        }
+        GroupMember existing = memberMapper.selectOne(new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, type)
+                .eq(GroupMember::getMemberRef, memberRef)
+                .last("LIMIT 1"));
+        String label = existing != null && existing.getMemberLabel() != null ? existing.getMemberLabel() : memberRef;
+        // 移回根节点 = 回到默认归属：删掉归属关系即可
+        if (ROOT_REF.equals(targetRef)) {
+            if (existing == null) {
+                return "该设备已在根节点";
+            }
+            memberMapper.deleteById(existing.getId());
+            operLogService.log("分组", "移动设备", "「" + label + "」→ 根节点，操作人=" + operator);
+            Logs.info(Logs.Module.GROUP, "移动设备", "类型", type, "设备", label, "目标", "根节点");
+            return null;
+        }
+        if (existing != null) {
+            if (targetRef.equals(existing.getGroupRef())) {
+                return "该设备已在此分组";
+            }
+            existing.setGroupRef(targetRef);
+            memberMapper.updateById(existing);
+            operLogService.log("分组", "移动设备", "「" + label + "」→ " + targetRef + "，操作人=" + operator);
+            Logs.info(Logs.Module.GROUP, "移动设备", "类型", type, "设备", label, "目标", targetRef);
+            return null;
+        }
+        GroupMember member = new GroupMember();
+        member.setGroupRef(targetRef);
+        member.setMemberType(type);
+        member.setMemberId(0L);
+        member.setMemberRef(memberRef);
+        member.setMemberLabel(label);
+        member.setCreatedBy(operator);
+        member.setCreatedAt(LocalDateTime.now());
+        memberMapper.insert(member);
+        operLogService.log("分组", "移动设备", "「" + label + "」→ " + targetRef + "，操作人=" + operator);
+        Logs.info(Logs.Module.GROUP, "移动设备", "类型", type, "设备", label, "目标", targetRef);
+        return null;
+    }
+
     /** 设备删除时清理归属关系，避免孤儿记录 */
     public void onDeviceDeleted(Long oltId) {
         memberMapper.delete(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, MEMBER_TYPE_OLT)
                 .eq(GroupMember::getMemberId, oltId));
+    }
+
+    /** 通用清理：设备模块删除设备时调用（ONU 按业务标识清） */
+    public void onMemberDeleted(String memberType, String memberRef) {
+        String type = normalizeMemberType(memberType);
+        LambdaQueryWrapper<GroupMember> wrapper = new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, type);
+        if (MEMBER_TYPE_OLT.equals(type)) {
+            try {
+                wrapper.eq(GroupMember::getMemberId, Long.valueOf(memberRef));
+            } catch (NumberFormatException e) {
+                return;
+            }
+        } else {
+            wrapper.eq(GroupMember::getMemberRef, memberRef);
+        }
+        memberMapper.delete(wrapper);
     }
     private String vendorText(String vendor) {
         if (vendor == null || vendor.isBlank()) {

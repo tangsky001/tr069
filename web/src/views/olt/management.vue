@@ -1,6 +1,6 @@
 <template>
   <div class="app-container olt-layout">
-    <!-- 左：分组树筛选（只读复用分组管理的树，选中后右侧只出组内 OLT） -->
+    <!-- 左：分组树筛选（只读复用设备根域的树，选中后右侧只出组内 OLT） -->
     <olt-group-tree @node-select="onGroupSelect" @device-select="onDeviceSelect" />
 
     <!-- 右：OLT 资源信息 + 厂商面板 -->
@@ -23,7 +23,7 @@
         </div>
 
         <div v-if="!resources.length" class="olt-empty">
-          尚未添加 OLT。请到「分组管理」选择节点后点「添加 OLT」，添加后设备即归属该分组；
+          尚未添加 OLT。请到「设备根域」选择节点后点「添加 OLT」，添加后设备即归属该分组；
           认出来后自动按厂商的面板展示。
         </div>
 

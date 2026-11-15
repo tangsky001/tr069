@@ -53,7 +53,7 @@
     </el-tree>
 
     <div v-if="!tree.length && !loading" class="gt-empty">
-      还没有分组，去「分组管理」创建
+      还没有分组，去「设备根域」创建
     </div>
   </el-card>
 </template>
@@ -62,14 +62,22 @@
 import { fetchGroupTree } from '@/api/group'
 
 /**
- * OLT 管理页左侧的分组树筛选栏（只读复用分组管理的树接口）：
+ * 管理页左侧的分组树筛选栏（只读复用分组管理的树接口，OLT 页与光猫设备页共用）：
  * 分组节点下面直接列出该组的设备（后端 members 字段，SVG 图标标识）；
- * 点分组节点 → 向外抛 node-select（含 nodeRef），管理页拉组内成员过滤 OLT 下拉；
- * 点设备叶子 → 抛 device-select（含设备 id），管理页直接选中该设备。
+ * 点分组节点 → 向外抛 node-select（含 nodeRef），管理页拉组内成员过滤列表；
+ * 点设备叶子 → 抛 device-select（含 deviceId / memberRef），管理页直接定位该设备。
+ * memberType：OLT（默认，OLT 管理页）/ ONU（设备管理-光猫页），树计数按类型单独统计。
  * 只做展示与选择，不改任何分组数据，也不侵入厂商面板。
  */
 export default {
   name: 'OltGroupTree',
+  props: {
+    // 成员类型：OLT / ONU；树计数与设备叶子都按这个类型取
+    memberType: {
+      type: String,
+      default: 'OLT'
+    }
+  },
   data() {
     return {
       loading: false,
@@ -86,10 +94,12 @@ export default {
         children: [
           ...decorate(node.children),
           ...(node.members || []).map(m => ({
-            nodeRef: 'D:' + m.id,
+            // ONU 没有数字主键，用 memberRef（SN）做唯一键
+            nodeRef: 'D:' + (m.ref || m.id),
             name: m.name,
             kind: 'device',
             deviceId: m.id,
+            memberRef: m.ref,
             children: []
           }))
         ]
@@ -108,7 +118,7 @@ export default {
   methods: {
     loadTree() {
       this.loading = true
-      return fetchGroupTree()
+      return fetchGroupTree(this.memberType)
         .then(res => {
           this.tree = res.data || []
         })

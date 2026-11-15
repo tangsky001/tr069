@@ -1,353 +1,411 @@
 <template>
-  <div class="app-container">
-    <el-card shadow="never" class="filter-card">
-      <el-form :inline="true" :model="query" size="small">
-        <el-form-item label="序列号">
-          <el-input v-model="query.sn" placeholder="支持模糊匹配" clearable style="width:180px" />
-        </el-form-item>
-        <el-form-item label="运营商">
-          <el-select v-model="query.isp" clearable placeholder="全部" style="width:140px">
-            <el-option label="电信 CT" value="CT" />
-            <el-option label="联通 CU" value="CU" />
-            <el-option label="移动 CMCC" value="CMCC" />
-            <el-option label="广电 CBN" value="CBN" />
-            <el-option label="通用 standard" value="standard" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="设备类型">
-          <el-input v-model="query.deviceType" placeholder="如 ADSL_4+1" clearable style="width:160px" />
-        </el-form-item>
-        <el-form-item label="房间号">
-          <el-input v-model="query.roomNo" placeholder="支持模糊匹配" clearable style="width:140px" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" icon="el-icon-search" @click="handleSearch">查询</el-button>
-          <el-button icon="el-icon-refresh" @click="resetQuery">重置</el-button>
-        </el-form-item>
-      </el-form>
-      <div class="online-bar">
-        设备总数：<b>{{ deviceStat.total }}</b> 台
-        <span class="stat-online">在线 <b>{{ deviceStat.online }}</b></span>
-        <span class="stat-offline">离线 <b>{{ deviceStat.offline }}</b></span>
-        <span class="online-bar-sep">|</span>
-        当前在线会话：<b>{{ onlineCount }}</b> 台
-        <el-button type="text" icon="el-icon-refresh" @click="refreshOnlineBar">刷新</el-button>
-        <el-button type="text" @click="onlineVisible = true">查看明细</el-button>
-      </div>
-    </el-card>
+  <div class="app-container device-layout">
+    <!-- 左：光猫分组树（与「设备根域」同一棵资源分组树，按光猫类型统计）。
+         光猫设备台账还没接入，分组维护与展示先就绪，设备接入后按 SN 自动对上。 -->
+    <olt-group-tree
+      ref="groupTree"
+      member-type="ONU"
+      @node-select="onGroupSelect"
+      @device-select="onGroupDeviceSelect"
+    />
 
-    <el-table
-      v-loading="loading"
-      :data="displayList"
-      border
-      fit
-      highlight-current-row
-      style="width:100%"
-      @selection-change="handleSelectionChange"
-    >
-      <el-table-column type="selection" width="42" align="center" />
-      <!-- 设备标识：终端唯一标识（OUI-SN）为主，下面是 SN、房间号备注、
+    <div ref="mainCol" class="device-main-col">
+      <el-card ref="filterCard" shadow="never" class="filter-card">
+        <el-form :inline="true" :model="query" size="small">
+          <el-form-item label="序列号">
+            <el-input v-model="query.sn" placeholder="支持模糊匹配" clearable style="width:180px" />
+          </el-form-item>
+          <el-form-item label="运营商">
+            <el-select v-model="query.isp" clearable placeholder="全部" style="width:140px">
+              <el-option label="电信 CT" value="CT" />
+              <el-option label="联通 CU" value="CU" />
+              <el-option label="移动 CMCC" value="CMCC" />
+              <el-option label="广电 CBN" value="CBN" />
+              <el-option label="通用 standard" value="standard" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="设备类型">
+            <el-input v-model="query.deviceType" placeholder="如 ADSL_4+1" clearable style="width:160px" />
+          </el-form-item>
+          <el-form-item label="房间号">
+            <el-input v-model="query.roomNo" placeholder="支持模糊匹配" clearable style="width:140px" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" icon="el-icon-search" @click="handleSearch">查询</el-button>
+            <el-button icon="el-icon-refresh" @click="resetQuery">重置</el-button>
+          </el-form-item>
+        </el-form>
+        <div class="online-bar">
+          设备总数：<b>{{ deviceStat.total }}</b> 台
+          <span class="stat-online">在线 <b>{{ deviceStat.online }}</b></span>
+          <span class="stat-offline">离线 <b>{{ deviceStat.offline }}</b></span>
+          <span class="online-bar-sep">|</span>
+          当前在线会话：<b>{{ onlineCount }}</b> 台
+          <el-button type="text" icon="el-icon-refresh" @click="refreshOnlineBar">刷新</el-button>
+          <el-button type="text" @click="onlineVisible = true">查看明细</el-button>
+          <el-tag
+            v-if="groupFilterName"
+            size="mini"
+            type="warning"
+            closable
+            class="group-filter-tag"
+            @close="clearGroupFilter"
+          >分组：{{ groupFilterName }}</el-tag>
+        </div>
+      </el-card>
+
+      <el-table
+        ref="deviceTable"
+        v-loading="loading"
+        :data="displayList"
+        :height="tableHeight"
+        :empty-text="groupFilterName ? '分组「' + groupFilterName + '」下还没有归属的光猫（设备模块接入后按 SN 自动对上）' : '暂无设备'"
+        border
+        fit
+        highlight-current-row
+        style="width:100%"
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="42" align="center" />
+        <!-- 设备标识：终端唯一标识（OUI-SN）为主，下面是 SN、房间号备注、
            下发进度，铭牌 MAC 压在最后一行 -->
-      <el-table-column label="设备标识" min-width="280">
-        <template slot-scope="{ row }">
-          <div class="cell-main">
-            <el-link type="primary" @click="openDetail(row)">{{ terminalId(row) }}</el-link>
-            <el-tag :type="isOnline(row) ? 'success' : 'info'" size="mini">
-              {{ isOnline(row) ? '在线' : '离线' }}
-            </el-tag>
-          </div>
-          <div class="cell-sub">
-            <span class="remark-label">SN</span>
-            <span class="cell-sn">{{ row.sn }}</span>
-          </div>
-          <!-- 下发进度：意图下发任务、本机提交的重启/恢复出厂、队列里压着的指令，都在这一行 -->
-          <div v-if="progressLines(row.sn).length" class="cell-tasks">
-            <div v-for="line in progressLines(row.sn)" :key="line.key" class="cell-task">
-              <i :class="line.icon" />
-              <span>{{ line.text }}</span>
-              <el-tag v-if="line.tag" size="mini" :type="line.status === 'running' ? 'warning' : 'info'">
-                {{ line.tag }}
+        <el-table-column label="设备标识" min-width="280">
+          <template slot-scope="{ row }">
+            <div class="cell-main">
+              <el-link type="primary" @click="openDetail(row)">{{ terminalId(row) }}</el-link>
+              <el-tag :type="isOnline(row) ? 'success' : 'info'" size="mini">
+                {{ isOnline(row) ? '在线' : '离线' }}
               </el-tag>
             </div>
-          </div>
-          <div class="cell-remark">
-            <span class="remark-label">房间号</span>
-            <span class="remark-value">{{ row.roomNo || '-' }}</span>
-            <span class="remark-label">备注</span>
-            <span class="remark-value remark-value-text">{{ row.remark || '-' }}</span>
-            <el-link type="primary" class="remark-edit" @click="openRemark(row)">修改</el-link>
-          </div>
-          <!-- 铭牌 MAC：设备标签上印的那个，取 LAN 口地址（WAN 的每条连接各有一份，会随通道变） -->
-          <div v-if="macOf(row.sn)" class="cell-mac">
-            <i class="el-icon-postcard" /> {{ macOf(row.sn) }}
-          </div>
-        </template>
-      </el-table-column>
-
-      <!-- 终端信息：厂家 / 型号 / 硬件固件版本 / PON 类型 + 光功率，独立组件承载 -->
-      <el-table-column label="终端信息" min-width="200">
-        <device-identity-cell
-          slot="header"
-          mode="header"
-          :sort-key="sortKey"
-          :sort-order="sortOrder"
-          :optic-filter="opticFilter"
-          @sort="sortBy"
-          @update:opticFilter="v => opticFilter = v"
-        />
-        <template slot-scope="{ row }">
-          <device-identity-cell :row="row" :biz="bizOf(row.sn)" />
-        </template>
-      </el-table-column>
-
-      <el-table-column label="业务状态" align="center">
-        <el-table-column label="WAN 连接" min-width="165">
-          <template slot-scope="{ row }">
-            <el-link
-              v-if="wanList(row.sn).length"
-              type="primary"
-              @click="openWanParams(row.sn)"
-            >
-              <el-tag type="primary" size="mini" class="wan-count">{{ wanList(row.sn).length }}</el-tag>
-              <span>条 WAN 连接</span>
-            </el-link>
-            <span v-else class="cell-empty">-</span>
-            <!-- LAN 网口：设备申报几个口就列几个，插线绿色、未插灰色，紧跟在 WAN 连接下面 -->
-            <div v-if="lanList(row.sn).length" class="lan-list-bar">
-              <div
-                v-for="item in lanList(row.sn)"
-                :key="item.path"
-                class="lan-list-chip"
-                :class="{ 'lan-list-up': item.connected }"
-                :title="lanPortTip(item)"
-              >
-                <svg class="lan-list-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="3" y="8" width="18" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-                  <line x1="7" y1="8" x2="7" y2="4" stroke="currentColor" stroke-width="1.5" />
-                  <line x1="12" y1="8" x2="12" y2="4" stroke="currentColor" stroke-width="1.5" />
-                  <line x1="17" y1="8" x2="17" y2="4" stroke="currentColor" stroke-width="1.5" />
-                </svg>
-                <span class="lan-list-label">LAN{{ item.instance }}</span>
-              </div>
+            <div class="cell-sub">
+              <span class="remark-label">SN</span>
+              <span class="cell-sn">{{ row.sn }}</span>
             </div>
-            <!-- 机型适配入口：未适配的给适配入口，已适配的给绿标 -->
-            <div v-if="!adaptOf(row.sn).adapted" class="adapt-line">
-              <el-button v-if="canModelManage" type="text" size="mini" class="adapt-btn" @click="openAdapt(row)">
-                <i class="el-icon-cpu" /> 适配
-              </el-button>
-            </div>
-            <div v-else class="adapt-line">
-              <span class="adapt-ok"><i class="el-icon-circle-check" /> 已适配</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="WIFI 信息" min-width="160">
-          <template slot-scope="{ row }">
-            <template v-if="enabledWifiList(row.sn).length">
-              <div class="wifi-list-band-row">
-                <span class="wifi-list-band-label">2.4G:</span>
-                <template v-if="enabledWifi24(row.sn).length">
-                  <el-tag
-                    v-for="item in enabledWifi24(row.sn)"
-                    :key="item.path"
-                    size="mini"
-                    class="wifi-tag wifi-tag-editable"
-                    @click.native="openWifiEdit(row, item)"
-                  >{{ item.params.SSID || '-' }}</el-tag>
-                </template>
-                <span v-else class="cell-empty">-</span>
-              </div>
-              <div class="wifi-list-band-row">
-                <span class="wifi-list-band-label">5.8G:</span>
-                <template v-if="enabledWifi58(row.sn).length">
-                  <el-tag
-                    v-for="item in enabledWifi58(row.sn)"
-                    :key="item.path"
-                    size="mini"
-                    class="wifi-tag wifi-tag-editable"
-                    @click.native="openWifiEdit(row, item)"
-                  >{{ item.params.SSID || '-' }}</el-tag>
-                </template>
-                <span v-else class="cell-empty">-</span>
-              </div>
-            </template>
-            <span v-else class="cell-empty">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="SIP 信息" min-width="150">
-          <template slot-scope="{ row }">
-            <template v-if="sipList(row.sn).length">
-              <!-- 每一路 SIP 都能点开看全部参数：只读本地快照，不发任何 RPC，
-                   不会唤醒设备（以前这一列是死的，点什么都没反应） -->
-              <div
-                v-for="item in sipList(row.sn)"
-                :key="item.path"
-                class="biz-row sip-row"
-                title="点击查看该路 SIP 的全部参数"
-                @click="openSipParams(row.sn, item)"
-              >
-                <el-tag size="mini" :type="sipTagType(item)">
-                  {{ item.statusText }}
+            <!-- 下发进度：意图下发任务、本机提交的重启/恢复出厂、队列里压着的指令，都在这一行 -->
+            <div v-if="progressLines(row.sn).length" class="cell-tasks">
+              <div v-for="line in progressLines(row.sn)" :key="line.key" class="cell-task">
+                <i :class="line.icon" />
+                <span>{{ line.text }}</span>
+                <el-tag v-if="line.tag" size="mini" :type="line.status === 'running' ? 'warning' : 'info'">
+                  {{ line.tag }}
                 </el-tag>
-                <span class="biz-name">{{ item.number }}</span>
               </div>
-            </template>
-            <span v-else class="cell-empty">-</span>
+            </div>
+            <div class="cell-remark">
+              <span class="remark-label">房间号</span>
+              <span class="remark-value">{{ row.roomNo || '-' }}</span>
+              <span class="remark-label">备注</span>
+              <span class="remark-value remark-value-text">{{ row.remark || '-' }}</span>
+              <el-link type="primary" class="remark-edit" @click="openRemark(row)">修改</el-link>
+            </div>
+            <!-- 铭牌 MAC：设备标签上印的那个，取 LAN 口地址（WAN 的每条连接各有一份，会随通道变） -->
+            <div v-if="macOf(row.sn)" class="cell-mac">
+              <i class="el-icon-postcard" /> {{ macOf(row.sn) }}
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="设备状态" width="80" align="center">
-          <template slot-scope="{ row }">
-            <el-tag :type="isOnline(row) ? 'success' : 'danger'" size="mini">
-              {{ isOnline(row) ? '在线' : '离线' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <!-- 运行信息：运行时长 / 加入时间 / 最后汇报时间 / 汇报IP，取代原先独立的「上报的IP」列 -->
-        <el-table-column label="运行信息" min-width="180">
-          <device-runtime-cell
+
+        <!-- 终端信息：厂家 / 型号 / 硬件固件版本 / PON 类型 + 光功率，独立组件承载 -->
+        <el-table-column label="终端信息" min-width="200">
+          <device-identity-cell
             slot="header"
             mode="header"
             :sort-key="sortKey"
             :sort-order="sortOrder"
+            :optic-filter="opticFilter"
             @sort="sortBy"
+            @update:opticFilter="v => opticFilter = v"
           />
           <template slot-scope="{ row }">
-            <device-runtime-cell :row="row" :biz="bizOf(row.sn)" />
+            <device-identity-cell :row="row" :biz="bizOf(row.sn)" />
           </template>
         </el-table-column>
-      </el-table-column>
 
-      <el-table-column label="操作" width="200" fixed="right">
-        <template slot-scope="{ row }">
-          <el-dropdown trigger="click" size="mini" @command="cmd => handleDeviceCommand(cmd, row)">
-            <el-button type="text" size="mini">
-              业务/操作<i class="el-icon-arrow-down el-icon--right" />
-            </el-button>
-            <el-dropdown-menu slot="dropdown">
-              <!-- 查业务信息是读；往下三条都会真的动设备，没有写权限就别摆出来 -->
-              <el-dropdown-item command="business" icon="el-icon-connection">业务信息</el-dropdown-item>
-              <el-dropdown-item v-if="canDeviceManage" command="probe" icon="el-icon-search">诊断(GetRPCMethods)</el-dropdown-item>
-              <el-dropdown-item v-if="canDeviceManage" command="reboot" icon="el-icon-refresh-right" divided>重启设备</el-dropdown-item>
-              <el-dropdown-item v-if="canDeviceManage" command="factoryReset" icon="el-icon-delete">恢复出厂</el-dropdown-item>
-            </el-dropdown-menu>
-          </el-dropdown>
-        </template>
-      </el-table-column>
-    </el-table>
+        <el-table-column label="业务状态" align="center">
+          <el-table-column label="WAN 连接" min-width="165">
+            <template slot-scope="{ row }">
+              <el-link
+                v-if="wanList(row.sn).length"
+                type="primary"
+                @click="openWanParams(row.sn)"
+              >
+                <el-tag type="primary" size="mini" class="wan-count">{{ wanList(row.sn).length }}</el-tag>
+                <span>条 WAN 连接</span>
+              </el-link>
+              <span v-else class="cell-empty">-</span>
+              <!-- LAN 网口：设备申报几个口就列几个，插线绿色、未插灰色，紧跟在 WAN 连接下面 -->
+              <div v-if="lanList(row.sn).length" class="lan-list-bar">
+                <div
+                  v-for="item in lanList(row.sn)"
+                  :key="item.path"
+                  class="lan-list-chip"
+                  :class="{ 'lan-list-up': item.connected }"
+                  :title="lanPortTip(item)"
+                >
+                  <svg class="lan-list-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="3" y="8" width="18" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+                    <line x1="7" y1="8" x2="7" y2="4" stroke="currentColor" stroke-width="1.5" />
+                    <line x1="12" y1="8" x2="12" y2="4" stroke="currentColor" stroke-width="1.5" />
+                    <line x1="17" y1="8" x2="17" y2="4" stroke="currentColor" stroke-width="1.5" />
+                  </svg>
+                  <span class="lan-list-label">LAN{{ item.instance }}</span>
+                </div>
+              </div>
+              <!-- 机型适配入口：未适配的给适配入口，已适配的给绿标 -->
+              <div v-if="!adaptOf(row.sn).adapted" class="adapt-line">
+                <el-button v-if="canModelManage" type="text" size="mini" class="adapt-btn" @click="openAdapt(row)">
+                  <i class="el-icon-cpu" /> 适配
+                </el-button>
+              </div>
+              <div v-else class="adapt-line">
+                <span class="adapt-ok"><i class="el-icon-circle-check" /> 已适配</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="WIFI 信息" min-width="160">
+            <template slot-scope="{ row }">
+              <template v-if="enabledWifiList(row.sn).length">
+                <div class="wifi-list-band-row">
+                  <span class="wifi-list-band-label">2.4G:</span>
+                  <template v-if="enabledWifi24(row.sn).length">
+                    <el-tag
+                      v-for="item in enabledWifi24(row.sn)"
+                      :key="item.path"
+                      size="mini"
+                      class="wifi-tag wifi-tag-editable"
+                      @click.native="openWifiEdit(row, item)"
+                    >{{ item.params.SSID || '-' }}</el-tag>
+                  </template>
+                  <span v-else class="cell-empty">-</span>
+                </div>
+                <div class="wifi-list-band-row">
+                  <span class="wifi-list-band-label">5.8G:</span>
+                  <template v-if="enabledWifi58(row.sn).length">
+                    <el-tag
+                      v-for="item in enabledWifi58(row.sn)"
+                      :key="item.path"
+                      size="mini"
+                      class="wifi-tag wifi-tag-editable"
+                      @click.native="openWifiEdit(row, item)"
+                    >{{ item.params.SSID || '-' }}</el-tag>
+                  </template>
+                  <span v-else class="cell-empty">-</span>
+                </div>
+              </template>
+              <span v-else class="cell-empty">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="SIP 信息" min-width="150">
+            <template slot-scope="{ row }">
+              <template v-if="sipList(row.sn).length">
+                <!-- 每一路 SIP 都能点开看全部参数：只读本地快照，不发任何 RPC，
+                   不会唤醒设备（以前这一列是死的，点什么都没反应） -->
+                <div
+                  v-for="item in sipList(row.sn)"
+                  :key="item.path"
+                  class="biz-row sip-row"
+                  title="点击查看该路 SIP 的全部参数"
+                  @click="openSipParams(row.sn, item)"
+                >
+                  <el-tag size="mini" :type="sipTagType(item)">
+                    {{ item.statusText }}
+                  </el-tag>
+                  <span class="biz-name">{{ item.number }}</span>
+                </div>
+              </template>
+              <span v-else class="cell-empty">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="设备状态" width="80" align="center">
+            <template slot-scope="{ row }">
+              <el-tag :type="isOnline(row) ? 'success' : 'danger'" size="mini">
+                {{ isOnline(row) ? '在线' : '离线' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <!-- 运行信息：运行时长 / 加入时间 / 最后汇报时间 / 汇报IP，取代原先独立的「上报的IP」列 -->
+          <el-table-column label="运行信息" min-width="180">
+            <device-runtime-cell
+              slot="header"
+              mode="header"
+              :sort-key="sortKey"
+              :sort-order="sortOrder"
+              @sort="sortBy"
+            />
+            <template slot-scope="{ row }">
+              <device-runtime-cell :row="row" :biz="bizOf(row.sn)" />
+            </template>
+          </el-table-column>
+        </el-table-column>
 
-    <el-pagination
-      class="pager"
-      :current-page.sync="query.page"
-      :page-size.sync="query.size"
-      :page-sizes="[10, 20, 50, 100]"
-      :total="total"
-      layout="total, sizes, prev, pager, next, jumper"
-      @size-change="handleSearch"
-      @current-change="load"
-    />
+        <el-table-column label="操作" width="200" fixed="right">
+          <template slot-scope="{ row }">
+            <el-dropdown trigger="click" size="mini" @command="cmd => handleDeviceCommand(cmd, row)">
+              <el-button type="text" size="mini">
+                业务/操作<i class="el-icon-arrow-down el-icon--right" />
+              </el-button>
+              <el-dropdown-menu slot="dropdown">
+                <!-- 查业务信息是读；往下三条都会真的动设备，没有写权限就别摆出来 -->
+                <el-dropdown-item command="business" icon="el-icon-connection">业务信息</el-dropdown-item>
+                <el-dropdown-item v-if="canDeviceManage" command="bindGroup" icon="el-icon-folder-add">归属分组</el-dropdown-item>
+                <el-dropdown-item v-if="canDeviceManage" command="probe" icon="el-icon-search">诊断(GetRPCMethods)</el-dropdown-item>
+                <el-dropdown-item v-if="canDeviceManage" command="reboot" icon="el-icon-refresh-right" divided>重启设备</el-dropdown-item>
+                <el-dropdown-item v-if="canDeviceManage" command="factoryReset" icon="el-icon-delete">恢复出厂</el-dropdown-item>
+              </el-dropdown-menu>
+            </el-dropdown>
+          </template>
+        </el-table-column>
+      </el-table>
 
-    <!-- 右下角批量操作工具条 -->
-    <div class="batch-bar">
-      <span class="batch-label">模版关键字</span>
-      <el-select
-        v-model="selectedTemplate"
-        filterable
-        clearable
-        placeholder="== 业务模版 =="
-        size="small"
-        style="width:160px"
-      >
-        <el-option-group v-if="bizTemplates.length" label="== 业务模板 ==">
-          <el-option
-            v-for="b in bizTemplates"
-            :key="'biz-' + b.template.id"
-            :label="b.template.name"
-            :value="'biz-' + b.template.id"
-          >
-            <span>{{ b.template.name }}</span>
-            <span class="member-hint">{{ (b.items || []).length }} 个成员</span>
-          </el-option>
-        </el-option-group>
-        <el-option-group label="== 配置模板 ==">
-          <el-option
-            v-for="t in templates"
-            :key="'cfg-' + t.id"
-            :label="t.name"
-            :value="'cfg-' + t.id"
-          >
-            <span>{{ t.name }}</span>
-            <span class="member-hint">{{ t.categoryLabel || t.category }}</span>
-          </el-option>
-        </el-option-group>
-      </el-select>
-      <!-- 批量操作条上每个按钮各管各的权限：能看台账不等于能重启设备 -->
-      <el-button
-        v-if="canDeviceManage"
-        size="small"
-        type="primary"
-        plain
-        @click="batchDispatchTemplate"
-      >批量下发模版</el-button>
+      <el-pagination
+        ref="pager"
+        class="pager"
+        :current-page.sync="query.page"
+        :page-size.sync="query.size"
+        :page-sizes="[10, 20, 50, 100]"
+        :total="total"
+        layout="total, sizes, prev, pager, next, jumper"
+        @size-change="handleSearch"
+        @current-change="load"
+      />
 
-      <el-dropdown v-if="canWorklistManage" trigger="click" @command="cmd => handleBatchCommand(cmd)">
-        <el-button size="small">一键下发<i class="el-icon-caret-top el-icon--right" /></el-button>
-        <el-dropdown-menu slot="dropdown">
-          <el-dropdown-item command="worklist-record" icon="el-icon-tickets">工单记录</el-dropdown-item>
-          <el-dropdown-item command="worklist-batch" icon="el-icon-s-order" divided>批量开通业务</el-dropdown-item>
-          <el-dropdown-item command="worklist-repair" icon="el-icon-s-tools">批量检修任务</el-dropdown-item>
-        </el-dropdown-menu>
-      </el-dropdown>
+      <!-- 右下角批量操作工具条 -->
+      <div ref="batchBar" class="batch-bar">
+        <span class="batch-label">模版关键字</span>
+        <el-select
+          v-model="selectedTemplate"
+          filterable
+          clearable
+          placeholder="== 业务模版 =="
+          size="small"
+          style="width:160px"
+        >
+          <el-option-group v-if="bizTemplates.length" label="== 业务模板 ==">
+            <el-option
+              v-for="b in bizTemplates"
+              :key="'biz-' + b.template.id"
+              :label="b.template.name"
+              :value="'biz-' + b.template.id"
+            >
+              <span>{{ b.template.name }}</span>
+              <span class="member-hint">{{ (b.items || []).length }} 个成员</span>
+            </el-option>
+          </el-option-group>
+          <el-option-group label="== 配置模板 ==">
+            <el-option
+              v-for="t in templates"
+              :key="'cfg-' + t.id"
+              :label="t.name"
+              :value="'cfg-' + t.id"
+            >
+              <span>{{ t.name }}</span>
+              <span class="member-hint">{{ t.categoryLabel || t.category }}</span>
+            </el-option>
+          </el-option-group>
+        </el-select>
+        <!-- 批量操作条上每个按钮各管各的权限：能看台账不等于能重启设备 -->
+        <el-button
+          v-if="canDeviceManage"
+          size="small"
+          type="primary"
+          plain
+          @click="batchDispatchTemplate"
+        >批量下发模版</el-button>
 
-      <el-dropdown v-if="canDeviceManage" trigger="click" @command="cmd => handleBatchCommand(cmd)">
-        <el-button size="small">更多...<i class="el-icon-caret-top el-icon--right" /></el-button>
-        <el-dropdown-menu slot="dropdown">
-          <el-dropdown-item command="query-admin-pwd">查询超管密码</el-dropdown-item>
-          <el-dropdown-item command="set-admin-pwd">设置超管密码</el-dropdown-item>
-          <el-dropdown-item command="query-telnet" divided>开启/查询 Telnet</el-dropdown-item>
-          <el-dropdown-item command="close-telnet">关闭 Telnet</el-dropdown-item>
-          <el-dropdown-item command="open-wan-access" divided>开启 WAN 侧访问</el-dropdown-item>
-          <el-dropdown-item command="close-wan-access">关闭 WAN 侧访问</el-dropdown-item>
-          <el-dropdown-item command="toggle-wifi">一键开启/关闭 WiFi</el-dropdown-item>
-          <el-dropdown-item command="disable-sip">禁用 SIP 电话</el-dropdown-item>
-          <el-dropdown-item command="del-wans">删除所有WAN连接(TR069除外)</el-dropdown-item>
-          <el-dropdown-item command="unlock-net">解除上网限制(将重启光猫)</el-dropdown-item>
-          <el-dropdown-item command="diagnose">诊断测试</el-dropdown-item>
-          <el-dropdown-item command="clear-cache">删除设备缓存</el-dropdown-item>
-          <el-dropdown-item command="mark-swap">标记并置换光猫</el-dropdown-item>
-          <el-dropdown-item command="factory-clear" divided>恢复出厂并清零（不再接受汇报）</el-dropdown-item>
-          <el-dropdown-item command="factory-reset">恢复出厂配置</el-dropdown-item>
-          <el-dropdown-item command="deep-factory-reset">深度恢复出厂</el-dropdown-item>
-          <el-dropdown-item command="deep-factory-clear">深度恢复出厂并清零（不再接受汇报）</el-dropdown-item>
-        </el-dropdown-menu>
-      </el-dropdown>
+        <el-dropdown v-if="canWorklistManage" trigger="click" @command="cmd => handleBatchCommand(cmd)">
+          <el-button size="small">一键下发<i class="el-icon-caret-top el-icon--right" /></el-button>
+          <el-dropdown-menu slot="dropdown">
+            <el-dropdown-item command="worklist-record" icon="el-icon-tickets">工单记录</el-dropdown-item>
+            <el-dropdown-item command="worklist-batch" icon="el-icon-s-order" divided>批量开通业务</el-dropdown-item>
+            <el-dropdown-item command="worklist-repair" icon="el-icon-s-tools">批量检修任务</el-dropdown-item>
+          </el-dropdown-menu>
+        </el-dropdown>
 
-      <el-dropdown v-if="canDeviceManage" trigger="click" @command="cmd => handleAdvancedCommand(cmd)">
-        <el-button size="small">高级...<i class="el-icon-caret-top el-icon--right" /></el-button>
-        <el-dropdown-menu slot="dropdown">
-          <el-dropdown-item command="export">导出设备</el-dropdown-item>
-          <el-dropdown-item command="custom-param">下发自定义 TR069 参数值</el-dropdown-item>
-          <el-dropdown-item command="debug">调试指令</el-dropdown-item>
-          <el-dropdown-item command="telnet">执行 Telnet 命令</el-dropdown-item>
-          <el-dropdown-item command="strip-ssid">去除 WiFi SSID 前缀</el-dropdown-item>
-          <el-dropdown-item command="fix-sip">修复 SIP 注册错误</el-dropdown-item>
-          <el-dropdown-item command="fix-bridge">修复 Internet 桥接/DHCP 透传</el-dropdown-item>
-          <el-dropdown-item command="export-config">导出配置文件</el-dropdown-item>
-          <el-dropdown-item command="clone-config">克隆配置文件</el-dropdown-item>
-          <el-dropdown-item command="force-report">强制上报/上线</el-dropdown-item>
-          <el-dropdown-item command="refresh">刷新状态</el-dropdown-item>
-        </el-dropdown-menu>
-      </el-dropdown>
+        <el-dropdown v-if="canDeviceManage" trigger="click" @command="cmd => handleBatchCommand(cmd)">
+          <el-button size="small">更多...<i class="el-icon-caret-top el-icon--right" /></el-button>
+          <el-dropdown-menu slot="dropdown">
+            <el-dropdown-item command="query-admin-pwd">查询超管密码</el-dropdown-item>
+            <el-dropdown-item command="set-admin-pwd">设置超管密码</el-dropdown-item>
+            <el-dropdown-item command="query-telnet" divided>开启/查询 Telnet</el-dropdown-item>
+            <el-dropdown-item command="close-telnet">关闭 Telnet</el-dropdown-item>
+            <el-dropdown-item command="open-wan-access" divided>开启 WAN 侧访问</el-dropdown-item>
+            <el-dropdown-item command="close-wan-access">关闭 WAN 侧访问</el-dropdown-item>
+            <el-dropdown-item command="toggle-wifi">一键开启/关闭 WiFi</el-dropdown-item>
+            <el-dropdown-item command="disable-sip">禁用 SIP 电话</el-dropdown-item>
+            <el-dropdown-item command="del-wans">删除所有WAN连接(TR069除外)</el-dropdown-item>
+            <el-dropdown-item command="unlock-net">解除上网限制(将重启光猫)</el-dropdown-item>
+            <el-dropdown-item command="diagnose">诊断测试</el-dropdown-item>
+            <el-dropdown-item command="clear-cache">删除设备缓存</el-dropdown-item>
+            <el-dropdown-item command="mark-swap">标记并置换光猫</el-dropdown-item>
+            <el-dropdown-item command="factory-clear" divided>恢复出厂并清零（不再接受汇报）</el-dropdown-item>
+            <el-dropdown-item command="factory-reset">恢复出厂配置</el-dropdown-item>
+            <el-dropdown-item command="deep-factory-reset">深度恢复出厂</el-dropdown-item>
+            <el-dropdown-item command="deep-factory-clear">深度恢复出厂并清零（不再接受汇报）</el-dropdown-item>
+          </el-dropdown-menu>
+        </el-dropdown>
 
-      <el-dropdown v-if="canOltManage" trigger="click" @command="cmd => handleOltCommand(cmd)">
-        <el-button size="small">OLT融合管理<i class="el-icon-caret-top el-icon--right" /></el-button>
-        <el-dropdown-menu slot="dropdown">
-          <el-dropdown-item command="olt-mgr" icon="el-icon-s-platform">OLT/ONU 管理</el-dropdown-item>
-          <el-dropdown-item command="olt-topo" icon="el-icon-share" divided>OLT 拓扑（开发中）</el-dropdown-item>
-        </el-dropdown-menu>
-      </el-dropdown>
+        <el-dropdown v-if="canDeviceManage" trigger="click" @command="cmd => handleAdvancedCommand(cmd)">
+          <el-button size="small">高级...<i class="el-icon-caret-top el-icon--right" /></el-button>
+          <el-dropdown-menu slot="dropdown">
+            <el-dropdown-item command="export">导出设备</el-dropdown-item>
+            <el-dropdown-item command="custom-param">下发自定义 TR069 参数值</el-dropdown-item>
+            <el-dropdown-item command="debug">调试指令</el-dropdown-item>
+            <el-dropdown-item command="telnet">执行 Telnet 命令</el-dropdown-item>
+            <el-dropdown-item command="strip-ssid">去除 WiFi SSID 前缀</el-dropdown-item>
+            <el-dropdown-item command="fix-sip">修复 SIP 注册错误</el-dropdown-item>
+            <el-dropdown-item command="fix-bridge">修复 Internet 桥接/DHCP 透传</el-dropdown-item>
+            <el-dropdown-item command="export-config">导出配置文件</el-dropdown-item>
+            <el-dropdown-item command="clone-config">克隆配置文件</el-dropdown-item>
+            <el-dropdown-item command="force-report">强制上报/上线</el-dropdown-item>
+            <el-dropdown-item command="refresh">刷新状态</el-dropdown-item>
+          </el-dropdown-menu>
+        </el-dropdown>
 
-      <el-button v-if="canDeviceManage" size="small" type="warning" plain @click="batchReboot">重启</el-button>
+        <el-dropdown v-if="canOltManage" trigger="click" @command="cmd => handleOltCommand(cmd)">
+          <el-button size="small">OLT融合管理<i class="el-icon-caret-top el-icon--right" /></el-button>
+          <el-dropdown-menu slot="dropdown">
+            <el-dropdown-item command="olt-mgr" icon="el-icon-s-platform">OLT/ONU 管理</el-dropdown-item>
+            <el-dropdown-item command="olt-topo" icon="el-icon-share" divided>OLT 拓扑（开发中）</el-dropdown-item>
+          </el-dropdown-menu>
+        </el-dropdown>
+
+        <el-button v-if="canDeviceManage" size="small" type="warning" plain @click="batchReboot">重启</el-button>
+      </div>
     </div>
+
+    <!-- 归属分组：把光猫挂到「设备根域」的分组节点上（ROOT=移回资源根组） -->
+    <el-dialog
+      :title="'归属分组：' + (bindRow ? bindRow.sn : '')"
+      :visible.sync="bindVisible"
+      width="420px"
+      top="8vh"
+    >
+      <div class="bind-tip">点选目标分组；选「资源根组」= 移回根节点（不归属任何分组）：</div>
+      <el-tree
+        v-loading="bindLoading"
+        :data="bindTree"
+        :props="{ label: 'name', children: 'children' }"
+        node-key="nodeRef"
+        highlight-current
+        default-expand-all
+        @node-click="onBindPick"
+      >
+        <span slot-scope="{ data }" class="bind-node">
+          <i :class="data.kind === 'root' ? 'el-icon-house' : 'el-icon-folder'" />
+          <span>{{ data.name }}</span>
+        </span>
+      </el-tree>
+      <div slot="footer">
+        <el-button size="small" @click="bindVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          size="small"
+          :disabled="!bindTargetRef"
+          :loading="bindSaving"
+          @click="submitGroupBind"
+        >确定</el-button>
+      </div>
+    </el-dialog>
 
     <!-- 下发自定义 TR069 参数弹窗 -->
     <el-dialog title="下发自定义 TR069 参数值" :visible.sync="customParamVisible" width="640px">
@@ -899,23 +957,39 @@ import {
   fetchTelnetCredentials
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
+import { fetchGroupMembers, fetchGroupTree, moveGroupMemberByRef } from '@/api/group'
 import { fetchConfigTemplates } from '@/api/configTemplate'
 import { fetchBizTemplates, executeBizTemplate } from '@/api/bizTemplate'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
 import DeviceRuntimeCell from '@/components/DeviceRuntimeCell.vue'
+import OltGroupTree from '@/views/olt/components/OltGroupTree'
 
 // 轮询节奏不在页面写死：created 时从后端 /device/poll-config 取（见 loadPollConfig），
 // 现场要调快调慢只改后端配置。
 
 export default {
   name: 'DeviceList',
-  components: { DeviceBusinessPanel, DeviceIdentityCell, DeviceRuntimeCell },
+  components: { DeviceBusinessPanel, DeviceIdentityCell, DeviceRuntimeCell, OltGroupTree },
   data() {
     return {
       loading: false,
       list: [],
       total: 0,
+      // 表格高度：mounted / 窗口 resize 时按右侧列剩余空间算（内容多了表格内部滚动）
+      tableHeight: null,
+      // 左侧光猫分组树筛选：null = 全部；选中后按组内光猫归属（SN 列表）过滤
+      groupFilterRef: null,
+      groupFilterName: '',
+      groupOnuRefs: null,
+      // 归属分组弹窗：把光猫挂到分组节点（调 /group/move-member，已有归属自动改）
+      bindVisible: false,
+      bindRow: null,
+      bindTree: [],
+      bindLoading: false,
+      bindTargetRef: null,
+      bindTargetName: '',
+      bindSaving: false,
       bizMap: {},
       bizTimer: null,
       listTimer: null,
@@ -1053,8 +1127,13 @@ export default {
     },
     // 排序与光模块筛选都在后端做（/device/page 的 sortKey / sortOrder / optic），
     // 页面拿到什么就显示什么——原来这里只排当前页 20 条，翻页就重新洗牌
+    // 分组筛选：光猫设备模块尚未接入台账，先按分组归属（SN 列表）在当前结果里过滤
     displayList() {
-      return this.list
+      if (this.groupOnuRefs == null) {
+        return this.list
+      }
+      const refs = new Set(this.groupOnuRefs.map(String))
+      return this.list.filter(row => refs.has(String(row.sn)))
     },
     // 一行账号都没读到时，底部提示不能还写着「可直接用于登录后台」
     adminPwdHasNoAccount() {
@@ -1096,7 +1175,13 @@ export default {
     this.loadRpcMeta()
     this.loadPollConfig()
   },
+  mounted() {
+    // 表格高度按视口自适应：剩余高度全给表格，内容多了表格内部滚动
+    this.calcTableHeight()
+    window.addEventListener('resize', this.calcTableHeight)
+  },
   beforeDestroy() {
+    window.removeEventListener('resize', this.calcTableHeight)
     if (this.bizTimer) {
       clearInterval(this.bizTimer)
       this.bizTimer = null
@@ -1659,7 +1744,118 @@ export default {
     },
     resetQuery() {
       this.query = { page: 1, size: 20, sn: '', isp: '', deviceType: '', roomNo: '' }
+      this.clearGroupFilter()
       this.load()
+    },
+    // ---------------- 左侧光猫分组树 ----------------
+    /**
+     * 表格高度 = 右侧列可用高度 - 筛选卡 - 分页 - 批量条 - 间距。
+     * 左右两列都定高（calc(100vh - 90px)），右侧不整页滚动，表格自己内部滚动。
+     */
+    calcTableHeight() {
+      this.$nextTick(() => {
+        const col = this.$refs.mainCol
+        if (!col) {
+          return
+        }
+        // ref 可能落在组件实例上（el-card / el-pagination），统一取根 DOM
+        const h = ref => {
+          const el = ref && ref.$el ? ref.$el : ref
+          return el && el.offsetHeight ? el.offsetHeight : 0
+        }
+        // 筛选卡 margin-bottom 16 + 分页 margin-top 16 + 批量条 margin-top 10 + 表格横向滚动条余量
+        const used = h(this.$refs.filterCard) + h(this.$refs.pager) + h(this.$refs.batchBar) + 58
+        this.tableHeight = Math.max(col.clientHeight - used, 200)
+      })
+    },
+    /**
+     * 选中分组：拉该节点直属光猫归属（memberType=ONU），按 SN 过滤列表。
+     * 光猫设备模块还没接入，台账暂为空；分组树本身可以先建组、授权、看结构。
+     */
+    onGroupSelect(node) {
+      if (!node) {
+        this.clearGroupFilter()
+        return
+      }
+      this.groupFilterRef = node.nodeRef
+      this.groupFilterName = node.name
+      this.groupOnuRefs = []
+      fetchGroupMembers(node.nodeRef, 'ONU')
+        .then(res => {
+          this.groupOnuRefs = (res.data || []).map(row => String(row.memberRef || row.name))
+        })
+        .catch(() => {
+          this.clearGroupFilter()
+        })
+    },
+    clearGroupFilter() {
+      this.groupFilterRef = null
+      this.groupFilterName = ''
+      this.groupOnuRefs = null
+    },
+    /** 打开「归属分组」：拉光猫类型的分组树，点选目标节点 */
+    openGroupBind(row) {
+      this.bindRow = row
+      this.bindTargetRef = null
+      this.bindTargetName = ''
+      this.bindVisible = true
+      this.bindLoading = true
+      fetchGroupTree('ONU')
+        .then(res => {
+          this.bindTree = res.data || []
+        })
+        .catch(() => {
+          this.bindTree = []
+        })
+        .finally(() => {
+          this.bindLoading = false
+        })
+    },
+    onBindPick(data) {
+      this.bindTargetRef = data.nodeRef
+      this.bindTargetName = data.name
+    },
+    async submitGroupBind() {
+      if (!this.bindRow || !this.bindTargetRef) {
+        return
+      }
+      const sn = this.bindRow.sn
+      this.bindSaving = true
+      try {
+        // move-member：没有归属则新建，已有归属直接改，ROOT=移回资源根组
+        await moveGroupMemberByRef({
+          groupRef: this.bindTargetRef,
+          memberType: 'ONU',
+          memberRef: sn,
+          memberLabel: this.bindRow.remark || sn
+        })
+        this.$message.success('「' + sn + '」已归属到「' + this.bindTargetName + '」')
+        this.bindVisible = false
+        // 树计数与当前筛选结果都跟着刷
+        if (this.$refs.groupTree) {
+          this.$refs.groupTree.loadTree()
+        }
+        if (this.groupFilterRef) {
+          this.onGroupSelect({ nodeRef: this.groupFilterRef, name: this.groupFilterName })
+        }
+      } catch (e) {
+        this.$message.error(e && e.message ? e.message : '归属失败')
+      } finally {
+        this.bindSaving = false
+      }
+    },
+    /** 点树上的光猫设备叶子：在本页列表里定位这台设备（SN = memberRef） */
+    onGroupDeviceSelect(node) {
+      const ref = node.memberRef == null ? '' : String(node.memberRef)
+      if (!ref) {
+        return
+      }
+      const hit = this.list.find(row => String(row.sn) === ref)
+      if (!hit) {
+        this.$message.warning('该光猫不在当前列表结果里（可能在别的页或还没上报台账）')
+        return
+      }
+      this.openDetail(hit)
     },
     // 完整详情：跳原来的设备详情页（能力树采集、RPC、参数树在那里）
     goDetail(sn) {
@@ -1742,6 +1938,10 @@ export default {
     handleDeviceCommand(cmd, row) {
       if (cmd === 'business') {
         this.openBusiness(row.sn)
+        return
+      }
+      if (cmd === 'bindGroup') {
+        this.openGroupBind(row)
         return
       }
       const rpc = this.rpcOf(cmd)
@@ -2333,6 +2533,38 @@ export default {
 </script>
 
 <style scoped>
+/* 左树右列表：整页定高（navbar 50px + app-container 上下内边距 40px），
+   左侧树卡片撑满并内部滚动，右侧列表区域自己滚动，窗口缩放自动跟随 */
+.device-layout {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  height: calc(100vh - 90px);
+}
+/* 子组件根元素（OltGroupTree 的卡片）：占满左列高度，树区内部滚动 */
+.device-layout > .group-tree-card {
+  height: 100%;
+  min-height: 0;
+}
+.device-main-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.group-filter-tag {
+  margin-left: 10px;
+}
+.bind-tip {
+  color: #606266;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.bind-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .filter-card {
   margin-bottom: 16px;
 }

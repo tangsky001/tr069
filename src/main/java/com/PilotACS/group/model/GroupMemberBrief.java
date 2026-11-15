@@ -13,8 +13,11 @@ import lombok.Data;
 @Data
 public class GroupMemberBrief {
 
-    @Schema(description = "OLT 设备 id")
+    @Schema(description = "设备 id：OLT 为 olt_device.id；ONU 为 null")
     private Long id;
+
+    @Schema(description = "设备业务标识：OLT 为 id 字符串；ONU 为光猫标识（如 SN）")
+    private String ref;
 
     @Schema(description = "设备名称")
     private String name;

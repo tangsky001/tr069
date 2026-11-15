@@ -25,6 +25,7 @@ public class GroupSchemaInitializer implements InitializingBean {
                 `id`                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
                 `parent_id`         BIGINT       DEFAULT NULL COMMENT '父自定义分组 id；挂在区划下时为 null',
                 `parent_civil_code` VARCHAR(12)  DEFAULT NULL COMMENT '父区划编号（civilCode）；挂在自定义分组下时为 null',
+                `civil_code`        VARCHAR(12)  DEFAULT NULL COMMENT '节点关联的区划编号（civilCode，可选）',
                 `name`              VARCHAR(64)  NOT NULL COMMENT '分组名称',
                 `sort`              INT          DEFAULT 0 COMMENT '排序号，同级从小到大',
                 `remark`            VARCHAR(255) DEFAULT NULL COMMENT '备注',
@@ -32,22 +33,24 @@ public class GroupSchemaInitializer implements InitializingBean {
                 `created_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (`id`),
                 KEY `idx_parent` (`parent_id`),
-                KEY `idx_parent_civil` (`parent_civil_code`)
+                KEY `idx_parent_civil` (`parent_civil_code`),
+                KEY `idx_civil` (`civil_code`)
             ) ENGINE = InnoDB COMMENT '自定义分组（挂在区划树上）'
             """;
 
     private static final String CREATE_MEMBER_SQL = """
             CREATE TABLE IF NOT EXISTS `res_group_member` (
                 `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
-                `group_ref`   VARCHAR(32)  NOT NULL COMMENT '分组节点引用：C:区划编号 或 G:自定义分组 id',
-                `member_type` VARCHAR(16)  NOT NULL DEFAULT 'OLT' COMMENT '成员类型：OLT（预留 DEVICE）',
-                `member_id`   BIGINT       NOT NULL COMMENT '成员主键：OLT 为 olt_device.id',
+                `group_ref`   VARCHAR(32)  NOT NULL COMMENT '分组节点引用：ROOT 或 G:自定义分组 id',
+                `member_type` VARCHAR(16)  NOT NULL DEFAULT 'OLT' COMMENT '成员类型：OLT / ONU（光猫）',
+                `member_id`   BIGINT       NOT NULL COMMENT '成员主键：OLT 为 olt_device.id；ONU 恒 0',
+                `member_ref`  VARCHAR(64)  DEFAULT NULL COMMENT '成员业务标识：OLT 同 member_id 字符串；ONU 为光猫标识（如 SN）',
                 `member_label` VARCHAR(128) DEFAULT NULL COMMENT '绑定时的成员名称快照',
                 `remark`      VARCHAR(255) DEFAULT NULL COMMENT '备注',
                 `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '操作人',
                 `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_member` (`member_type`, `member_id`),
+                UNIQUE KEY `uk_member` (`member_type`, `member_ref`),
                 KEY `idx_group_ref` (`group_ref`)
             ) ENGINE = InnoDB COMMENT '分组成员绑定关系'
             """;
@@ -78,27 +81,54 @@ public class GroupSchemaInitializer implements InitializingBean {
         }
     }
 
-    /** res_group 迁移：补 parent_civil_code 列（挂在区划下的自定义节点） */
+    /** res_group 迁移：补 parent_civil_code / civil_code 列（挂在区划下的自定义节点） */
     private void migrateGroupTable() {
         if (!columnExists("res_group", "parent_civil_code")) {
             jdbcTemplate.execute("ALTER TABLE `res_group` ADD COLUMN `parent_civil_code` VARCHAR(12) DEFAULT NULL COMMENT '父区划编号（civilCode）；挂在自定义分组下时为 null'");
             Logs.info(Logs.Module.SYSTEM, "分组表结构补齐", "表", "res_group", "列", "parent_civil_code");
         }
+        if (!columnExists("res_group", "civil_code")) {
+            jdbcTemplate.execute("ALTER TABLE `res_group` ADD COLUMN `civil_code` VARCHAR(12) DEFAULT NULL COMMENT '节点关联的区划编号（civilCode，可选）'");
+            addIndexIfMissing("res_group", "idx_civil", "KEY `idx_civil` (`civil_code`)");
+            Logs.info(Logs.Module.SYSTEM, "分组表结构补齐", "表", "res_group", "列", "civil_code");
+        }
     }
 
-    /** res_group_member 迁移：老结构（group_code/group_id）统一改为 group_ref 节点引用 */
+    /** res_group_member 迁移：老结构（group_code/group_id）统一改为 group_ref 节点引用；补 member_ref 并切换唯一键 */
     private void migrateMemberTable() {
         boolean hasGroupRef = columnExists("res_group_member", "group_ref");
         if (!hasGroupRef) {
             jdbcTemplate.execute("ALTER TABLE `res_group_member` ADD COLUMN `group_ref` VARCHAR(32) DEFAULT NULL COMMENT '分组节点引用：C:区划编号 或 G:自定义分组 id'");
         }
-        // 老结构的唯一键允许同一设备挂多组，改成按设备唯一
+        // member_ref：成员业务标识（OLT=olt_device.id 字符串；ONU=光猫 SN），老数据按 member_id 回填
+        if (!columnExists("res_group_member", "member_ref")) {
+            jdbcTemplate.execute("ALTER TABLE `res_group_member` ADD COLUMN `member_ref` VARCHAR(64) DEFAULT NULL COMMENT '成员业务标识：OLT 同 member_id 字符串；ONU 为光猫标识（如 SN）'");
+            Logs.info(Logs.Module.SYSTEM, "分组绑定表结构补齐", "表", "res_group_member", "列", "member_ref");
+        }
+        jdbcTemplate.update("UPDATE `res_group_member` SET `member_ref` = `member_id` WHERE `member_ref` IS NULL");
+        // 老结构的唯一键允许同一设备挂多组，改成按设备唯一；
+        // ONU 的 member_id 恒 0，唯一性落在 (member_type, member_ref) 上
         dropIndexIfExists("res_group_member", "uk_group_member");
-        addIndexIfMissing("res_group_member", "uk_member",
-                "UNIQUE KEY `uk_member` (`member_type`, `member_id`)");
+        if (indexHasColumn("res_group_member", "uk_member", "member_ref")) {
+            // 已是 (member_type, member_ref) 版本，跳过
+        } else {
+            dropIndexIfExists("res_group_member", "uk_member");
+            addIndexIfMissing("res_group_member", "uk_member",
+                    "UNIQUE KEY `uk_member` (`member_type`, `member_ref`)");
+            Logs.info(Logs.Module.SYSTEM, "分组绑定唯一键已切换", "索引", "uk_member(member_type, member_ref)");
+        }
         if (!hasGroupRef) {
             Logs.info(Logs.Module.SYSTEM, "分组绑定表已切换为 group_ref 节点引用");
         }
+    }
+
+    /** 唯一键定义里是否包含某列（避免每次启动 drop/add 抖动） */
+    private boolean indexHasColumn(String table, String index, String column) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.statistics" +
+                " WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? AND column_name = ?",
+                Integer.class, table, index, column);
+        return count != null && count > 0;
     }
 
     private void dropIndexIfExists(String table, String index) {

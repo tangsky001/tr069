@@ -8,6 +8,7 @@ package com.PilotACS.group;
 
 import com.PilotACS.common.result.Result;
 import com.PilotACS.common.security.UserContext;
+import com.PilotACS.group.model.GroupAttachRequest;
 import com.PilotACS.group.model.GroupCreateRequest;
 import com.PilotACS.group.model.GroupDeleteRequest;
 import com.PilotACS.group.model.GroupMemberView;
@@ -39,11 +40,11 @@ public class GroupController {
 
     private final GroupService groupService;
 
-    /** 分组树：区划骨架 + 自定义节点，节点带成员数量（直接数与含下级汇总数） */
-    @Operation(summary = "分组树：区划骨架（civilCode.csv，34 省逐级到区县）+ 自定义节点，节点带成员数量")
+    /** 分组树：区划骨架 + 自定义节点，节点带成员数量（直接数与含下级汇总数）；memberType=OLT/ONU 分开统计 */
+    @Operation(summary = "分组树：区划骨架（civilCode.csv，34 省逐级到区县）+ 自定义节点，节点带成员数量；memberType=OLT/ONU（默认 OLT）")
     @GetMapping("/tree")
-    public Result<List<GroupNodeView>> tree() {
-        return Result.ok(groupService.tree());
+    public Result<List<GroupNodeView>> tree(@RequestParam(value = "memberType", required = false) String memberType) {
+        return Result.ok(groupService.tree(memberType));
     }
 
     /** 建组候选：父节点下一级可选的区划列表（根节点列省份，省列市，市列区县） */
@@ -79,11 +80,12 @@ public class GroupController {
         return error == null ? Result.ok() : Result.fail(error);
     }
 
-    /** 组内成员：某节点的 OLT 实时台账与状态 */
-    @Operation(summary = "组内成员：某节点的 OLT 台账与在线状态，按绑定时间倒序")
+    /** 组内成员：某节点的设备台账与状态（OLT 实时台账；ONU 为归属快照，光猫模块未接入） */
+    @Operation(summary = "组内成员：某节点的设备台账与在线状态，按绑定时间倒序；memberType=OLT/ONU（默认 OLT）")
     @GetMapping("/members")
-    public Result<List<GroupMemberView>> members(@RequestParam("nodeRef") String nodeRef) {
-        return Result.ok(groupService.members(nodeRef));
+    public Result<List<GroupMemberView>> members(@RequestParam("nodeRef") String nodeRef,
+                                                 @RequestParam(value = "memberType", required = false) String memberType) {
+        return Result.ok(groupService.members(nodeRef, memberType));
     }
 
 
@@ -92,6 +94,24 @@ public class GroupController {
     @PostMapping("/move")
     public Result<Void> move(@RequestBody GroupMoveRequest request, HttpServletRequest httpRequest) {
         String error = groupService.move(request.getNodeRef(), request.getOltId(), operator(httpRequest));
+        return error == null ? Result.ok() : Result.fail(error);
+    }
+
+    /** 通用归属：光猫等设备模块接入时调用；groupRef 空/ROOT=根节点（不写归属关系） */
+    @Operation(summary = "通用归属落库（光猫等设备模块接入用）：memberType=OLT/ONU，memberRef=设备业务标识")
+    @PostMapping("/attach")
+    public Result<Void> attach(@RequestBody GroupAttachRequest request) {
+        String error = groupService.attach(request.getMemberType(), request.getMemberRef(),
+                request.getMemberLabel(), request.getGroupRef());
+        return error == null ? Result.ok() : Result.fail(error);
+    }
+
+    /** 通用移动：光猫等设备模块接入时调用；ROOT = 移回根节点 */
+    @Operation(summary = "通用移动（光猫等设备模块接入用）：memberType=OLT/ONU，memberRef=设备业务标识")
+    @PostMapping("/move-member")
+    public Result<Void> moveMember(@RequestBody GroupAttachRequest request, HttpServletRequest httpRequest) {
+        String error = groupService.moveMember(request.getGroupRef(), request.getMemberType(),
+                request.getMemberRef(), operator(httpRequest));
         return error == null ? Result.ok() : Result.fail(error);
     }
 
