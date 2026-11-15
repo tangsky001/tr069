@@ -19,4 +19,7 @@ public class GroupRenameRequest {
 
     @Schema(description = "新名称")
     private String name;
+
+    @Schema(description = "表域：OLT / ONU（默认 OLT）")
+    private String memberType;
 }

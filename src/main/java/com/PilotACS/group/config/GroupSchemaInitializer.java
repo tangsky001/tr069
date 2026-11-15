@@ -12,16 +12,19 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 分组两张表自动补建与结构迁移。
- * <p>DDL 与 sql/mysql.sql 保持一致；分组树骨架来自 civilCode.csv（不落库），
- * 自定义节点在 res_group 表，绑定关系 res_group_member 用 group_ref 统一引用
- * 区划节点（C:xx）与自定义节点（G:xx）。</p>
+ * 分组表自动补建与数据迁移。
+ *
+ * <p><b>OLT 与光猫物理分表</b>：各一套树 + 归属（olt_res_group / onu_res_group、
+ * olt_res_group_member / onu_res_group_member），结构完全相同，数据互不混；
+ * 旧的单表 res_group / res_group_member 若存在，启动时自动按 member_type
+ * 分流迁移到对应新表（旧表保留不清，便于回退）。</p>
  */
 @Component
 public class GroupSchemaInitializer implements InitializingBean {
 
+    /** %s = 表名前缀（olt_ / onu_） */
     private static final String CREATE_GROUP_SQL = """
-            CREATE TABLE IF NOT EXISTS `res_group` (
+            CREATE TABLE IF NOT EXISTS `%sres_group` (
                 `id`                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
                 `parent_id`         BIGINT       DEFAULT NULL COMMENT '父自定义分组 id；挂在区划下时为 null',
                 `parent_civil_code` VARCHAR(12)  DEFAULT NULL COMMENT '父区划编号（civilCode）；挂在自定义分组下时为 null',
@@ -39,10 +42,10 @@ public class GroupSchemaInitializer implements InitializingBean {
             """;
 
     private static final String CREATE_MEMBER_SQL = """
-            CREATE TABLE IF NOT EXISTS `res_group_member` (
+            CREATE TABLE IF NOT EXISTS `%sres_group_member` (
                 `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
                 `group_ref`   VARCHAR(32)  NOT NULL COMMENT '分组节点引用：ROOT 或 G:自定义分组 id',
-                `member_type` VARCHAR(16)  NOT NULL DEFAULT 'OLT' COMMENT '成员类型：OLT / ONU（光猫）',
+                `member_type` VARCHAR(16)  NOT NULL DEFAULT '%s' COMMENT '成员类型：本表只存该类型（OLT / ONU）',
                 `member_id`   BIGINT       NOT NULL COMMENT '成员主键：OLT 为 olt_device.id；ONU 恒 0',
                 `member_ref`  VARCHAR(64)  DEFAULT NULL COMMENT '成员业务标识：OLT 同 member_id 字符串；ONU 为光猫标识（如 SN）',
                 `member_label` VARCHAR(128) DEFAULT NULL COMMENT '绑定时的成员名称快照',
@@ -50,9 +53,9 @@ public class GroupSchemaInitializer implements InitializingBean {
                 `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '操作人',
                 `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_member` (`member_type`, `member_ref`),
+                UNIQUE KEY `uk_member` (`member_ref`),
                 KEY `idx_group_ref` (`group_ref`)
-            ) ENGINE = InnoDB COMMENT '分组成员绑定关系'
+            ) ENGINE = InnoDB COMMENT '分组成员归属关系'
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -71,91 +74,52 @@ public class GroupSchemaInitializer implements InitializingBean {
             return;
         }
         try {
-            jdbcTemplate.execute(CREATE_GROUP_SQL);
-            jdbcTemplate.execute(CREATE_MEMBER_SQL);
-            migrateGroupTable();
-            migrateMemberTable();
-            Logs.info(Logs.Module.SYSTEM, "分组表已就绪", "表", "res_group, res_group_member");
+            for (String prefix : new String[]{"olt_", "onu_"}) {
+                jdbcTemplate.execute(String.format(CREATE_GROUP_SQL, prefix));
+                jdbcTemplate.execute(String.format(CREATE_MEMBER_SQL, prefix, "olt_".equals(prefix) ? "OLT" : "ONU"));
+            }
+            migrateFromLegacyTables();
+            Logs.info(Logs.Module.SYSTEM, "分组表已就绪",
+                    "表", "olt_res_group, olt_res_group_member, onu_res_group, onu_res_group_member");
         } catch (Exception e) {
             Logs.error(Logs.Module.SYSTEM, "分组表自动建表失败，请手工执行 sql/mysql.sql", e);
         }
     }
 
-    /** res_group 迁移：补 parent_civil_code / civil_code 列（挂在区划下的自定义节点） */
-    private void migrateGroupTable() {
-        if (!columnExists("res_group", "parent_civil_code")) {
-            jdbcTemplate.execute("ALTER TABLE `res_group` ADD COLUMN `parent_civil_code` VARCHAR(12) DEFAULT NULL COMMENT '父区划编号（civilCode）；挂在自定义分组下时为 null'");
-            Logs.info(Logs.Module.SYSTEM, "分组表结构补齐", "表", "res_group", "列", "parent_civil_code");
+    /** 旧单表数据按 member_type 分流迁到各自新表（目标空才迁，幂等）；旧表保留不清 */
+    private void migrateFromLegacyTables() {
+        if (tableExists("res_group") && !tableExistsWithData("olt_res_group")) {
+            jdbcTemplate.update("INSERT INTO `olt_res_group` SELECT * FROM `res_group`");
+            Logs.info(Logs.Module.SYSTEM, "旧分组表数据已迁至 olt_res_group", "行数",
+                    jdbcTemplate.queryForObject("SELECT COUNT(*) FROM `olt_res_group`", Integer.class));
         }
-        if (!columnExists("res_group", "civil_code")) {
-            jdbcTemplate.execute("ALTER TABLE `res_group` ADD COLUMN `civil_code` VARCHAR(12) DEFAULT NULL COMMENT '节点关联的区划编号（civilCode，可选）'");
-            addIndexIfMissing("res_group", "idx_civil", "KEY `idx_civil` (`civil_code`)");
-            Logs.info(Logs.Module.SYSTEM, "分组表结构补齐", "表", "res_group", "列", "civil_code");
-        }
-    }
-
-    /** res_group_member 迁移：老结构（group_code/group_id）统一改为 group_ref 节点引用；补 member_ref 并切换唯一键 */
-    private void migrateMemberTable() {
-        boolean hasGroupRef = columnExists("res_group_member", "group_ref");
-        if (!hasGroupRef) {
-            jdbcTemplate.execute("ALTER TABLE `res_group_member` ADD COLUMN `group_ref` VARCHAR(32) DEFAULT NULL COMMENT '分组节点引用：C:区划编号 或 G:自定义分组 id'");
-        }
-        // member_ref：成员业务标识（OLT=olt_device.id 字符串；ONU=光猫 SN），老数据按 member_id 回填
-        if (!columnExists("res_group_member", "member_ref")) {
-            jdbcTemplate.execute("ALTER TABLE `res_group_member` ADD COLUMN `member_ref` VARCHAR(64) DEFAULT NULL COMMENT '成员业务标识：OLT 同 member_id 字符串；ONU 为光猫标识（如 SN）'");
-            Logs.info(Logs.Module.SYSTEM, "分组绑定表结构补齐", "表", "res_group_member", "列", "member_ref");
-        }
-        jdbcTemplate.update("UPDATE `res_group_member` SET `member_ref` = `member_id` WHERE `member_ref` IS NULL");
-        // 老结构的唯一键允许同一设备挂多组，改成按设备唯一；
-        // ONU 的 member_id 恒 0，唯一性落在 (member_type, member_ref) 上
-        dropIndexIfExists("res_group_member", "uk_group_member");
-        if (indexHasColumn("res_group_member", "uk_member", "member_ref")) {
-            // 已是 (member_type, member_ref) 版本，跳过
-        } else {
-            dropIndexIfExists("res_group_member", "uk_member");
-            addIndexIfMissing("res_group_member", "uk_member",
-                    "UNIQUE KEY `uk_member` (`member_type`, `member_ref`)");
-            Logs.info(Logs.Module.SYSTEM, "分组绑定唯一键已切换", "索引", "uk_member(member_type, member_ref)");
-        }
-        if (!hasGroupRef) {
-            Logs.info(Logs.Module.SYSTEM, "分组绑定表已切换为 group_ref 节点引用");
+        if (tableExists("res_group_member")) {
+            if (!tableExistsWithData("olt_res_group_member")) {
+                jdbcTemplate.update("INSERT INTO `olt_res_group_member` " +
+                        "SELECT * FROM `res_group_member` WHERE `member_type` <> 'ONU'");
+                Logs.info(Logs.Module.SYSTEM, "旧归属表 OLT 数据已迁至 olt_res_group_member");
+            }
+            if (!tableExistsWithData("onu_res_group_member")) {
+                jdbcTemplate.update("INSERT INTO `onu_res_group_member` " +
+                        "SELECT * FROM `res_group_member` WHERE `member_type` = 'ONU'");
+                Logs.info(Logs.Module.SYSTEM, "旧归属表光猫数据已迁至 onu_res_group_member");
+            }
         }
     }
 
-    /** 唯一键定义里是否包含某列（避免每次启动 drop/add 抖动） */
-    private boolean indexHasColumn(String table, String index, String column) {
+    private boolean tableExists(String table) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.statistics" +
-                " WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? AND column_name = ?",
-                Integer.class, table, index, column);
+                "SELECT COUNT(*) FROM information_schema.tables" +
+                " WHERE table_schema = DATABASE() AND table_name = ?",
+                Integer.class, table);
         return count != null && count > 0;
     }
 
-    private void dropIndexIfExists(String table, String index) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.statistics" +
-                " WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
-                Integer.class, table, index);
-        if (count != null && count > 0) {
-            jdbcTemplate.execute("ALTER TABLE `" + table + "` DROP INDEX `" + index + "`");
+    private boolean tableExistsWithData(String table) {
+        if (!tableExists(table)) {
+            return false;
         }
-    }
-
-    private void addIndexIfMissing(String table, String index, String definition) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.statistics" +
-                " WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
-                Integer.class, table, index);
-        if (count == null || count == 0) {
-            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD " + definition);
-        }
-    }
-
-    private boolean columnExists(String table, String column) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.columns" +
-                " WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
-                Integer.class, table, column);
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM `" + table + "`", Integer.class);
         return count != null && count > 0;
     }
 }

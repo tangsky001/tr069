@@ -7,6 +7,7 @@
 package com.PilotACS.acl;
 
 import com.PilotACS.common.log.Logs;
+import com.PilotACS.group.config.GroupScopeContext;
 import com.PilotACS.common.security.LoginUser;
 import com.PilotACS.common.security.UserContext;
 import com.PilotACS.service.SysOperLogService;
@@ -181,16 +182,28 @@ public class DeviceAclService {
 
     // ---------------------------------------------------------------- 授权维护
 
-    /** 某范围（分组/设备）的授权清单 */
-    public List<ResAcl> listByScope(String scopeType, String scopeId) {
-        return aclMapper.selectList(new LambdaQueryWrapper<ResAcl>()
+    /** 某范围（分组/设备）的授权清单；memberType 决定查 olt_res_acl 还是 onu_res_acl（默认 OLT） */
+    public List<ResAcl> listByScope(String scopeType, String scopeId, String memberType) {
+        String scope = GroupScopeContext.normalize(memberType);
+        return GroupScopeContext.with(scope, () -> aclMapper.selectList(new LambdaQueryWrapper<ResAcl>()
                 .eq(ResAcl::getScopeType, scopeType)
                 .eq(ResAcl::getScopeId, scopeId)
-                .orderByAsc(ResAcl::getId));
+                .orderByAsc(ResAcl::getId)));
     }
 
     /** 授权：同一主体+范围覆盖更新 */
     public String grant(Long principalId, String scopeType, String scopeId, List<String> perms, String operator) {
+        return grant(principalId, scopeType, scopeId, perms, operator, GroupScopeContext.OLT);
+    }
+
+    /** 授权（指定表域）：OLT 与光猫权限各存各表 */
+    public String grant(Long principalId, String scopeType, String scopeId, List<String> perms,
+                        String operator, String memberType) {
+        String scope = GroupScopeContext.normalize(memberType);
+        return GroupScopeContext.with(scope, () -> doGrant(principalId, scopeType, scopeId, perms, operator));
+    }
+
+    private String doGrant(Long principalId, String scopeType, String scopeId, List<String> perms, String operator) {
         if (principalId == null) {
             return "请选择用户";
         }
@@ -234,8 +247,13 @@ public class DeviceAclService {
         return null;
     }
 
-    /** 撤销授权（按 ACL 记录主键） */
-    public String revoke(Long id) {
+    /** 撤销授权（按 ACL 记录主键）；memberType 决定操作哪套 ACL 表（默认 OLT） */
+    public String revoke(Long id, String memberType) {
+        String scope = GroupScopeContext.normalize(memberType);
+        return GroupScopeContext.with(scope, () -> doRevoke(id));
+    }
+
+    private String doRevoke(Long id) {
         if (id == null || aclMapper.selectById(id) == null) {
             return "授权记录不存在";
         }

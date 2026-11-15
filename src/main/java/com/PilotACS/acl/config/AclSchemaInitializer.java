@@ -14,12 +14,16 @@ import org.springframework.stereotype.Component;
 
 /**
  * 设备/分组级 ACL 表自动补建（DDL 与 sql/mysql.sql 保持一致）。
+ *
+ * <p>OLT 与光猫权限各一套表（olt_res_acl / onu_res_acl），结构与规则相同、数据互不混；
+ * 旧单表 res_acl 若存在，启动时自动迁到 olt_res_acl（旧表保留不清，便于回退）。</p>
  */
 @Component
 public class AclSchemaInitializer implements InitializingBean {
 
+    /** %s = 表名前缀（olt_ / onu_） */
     private static final String CREATE_ACL_SQL = """
-            CREATE TABLE IF NOT EXISTS `res_acl` (
+            CREATE TABLE IF NOT EXISTS `%sres_acl` (
                 `id`           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
                 `principal_id` BIGINT      NOT NULL COMMENT '授权对象：sys_user.id',
                 `scope_type`   VARCHAR(10) NOT NULL COMMENT '范围类型：device / group',
@@ -48,10 +52,32 @@ public class AclSchemaInitializer implements InitializingBean {
             return;
         }
         try {
-            jdbcTemplate.execute(CREATE_ACL_SQL);
-            Logs.info(Logs.Module.SYSTEM, "ACL 表已就绪", "表", "res_acl");
+            for (String prefix : new String[]{"olt_", "onu_"}) {
+                jdbcTemplate.execute(String.format(CREATE_ACL_SQL, prefix));
+            }
+            // 旧 ACL 全是 OLT 分组/设备授权，迁到 olt_res_acl；目标非空则跳过（幂等）
+            Integer legacy = countTable("res_acl");
+            if (legacy != null && legacy > 0) {
+                Integer target = countTable("olt_res_acl");
+                if (target != null && target == 0) {
+                    jdbcTemplate.update("INSERT INTO `olt_res_acl` SELECT * FROM `res_acl`");
+                    Logs.info(Logs.Module.SYSTEM, "旧 ACL 数据已迁至 olt_res_acl", "行数", legacy);
+                }
+            }
+            Logs.info(Logs.Module.SYSTEM, "ACL 表已就绪", "表", "olt_res_acl, onu_res_acl");
         } catch (Exception e) {
             Logs.error(Logs.Module.SYSTEM, "ACL 表自动建表失败，请手工执行 sql/mysql.sql", e);
         }
+    }
+
+    private Integer countTable(String table) {
+        Integer exists = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.tables" +
+                " WHERE table_schema = DATABASE() AND table_name = ?",
+                Integer.class, table);
+        if (exists == null || exists == 0) {
+            return null;
+        }
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM `" + table + "`", Integer.class);
     }
 }

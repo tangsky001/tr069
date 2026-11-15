@@ -47,36 +47,37 @@ public class GroupController {
         return Result.ok(groupService.tree(memberType));
     }
 
-    /** 建组候选：父节点下一级可选的区划列表（根节点列省份，省列市，市列区县） */
-    @Operation(summary = "建组候选：父节点下一级可选区划（根→省，省→市，市→区县；自定义节点无候选）")
+    /** 建组候选：父节点下一级可选的区划列表（根节点列省份，省列市，市列区县）；OLT/ONU 各自的树 */
+    @Operation(summary = "建组候选：父节点下一级可选区划（根→省，省→市，市→区县；自定义节点无候选）；memberType=OLT/ONU（默认 OLT）")
     @GetMapping("/candidates")
-    public Result<List<GroupNodeView>> candidates(@RequestParam(value = "parentRef", required = false) String parentRef) {
-        return Result.ok(groupService.candidates(parentRef == null || parentRef.isBlank() ? "ROOT" : parentRef));
+    public Result<List<GroupNodeView>> candidates(@RequestParam(value = "parentRef", required = false) String parentRef,
+                                                  @RequestParam(value = "memberType", required = false) String memberType) {
+        return Result.ok(groupService.candidates(parentRef == null || parentRef.isBlank() ? "ROOT" : parentRef, memberType));
     }
 
-    /** 创建分组（落库）：选区划（层级必须衔接）或自定义名称 */
-    @Operation(summary = "创建分组：父节点下落库；选区划（与父节点层级衔接）或自定义名称")
+    /** 创建分组（落库）：选区划（层级必须衔接）或自定义名称；OLT/ONU 各自的树 */
+    @Operation(summary = "创建分组：父节点下落库；选区划（与父节点层级衔接）或自定义名称；memberType=OLT/ONU（默认 OLT）")
     @PostMapping("/create")
     public Result<Void> create(@RequestBody GroupCreateRequest request, HttpServletRequest httpRequest) {
         String error = groupService.create(request.getParentRef(), request.getCivilCode(),
-                request.getName(), operator(httpRequest));
+                request.getName(), operator(httpRequest), request.getMemberType());
         return error == null ? Result.ok() : Result.fail(error);
     }
 
     /** 重命名自定义分组 */
-    @Operation(summary = "重命名自定义分组（区划节点不可改名）")
+    @Operation(summary = "重命名自定义分组（区划节点不可改名）；memberType=OLT/ONU（默认 OLT）")
     @PostMapping("/rename")
     public Result<Void> rename(@RequestBody GroupRenameRequest request) {
         Long id = parseGroupId(request.getId());
-        String error = id == null ? "分组不存在" : groupService.rename(id, request.getName());
+        String error = id == null ? "分组不存在" : groupService.rename(id, request.getName(), request.getMemberType());
         return error == null ? Result.ok() : Result.fail(error);
     }
 
     /** 删除自定义分组：无下级且无绑定成员才允许 */
-    @Operation(summary = "删除自定义分组：有子分组或绑定成员时拒绝；区划节点不可删除")
+    @Operation(summary = "删除自定义分组：有子分组或绑定成员时拒绝；区划节点不可删除；memberType=OLT/ONU（默认 OLT）")
     @PostMapping("/delete")
     public Result<Void> delete(@RequestBody GroupDeleteRequest request) {
-        String error = groupService.delete(request.getId());
+        String error = groupService.delete(request.getId(), request.getMemberType());
         return error == null ? Result.ok() : Result.fail(error);
     }
 

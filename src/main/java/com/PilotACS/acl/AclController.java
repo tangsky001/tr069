@@ -46,28 +46,31 @@ public class AclController {
                 .orderByAsc(SysUser::getId)));
     }
 
-    /** 某范围（分组/设备）的授权清单 */
-    @Operation(summary = "某范围的授权清单")
+    /** 某范围（分组/设备）的授权清单；memberType=OLT/ONU 各查各的 ACL 表（默认 OLT） */
+    @Operation(summary = "某范围的授权清单；memberType=OLT/ONU（默认 OLT）")
     @GetMapping("/list")
-    public Result<List<ResAcl>> list(@RequestParam String scopeType, @RequestParam String scopeId) {
-        return Result.ok(aclService.listByScope(scopeType, scopeId));
+    public Result<List<ResAcl>> list(@RequestParam String scopeType, @RequestParam String scopeId,
+                                     @RequestParam(value = "memberType", required = false) String memberType) {
+        return Result.ok(aclService.listByScope(scopeType, scopeId, memberType));
     }
 
     /** 授权（同主体+范围覆盖更新） */
-    @Operation(summary = "授权：给用户授予某分组/设备的动作")
+    @Operation(summary = "授权：给用户授予某分组/设备的动作；memberType=OLT/ONU（默认 OLT）")
     @PostMapping("/grant")
-    public Result<Void> grant(@RequestBody AclGrantRequest request) {
+    public Result<Void> grant(@RequestBody AclGrantRequest request,
+                              @RequestParam(value = "memberType", required = false) String memberType) {
         String operator = UserContext.get() == null ? null : UserContext.get().getUsername();
         String error = aclService.grant(request.getPrincipalId(), request.getScopeType(),
-                request.getScopeId(), request.getPerms(), operator);
+                request.getScopeId(), request.getPerms(), operator, memberType);
         return error == null ? Result.ok() : Result.fail(error);
     }
 
     /** 撤销授权 */
-    @Operation(summary = "撤销授权")
+    @Operation(summary = "撤销授权；memberType=OLT/ONU（默认 OLT）")
     @PostMapping("/revoke")
-    public Result<Void> revoke(@RequestBody AclRevokeRequest request) {
-        String error = aclService.revoke(request.getId());
+    public Result<Void> revoke(@RequestBody AclRevokeRequest request,
+                               @RequestParam(value = "memberType", required = false) String memberType) {
+        String error = aclService.revoke(request.getId(), memberType);
         return error == null ? Result.ok() : Result.fail(error);
     }
 }

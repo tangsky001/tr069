@@ -196,12 +196,13 @@
       </div>
     </el-dialog>
 
-    <!-- 设备/分组级授权弹窗 -->
+    <!-- 设备/分组级授权弹窗（OLT 表域） -->
     <acl-dialog
       :visible.sync="aclVisible"
       :scope-type="aclScopeType"
       :scope-id="aclScopeId"
       :title="aclTitle"
+      member-type="OLT"
     />
 
     <!-- 添加 / 编辑 OLT：添加即归属当前选中分组（groupRef 为空 = 根节点） -->
@@ -411,7 +412,7 @@ export default {
       // 拉取父节点下一级区划候选：根→省份，省→市，市→区县
       this.dialogCandidateLoading = true
       try {
-        const res = await fetchGroupCandidates(this.dialogParentRef)
+        const res = await fetchGroupCandidates(this.dialogParentRef, 'OLT')
         this.dialogCandidates = res.data || []
       } catch (e) {
         this.$message.error('区划候选加载失败，请确认后端已重新打包启动')
@@ -442,7 +443,8 @@ export default {
         await createGroup({
           parentRef: this.dialogParentRef || 'ROOT',
           civilCode: this.dialogSelectedCivil,
-          name: this.dialogName.trim()
+          name: this.dialogName.trim(),
+          memberType: 'OLT'
         })
         this.$message.success('分组已创建')
         this.dialogVisible = false
@@ -466,7 +468,7 @@ export default {
       }
       this.dialogSaving = true
       try {
-        await renameGroup(this.renameId, this.renameName.trim())
+        await renameGroup(this.renameId, this.renameName.trim(), 'OLT')
         this.$message.success('已重命名')
         this.renameVisible = false
         await this.loadTree()
@@ -484,7 +486,7 @@ export default {
         return
       }
       try {
-        await deleteGroup(node.nodeRef)
+        await deleteGroup(node.nodeRef, 'OLT')
         this.$message.success('已删除')
         if (this.currentRef === node.nodeRef) {
           this.currentRef = ''

@@ -255,8 +255,11 @@ CREATE TABLE IF NOT EXISTS `olt_quick_setup_config` (
     KEY `idx_olt` (`olt_id`)
 ) ENGINE = InnoDB COMMENT '快速开通参数';
 
--- 自定义分组节点：骨架来自 civilCode.csv（省→市→区县，不落库），此处只存手动创建/挂靠的节点
-CREATE TABLE IF NOT EXISTS `res_group` (
+-- ============ OLT / 光猫分组：各一套物理表（树 + 归属 + ACL），互不混 ============
+-- 旧单表 res_group / res_group_member / res_acl 已由启动迁移分流到下面对应新表（旧表保留，确认无误后可手工删除）
+
+-- 自定义分组节点（OLT 树）：骨架来自 civilCode.csv（省→市→区县，不落库），此处只存手动创建/挂靠的节点
+CREATE TABLE IF NOT EXISTS `olt_res_group` (
     `id`                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     `parent_id`         BIGINT       DEFAULT NULL COMMENT '父自定义分组 id；挂在区划下时为 null',
     `parent_civil_code` VARCHAR(12)  DEFAULT NULL COMMENT '父区划编号（civilCode）；挂在自定义分组下时为 null',
@@ -270,26 +273,59 @@ CREATE TABLE IF NOT EXISTS `res_group` (
     KEY `idx_parent` (`parent_id`),
     KEY `idx_parent_civil` (`parent_civil_code`),
     KEY `idx_civil` (`civil_code`)
-) ENGINE = InnoDB COMMENT '自定义分组（挂在区划树上）';
+) ENGINE = InnoDB COMMENT 'OLT 自定义分组（挂在区划树上）';
 
--- 分组成员绑定关系（group_ref 统一引用：ROOT / G:自定义分组 id；member_type：OLT / ONU）
-CREATE TABLE IF NOT EXISTS `res_group_member` (
+-- OLT 成员归属关系（group_ref 统一引用：ROOT / G:id；member_type 恒 OLT）
+CREATE TABLE IF NOT EXISTS `olt_res_group_member` (
     `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     `group_ref`   VARCHAR(32)  NOT NULL COMMENT '分组节点引用：ROOT 或 G:自定义分组 id',
-    `member_type` VARCHAR(16)  NOT NULL DEFAULT 'OLT' COMMENT '成员类型：OLT / ONU（光猫）',
-    `member_id`   BIGINT       NOT NULL COMMENT '成员主键：OLT 为 olt_device.id；ONU 恒 0',
-    `member_ref`  VARCHAR(64)  DEFAULT NULL COMMENT '成员业务标识：OLT 同 member_id 字符串；ONU 为光猫标识（如 SN）',
+    `member_type` VARCHAR(16)  NOT NULL DEFAULT 'OLT' COMMENT '成员类型：本表只存 OLT',
+    `member_id`   BIGINT       NOT NULL COMMENT '成员主键：olt_device.id',
+    `member_ref`  VARCHAR(64)  DEFAULT NULL COMMENT '成员业务标识：同 member_id 字符串',
     `member_label` VARCHAR(128) DEFAULT NULL COMMENT '绑定时的成员名称快照',
     `remark`      VARCHAR(255) DEFAULT NULL COMMENT '备注',
     `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '操作人',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_member` (`member_type`, `member_ref`),
+    UNIQUE KEY `uk_member` (`member_ref`),
     KEY `idx_group_ref` (`group_ref`)
-) ENGINE = InnoDB COMMENT '分组成员绑定关系';
+) ENGINE = InnoDB COMMENT 'OLT 分组成员归属关系';
 
--- ============ 设备/分组级 ACL（细到每台设备的看与操作授权） ============
-CREATE TABLE IF NOT EXISTS `res_acl` (
+-- 自定义分组节点（光猫树）：与 OLT 树结构相同、数据独立
+CREATE TABLE IF NOT EXISTS `onu_res_group` (
+    `id`                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `parent_id`         BIGINT       DEFAULT NULL COMMENT '父自定义分组 id；挂在区划下时为 null',
+    `parent_civil_code` VARCHAR(12)  DEFAULT NULL COMMENT '父区划编号（civilCode）；挂在自定义分组下时为 null',
+    `civil_code`        VARCHAR(12)  DEFAULT NULL COMMENT '节点关联的区划编号（civilCode，可选）',
+    `name`              VARCHAR(64)  NOT NULL COMMENT '分组名称',
+    `sort`              INT          DEFAULT 0 COMMENT '排序号，同级从小到大',
+    `remark`            VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `created_by`        VARCHAR(64)  DEFAULT NULL COMMENT '创建人',
+    `created_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_parent` (`parent_id`),
+    KEY `idx_parent_civil` (`parent_civil_code`),
+    KEY `idx_civil` (`civil_code`)
+) ENGINE = InnoDB COMMENT '光猫自定义分组（挂在区划树上）';
+
+-- 光猫成员归属关系（group_ref 统一引用：ROOT / G:id；member_type 恒 ONU，member_ref = 光猫 SN）
+CREATE TABLE IF NOT EXISTS `onu_res_group_member` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `group_ref`   VARCHAR(32)  NOT NULL COMMENT '分组节点引用：ROOT 或 G:自定义分组 id',
+    `member_type` VARCHAR(16)  NOT NULL DEFAULT 'ONU' COMMENT '成员类型：本表只存 ONU（光猫）',
+    `member_id`   BIGINT       NOT NULL COMMENT '成员主键：光猫模块未接入，恒 0',
+    `member_ref`  VARCHAR(64)  DEFAULT NULL COMMENT '成员业务标识：光猫标识（如 SN）',
+    `member_label` VARCHAR(128) DEFAULT NULL COMMENT '绑定时的成员名称快照',
+    `remark`      VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '操作人',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_member` (`member_ref`),
+    KEY `idx_group_ref` (`group_ref`)
+) ENGINE = InnoDB COMMENT '光猫分组成员归属关系';
+
+-- ============ 设备/分组级 ACL（OLT 与光猫各一套，规则相同） ============
+CREATE TABLE IF NOT EXISTS `olt_res_acl` (
     `id`           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
     `principal_id` BIGINT      NOT NULL COMMENT '授权对象：sys_user.id',
     `scope_type`   VARCHAR(10) NOT NULL COMMENT '范围类型：device / group',
@@ -299,7 +335,19 @@ CREATE TABLE IF NOT EXISTS `res_acl` (
     `created_at`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_principal_scope` (`principal_id`, `scope_type`, `scope_id`)
-) ENGINE = InnoDB COMMENT '设备/分组级 ACL';
+) ENGINE = InnoDB COMMENT 'OLT 设备/分组级 ACL';
+
+CREATE TABLE IF NOT EXISTS `onu_res_acl` (
+    `id`           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `principal_id` BIGINT      NOT NULL COMMENT '授权对象：sys_user.id',
+    `scope_type`   VARCHAR(10) NOT NULL COMMENT '范围类型：device / group',
+    `scope_id`     VARCHAR(40) NOT NULL COMMENT '范围引用：分组为 ROOT / G:id（光猫设备级待模块接入）',
+    `perms`        VARCHAR(64) NOT NULL DEFAULT 'view' COMMENT '授予动作，逗号分隔：view,operate,update,delete',
+    `created_by`   VARCHAR(64) DEFAULT NULL COMMENT '创建人',
+    `created_at`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_principal_scope` (`principal_id`, `scope_type`, `scope_id`)
+) ENGINE = InnoDB COMMENT '光猫设备/分组级 ACL';
 
 -- OPS_ADMIN 增加 ACL 管理权限码（幂等；老库手动执行一次即可）
 INSERT INTO `sys_role_permission` (`role_code`, `perm_code`)

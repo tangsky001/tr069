@@ -22,4 +22,7 @@ public class GroupCreateRequest {
 
     @Schema(description = "分组名称：选区划时可留空（默认区划名）；自定义节点必填，如「北京其他区域」")
     private String name;
+
+    @Schema(description = "表域：OLT / ONU（默认 OLT）——OLT 与光猫各一棵独立的分组树")
+    private String memberType;
 }

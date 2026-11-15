@@ -16,4 +16,7 @@ public class GroupDeleteRequest {
 
     @Schema(description = "节点引用：G:自定义分组 id（区划节点会被拒绝）")
     private String id;
+
+    @Schema(description = "表域：OLT / ONU（默认 OLT）")
+    private String memberType;
 }

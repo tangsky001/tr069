@@ -55,6 +55,7 @@ const ACTION_TEXT = { view: '查看', operate: '操作', update: '编辑', delet
 
 /**
  * 设备/分组级授权弹窗：配置谁能看、谁能操作某一台设备或整个分组。
+ * memberType=OLT/ONU 是表域：OLT 与光猫权限各存各表（olt_res_acl / onu_res_acl）。
  * 授权后立即生效（后端 API 层拦截），无需重启。
  */
 export default {
@@ -64,7 +65,9 @@ export default {
     // device / group
     scopeType: { type: String, default: 'device' },
     scopeId: { type: String, default: null },
-    title: { type: String, default: '' }
+    title: { type: String, default: '' },
+    // 表域：OLT / ONU（默认 OLT）
+    memberType: { type: String, default: 'OLT' }
   },
   data() {
     return {
@@ -110,7 +113,7 @@ export default {
         return
       }
       this.loading = true
-      fetchAclList(this.scopeType, this.scopeId)
+      fetchAclList(this.scopeType, this.scopeId, this.memberType)
         .then(res => {
           this.rows = res.data || []
         })
@@ -139,7 +142,8 @@ export default {
         principalId: this.userId,
         scopeType: this.scopeType,
         scopeId: this.scopeId,
-        perms: this.actions
+        perms: this.actions,
+        memberType: this.memberType
       })
         .then(() => {
           this.$message.success('已授权，立即生效')
@@ -151,7 +155,7 @@ export default {
         })
     },
     revoke(row) {
-      revokeAcl(row.id)
+      revokeAcl(row.id, this.memberType)
         .then(() => {
           this.$message.success('已移除授权')
           this.loadRows()

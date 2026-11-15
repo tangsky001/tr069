@@ -45,23 +45,116 @@
         </el-card>
       </div>
 
-      <!-- 右：光猫设备区（设备台账待光猫接入后开放） -->
+      <!-- 右：光猫设备台账（设备模块未接入，先按分组归属展示一行一台光猫） -->
       <div class="onu-main-col">
-        <el-card shadow="never" class="group-card">
+        <el-card ref="deviceCard" shadow="never" class="group-card">
           <div slot="header" class="panel-header">
             <span>
               光猫设备
               <span v-if="currentPath" class="member-path">{{ currentPath }}</span>
             </span>
+            <div class="head-actions">
+              <el-tag
+                v-if="currentRef"
+                size="mini"
+                type="warning"
+                closable
+                @close="clearNode"
+              >分组：{{ currentNode ? currentNode.name : currentRef }}</el-tag>
+              <el-button size="mini" icon="el-icon-refresh" :loading="membersLoading" @click="loadMembers">刷新</el-button>
+            </div>
           </div>
-          <div class="empty">
-            <i class="el-icon-monitor empty-icon" />
-            <div>光猫设备管理建设中</div>
-            <div class="empty-sub">当前可先在左侧维护光猫的分组结构（与 OLT 共用同一棵资源分组树），设备台账接入后在此展示与归属。</div>
-          </div>
+
+          <el-table
+            ref="deviceTable"
+            v-loading="membersLoading"
+            :data="members"
+            :height="tableHeight"
+            :empty-text="memberEmptyText"
+            size="small"
+            border
+            fit
+            highlight-current-row
+            style="width:100%"
+          >
+            <!-- 设备标识：光猫业务标识（SN）为主，名称快照与归属时间在下面 -->
+            <el-table-column label="设备标识" min-width="220">
+              <template slot-scope="{ row }">
+                <div class="cell-main">{{ row.memberRef || row.name || '—' }}</div>
+                <div class="cell-sub">
+                  <span v-if="row.name && row.name !== row.memberRef">{{ row.name }}</span>
+                  <span v-if="row.boundAt" class="cell-time">归属 {{ fmtTime(row.boundAt) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="PON类型" width="110">
+              <template slot-scope="{ row }">{{ row.ponType || '—' }}</template>
+            </el-table-column>
+
+            <el-table-column label="终端型号" width="120">
+              <template slot-scope="{ row }">{{ row.model || '—' }}</template>
+            </el-table-column>
+
+            <el-table-column label="WAN连接" width="120">
+              <template slot-scope="{ row }">{{ row.wanText || '—' }}</template>
+            </el-table-column>
+
+            <el-table-column label="设备状态" width="110">
+              <template slot-scope="{ row }">
+                <el-tag :type="row.statusLevel || 'info'" size="mini">{{ row.statusText || '未采集' }}</el-tag>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="上线时间" width="170">
+              <template slot-scope="{ row }">{{ row.onlineAt ? fmtTime(row.onlineAt) : '—' }}</template>
+            </el-table-column>
+
+            <!-- 操作：把这台光猫移动到别的分组（ROOT=移回资源根组） -->
+            <el-table-column v-if="canMove" label="操作" width="90" fixed="right">
+              <template slot-scope="{ row }">
+                <el-button type="text" size="mini" icon="el-icon-position" @click="openMove(row)">移动</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </el-card>
       </div>
     </div>
+
+    <!-- 移动光猫到别的分组：点选目标节点，ROOT=移回资源根组 -->
+    <el-dialog
+      :title="'移动光猫：' + (moveRow ? (moveRow.memberRef || moveRow.name || '') : '')"
+      :visible.sync="moveVisible"
+      width="420px"
+      top="8vh"
+      @closed="resetMove"
+    >
+      <div class="move-tip">点选目标分组；选「资源根组」= 移回根节点（不归属任何分组）：</div>
+      <el-tree
+        v-loading="moveLoading"
+        :data="moveTree"
+        :props="{ label: 'name', children: 'children' }"
+        node-key="nodeRef"
+        highlight-current
+        default-expand-all
+        @node-click="onMovePick"
+      >
+        <span slot-scope="{ data }" class="move-node">
+          <i :class="data.kind === 'root' ? 'el-icon-house' : 'el-icon-folder'" />
+          <span>{{ data.name }}</span>
+        </span>
+      </el-tree>
+      <div slot="footer">
+        <el-button size="small" @click="moveVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          size="small"
+          :disabled="!moveTargetRef"
+          :loading="moveSaving"
+          @click="submitMove"
+        >确定</el-button>
+      </div>
+    </el-dialog>
 
     <!-- 右键菜单：区划节点只能新建子分组；自定义节点可改名/删除 -->
     <div
@@ -134,12 +227,13 @@
       </div>
     </el-dialog>
 
-    <!-- 分组级授权弹窗 -->
+    <!-- 分组级授权弹窗（光猫表域 onu_res_acl） -->
     <acl-dialog
       :visible.sync="aclVisible"
       :scope-type="aclScopeType"
       :scope-id="aclScopeId"
       :title="aclTitle"
+      member-type="ONU"
     />
   </div>
 </template>
@@ -148,9 +242,11 @@
 import {
   fetchGroupTree,
   fetchGroupCandidates,
+  fetchGroupMembers,
   createGroup,
   renameGroup,
-  deleteGroup
+  deleteGroup,
+  moveGroupMemberByRef
 } from '@/api/group'
 import AclDialog from './components/AclDialog'
 
@@ -171,6 +267,19 @@ export default {
       currentNode: null,
       currentRef: '',
       currentPath: '',
+      // 光猫设备台账：设备模块未接入，先按分组归属（memberType=ONU）出一行一台
+      members: [],
+      membersLoading: false,
+      // 右侧表格高度自适应
+      tableHeight: null,
+      // 移动光猫到别的分组（调 /group/move-member，已有归属直接改）
+      moveVisible: false,
+      moveRow: null,
+      moveTree: [],
+      moveLoading: false,
+      moveTargetRef: null,
+      moveTargetName: '',
+      moveSaving: false,
       // 右键菜单
       menuVisible: false,
       menuX: 0,
@@ -196,6 +305,19 @@ export default {
       aclTitle: ''
     }
   },
+  computed: {
+    /** 表格空态：区分「选中分组下没有」与「整体还没归属」 */
+    memberEmptyText() {
+      if (this.currentRef) {
+        return '当前分组下还没有归属的光猫，可到「设备管理」里给光猫选「归属分组」'
+      }
+      return '还没有光猫归属记录（光猫设备模块接入后按 SN 自动落归属）'
+    },
+    /** 移动光猫归属走设备管理权限，与「设备管理-归属分组」一致 */
+    canMove() {
+      return this.$has('device:update')
+    }
+  },
   watch: {
     keyword(val) {
       this.$refs.tree && this.$refs.tree.filter(val)
@@ -205,7 +327,12 @@ export default {
     this.loadTree()
     document.addEventListener('click', this.hideMenu)
   },
+  mounted() {
+    this.calcTableHeight()
+    window.addEventListener('resize', this.calcTableHeight)
+  },
   beforeDestroy() {
+    window.removeEventListener('resize', this.calcTableHeight)
     document.removeEventListener('click', this.hideMenu)
   },
   methods: {
@@ -216,9 +343,105 @@ export default {
         const res = await fetchGroupTree('ONU')
         this.tree = res.data || []
         this.syncCurrentNode()
+        await this.loadMembers()
       } finally {
         this.loading = false
       }
+    },
+    /** 拉当前节点（未选节点=根节点）直属光猫：设备模块未接入，返回的是归属记录快照 */
+    async loadMembers() {
+      this.membersLoading = true
+      try {
+        const res = await fetchGroupMembers(this.currentRef || 'ROOT', 'ONU')
+        this.members = res.data || []
+      } catch (e) {
+        this.members = []
+      } finally {
+        this.membersLoading = false
+        this.calcTableHeight()
+      }
+    },
+    /** 取消节点选中：回到根节点视角 */
+    clearNode() {
+      this.currentRef = ''
+      this.currentPath = ''
+      this.currentNode = null
+      this.$refs.tree && this.$refs.tree.setCurrentKey(null)
+      this.loadMembers()
+    },
+    // ---------- 移动光猫到别的分组 ----------
+    /** 打开移动弹窗：拉光猫分组树点选目标节点 */
+    openMove(row) {
+      this.moveRow = row
+      this.moveTargetRef = null
+      this.moveTargetName = ''
+      this.moveVisible = true
+      this.moveLoading = true
+      fetchGroupTree('ONU')
+        .then(res => {
+          this.moveTree = res.data || []
+        })
+        .catch(() => {
+          this.moveTree = []
+        })
+        .finally(() => {
+          this.moveLoading = false
+        })
+    },
+    onMovePick(data) {
+      this.moveTargetRef = data.nodeRef
+      this.moveTargetName = data.name
+    },
+    resetMove() {
+      this.moveRow = null
+      this.moveTargetRef = null
+      this.moveTargetName = ''
+      this.moveTree = []
+    },
+    async submitMove() {
+      if (!this.moveRow || !this.moveTargetRef) {
+        return
+      }
+      const ref = this.moveRow.memberRef || this.moveRow.name
+      this.moveSaving = true
+      try {
+        await moveGroupMemberByRef({
+          groupRef: this.moveTargetRef,
+          memberType: 'ONU',
+          memberRef: ref,
+          memberLabel: this.moveRow.name
+        })
+        this.$message.success('「' + ref + '」已移动到「' + this.moveTargetName + '」')
+        this.moveVisible = false
+        // 左树计数与右侧列表一起刷
+        this.loadTree()
+      } catch (e) {
+        this.$message.error(e && e.message ? e.message : '移动失败')
+      } finally {
+        this.moveSaving = false
+      }
+    },
+
+    /** 时间统一 yyyy-MM-dd HH:mm:ss（后端给的是 ISO，带 T） */
+    fmtTime(value) {
+      if (!value) {
+        return '—'
+      }
+      return String(value).replace('T', ' ').slice(0, 19)
+    },
+    /** 表格高度 = 卡片可用高度 - 卡片头 - body 上下内边距，窗口缩放自动跟随 */
+    calcTableHeight() {
+      this.$nextTick(() => {
+        const card = this.$refs.deviceCard
+        if (!card) {
+          return
+        }
+        const el = card.$el
+        const header = el.querySelector('.el-card__header')
+        const headerH = header ? header.offsetHeight : 0
+        // el-card__body 上下各 20px 内边距
+        this.tableHeight = Math.max(el.clientHeight - headerH - 40, 160)
+      })
     },
     /** 树重新加载后，用 currentRef 在新树里找回当前节点（保持选中态） */
     syncCurrentNode() {
@@ -255,6 +478,7 @@ export default {
       this.currentNode = data
       this.currentRef = data.nodeRef
       this.currentPath = this.pathFromTree(data.nodeRef)
+      await this.loadMembers()
     },
     pathFromTree(ref) {
       const findPath = (nodes, trail) => {
@@ -302,7 +526,7 @@ export default {
     async loadCandidates(parentRef) {
       this.dialogCandidateLoading = true
       try {
-        const res = await fetchGroupCandidates(parentRef)
+        const res = await fetchGroupCandidates(parentRef, 'ONU')
         this.dialogCandidates = res.data || []
       } catch (e) {
         this.dialogCandidates = []
@@ -329,7 +553,8 @@ export default {
         await createGroup({
           parentRef: this.dialogParentRef || 'ROOT',
           civilCode: this.dialogSelectedCivil,
-          name: this.dialogName.trim()
+          name: this.dialogName.trim(),
+          memberType: 'ONU'
         })
         this.$message.success('分组已创建')
         this.dialogVisible = false
@@ -355,7 +580,7 @@ export default {
       }
       this.dialogSaving = true
       try {
-        await renameGroup(this.renameId, this.renameName.trim())
+        await renameGroup(this.renameId, this.renameName.trim(), 'ONU')
         this.$message.success('已重命名')
         this.renameVisible = false
         await this.loadTree()
@@ -373,7 +598,7 @@ export default {
         return
       }
       try {
-        await deleteGroup(node.nodeRef)
+        await deleteGroup(node.nodeRef, 'ONU')
         this.$message.success('已删除')
         if (this.currentRef === node.nodeRef) {
           this.currentRef = ''
@@ -476,25 +701,36 @@ export default {
   font-size: 13px;
   font-weight: 400;
 }
-.empty {
-  flex: 1;
+.head-actions {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: 8px;
+}
+/* 移动弹窗 */
+.move-tip {
+  color: #606266;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.move-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 设备标识列：主行 SN，副行名称/归属时间 */
+.cell-main {
+  color: #303133;
+  font-weight: 500;
+}
+.cell-sub {
+  display: flex;
+  gap: 10px;
   color: #909399;
-  font-size: 14px;
-}
-.empty-icon {
-  font-size: 48px;
-  color: #c0c4cc;
-}
-.empty-sub {
   font-size: 12px;
-  max-width: 420px;
-  text-align: center;
   line-height: 1.6;
+}
+.cell-time {
+  color: #b0b3b8;
 }
 /* 右键菜单 */
 .ctx-menu {

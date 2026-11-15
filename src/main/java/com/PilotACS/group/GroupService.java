@@ -6,6 +6,7 @@
 
 package com.PilotACS.group;
 
+import com.PilotACS.group.config.GroupScopeContext;
 import com.PilotACS.group.entity.GroupMember;
 import com.PilotACS.group.entity.ResGroup;
 import com.PilotACS.group.mapper.GroupMemberMapper;
@@ -39,13 +40,18 @@ import java.util.stream.Collectors;
  * 分组管理服务：默认只有固定根节点「资源根组」，分组节点逐级手动创建落库。
  *
  * <p>建组流程：右键节点 → 弹窗列出该节点区划的下级候选（根节点列 34 省，
- * 省节点列市，市节点列区县；自定义节点只能手输名称）→ 选中后确定才落库 res_group。
+ * 省节点列市，市节点列区县；自定义节点只能手输名称）→ 选中后确定才落库。
  * 节点落库时记录 civil_code（所选区划编号），下一级的候选就由它决定。</p>
  *
  * <p>节点引用 nodeRef：{@code ROOT}（固定根，未绑定设备的默认归属）/ {@code G:id}（已落库分组）。
  * 成员类型 memberType：{@code OLT}（OLT 台账，member_id=olt_device.id）/
- * {@code ONU}（光猫，member_ref=光猫标识如 SN，设备模块接入前归属关系先行落库）。
- * 同一棵分组树两类成员各自独立计数、互不混入。</p>
+ * {@code ONU}（光猫，member_ref=光猫标识如 SN，设备模块接入前归属关系先行落库）。</p>
+ *
+ * <p><b>物理分表：</b>OLT 与光猫各一套表（olt_res_group / onu_res_group、
+ * olt_res_group_member / onu_res_group_member、olt_res_acl / onu_res_acl），
+ * 两棵树互相独立、权限也各自独立。本服务逻辑只写一套，公共入口用
+ * {@link GroupScopeContext#with} 标记当前域，动态表名拦截器落到对应物理表；
+ * 未标记（内部调用/老接口）默认 OLT 域。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -70,7 +76,7 @@ public class GroupService {
 
     /**
      * 分组树：根节点 + 已落库的分组节点（区划节点只有创建过才出现）。
-     * memberType 决定计数与成员清单按哪类设备统计（OLT/ONU 各自独立，互不混入）；null 默认 OLT。
+     * memberType 决定落到哪套表（OLT/ONU 各一棵树）；null 默认 OLT。
      */
     public List<GroupNodeView> tree() {
         return tree(MEMBER_TYPE_OLT);
@@ -78,6 +84,10 @@ public class GroupService {
 
     public List<GroupNodeView> tree(String memberType) {
         String type = normalizeMemberType(memberType);
+        return GroupScopeContext.with(type, () -> doTree(type));
+    }
+
+    private List<GroupNodeView> doTree(String type) {
         // 设备级 ACL：受限用户看不到未授权设备（null = 不限制）；目前只作用于 OLT
         Set<Long> hidden = MEMBER_TYPE_OLT.equals(type) ? deviceAclService.hiddenOltIds(UserContext.get()) : null;
         List<ResGroup> groups = groupMapper.selectList(new LambdaQueryWrapper<ResGroup>()
@@ -196,6 +206,14 @@ public class GroupService {
      * 根节点 → 34 个省份；省节点 → 市；市节点 → 区县；区县/自定义节点 → 无候选（只能手输名称）。
      */
     public List<GroupNodeView> candidates(String parentRef) {
+        return candidates(parentRef, MEMBER_TYPE_OLT);
+    }
+
+    public List<GroupNodeView> candidates(String parentRef, String memberType) {
+        return GroupScopeContext.with(memberType, () -> doCandidates(parentRef));
+    }
+
+    private List<GroupNodeView> doCandidates(String parentRef) {
         String civilCode = ROOT_REF.equals(parentRef) ? null : civilOfNode(parentRef);
         if (civilCode == null && !ROOT_REF.equals(parentRef)) {
             // 自定义节点没有区划锚点，没有下级区划候选
@@ -251,7 +269,7 @@ public class GroupService {
         return total;
     }
 
-    /** 节点引用是否有效：根节点 / G: 前缀查落库记录 */
+    /** 节点引用是否有效：根节点 / G: 前缀查落库记录（须在 scope 上下文内调用，默认 OLT 域） */
     public boolean refExists(String nodeRef) {
         if (nodeRef == null || nodeRef.isBlank()) {
             return false;
@@ -273,7 +291,7 @@ public class GroupService {
         }
     }
 
-    /** 节点全路径文案：资源根组 / 北京市 / 海淀片区 */
+    /** 节点全路径文案：资源根组 / 北京市 / 海淀片区（须在 scope 上下文内调用，默认 OLT 域） */
     public String pathText(String nodeRef) {
         if (nodeRef == null || nodeRef.isBlank()) {
             return "";
@@ -305,6 +323,10 @@ public class GroupService {
 
     public List<GroupMemberView> members(String nodeRef, String memberType) {
         String type = normalizeMemberType(memberType);
+        return GroupScopeContext.with(type, () -> doMembers(nodeRef, type));
+    }
+
+    private List<GroupMemberView> doMembers(String nodeRef, String type) {
         List<GroupMemberView> rows = new ArrayList<>();
         if (!refExists(nodeRef)) {
             return rows;
@@ -418,6 +440,15 @@ public class GroupService {
      * 名称缺省用区划名；不选区划则按自定义名称建组。
      */
     public String create(String parentRef, String civilCode, String name, String operator) {
+        return create(parentRef, civilCode, name, operator, MEMBER_TYPE_OLT);
+    }
+
+    public String create(String parentRef, String civilCode, String name, String operator, String memberType) {
+        return GroupScopeContext.with(memberType,
+                () -> doCreate(parentRef, civilCode, name, operator));
+    }
+
+    private String doCreate(String parentRef, String civilCode, String name, String operator) {
         Long parentId = null;
         if (parentRef != null && !parentRef.isBlank() && !ROOT_REF.equals(parentRef)) {
             if (!parentRef.startsWith(GROUP_PREFIX)) {
@@ -475,6 +506,14 @@ public class GroupService {
 
     /** 重命名分组 */
     public String rename(Long id, String name) {
+        return rename(id, name, MEMBER_TYPE_OLT);
+    }
+
+    public String rename(Long id, String name, String memberType) {
+        return GroupScopeContext.with(memberType, () -> doRename(id, name));
+    }
+
+    private String doRename(Long id, String name) {
         ResGroup group = groupMapper.selectById(id);
         if (group == null) {
             return "分组不存在";
@@ -492,6 +531,15 @@ public class GroupService {
     /** 删除分组：无下级且无绑定成员才允许；根节点不可删 */
     @Transactional
     public String delete(String nodeRef) {
+        return delete(nodeRef, MEMBER_TYPE_OLT);
+    }
+
+    @Transactional
+    public String delete(String nodeRef, String memberType) {
+        return GroupScopeContext.with(memberType, () -> doDelete(nodeRef));
+    }
+
+    private String doDelete(String nodeRef) {
         if (ROOT_REF.equals(nodeRef)) {
             return "根节点不可删除";
         }
@@ -524,6 +572,10 @@ public class GroupService {
      * groupRef 为空或 ROOT = 挂在根节点（不写归属关系）；其余必须是已落库分组节点。
      */
     public String attachAfterCreate(String groupRef, Long oltId, String label) {
+        return GroupScopeContext.with(MEMBER_TYPE_OLT, () -> doAttachAfterCreate(groupRef, oltId, label));
+    }
+
+    private String doAttachAfterCreate(String groupRef, Long oltId, String label) {
         if (groupRef == null || groupRef.isBlank() || ROOT_REF.equals(groupRef)) {
             return null;
         }
@@ -547,6 +599,10 @@ public class GroupService {
      */
     public String attach(String memberType, String memberRef, String label, String groupRef) {
         String type = normalizeMemberType(memberType);
+        return GroupScopeContext.with(type, () -> doAttach(type, memberRef, label, groupRef));
+    }
+
+    private String doAttach(String type, String memberRef, String label, String groupRef) {
         if (memberRef == null || memberRef.isBlank()) {
             return "设备标识不能为空";
         }
@@ -579,6 +635,10 @@ public class GroupService {
      * 与旧"绑定"不同：换分组直接改归属，不需要先解绑。
      */
     public String move(String targetRef, Long oltId, String operator) {
+        return GroupScopeContext.with(MEMBER_TYPE_OLT, () -> doMove(targetRef, oltId, operator));
+    }
+
+    private String doMove(String targetRef, Long oltId, String operator) {
         if (!refExists(targetRef)) {
             return "目标分组不存在";
         }
@@ -630,6 +690,10 @@ public class GroupService {
      */
     public String moveMember(String targetRef, String memberType, String memberRef, String operator) {
         String type = normalizeMemberType(memberType);
+        return GroupScopeContext.with(type, () -> doMoveMember(targetRef, type, memberRef, operator));
+    }
+
+    private String doMoveMember(String targetRef, String type, String memberRef, String operator) {
         if (!refExists(targetRef)) {
             return "目标分组不存在";
         }
@@ -685,14 +749,18 @@ public class GroupService {
 
     /** 设备删除时清理归属关系，避免孤儿记录 */
     public void onDeviceDeleted(Long oltId) {
-        memberMapper.delete(new LambdaQueryWrapper<GroupMember>()
+        GroupScopeContext.with(MEMBER_TYPE_OLT, () -> memberMapper.delete(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, MEMBER_TYPE_OLT)
-                .eq(GroupMember::getMemberId, oltId));
+                .eq(GroupMember::getMemberId, oltId)));
     }
 
     /** 通用清理：设备模块删除设备时调用（ONU 按业务标识清） */
     public void onMemberDeleted(String memberType, String memberRef) {
         String type = normalizeMemberType(memberType);
+        GroupScopeContext.with(type, () -> doMemberDeleted(type, memberRef));
+    }
+
+    private void doMemberDeleted(String type, String memberRef) {
         LambdaQueryWrapper<GroupMember> wrapper = new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, type);
         if (MEMBER_TYPE_OLT.equals(type)) {
@@ -706,6 +774,7 @@ public class GroupService {
         }
         memberMapper.delete(wrapper);
     }
+
     private String vendorText(String vendor) {
         if (vendor == null || vendor.isBlank()) {
             return "—";

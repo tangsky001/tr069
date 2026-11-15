@@ -122,7 +122,7 @@
         </el-table-column>
 
         <el-table-column label="业务状态" align="center">
-          <el-table-column label="WAN 连接" min-width="165">
+          <el-table-column label="WAN 连接" width="140">
             <template slot-scope="{ row }">
               <el-link
                 v-if="wanList(row.sn).length"
@@ -162,7 +162,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="WIFI 信息" min-width="160">
+          <el-table-column label="WIFI 信息" width="140">
             <template slot-scope="{ row }">
               <template v-if="enabledWifiList(row.sn).length">
                 <div class="wifi-list-band-row">
@@ -195,7 +195,7 @@
               <span v-else class="cell-empty">-</span>
             </template>
           </el-table-column>
-          <el-table-column label="SIP 信息" min-width="150">
+          <el-table-column label="SIP 信息" width="140">
             <template slot-scope="{ row }">
               <template v-if="sipList(row.sn).length">
                 <!-- 每一路 SIP 都能点开看全部参数：只读本地快照，不发任何 RPC，
@@ -224,7 +224,7 @@
             </template>
           </el-table-column>
           <!-- 运行信息：运行时长 / 加入时间 / 最后汇报时间 / 汇报IP，取代原先独立的「上报的IP」列 -->
-          <el-table-column label="运行信息" min-width="180">
+          <el-table-column label="运行信息" min-width="160">
             <device-runtime-cell
               slot="header"
               mode="header"
@@ -238,7 +238,7 @@
           </el-table-column>
         </el-table-column>
 
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template slot-scope="{ row }">
             <el-dropdown trigger="click" size="mini" @command="cmd => handleDeviceCommand(cmd, row)">
               <el-button type="text" size="mini">
