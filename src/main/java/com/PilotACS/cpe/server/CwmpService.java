@@ -73,8 +73,10 @@ public class CwmpService {
 
     /**
      * 处理 CPE 的一次 POST（body 为空表示空 POST）
+     *
+     * @param remoteAddr 设备来源地址，无 Cookie 会话时按它兜底找回会话
      */
-    public Reply processRequest(String body, String cookieSessionId) {
+    public Reply processRequest(String body, String cookieSessionId, String remoteAddr) {
         SoapMessage msg;
         try {
             msg = SoapParser.parse(body);
@@ -87,10 +89,21 @@ public class CwmpService {
         String newSessionId = null;
         if (session == null) {
             if (msg.getName() == null) {
-                // 无会话的空 POST：多为设备收尾（TR-069 A.3.2 里空响应即结束会话）。
-                // 不能再回 Inform 请求——Inform 只能 CPE→ACS，个别设备不认会立刻重发空 POST 形成风暴
-                Logs.debug(Logs.Module.CPE, "无会话空 POST，回 200 空响应结束会话");
-                return Reply.empty(200);
+                // 无 Cookie 的空 POST：老设备不回传 session cookie，它的空 POST 找不到会话，
+                // 会话里排的任务永远装不上。按 Inform 时记下的来源地址找回会话；
+                // 只有"已 Inform 等 RPC"状态的会话才认（state 0 没身份，state 2 在飞响应不能空答）
+                CwmpSession fallback = registry.byRemoteAddr(remoteAddr);
+                if (fallback != null && fallback.getState() == CwmpSession.STATE_INFORMED) {
+                    session = fallback;
+                    Logs.info(Logs.Module.CPE, "设备不带 Cookie，按来源地址找回会话", "sn", session.getSn(),
+                            "地址", remoteAddr);
+                } else {
+                    // 真没有会话：多为设备收尾（TR-069 A.3.2 里空响应即结束会话）。
+                    // 不能再回 Inform 请求——Inform 只能 CPE→ACS，个别设备不认会立刻重发空 POST 形成风暴。
+                    // 有些老固件会话结束后仍每 2 秒重发空 POST 要任务，按规范回空响应即可，降为 debug 防刷屏
+                    Logs.debug(Logs.Module.CPE, "无会话空 POST，回 200 空响应结束会话", "地址", remoteAddr);
+                    return Reply.empty(200);
+                }
             }
             if (!"Inform".equals(msg.getName())) {
                 // 没有会话又不报 Inform（含空 POST），直接 400
@@ -100,7 +113,9 @@ public class CwmpService {
                 return new Reply(400, SoapBuilder.acsFault(8000, "Invalid device id"), null);
             }
             session = registry.create(msg.getSerialNumber());
+            session.setRemoteAddr(remoteAddr);
             newSessionId = session.getSessionId();
+            Logs.debug(Logs.Module.CPE, "会话来源地址已记录", "sn", session.getSn(), "地址", remoteAddr);
             // 同 SN 旧会话被顶替时必须完整收尾：在飞任务回队、参数落库、快照刷新。
             // 否则任务卡 running，新会话 loadQueuedTasks 装不到它（只装 queued）→ "无待执行任务"
             CwmpSession superseded = registry.lastSuperseded();
@@ -487,7 +502,10 @@ public class CwmpService {
         s.setEnded(true);
         TaskRun cur = s.getCurrent();
         if (cur != null && !cur.finished() && !cur.isCompleted()) {
-            // 会话中断不判死：任务回队，设备下次上报续跑（与"排队等待设备上线"语义一致）
+            // 会话中断不判死：任务回队，设备下次上报续跑（与"排队等待设备上线"语义一致）。
+            // 打续跑标记：重排时跳过已采到的参数，否则大任务整树重发，
+            // 设备每轮跑到会话上限就断，永远跑不完 → 无限排队
+            store.markTaskResume(cur.getTaskId());
             store.updateTask(cur.getTaskId(), "queued", null, "会话中断(" + reason + ")，待续跑", null);
         }
         store.saveDeviceParams(s.getSn(), s.getData().all(), s.getData().dirtyPaths(), s.getData().isFullSync());

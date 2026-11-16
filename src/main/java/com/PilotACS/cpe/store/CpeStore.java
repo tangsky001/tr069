@@ -441,6 +441,31 @@ public class CpeStore {
                 """, deadline);
     }
 
+    /**
+     * 会话中断回队时给任务打续跑标记（params_json.resume=true）：
+     * 下次装载按断点续传——已采到的参数不再重发，避免"整树重排→设备中途断→回队→再整树重排"的无限循环
+     */
+    public void markTaskResume(long id) {
+        Map<String, Object> row = getTask(id);
+        if (row == null) {
+            return;
+        }
+        Map<String, Object> params = new LinkedHashMap<>();
+        Object pj = row.get("params_json");
+        if (pj instanceof String s && !s.isBlank()) {
+            try {
+                params.putAll(new ObjectMapper().readValue(s, Map.class));
+            } catch (Exception ignore) {
+                // params_json 坏了就只写 resume 标记
+            }
+        }
+        if (Boolean.TRUE.equals(params.get("resume"))) {
+            return;
+        }
+        params.put("resume", true);
+        jdbcTemplate.update("UPDATE cpe_task SET params_json=? WHERE id=?", toJson(params), id);
+    }
+
     private String toJson(Object o) {
         try {
             return JSON.writeValueAsString(o == null ? Map.of() : o);

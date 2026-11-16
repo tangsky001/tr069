@@ -11,9 +11,8 @@ import com.PilotACS.common.log.Logs;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.stereotype.Component;
+import org.springframework.web.HttpRequestHandler;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -22,20 +21,22 @@ import java.util.Base64;
 /**
  * CPE 上报端点（TR-069 CWMP）。
  * <p>注意：这里故意不用 @RestController——项目给所有 RestController 统一加 /api
- * 前缀，而设备侧配置的 ACS URL 不能带 /api，所以用普通 @Controller 挂在配置的
- * 路径上（默认 /acs，可用 acs.cpe.path 覆盖），鉴权由设备侧 Basic 账号控制。
+ * 前缀，而设备侧配置的 ACS URL 不能带 /api。端点由 {@link CpeServerConfig} 用
+ * SimpleUrlHandlerMapping 挂到 acs.cpe.paths 配置的每个路径上（多地址判定），
+ * 鉴权由设备侧 Basic 账号控制。
  */
-@Controller
+@Component
 @RequiredArgsConstructor
-public class CwmpEndpoint {
+public class CwmpEndpoint implements HttpRequestHandler {
 
     private final CwmpService cwmpService;
     private final CpeProperties props;
 
-    @PostMapping("${acs.cpe.path:/acs}")
-    public void post(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        if (!props.isEnabled()) {
-            response.sendError(404);
+    @Override
+    public void handleRequest(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        if (!"POST".equalsIgnoreCase(request.getMethod())) {
+            // GET 一律拒绝（CWMP 只收 POST）
+            response.sendError(405);
             return;
         }
         // 可选 Basic 认证（acs.cpe.auth-username 配置后才启用）
@@ -46,7 +47,7 @@ public class CwmpEndpoint {
         }
         String body = new String(request.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         String sessionId = cookieSession(request);
-        CwmpService.Reply reply = cwmpService.processRequest(body, sessionId);
+        CwmpService.Reply reply = cwmpService.processRequest(body, sessionId, request.getRemoteAddr());
         if (reply.newSessionId() != null) {
             response.addHeader("Set-Cookie", "session=" + reply.newSessionId()
                     + "; Path=/; HttpOnly; Max-Age=" + props.getSessionTimeoutSeconds());
@@ -56,12 +57,6 @@ public class CwmpEndpoint {
             response.setContentType("text/xml; charset=\"utf-8\"");
             response.getOutputStream().write(reply.body().getBytes(StandardCharsets.UTF_8));
         }
-    }
-
-    /** GET 一律拒绝（CWMP 只收 POST） */
-    @GetMapping("${acs.cpe.path:/acs}")
-    public void get(HttpServletResponse response) throws IOException {
-        response.sendError(405);
     }
 
     private boolean basicAuthOk(HttpServletRequest request) {

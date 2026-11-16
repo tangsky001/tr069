@@ -26,7 +26,7 @@ spring:
 
 # 对外公布的主机地址：内网登录二维码用它 + 管理端端口拼链接
 acs:
-  public-host: 127.0.0.1
+  public-host: 10.101.125.100
   group:
     # 启动时自动补建 res_group_member 表
     auto-create-table: true
@@ -44,13 +44,12 @@ acs:
     # 单次采集留档的回显上限(字符)，超出截断
     max-raw-output-chars: 60000
   cpe:
-    # 是否启用 CPE（光猫）CWMP 接入端点
-    enabled: true
-    # 设备侧 ACS URL 指向的路径（不带 /api，设备直连）
-    path: /acs
+    # 设备侧 ACS URL 指向的路径列表（不带 /api，设备直连），每个路径都挂 CWMP 端点；
+    # CPE 端口上的任意其他路径（含不带路径的 http://host:9090/?sn=xxx）自动转发到第一个路径；
+    # 主端口 8888 上命中这些路径的请求一律拒绝，主端口只服务管理端 REST API。
+    paths: /acs,/ACS-server/ACS,/ACS-server/acs,/ACS-server/ACS-server,/ACS,/cwmp,/CWMP,/tr069,/TR069,/CPE,/cpe,/CPE-server,/CPE-server/cpe,/CPE-server/CPE,/CPE-server/CPE-server,/push
     # CPE 独立监听端口（不同厂商设备配置的 ACS 端口不同）；
-    # 不占用 server 主端口 8888，主端口上的 /acs 会被拒绝，主端口只服务管理端 REST API。
-    # 设备 ACS URL 可不带路径（如 http://host:9090/?sn=xxx），会自动转发到 /acs
+    # 不占用 server 主端口 8888，主端口上的 CWMP 路径会被拒绝。
     ports: 9090,8080,8012,6060,5481,9092,6890,9095,7013
     # ACS 侧 Basic 认证账号，留空则不校验
     auth-username: ""

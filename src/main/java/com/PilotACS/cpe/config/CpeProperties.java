@@ -20,11 +20,12 @@ import java.util.List;
 @ConfigurationProperties(prefix = "acs.cpe")
 public class CpeProperties {
 
-    /** 是否启用 CWMP 接入端点 */
-    private boolean enabled = true;
-
-    /** CPE 上报端点路径（设备侧配置的 ACS URL 指向这里） */
-    private String path = "/acs";
+    /**
+     * 设备 ACS URL 可指向的路径列表（不带 /api，设备直连）。
+     * 每个路径都直接挂 CWMP 端点（多地址判定）；CPE 端口上的其他任意路径
+     * （含不带路径的 http://host:9090/?sn=xxx）自动转发到列表第一个路径。
+     */
+    private List<String> paths = List.of("/acs");
 
     /**
      * CPE 设备直连监听端口列表（独立于 server 主端口）。

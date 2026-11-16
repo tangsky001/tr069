@@ -18,6 +18,9 @@ import org.springframework.web.servlet.config.annotation.PathMatchConfigurer;
 import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.util.ArrayList;
+import java.util.List;
+
 // Web 配置：/api 前缀、拦截器、跨域、文档路径
 @Configuration
 @RequiredArgsConstructor
@@ -45,21 +48,25 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        List<String> excludes = new ArrayList<>(List.of(
+                "/api/user/login",
+                "/error",
+                "/favicon.ico",
+                "/v3/api-docs/**",
+                "/swagger-ui/**",
+                "/doc.html",
+                "/doc/index.html",
+                "/webjars/**",
+                "/knife4j/**"));
+        // CPE 上报端点：设备直连，走设备侧 Basic 账号，不走登录态（acs.cpe.paths 多地址）
+        cpeProperties.getPaths().forEach(p -> {
+            String path = p.startsWith("/") ? p : "/" + p;
+            excludes.add(path);
+            excludes.add(path + "/**");
+        });
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/**")
-                .excludePathPatterns(
-                        "/api/user/login",
-                        "/error",
-                        "/favicon.ico",
-                        "/v3/api-docs/**",
-                        "/swagger-ui/**",
-                        "/doc.html",
-                        "/doc/index.html",
-                        "/webjars/**",
-                        "/knife4j/**",
-                        // CPE 上报端点：设备直连，走设备侧 Basic 账号，不走登录态
-                        cpeProperties.getPath(),
-                        cpeProperties.getPath() + "/**");
+                .excludePathPatterns(excludes);
         // 设备级 ACL：认证之后按用户拦截 /olt/{id}** 的查看与操作（在 AuthInterceptor 之后执行）
         registry.addInterceptor(oltAclInterceptor)
                 .addPathPatterns("/api/olt/**");

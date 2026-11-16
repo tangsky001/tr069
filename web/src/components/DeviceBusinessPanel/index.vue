@@ -53,6 +53,7 @@
               <el-tag v-if="item.ipProtocol" size="mini" :type="ipTagType(item.ipProtocol)">
                 {{ item.ipProtocol }}
               </el-tag>
+              <el-tag v-if="item.addrType" size="mini" type="info">{{ item.addrType }}</el-tag>
               <el-tag v-if="item.natEnabled" size="mini">NAT</el-tag>
               <el-tag v-if="item.mtu" size="mini">MTU/{{ item.mtu }}</el-tag>
             </span>
@@ -71,7 +72,7 @@
           </div>
           <div class="wan-row">
             <span class="k">VLAN ID:</span>
-            <span class="v v-strong">{{ show(item.params.VLANIDMark) }}</span>
+            <span class="v v-strong">{{ show(item.vlanId) }}</span>
           </div>
           <div class="wan-row">
             <span class="k">IP地址/子网掩码:</span>
@@ -186,9 +187,9 @@
       <div class="wifi-bar">
         <div v-for="item in sipItems" :key="item.path" class="wifi-chip">
           <i :class="item.registered ? 'el-icon-phone status-ok' : 'el-icon-phone-outline status-bad'" />
-          <span class="wifi-ssid">{{ item.number }}</span>
-          <span :class="item.registered ? 'status-ok' : 'status-bad'">{{ item.statusText }}</span>
-          <span class="wifi-clients">{{ item.server }}</span>
+          <span class="wifi-ssid">{{ show(item.number) }}</span>
+          <span :class="item.registered ? 'status-ok' : 'status-bad'">{{ show(item.statusText) }}</span>
+          <span class="wifi-clients">{{ show(item.server) }}</span>
         </div>
       </div>
     </template>

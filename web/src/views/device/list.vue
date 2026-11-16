@@ -210,7 +210,7 @@
                   <el-tag size="mini" :type="sipTagType(item)">
                     {{ item.statusText }}
                   </el-tag>
-                  <span class="biz-name">{{ item.number }}</span>
+                  <span class="biz-name">{{ showVal(item.number) }}</span>
                 </div>
               </template>
               <span v-else class="cell-empty">-</span>
@@ -592,6 +592,7 @@
             <el-tag v-if="item.ipProtocol" size="mini" :type="ipTagType(item.ipProtocol)">
               {{ item.ipProtocol }}
             </el-tag>
+            <el-tag v-if="item.addrType" size="mini" type="info">{{ item.addrType }}</el-tag>
             <el-tag v-if="item.mtu" size="mini" type="info">MTU/{{ item.mtu }}</el-tag>
           </span>
         </div>
@@ -609,7 +610,7 @@
         </div>
         <div class="wan-param-row">
           <span class="k">VLAN ID:</span>
-          <span class="v v-strong">{{ showVal(item.params.VLANIDMark) }}</span>
+          <span class="v v-strong">{{ showVal(item.vlanId) }}</span>
         </div>
         <div class="wan-param-row">
           <span class="k">IP地址/子网掩码:</span>

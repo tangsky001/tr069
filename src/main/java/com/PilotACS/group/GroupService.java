@@ -466,7 +466,7 @@ public class GroupService {
                 : (binding != null && binding.getMemberLabel() != null ? binding.getMemberLabel() : sn));
         row.setHost(device == null ? null : (String) device.get("connection_request_url"));
         row.setVendorText(device == null || isBlank(device.get("manufacturer"))
-                ? "—" : BrandName.text(String.valueOf(device.get("manufacturer"))));
+                ? "—" : orBrand(String.valueOf(device.get("manufacturer"))));
         String status = device == null ? null : String.valueOf(device.get("status"));
         row.setStatus(status);
         row.setStatusText(statusText(status));
@@ -493,6 +493,12 @@ public class GroupService {
     private String onuDisplayName(Map<String, Object> device, String sn) {
         Object productClass = device.get("product_class");
         return productClass == null || String.valueOf(productClass).isBlank() ? sn : String.valueOf(productClass);
+    }
+
+    /** 厂商显示：全称（Huawei Technologies Co., Ltd / CIOT）→ 中文简称，未登记原样返回 */
+    private String orBrand(String manufacturer) {
+        String label = BrandName.label(manufacturer);
+        return label != null ? label : BrandName.text(manufacturer);
     }
 
     private boolean isBlank(Object v) {

@@ -52,6 +52,27 @@ public class SessionRegistry {
         return sn == null ? null : bySn.get(sn);
     }
 
+    /**
+     * 无 Cookie 回退：按设备来源地址找最近活跃的未结束会话。
+     * <p>老设备（不回传 session cookie）的空 POST 找不到会话，会话里排的任务永远装不上；
+     * 用 Inform 时记下的来源地址兜底。每 SN 只有一个活跃会话，遍历即可。
+     */
+    public CwmpSession byRemoteAddr(String addr) {
+        if (addr == null || addr.isBlank()) {
+            return null;
+        }
+        CwmpSession best = null;
+        for (CwmpSession s : bySn.values()) {
+            if (s.isEnded() || !addr.equals(s.getRemoteAddr())) {
+                continue;
+            }
+            if (best == null || s.getLastActivity() > best.getLastActivity()) {
+                best = s;
+            }
+        }
+        return best;
+    }
+
     public void remove(CwmpSession s) {
         bySn.remove(s.getSn(), s);
         bySessionId.remove(s.getSessionId(), s);

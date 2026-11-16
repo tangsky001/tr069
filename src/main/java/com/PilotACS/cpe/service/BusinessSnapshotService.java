@@ -129,11 +129,18 @@ public class BusinessSnapshotService {
     private Map<String, Object> wanEntry(DeviceData data, String prefix, String connMode, int instance) {
         Map<String, Object> out = new LinkedHashMap<>();
         String name = data.value(prefix + "Name");
-        String serviceList = data.value(prefix + "ServiceList");
+        Map<String, Object> params = new LinkedHashMap<>();
+        for (String p : data.leaves(prefix)) {
+            params.put(p.substring(prefix.length()), data.value(p));
+        }
+        // 业务模式：标准 ServiceList → 厂商参数（X_CMCC_ServiceList / X_CT-COM_ServiceList）→ 连接名 → 连接模式
+        String serviceList = orElse(data.value(prefix + "ServiceList"), vendorParam(params, "servicelist"));
         out.put("path", prefix);
         out.put("instance", instance);
         out.put("connMode", connMode);
         out.put("ipProtocol", data.value(prefix + "ConnectionType"));
+        // 地址类型：编址方式（DHCP/Static/PPPoE），厂商参数回退（X_CMCC_AddressType 等）
+        out.put("addrType", orElse(data.value(prefix + "AddressingType"), vendorParam(params, "addresstype")));
         out.put("up", boolValue(data, prefix + "Enable", true));
         out.put("statusText", data.value(prefix + "ConnectionStatus"));
         out.put("uptimeText", uptimeText(data.value(prefix + "Uptime")));
@@ -141,15 +148,24 @@ public class BusinessSnapshotService {
         out.put("mtu", data.value(prefix + "MaxMTUSize"));
         // 卡片标题：连接名（设备网页里叫 Internet连接 / 1_TR069_R_VID 这类）→ 业务清单 → 模式+实例号
         out.put("title", orElse(name, orElse(serviceList, connMode + " " + instance)));
-        // 业务模式：ServiceList（INTERNET/TR069/VOIP）→ 连接名 → 连接模式
         out.put("service", orElse(serviceList, orElse(name, connMode)));
         out.put("bindPorts", "");
-        Map<String, Object> params = new LinkedHashMap<>();
-        for (String p : data.leaves(prefix)) {
-            params.put(p.substring(prefix.length()), data.value(p));
-        }
+        // VLAN ID：不少设备不用标准字段，只有厂商参数（X_CMCC_VLANIDMark / X_CT-COM_VLANID / …）
+        out.put("vlanId", vendorParam(params, "vlanidmark") != null
+                ? vendorParam(params, "vlanidmark") : vendorParam(params, "vlanid"));
         out.put("params", params);
         return out;
+    }
+
+    /** 在连接参数里找厂商自定义参数（键名后缀匹配，不区分大小写），取第一个非空值 */
+    private String vendorParam(Map<String, Object> params, String suffix) {
+        for (Map.Entry<String, Object> e : params.entrySet()) {
+            String k = e.getKey().toLowerCase();
+            if (k.endsWith(suffix) && e.getValue() != null && !String.valueOf(e.getValue()).isBlank()) {
+                return String.valueOf(e.getValue());
+            }
+        }
+        return null;
     }
 
     // ---------------- LAN ----------------
@@ -358,7 +374,10 @@ public class BusinessSnapshotService {
             for (int profile : data.instances(profileBase)) {
                 String lineBase = profileBase + profile + ".Line.";
                 for (int line : data.instances(lineBase)) {
-                    out.add(sipEntry(data, lineBase + line + ".", line));
+                    Map<String, Object> entry = sipEntry(data, lineBase + line + ".", line);
+                    if (entry != null) {
+                        out.add(entry);
+                    }
                 }
             }
         }
@@ -366,23 +385,67 @@ public class BusinessSnapshotService {
     }
 
     private Map<String, Object> sipEntry(DeviceData data, String prefix, int line) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        for (String p : data.leaves(prefix)) {
+            params.put(p.substring(prefix.length()), data.value(p));
+        }
+        // 空壳线路（GPN 扫出实例但从未采到任何值）不渲染
+        boolean hasData = params.values().stream().anyMatch(v -> v != null && !String.valueOf(v).isBlank());
+        if (!hasData) {
+            return null;
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("path", prefix);
         out.put("line", line);
-        out.put("number", data.value(prefix + "DirectoryNumber"));
+        // 号码：标准 DirectoryNumber → 厂商参数（SIP.URI / SIP.AuthUserName，不少设备不报标准字段）
+        String number = orElse(data.value(prefix + "DirectoryNumber"),
+                orElse(data.value(prefix + "SIP.URI"),
+                        orElse(data.value(prefix + "SIP.AuthUserName"),
+                                orElse(vendorParam(params, "uri"), vendorParam(params, "authusername")))));
+        if (number != null && number.contains("@")) {
+            // URI 形如 0003@ims.mnc001.mcc460.xxx → 截 @ 前的号码
+            number = number.substring(0, number.indexOf('@'));
+        }
+        out.put("number", number);
         String server = orElse(data.value(prefix + "ProxyServer"), data.value(prefix + "SIPProxyServer"));
         server = orElse(server, data.value(prefix + "RegistrarServer"));
         out.put("server", server);
         String status = orElse(data.value(prefix + "Status"), data.value(prefix + "SIPRegisterStatus"));
         status = orElse(status, data.value(prefix + "RegisterStatus"));
-        out.put("statusText", status);
-        out.put("registered", status != null && status.matches("(?i).*(up|registered|ok).*"));
-        Map<String, Object> params = new LinkedHashMap<>();
-        for (String p : data.leaves(prefix)) {
-            params.put(p.substring(prefix.length()), data.value(p));
-        }
+        // 注册判定（先于中文归一化）："Unregistered" 含 "registered"，不能命中
+        String low = status == null ? "" : status.toLowerCase();
+        boolean registered = low.equals("up") || low.contains("ok")
+                || (low.contains("registered") && !low.contains("unregistered") && !low.contains("registering"));
+        // 状态文案统一中文，前端只管颜色
+        out.put("statusText", sipStatusText(status));
+        out.put("registered", registered);
         out.put("params", params);
         return out;
+    }
+
+    /** SIP 注册状态归一成中文文案 */
+    private String sipStatusText(String status) {
+        if (status == null || status.isBlank()) {
+            return null;
+        }
+        String low = status.toLowerCase();
+        if (low.equals("up") || low.contains("registered") && !low.contains("unregistered")
+                && !low.contains("registering") && !low.contains("error") && !low.contains("fail")) {
+            return "已注册";
+        }
+        if (low.contains("unregistered")) {
+            return "未注册";
+        }
+        if (low.contains("registering")) {
+            return "注册中";
+        }
+        if (low.contains("disabled")) {
+            return "未启用";
+        }
+        if (low.contains("error") || low.contains("fail")) {
+            return "注册失败";
+        }
+        return status;
     }
 
     // ---------------- 派生字段 ----------------

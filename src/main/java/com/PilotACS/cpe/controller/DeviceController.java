@@ -554,7 +554,9 @@ public class DeviceController {
                 }
             }
             if ("manufacturer".equals(k) && v instanceof String s) {
-                v = BrandName.text(s);
+                // 全称（Huawei Technologies Co., Ltd / CIOT）按包含匹配转简称，缩写（SKYW）走精确匹配
+                String label = BrandName.label(s);
+                v = label != null ? label : BrandName.text(s);
             }
             out.put(sb.toString(), v);
         });

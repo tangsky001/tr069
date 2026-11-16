@@ -12,6 +12,7 @@ import com.PilotACS.cpe.model.DeviceData;
 import com.PilotACS.cpe.model.RpcRequest;
 import com.PilotACS.cpe.model.TaskRun;
 import com.PilotACS.cpe.service.BusinessPaths;
+import com.PilotACS.common.log.Logs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -71,6 +72,15 @@ public class TaskPlanner {
                 if (names.isEmpty()) {
                     names = strList(params.get("paths"));
                 }
+                // 续跑（会话中断回队）：跳过参数树里已经采到的名字，只补缺口。
+                // 否则大任务每轮整树重发，设备跑到会话上限就断，永远完不成 → 无限排队
+                if (Boolean.TRUE.equals(params.get("resume")) && !names.isEmpty()) {
+                    List<String> remaining = names.stream().filter(n -> !data.has(n)).toList();
+                    Logs.info(Logs.Module.CPE, "任务断点续跑", "任务", run.getTaskId(),
+                            "总数", names.size(), "已采", names.size() - remaining.size(),
+                            "待采", remaining.size());
+                    names = new ArrayList<>(remaining);
+                }
                 appendGpv(run, names, "collect");
             }
             case TYPE_GPN -> {
@@ -107,19 +117,36 @@ public class TaskPlanner {
             case TYPE_CUSTOM -> run.getSteps().add(new TaskRun.RpcStep(
                     RpcRequest.custom(str(params.get("method")), castMap(params.get("args")), key), "apply"));
             case TYPE_REFRESH_BIZ -> {
-                List<String> leaves = modelLeaves(modelParams, root);
-                if (!leaves.isEmpty()) {
-                    // 模板快速路径：机型模板里登记过业务叶子，直接 GPV
-                    appendGpv(run, leaves, "collect");
+                if (Boolean.TRUE.equals(params.get("resume"))) {
+                    // 会话中断回队：不再 GPN 重扫，直接补采业务域里还没取到值的叶子
+                    appendGpv(run, uncollectedBizLeaves(data, root), "collect");
                 } else {
-                    // 无模板：先 GPN 扫业务子树（响应回来后由会话引擎补 GPV）
-                    for (String br : BusinessPaths.businessRoots(root)) {
-                        run.getSteps().add(new TaskRun.RpcStep(RpcRequest.gpn(br, false, key), "scan"));
+                    List<String> leaves = modelLeaves(modelParams, root);
+                    if (!leaves.isEmpty()) {
+                        // 模板快速路径：机型模板里登记过业务叶子，直接 GPV
+                        appendGpv(run, leaves, "collect");
+                    } else {
+                        // 无模板：先 GPN 扫业务子树（响应回来后由会话引擎补 GPV）
+                        for (String br : BusinessPaths.businessRoots(root)) {
+                            run.getSteps().add(new TaskRun.RpcStep(RpcRequest.gpn(br, false, key), "scan"));
+                        }
                     }
                 }
             }
-            case TYPE_ADAPT_PROBE -> run.getSteps().add(new TaskRun.RpcStep(
-                    RpcRequest.gpn(root, false, key), "probe"));
+            case TYPE_ADAPT_PROBE -> {
+                if (Boolean.TRUE.equals(params.get("resume"))) {
+                    // 会话中断回队：树已经在会话里（GPN 全量做过了），只补采没取到值的业务叶子。
+                    // 不加这条会每轮重跑 GPN+全量 GPV，恰好吃满设备单会话请求上限（Inform+99），
+                    // 后面排队的任务（初始化 SPV 等）永远轮不到
+                    List<String> missing = uncollectedBizLeaves(data, root);
+                    Logs.info(Logs.Module.CPE, "探测任务断点续跑", "任务", run.getTaskId(),
+                            "待采", missing.size());
+                    appendGpv(run, missing, "collect");
+                } else {
+                    run.getSteps().add(new TaskRun.RpcStep(
+                            RpcRequest.gpn(root, false, key), "probe"));
+                }
+            }
             default -> run.getSteps().add(new TaskRun.RpcStep(
                     RpcRequest.custom(run.getType(), params, key), "apply"));
         }
@@ -158,6 +185,22 @@ public class TaskPlanner {
         for (String br : BusinessPaths.businessRoots(root)) {
             for (String p : modelParams.keySet()) {
                 if (p.startsWith(br) && !p.endsWith(".")) {
+                    out.add(p);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 业务域里还没取到值的叶子（GPN 只登记路径 value=null，GPV 采完才有值）。
+     * 续跑时只补这些，避免整树重采
+     */
+    private List<String> uncollectedBizLeaves(DeviceData data, String root) {
+        List<String> out = new ArrayList<>();
+        for (String br : BusinessPaths.businessRoots(root)) {
+            for (String p : data.leaves(br)) {
+                if (data.value(p) == null) {
                     out.add(p);
                 }
             }

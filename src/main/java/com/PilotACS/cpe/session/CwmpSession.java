@@ -51,6 +51,8 @@ public class CwmpSession {
     private String cwmpVersion;
     private List<String> events = new ArrayList<>();
     private boolean bootstrap;
+    /** 设备来源地址（Inform 时填）；老设备不回传 Cookie 时按它找回会话 */
+    private volatile String remoteAddr;
 
     /** 会话内存参数树 */
     private final DeviceData data = new DeviceData();

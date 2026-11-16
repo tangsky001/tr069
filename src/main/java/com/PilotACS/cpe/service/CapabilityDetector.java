@@ -31,6 +31,7 @@ public class CapabilityDetector {
     private static final Pattern LAN_IF_TR181 = Pattern.compile("\\.Ethernet\\.Interface\\.(\\d+)\\.");
     private static final Pattern WIFI_TR098 =
             Pattern.compile("\\.LANDevice\\.(\\d+)\\.LANWLANConfiguration\\.(\\d+)\\.");
+    private static final Pattern WIFI_RADIO_TR181 = Pattern.compile("\\.WiFi\\.Radio\\.(\\d+)\\.");
     private static final Pattern SIP_LINE =
             Pattern.compile("\\.VoiceService\\.(\\d+)\\.VoiceProfile\\.(\\d+)\\.Line\\.(\\d+)\\.");
 
@@ -90,9 +91,27 @@ public class CapabilityDetector {
         return max;
     }
 
+    /**
+     * 实测 WIFI 频段。
+     * <p>判定口径：
+     * <ul>
+     * <li>每个射频实例独立判定，再取并集；</li>
+     * <li>标准 b/g → 2.4G，a/ac → 5G；n/ax/be（WiFi4/6/7）在 2.4G 和 5G 上都存在，
+     *     单独出现时只能算"模糊证据"——WiFi6 的 2.4G 射频经常只报 AX，不能当 5G；</li>
+     * <li>模糊射频靠另一颗射频的清晰证据补齐（双频机必是一颗 2.4G 一颗 5G）；</li>
+     * <li>兜底：实测到 5G 的家用光猫必然带 2.4G 频段，不存在"只有 5G"的机型。</li>
+     * </ul>
+     */
     private List<String> detectWifiBands(DeviceData data, String root) {
-        Set<String> bands = new LinkedHashSet<>();
+        Map<String, Set<String>> clear = new LinkedHashMap<>();
+        Map<String, Set<String>> ambiguous = new LinkedHashMap<>();
+        Set<String> radios = new LinkedHashSet<>();
         for (String p : data.allPaths("")) {
+            String radio = wifiRadioId(p);
+            if (radio == null) {
+                continue;
+            }
+            radios.add(radio);
             String leaf = p.substring(p.lastIndexOf('.') + 1);
             String v = data.value(p);
             if (v == null || v.isBlank()) {
@@ -100,27 +119,76 @@ public class CapabilityDetector {
             }
             switch (leaf) {
                 case "OperatingFrequencyBand" -> {
-                    if (v.contains("2.4")) {
-                        bands.add("2.4G");
+                    String s = v.toLowerCase();
+                    if (s.contains("2.4") || (s.contains("2") && !s.contains("5"))) {
+                        bands(clear, radio).add("2.4G");
                     }
-                    if (v.contains("5")) {
-                        bands.add("5G");
+                    if (s.contains("5")) {
+                        bands(clear, radio).add("5G");
                     }
                 }
-                case "OperatingStandards", "Standard" -> {
-                    Set<String> toks = new LinkedHashSet<>(List.of(v.toLowerCase().split("[,;\\s]+")));
-                    if (toks.contains("b") || toks.contains("g") || toks.contains("n")) {
-                        bands.add("2.4G");
-                    }
-                    if (toks.contains("a") || toks.contains("ac") || toks.contains("ax")) {
-                        bands.add("5G");
+                case "OperatingStandards", "Standard", "RadioStandard" -> {
+                    // 有的设备整串报 802.11b/g/n、802.11ax，先剥前缀再拆 token
+                    for (String raw : v.toLowerCase().split("[,;/、\\s]+")) {
+                        String t = raw.replace("802.11", "").trim();
+                        switch (t) {
+                            case "b", "g", "d" -> bands(clear, radio).add("2.4G");
+                            case "a", "ac" -> bands(clear, radio).add("5G");
+                            // WiFi4/6/7 双频通吃，单独出现定不了频段
+                            case "n", "ax", "be" -> {
+                                bands(ambiguous, radio).add("2.4G");
+                                bands(ambiguous, radio).add("5G");
+                            }
+                            default -> {
+                            }
+                        }
                     }
                 }
                 default -> {
                 }
             }
         }
+
+        Set<String> bands = new LinkedHashSet<>();
+        clear.values().forEach(bands::addAll);
+        boolean has2 = bands.contains("2.4G");
+        boolean has5 = bands.contains("5G");
+        for (Set<String> amb : ambiguous.values()) {
+            if (has2 && !has5) {
+                bands.add("5G");
+            } else if (has5 && !has2) {
+                bands.add("2.4G");
+            } else if (!has2 && !has5 && radios.size() >= 2) {
+                // 两颗射频都只有模糊证据：双射频机按双频算
+                bands.addAll(amb);
+            }
+        }
+        if (!has2 && !has5 && radios.size() == 1 && !ambiguous.isEmpty()) {
+            // 单射频只有模糊证据（如仅报 AX/n）：家用机型默认按 2.4G
+            bands.add("2.4G");
+        }
+        // 兜底：能跑 5G 的家用光猫必然也有 2.4G 频段
+        if (bands.contains("5G")) {
+            bands.add("2.4G");
+        }
         return new ArrayList<>(bands);
+    }
+
+    private Set<String> bands(Map<String, Set<String>> map, String radio) {
+        return map.computeIfAbsent(radio, k -> new LinkedHashSet<>());
+    }
+
+    /** 参数路径所属的射频实例标识，不属于任何射频返回 null */
+    private String wifiRadioId(String path) {
+        Matcher m = WIFI_TR098.matcher(path);
+        if (m.find()) {
+            return "t98:" + m.group(1) + '.' + m.group(2);
+        }
+        m = WIFI_RADIO_TR181.matcher(path);
+        if (m.find()) {
+            return "t181:" + m.group(1);
+        }
+        return null;
     }
 
     private int detectSipLines(DeviceData data) {
