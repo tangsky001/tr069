@@ -54,7 +54,19 @@ export default {
       return this.sortOrder === 'asc' ? 'el-icon-caret-top hd-sort' : 'el-icon-caret-bottom hd-sort'
     },
     formatTime(value) {
-      return value ? String(value).replace('T', ' ') : '-'
+      if (!value) {
+        return '-'
+      }
+      // 纯数字按毫秒时间戳格式化到毫秒（yyyy-MM-dd HH:mm:ss.SSS）；ISO 字符串只把 T 换成空格
+      const raw = String(value)
+      if (/^\d{10,}$/.test(raw)) {
+        const d = new Date(Number(raw))
+        const p = (n, w = 2) => String(n).padStart(w, '0')
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+          ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) +
+          '.' + p(d.getMilliseconds(), 3)
+      }
+      return raw.replace('T', ' ')
     }
   }
 }
