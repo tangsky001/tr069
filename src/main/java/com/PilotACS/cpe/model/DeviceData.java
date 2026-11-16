@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * 会话内存参数树（对应 genieacs DeviceData），会话结束时 diff 落 SQLite
+ * 会话内存参数树，会话结束时 diff 落 SQLite
  */
 public class DeviceData {
 

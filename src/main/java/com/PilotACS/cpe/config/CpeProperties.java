@@ -42,7 +42,7 @@ public class CpeProperties {
     /** 单会话最大 RPC 往返数，防失控 */
     private int maxRpcCount = 255;
 
-    /** GetParameterValues 单次批量参数个数（参考 genieacs gpvBatchSize=32） */
+    /** GetParameterValues 单次批量参数个数 */
     private int gpvBatchSize = 32;
 
     /**

@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * ACS 下发给 CPE 的一条 RPC 请求（会话里同时只有一条在飞，参考 genieacs 单飞模型）
+ * ACS 下发给 CPE 的一条 RPC 请求（会话里同时只有一条在飞）
  */
 @Data
 public class RpcRequest {

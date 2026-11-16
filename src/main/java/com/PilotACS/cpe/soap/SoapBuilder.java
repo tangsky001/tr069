@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * ACS → CPE 的 SOAP 报文生成（报文骨架与 genieacs soap.ts response() 一致）
+ * ACS → CPE 的 SOAP 报文生成
  */
 public final class SoapBuilder {
 
@@ -28,7 +28,7 @@ public final class SoapBuilder {
     private SoapBuilder() {
     }
 
-    /** InformResponse（MaxEnvelopes 固定 1，与 genieacs 相同） */
+    /** InformResponse，MaxEnvelopes 固定 1 */
     public static String informResponse(String id) {
         return ENVELOPE_OPEN
                 + header(id)
@@ -79,7 +79,7 @@ public final class SoapBuilder {
         return sb.toString();
     }
 
-    /** GetRPCMethodsResponse：固定暴露 Inform/GetRPCMethods/TransferComplete（与 genieacs 一致） */
+    /** GetRPCMethodsResponse：固定暴露 Inform/GetRPCMethods/TransferComplete */
     public static String getRpcMethodsResponse(String id, List<String> methods) {
         StringBuilder sb = new StringBuilder();
         sb.append(ENVELOPE_OPEN).append(header(id))

@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 解析后的 CPE SOAP 请求/响应报文（参考 genieacs soap.ts request() 的输出结构）
+ * 解析后的 CPE SOAP 请求/响应报文
  */
 @Data
 public class SoapMessage {

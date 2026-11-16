@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 一个 CPE 的 CWMP 会话（对应 genieacs SessionContext）
+ * 一个 CPE 的 CWMP 会话
  * <p>三态：0=已建会话等 Inform → 1=Inform 已回、等空 POST → 2=ACS RPC 在飞
  */
 @Data

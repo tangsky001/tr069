@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
 
 /**
  * CWMP 会话核心：三态状态机 + Inform 处理 + RPC 单飞循环。
- * <p>流程复刻 genieacs cwmp.ts processRequest：
+ * <p>流程：
  * <pre>
  * state 0：只接受 Inform → 回 InformResponse → state 1
  * state 1：空 POST（设备就绪）→ 取下一个任务展开成 RPC → state 2
@@ -89,7 +89,7 @@ public class CwmpService {
                 return new Reply(200, SoapBuilder.informRequest("0"), null);
             }
             if (!"Inform".equals(msg.getName())) {
-                // 没有会话又不报 Inform（含空 POST）：参考 genieacs 直接 400
+                // 没有会话又不报 Inform（含空 POST），直接 400
                 return new Reply(400, SoapBuilder.acsFault(8000, "No session, Inform required"), null);
             }
             if (msg.getSerialNumber() == null || msg.getSerialNumber().isBlank()) {
@@ -268,7 +268,7 @@ public class CwmpService {
                         s.getData().put(new CpeParam(p.path(), p.value(), p.type(), false, true, p.ts()));
                     }
                 }
-                // 设备没回的参数记空串，与 genieacs 行为一致
+                // 设备没回的参数记空串
                 if (req.getNames() != null) {
                     for (String n : req.getNames()) {
                         if (!s.getData().has(n)) {

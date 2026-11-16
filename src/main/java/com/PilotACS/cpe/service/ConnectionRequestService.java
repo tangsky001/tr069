@@ -22,7 +22,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * ACS → CPE 反向连接（参考 genieacs connection-request.ts）：
+ * ACS → CPE 反向连接：
  * GET 设备的 ConnectionRequestURL，Digest（回退 Basic）认证。
  */
 @Service

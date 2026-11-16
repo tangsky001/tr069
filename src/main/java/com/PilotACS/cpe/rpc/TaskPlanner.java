@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 任务 → RPC 步骤展开器（对应 genieacs 把 task 翻译成内置 provision 的那层）
+ * 任务 → RPC 步骤展开器
  */
 @Component
 @RequiredArgsConstructor

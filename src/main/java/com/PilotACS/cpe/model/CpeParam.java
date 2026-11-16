@@ -7,7 +7,7 @@
 package com.PilotACS.cpe.model;
 
 /**
- * 一个 CWMP 参数（参考 genieacs Attributes：object/writable/value/type/timestamp）
+ * 一个 CWMP 参数
  *
  * @param path     全路径，如 InternetGatewayDevice.LANDevice.1.LANWLANConfiguration.1.SSID
  *                 对象节点以 '.' 结尾

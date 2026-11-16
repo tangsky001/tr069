@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 活跃会话注册表：同设备互斥（对应 genieacs 的 cwmp_session_<deviceId> 锁）
+ * 活跃会话注册表：同设备互斥
  */
 @Component
 public class SessionRegistry {
