@@ -383,6 +383,14 @@ public class CpeStore {
         return n == null ? 0 : n;
     }
 
+    /** 某设备某类型在队/在跑的任务数（自动排任务防重复用） */
+    public int countActiveTasks(String sn, String type) {
+        Integer n = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM cpe_task WHERE sn = ? AND type = ? AND status IN ('queued','running')",
+                Integer.class, sn, type);
+        return n == null ? 0 : n;
+    }
+
     /** 兜底：把卡在 running 的任务判死 */
     public void failStaleRunningTasks(long olderThanMs) {
         long deadline = System.currentTimeMillis() - olderThanMs;

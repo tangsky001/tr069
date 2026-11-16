@@ -8,7 +8,9 @@ package com.PilotACS.cpe.controller;
 
 import com.PilotACS.acl.DeviceAclService;
 import com.PilotACS.cpe.config.CpeProperties;
+import com.PilotACS.cpe.model.BrandName;
 import com.PilotACS.cpe.model.CpeParam;
+import com.PilotACS.cpe.model.IspVariant;
 import com.PilotACS.cpe.model.DeviceData;
 import com.PilotACS.cpe.service.BusinessSnapshotService;
 import com.PilotACS.cpe.service.DispatchService;
@@ -129,6 +131,8 @@ public class DeviceController {
         List<Map<String, Object>> items = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             Map<String, Object> item = camel(row);
+            // 在线口径与 /device/stat 一致：台账 status 列（15 分钟没上报会被 sweep 翻成 offline）
+            item.put("online", "online".equals(row.get("status")));
             Map<String, String> bizParams = store.loadBizParams(str(row.get("sn")));
             Map<String, Object> biz = new LinkedHashMap<>();
             String oui = str(row.get("oui"));
@@ -138,7 +142,7 @@ public class DeviceController {
                     .map(Map.Entry::getValue).findFirst().orElse(null));
             biz.put("ponType", bizParams.entrySet().stream()
                     .filter(e -> e.getKey().contains("PON") && e.getKey().endsWith(".Mode"))
-                    .map(Map.Entry::getValue).findFirst().orElse(null));
+                    .map(Map.Entry::getValue).findFirst().orElse("GE"));
             biz.put("opticText", bizParams.entrySet().stream()
                     .filter(e -> e.getKey().substring(e.getKey().lastIndexOf('.') + 1).contains("RxPower"))
                     .map(e -> "收光 " + e.getValue() + " dBm").findFirst().orElse(null));
@@ -212,6 +216,10 @@ public class DeviceController {
         Map<String, Object> cols = new LinkedHashMap<>();
         cols.put("room_no", strOrEmpty(body.get("roomNo")));
         cols.put("remark", strOrEmpty(body.get("remark")));
+        Object isp = body.get("isp");
+        if (isp != null && !String.valueOf(isp).isBlank()) {
+            cols.put("isp", IspVariant.canonical(String.valueOf(isp)));
+        }
         store.updateDeviceColumns(sn, cols);
         return Result.ok();
     }
@@ -509,7 +517,7 @@ public class DeviceController {
         return out;
     }
 
-    /** snake_case 行 → camelCase（台账字段直接映射前端字段名） */
+    /** snake_case 行 → camelCase（台账字段直接映射前端字段名），厂家字段顺带转中文品牌 */
     private Map<String, Object> camel(Map<String, Object> row) {
         Map<String, Object> out = new LinkedHashMap<>();
         row.forEach((k, v) -> {
@@ -520,6 +528,9 @@ public class DeviceController {
                     sb.append(Character.toUpperCase(parts[i].charAt(0)))
                             .append(parts[i].substring(1));
                 }
+            }
+            if ("manufacturer".equals(k) && v instanceof String s) {
+                v = BrandName.text(s);
             }
             out.put(sb.toString(), v);
         });

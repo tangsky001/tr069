@@ -6,6 +6,7 @@
 
 package com.PilotACS.cpe.controller;
 
+import com.PilotACS.cpe.model.IspVariant;
 import com.PilotACS.cpe.service.ModelProfileService;
 import com.PilotACS.common.result.Result;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,12 +42,14 @@ public class ModelController {
     @GetMapping("/capability-options")
     public Result<Map<String, Object>> capabilityOptions() {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("isp", List.of(
-                Map.of("v", "CT", "t", "电信"),
-                Map.of("v", "CU", "t", "联通"),
-                Map.of("v", "CMCC", "t", "移动"),
-                Map.of("v", "CBN", "t", "广电"),
-                Map.of("v", "standard", "t", "标准/通用")));
+        List<Map<String, Object>> isps = new ArrayList<>();
+        for (IspVariant v : IspVariant.values()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("v", v.code());
+            item.put("t", v.label());
+            isps.add(item);
+        }
+        out.put("isp", isps);
         out.put("ports", List.of("1", "2", "4", "8"));
         out.put("speeds", List.of("10/100", "10/100/1000", "10/100/1000/2500"));
         out.put("wifiSpecs", List.of("2.4G", "2.4G+5G", "2.4G+5G+6G"));

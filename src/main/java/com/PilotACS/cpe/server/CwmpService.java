@@ -417,6 +417,7 @@ public class CwmpService {
             store.updateTask(cur.getTaskId(), "fail", "0", "会话提前结束，任务未完成: " + reason, null);
         }
         store.saveDeviceParams(s.getSn(), s.getData().all(), s.getData().dirtyPaths(), s.getData().isFullSync());
+        modelProfileService.detectIsp(s.getSn());
         registry.remove(s);
         Logs.info(Logs.Module.CPE, "会话结束", "sn", s.getSn(), "原因", reason,
                 "RPC数", s.getRpcCount(), "参数数", s.getData().all().size());

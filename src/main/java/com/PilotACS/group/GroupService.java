@@ -6,6 +6,7 @@
 
 package com.PilotACS.group;
 
+import com.PilotACS.cpe.model.BrandName;
 import com.PilotACS.group.config.GroupScopeContext;
 import com.PilotACS.group.entity.GroupMember;
 import com.PilotACS.group.entity.ResGroup;
@@ -71,6 +72,8 @@ public class GroupService {
     private final CivilCodeService civilCodeService;
     /** 光猫台账（cpe_device，MySQL）：ONU 树/成员装配用 */
     private final com.PilotACS.cpe.store.CpeStore cpeStore;
+    /** 运营商自动识别（参数树私有节点） */
+    private final com.PilotACS.cpe.service.ModelProfileService modelProfileService;
 
     /** 设备级 ACL：树/成员清单按用户可见性过滤 */
     private final DeviceAclService deviceAclService;
@@ -418,30 +421,32 @@ public class GroupService {
         return rows;
     }
 
-    /** ONU 根节点成员 = 未归属任何分组的光猫（含显式 ROOT 归属），真实台账展示 */
+    /** ONU 根节点成员 = 全部光猫（含归属在子分组的），真实台账展示；实际归属看 actualGroupText */
     private List<GroupMemberView> rootOnuMembers() {
         List<GroupMemberView> rows = new ArrayList<>();
-        List<GroupMember> bindings = memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
-                .eq(GroupMember::getMemberType, MEMBER_TYPE_ONU)
-                .orderByDesc(GroupMember::getCreatedAt));
-        Map<String, GroupMember> rootBindings = new HashMap<>();
-        Set<String> boundElsewhere = new HashSet<>();
-        for (GroupMember binding : bindings) {
-            if (ROOT_REF.equals(binding.getGroupRef())) {
-                rootBindings.put(binding.getMemberRef(), binding);
-            } else if (binding.getMemberRef() != null) {
-                boundElsewhere.add(binding.getMemberRef());
-            }
-        }
+        Map<String, GroupMember> bindingBySn = onuBindingsBySn();
         Set<String> hiddenRefs = deviceAclService.hiddenOnuRefs(UserContext.get());
         for (Map<String, Object> device : cpeStore.allDevices()) {
             String sn = String.valueOf(device.get("sn"));
-            if (boundElsewhere.contains(sn) || (hiddenRefs != null && hiddenRefs.contains(sn))) {
+            if (hiddenRefs != null && hiddenRefs.contains(sn)) {
                 continue;
             }
-            rows.add(onuMemberView(rootBindings.get(sn), ROOT_REF, ROOT_NAME, device));
+            rows.add(onuMemberView(bindingBySn.get(sn), ROOT_REF, ROOT_NAME, device));
         }
         return rows;
+    }
+
+    /** ONU 全部归属记录按 SN 归一（同 SN 取最新一条） */
+    private Map<String, GroupMember> onuBindingsBySn() {
+        Map<String, GroupMember> bySn = new HashMap<>();
+        for (GroupMember binding : memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
+                .eq(GroupMember::getMemberType, MEMBER_TYPE_ONU)
+                .orderByDesc(GroupMember::getCreatedAt))) {
+            if (binding.getMemberRef() != null) {
+                bySn.putIfAbsent(binding.getMemberRef(), binding);
+            }
+        }
+        return bySn;
     }
 
     /** ONU 成员行组装：归属记录 + 真实台账（deviceRow 可能为 null，如台账已被清理） */
@@ -451,6 +456,8 @@ public class GroupService {
         row.setId(binding == null ? null : binding.getId());
         row.setNodeRef(nodeRef);
         row.setGroupText(groupText);
+        row.setActualGroupText(binding == null || binding.getGroupRef() == null
+                ? ROOT_NAME : pathText(binding.getGroupRef()));
         row.setOltId(null);
         String sn = device != null ? String.valueOf(device.get("sn"))
                 : (binding == null ? null : binding.getMemberRef());
@@ -459,14 +466,18 @@ public class GroupService {
                 : (binding != null && binding.getMemberLabel() != null ? binding.getMemberLabel() : sn));
         row.setHost(device == null ? null : (String) device.get("connection_request_url"));
         row.setVendorText(device == null || isBlank(device.get("manufacturer"))
-                ? "—" : String.valueOf(device.get("manufacturer")));
+                ? "—" : BrandName.text(String.valueOf(device.get("manufacturer"))));
         String status = device == null ? null : String.valueOf(device.get("status"));
         row.setStatus(status);
         row.setStatusText(statusText(status));
         row.setStatusLevel(statusLevel(status));
         if (device != null) {
             row.setSoftwareVersion((String) device.get("software_version"));
-            row.setIsp((String) device.get("isp"));
+            String isp = String.valueOf(device.get("isp"));
+            if (isp == null || "null".equals(isp) || isp.isBlank()) {
+                isp = modelProfileService.detectIsp(sn);
+            }
+            row.setIsp(isp);
             Object last = device.get("last_inform_ms");
             row.setLastInformText(last == null ? "—" : fmtMs(((Number) last).longValue()));
             row.setIp(cpeStore.loadBizParams(sn).entrySet().stream()

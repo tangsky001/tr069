@@ -79,6 +79,8 @@ public class BusinessSnapshotService {
 
     private Map<String, Object> wanEntry(DeviceData data, String prefix, String connMode, int instance) {
         Map<String, Object> out = new LinkedHashMap<>();
+        String name = data.value(prefix + "Name");
+        String serviceList = data.value(prefix + "ServiceList");
         out.put("path", prefix);
         out.put("instance", instance);
         out.put("connMode", connMode);
@@ -88,7 +90,10 @@ public class BusinessSnapshotService {
         out.put("uptimeText", uptimeText(data.value(prefix + "Uptime")));
         out.put("natEnabled", boolValue(data, prefix + "NATEnabled", null));
         out.put("mtu", data.value(prefix + "MaxMTUSize"));
-        out.put("service", data.value(prefix + "Name"));
+        // 卡片标题：连接名（设备网页里叫 Internet连接 / 1_TR069_R_VID 这类）→ 业务清单 → 模式+实例号
+        out.put("title", orElse(name, orElse(serviceList, connMode + " " + instance)));
+        // 业务模式：ServiceList（INTERNET/TR069/VOIP）→ 连接名 → 连接模式
+        out.put("service", orElse(serviceList, orElse(name, connMode)));
         out.put("bindPorts", "");
         Map<String, Object> params = new LinkedHashMap<>();
         for (String p : data.leaves(prefix)) {

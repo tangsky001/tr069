@@ -87,38 +87,43 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="终端型号" min-width="130">
+            <el-table-column label="终端型号" min-width="150">
               <template slot-scope="{ row }">{{ row.name || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="厂商" width="100">
+            <el-table-column label="厂商" width="80">
               <template slot-scope="{ row }">{{ row.vendorText || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="软件版本" width="130">
+            <el-table-column label="软件版本" width="110">
               <template slot-scope="{ row }">{{ row.softwareVersion || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="运营商" width="90">
+            <el-table-column label="运营商" width="70">
               <template slot-scope="{ row }">{{ row.isp || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="IP" width="130">
+            <el-table-column label="IP" width="100">
               <template slot-scope="{ row }">{{ row.ip || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="在线状态" width="100">
+            <el-table-column label="在线状态" width="70">
               <template slot-scope="{ row }">
                 <el-tag :type="row.statusLevel || 'info'" size="mini">{{ row.statusText || '未采集' }}</el-tag>
               </template>
             </el-table-column>
 
-            <el-table-column label="最近上报" width="160">
+            <!-- 实际归属：后端按归属记录算好的分组全路径，根视角下看真实落组 -->
+            <el-table-column label="设备归属" min-width="140">
+              <template slot-scope="{ row }">{{ row.actualGroupText || '—' }}</template>
+            </el-table-column>
+
+            <el-table-column label="最近上报" width="150">
               <template slot-scope="{ row }">{{ row.lastInformText || '—' }}</template>
             </el-table-column>
 
             <!-- 操作：进详情做运维操作（改备注/重启/批量下发等），移动改归属分组 -->
-            <el-table-column label="操作" width="130" fixed="right">
+            <el-table-column label="操作" width="120" fixed="right">
               <template slot-scope="{ row }">
                 <el-button
                   type="text"
@@ -323,7 +328,7 @@ export default {
     /** 表格空态：区分「选中分组下没有」与「整体还没有上报的光猫」 */
     memberEmptyText() {
       if (this.currentRef) {
-        return '当前分组下还没有归属的光猫；上报的光猫默认在「资源根组」，可点「移动」调整归属'
+        return '当前分组下还没有光猫；点「资源根组」可看全部光猫，点「移动」调整归属'
       }
       return '还没有 ACS 上报的光猫（设备配置 ACS 地址并上报后自动出现在这里）'
     },

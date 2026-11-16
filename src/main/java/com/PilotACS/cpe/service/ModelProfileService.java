@@ -7,6 +7,7 @@
 package com.PilotACS.cpe.service;
 
 import com.PilotACS.cpe.model.CpeParam;
+import com.PilotACS.cpe.model.IspVariant;
 import com.PilotACS.cpe.session.CwmpSession;
 import com.PilotACS.cpe.store.CpeStore;
 import com.PilotACS.common.log.Logs;
@@ -15,8 +16,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 机型模板库：品牌+型号+版本号+运营商 唯一绑定一份设备参数树。
@@ -31,8 +35,80 @@ public class ModelProfileService {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    /** 参数树低于该值视为没采全，值得自动探测一次 */
+    private static final int FULL_TREE_MIN_PARAMS = 100;
+
+    /** 本次启动内已自动排过探测的 sn（防止周期 Inform 反复排任务） */
+    private final Set<String> ispProbeDone = ConcurrentHashMap.newKeySet();
+
     private final CpeStore store;
     private final CapabilityDetector capabilityDetector;
+
+    /** 台账没写运营商时，从参数树私有节点识别一次并回填（已写的不再动） */
+    public String detectIsp(String sn) {
+        try {
+            Map<String, Object> device = store.findDevice(sn);
+            if (device == null) {
+                return null;
+            }
+            String isp = str(device.get("isp"));
+            if (isp != null && !isp.isBlank()) {
+                return isp;
+            }
+            IspVariant hit = null;
+            for (String path : store.loadParams(sn).keySet()) {
+                hit = IspVariant.ofPath(path);
+                if (hit != null) {
+                    break;
+                }
+            }
+            if (hit == null) {
+                // 没认出来：把参数树里 X_ 开头的二段节点取样打出来，方便补前缀表
+                Set<String> samples = new LinkedHashSet<>();
+                Map<String, CpeParam> params = store.loadParams(sn);
+                for (String path : params.keySet()) {
+                    int i = path.indexOf(".X_");
+                    if (i < 0) {
+                        continue;
+                    }
+                    int end = path.indexOf('.', i + 1);
+                    samples.add(end < 0 ? path.substring(i + 1) : path.substring(i + 1, end));
+                    if (samples.size() >= 5) {
+                        break;
+                    }
+                }
+                Logs.info(Logs.Module.CPE, "运营商识别未命中", "sn", sn,
+                        "参数数", params.size(), "私有节点样本", samples);
+                maybeProbeTree(sn, params.size());
+                return null;
+            }
+            store.updateDeviceColumns(sn, Map.of("isp", hit.code()));
+            Logs.info(Logs.Module.CPE, "按私有节点识别运营商", "sn", sn, "运营商", hit.code());
+            return hit.code();
+        } catch (Exception e) {
+            Logs.debug(Logs.Module.CPE, "运营商识别跳过: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 参数树缺私有节点时自动排一次全树探测（AdaptProbe：GPN 全树 → 会话引擎补 GPV） */
+    private void maybeProbeTree(String sn, int paramCount) {
+        if (ispProbeDone.contains(sn)) {
+            return;
+        }
+        ispProbeDone.add(sn);
+        if (paramCount >= FULL_TREE_MIN_PARAMS) {
+            // 树已经采全还是没有私有节点：通用固件，认不出属正常
+            Logs.info(Logs.Module.CPE, "参数树已采全且无私有节点，不再探测", "sn", sn, "参数数", paramCount);
+            return;
+        }
+        if (store.countActiveTasks(sn, "AdaptProbe") > 0) {
+            return;
+        }
+        store.insertTask(sn, "AdaptProbe", Map.of(), "system-isp-detect");
+        Logs.info(Logs.Module.CPE, "参数树不完整，自动排全树探测", "sn", sn,
+                "参数数", paramCount, "任务类型", "AdaptProbe");
+    }
 
     /** Inform 后调用：按设备身份匹配模板并挂到会话 */
     public void attachModel(CwmpSession s) {
@@ -40,14 +116,27 @@ public class ModelProfileService {
             Map<String, Object> device = store.findDevice(s.getSn());
             String isp = str(device.get("isp"));
             if (isp == null || isp.isBlank()) {
+                // 台账还没写运营商：Inform 时也按存量参数树识别一次
+                detectIsp(s.getSn());
                 return;
             }
             String brand = normalizeBrand(s.getManufacturer());
             String model = str(s.getProductClass());
             String version = str(s.getSoftwareVersion());
-            Map<String, Object> row = store.findModelExact(brand, model, version, isp);
+            Map<String, Object> row = null;
+            for (String ispCode : IspVariant.candidateCodes(isp)) {
+                row = store.findModelExact(brand, model, version, ispCode);
+                if (row != null) {
+                    break;
+                }
+            }
             if (row == null) {
-                row = store.findModelLoose(brand, model, isp);
+                for (String ispCode : IspVariant.candidateCodes(isp)) {
+                    row = store.findModelLoose(brand, model, ispCode);
+                    if (row != null) {
+                        break;
+                    }
+                }
             }
             if (row == null) {
                 return;
@@ -68,7 +157,7 @@ public class ModelProfileService {
      */
     public long saveTemplate(String sn, Map<String, Object> declared, Map<String, Object> detected) {
         Map<String, Object> device = store.findDevice(sn);
-        String isp = str(declared.get("isp"));
+        String isp = IspVariant.canonical(str(declared.get("isp")));
         String brand = normalizeBrand(str(device.get("manufacturer")));
         String model = str(device.get("product_class"));
         String version = str(device.get("software_version"));
@@ -133,10 +222,15 @@ public class ModelProfileService {
         }
         if (model == null && adapted == 1) {
             String isp = str(device.get("isp"));
-            model = isp == null ? null : store.findModelExact(
-                    normalizeBrand(str(device.get("manufacturer"))),
-                    str(device.get("product_class")),
-                    str(device.get("software_version")), isp);
+            String brand = normalizeBrand(str(device.get("manufacturer")));
+            for (String ispCode : IspVariant.candidateCodes(isp)) {
+                model = store.findModelExact(brand,
+                        str(device.get("product_class")),
+                        str(device.get("software_version")), ispCode);
+                if (model != null) {
+                    break;
+                }
+            }
         }
         if (model != null) {
             st.put("adaptedFrom", model.get("source_sn"));
@@ -201,23 +295,17 @@ public class ModelProfileService {
         return o == null ? null : String.valueOf(o);
     }
 
-    /** 运营商编码 → 文案 */
+    /** 运营商编码 → 文案（委托 {@link IspVariant}） */
     public static final class IspText {
         private IspText() {
         }
 
         public static String of(String isp) {
-            if (isp == null) {
+            if (isp == null || isp.isBlank()) {
                 return null;
             }
-            return switch (isp) {
-                case "CT" -> "电信";
-                case "CU" -> "联通";
-                case "CMCC" -> "移动";
-                case "CBN" -> "广电";
-                case "standard" -> "标准/通用";
-                default -> isp;
-            };
+            IspVariant v = IspVariant.of(isp);
+            return v == null ? isp : v.label();
         }
     }
 }

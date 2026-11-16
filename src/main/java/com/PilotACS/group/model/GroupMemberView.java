@@ -25,6 +25,9 @@ public class GroupMemberView {
     @Schema(description = "分组节点全路径文案：北京市 / 市辖区 / 海淀区 / 北京其他区域")
     private String groupText;
 
+    @Schema(description = "实际归属分组全路径文案（根视角下可能与所选节点不同；未归属=资源根组）")
+    private String actualGroupText;
+
     @Schema(description = "OLT 设备 id；ONU 为 null")
     private Long oltId;
 

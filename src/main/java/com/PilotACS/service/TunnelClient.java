@@ -121,7 +121,7 @@ public class TunnelClient {
     // ==================== 建连 + 握手 ====================
 
     private void connect() throws IOException {
-        Logs.info(Logs.Module.TUNNEL, "正在连接服务器", "地址", SERVER_HOST + ":" + SERVER_PORT);
+        Logs.info(Logs.Module.TUNNEL, "正在连接服务器");
 
         Socket raw;
         if (USE_TLS) {
@@ -161,7 +161,7 @@ public class TunnelClient {
             return;
         }
 
-        Logs.info(Logs.Module.TUNNEL, "连接成功", "实例", instanceId, "域名", subdomain + ".i-ddns.com");
+        Logs.info(Logs.Module.TUNNEL, "连接成功", "域名", subdomain + ".i-ddns.com");
         executor.submit(this::heartbeatLoop);
         readLoop();
     }
