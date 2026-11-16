@@ -36,6 +36,9 @@ public class CwmpSession {
     private String deviceId;
 
     private int state = STATE_CREATED;
+
+    /** 在飞 RPC 的步骤用途（scan/probe/collect/apply），Fault 时判断能不能跳过着继续 */
+    private String pendingPurpose;
     private final long created = System.currentTimeMillis();
     private volatile long lastActivity = created;
     /** 一次性基本信息（Inform 时填） */

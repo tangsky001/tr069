@@ -20,18 +20,28 @@ public class SessionRegistry {
 
     private final Map<String, CwmpSession> bySn = new ConcurrentHashMap<>();
     private final Map<String, CwmpSession> bySessionId = new ConcurrentHashMap<>();
+    /** create() 顶替掉的旧会话，供调用方做收尾（在飞任务回队等） */
+    private volatile CwmpSession lastSuperseded;
 
     public synchronized CwmpSession create(String sn) {
-        // 同设备旧会话先作废（设备重新 Inform 场景）
+        // 同设备旧会话先摘除（设备重新 Inform 场景）。
+        // 注意：不能在这里 setEnded —— endSession 靠 isEnded 幂等，提前置位会跳过收尾；
+        // 旧会话由调用方 endSession(lastSuperseded) 完整收尾（任务回队/参数落库/快照刷新）
         CwmpSession old = bySn.get(sn);
+        lastSuperseded = null;
         if (old != null) {
-            old.setEnded(true);
             bySessionId.remove(old.getSessionId());
+            lastSuperseded = old;
         }
         CwmpSession s = new CwmpSession(UUID.randomUUID().toString().replace("-", ""), sn);
         bySn.put(sn, s);
         bySessionId.put(s.getSessionId(), s);
         return s;
+    }
+
+    /** 刚被 create() 顶替的旧会话；无则 null */
+    public CwmpSession lastSuperseded() {
+        return lastSuperseded;
     }
 
     public CwmpSession bySessionId(String sessionId) {

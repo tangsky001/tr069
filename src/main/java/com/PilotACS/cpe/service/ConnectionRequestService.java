@@ -15,7 +15,9 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -31,36 +33,69 @@ public class ConnectionRequestService {
 
     private final CpeProperties props;
 
-    /** 唤醒设备，返回是否成功拿到 200/204 */
+    /** 唤醒设备（用配置里的默认账号） */
     public boolean wake(String url) {
+        return wake(url, null, null);
+    }
+
+    /**
+     * 唤醒设备。只允许两类凭据：
+     * 1. 配置文件 acs.cpe.cr-username/cr-password
+     * 2. ACS 首次下发到设备的同一组账密（即上面那组；下发前设备被旧平台改过密码时 401 属正常）
+     * 设备树上报的 ConnectionRequestUsername（如 RMS）密码未知，不再参与猜配。
+     * username/password 入参保留仅为兼容旧调用，非空且与配置不同时作为最后兜底试一次。
+     */
+    public boolean wake(String url, String username, String password) {
         if (url == null || url.isBlank()) {
             return false;
         }
-        try {
-            HttpURLConnection conn = open(url);
-            int code = conn.getResponseCode();
-            if (code == 200 || code == 204) {
-                return true;
-            }
-            String auth = conn.getHeaderField("WWW-Authenticate");
-            conn.disconnect();
-            if (auth == null || code != 401) {
+        List<String[]> pairs = new ArrayList<>();
+        pairs.add(new String[]{props.getCrUsername(), props.getCrPassword()});
+        boolean foreignCred = username != null && !username.isBlank()
+                && !username.equals(props.getCrUsername());
+        if (foreignCred && password != null && !password.isBlank()) {
+            pairs.add(new String[]{username, password});
+        }
+
+        String lastAuth = null;
+        int lastCode = 0;
+        for (String[] cred : pairs) {
+            try {
+                HttpURLConnection conn = open(url);
+                int code = conn.getResponseCode();
+                if (code == 200 || code == 204) {
+                    conn.disconnect();
+                    return true;
+                }
+                String auth = conn.getHeaderField("WWW-Authenticate");
+                conn.disconnect();
+                if (auth == null || code != 401) {
+                    Logs.warn(Logs.Module.CPE, "反向连接被拒", "url", maskUrl(url), "状态码", code);
+                    return false;
+                }
+                // 第二次带认证：Digest 用设备挑战头现场算，Basic 直接 base64
+                HttpURLConnection conn2 = open(url);
+                conn2.setRequestProperty("Authorization", authorization(auth, url, cred[0], cred[1]));
+                int code2 = conn2.getResponseCode();
+                conn2.disconnect();
+                if (code2 == 200 || code2 == 204) {
+                    Logs.info(Logs.Module.CPE, "反向连接认证成功", "url", maskUrl(url), "账号", cred[0],
+                            "认证方式", auth.startsWith("Digest") ? "Digest" : "Basic");
+                    return true;
+                }
+                lastCode = code2;
+                lastAuth = auth;
+            } catch (Exception e) {
+                Logs.warn(Logs.Module.CPE, "反向连接失败", "url", maskUrl(url), "原因", e.getMessage());
                 return false;
             }
-            // 第二次带认证
-            HttpURLConnection conn2 = open(url);
-            conn2.setRequestProperty("Authorization", authorization(auth, url));
-            int code2 = conn2.getResponseCode();
-            conn2.disconnect();
-            if (code2 == 200 || code2 == 204) {
-                return true;
-            }
-            Logs.warn(Logs.Module.CPE, "反向连接被拒", "url", maskUrl(url), "状态码", code2);
-            return false;
-        } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "反向连接失败", "url", maskUrl(url), "原因", e.getMessage());
-            return false;
         }
+        Logs.warn(Logs.Module.CPE, "反向连接被拒", "url", maskUrl(url), "状态码", lastCode,
+                "认证方式", lastAuth == null ? "?" : (lastAuth.startsWith("Digest") ? "Digest" : "Basic"),
+                "尝试账号", pairs.stream().map(p -> p[0]).distinct().toList(),
+                foreignCred ? "提示" : null,
+                foreignCred ? "设备侧 CR 账密被外部平台改过，请重新下发 ConnectionRequestUsername/Password" : null);
+        return false;
     }
 
     private HttpURLConnection open(String url) throws Exception {
@@ -71,16 +106,16 @@ public class ConnectionRequestService {
         return conn;
     }
 
-    private String authorization(String challenge, String url) {
+    private String authorization(String challenge, String url, String username, String password) {
         if (challenge.startsWith("Digest")) {
-            return digest(challenge, url);
+            return digest(challenge, url, username, password);
         }
         // Basic 回退
-        String up = props.getCrUsername() + ":" + props.getCrPassword();
+        String up = username + ":" + password;
         return "Basic " + Base64.getEncoder().encodeToString(up.getBytes(StandardCharsets.UTF_8));
     }
 
-    private String digest(String challenge, String url) {
+    private String digest(String challenge, String url, String username, String password) {
         Map<String, String> p = new java.util.HashMap<>();
         Matcher m = Pattern.compile("(\\w+)=(?:\"([^\"]*)\"|([^,\\s]+))").matcher(challenge);
         while (m.find()) {
@@ -91,12 +126,17 @@ public class ConnectionRequestService {
         String qop = p.getOrDefault("qop", "");
         String cnonce = HexFormat.of().formatHex(randBytes());
         String nc = "00000001";
-        String uri = URI.create(url).getPath() == null ? "/" : URI.create(url).getPath();
+        // Digest 的 uri 必须与请求行一致：带 query 的 CR URL 要连 ?sn=xxx 一起算，否则响应值对不上
+        URI u = URI.create(url);
+        String uri = u.getRawPath() == null || u.getRawPath().isEmpty() ? "/" : u.getRawPath();
+        if (u.getRawQuery() != null && !u.getRawQuery().isEmpty()) {
+            uri += "?" + u.getRawQuery();
+        }
 
-        String ha1 = md5(props.getCrUsername() + ":" + realm + ":" + props.getCrPassword());
+        String ha1 = md5(username + ":" + realm + ":" + password);
         String ha2 = md5("GET:" + uri);
         String response;
-        String sbAuth = "Digest username=\"" + props.getCrUsername() + "\", realm=\"" + realm
+        String sbAuth = "Digest username=\"" + username + "\", realm=\"" + realm
                 + "\", nonce=\"" + nonce + "\", uri=\"" + uri + "\", response=\"";
         if (qop != null && !qop.isBlank()) {
             response = md5(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":auth:" + ha2);

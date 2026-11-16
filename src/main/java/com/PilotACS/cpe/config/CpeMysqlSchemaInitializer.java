@@ -45,6 +45,8 @@ public class CpeMysqlSchemaInitializer implements InitializingBean {
                 `last_inform_ms`        BIGINT       DEFAULT NULL COMMENT '最近 Inform 毫秒时间戳',
                 `last_boot_ms`          BIGINT       DEFAULT NULL COMMENT '最近 1 BOOT 毫秒时间戳',
                 `last_bootstrap_ms`     BIGINT       DEFAULT NULL COMMENT '最近 0 BOOTSTRAP 毫秒时间戳',
+                `init_provisioned`      TINYINT      DEFAULT 0 COMMENT '1 首次上报已下发反向连接账密+周期上报',
+                `init_provisioned_at`   BIGINT       DEFAULT NULL COMMENT '首次下发毫秒时间戳',
                 `created_at`            BIGINT       DEFAULT NULL COMMENT '建档毫秒时间戳',
                 `updated_at`            BIGINT       DEFAULT NULL COMMENT '更新毫秒时间戳',
                 PRIMARY KEY (`sn`),
@@ -71,6 +73,14 @@ public class CpeMysqlSchemaInitializer implements InitializingBean {
                 KEY `uk_cpe_task_no` (`task_no`),
                 KEY `idx_cpe_task_sn` (`sn`, `status`)
             ) ENGINE = InnoDB COMMENT '光猫下发任务（CWMP/TR-069）';
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS `cpe_device_snapshot` (
+                `sn`            VARCHAR(64) NOT NULL COMMENT '序列号（主键）',
+                `snapshot_json` MEDIUMTEXT  COMMENT '业务快照 JSON（WAN/LAN/WIFI/SIP）',
+                `updated_at`    BIGINT      DEFAULT NULL COMMENT '刷新毫秒时间戳',
+                PRIMARY KEY (`sn`)
+            ) ENGINE = InnoDB COMMENT '光猫业务快照（会话结束/采集完成时刷新）';
             """);
 
     private final JdbcTemplate jdbcTemplate;
@@ -87,9 +97,45 @@ public class CpeMysqlSchemaInitializer implements InitializingBean {
             for (String sql : CREATE_SQL) {
                 jdbcTemplate.execute(sql);
             }
+            ensureColumns();
+            upgradeTaskParamJson();
             Logs.info(Logs.Module.CPE, "MySQL 台账/任务表就绪", "表", "cpe_device/cpe_task");
         } catch (Exception e) {
             Logs.error(Logs.Module.CPE, "光猫台账表自动建表失败，请手工执行 sql/mysql.sql", e);
+        }
+    }
+
+    /** 老库升级：首次下发标记列靠 ALTER 补齐（幂等） */
+    private void ensureColumns() {
+        addColumnIfMissing("init_provisioned",
+                "ALTER TABLE `cpe_device` ADD COLUMN `init_provisioned` TINYINT DEFAULT 0 "
+                        + "COMMENT '1 首次上报已下发反向连接账密+周期上报'");
+        addColumnIfMissing("init_provisioned_at",
+                "ALTER TABLE `cpe_device` ADD COLUMN `init_provisioned_at` BIGINT DEFAULT NULL "
+                        + "COMMENT '首次下发毫秒时间戳'");
+    }
+
+    /** 老库升级：cpe_task.params_json TEXT(64KB) 装不下业务刷新的叶子清单 → MEDIUMTEXT（幂等） */
+    private void upgradeTaskParamJson() {
+        String type = jdbcTemplate.queryForObject("""
+                SELECT DATA_TYPE FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cpe_task' AND COLUMN_NAME = 'params_json'
+                """, String.class);
+        if (type != null && !"mediumtext".equalsIgnoreCase(type)) {
+            jdbcTemplate.execute("ALTER TABLE `cpe_task` MODIFY `params_json` MEDIUMTEXT "
+                    + "COMMENT '任务参数 JSON（业务刷新的叶子清单可能很大）'");
+            Logs.info(Logs.Module.CPE, "cpe_task.params_json 扩容为 MEDIUMTEXT");
+        }
+    }
+
+    private void addColumnIfMissing(String column, String ddl) {
+        Integer n = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cpe_device' AND COLUMN_NAME = ?
+                """, Integer.class, column);
+        if (n == null || n == 0) {
+            jdbcTemplate.execute(ddl);
+            Logs.info(Logs.Module.CPE, "台账补列", "列", column);
         }
     }
 }

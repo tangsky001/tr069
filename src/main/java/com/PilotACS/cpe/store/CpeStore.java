@@ -151,9 +151,41 @@ public class CpeStore {
             set.append(k).append(" = ?");
             args.add(v);
         });
+        set.append(", updated_at = ?");
+        args.add(System.currentTimeMillis());
         args.add(sn);
-        jdbcTemplate.update("UPDATE cpe_device SET " + set + ", updated_at = ? WHERE sn = ?", args.toArray(),
-                System.currentTimeMillis(), sn);
+        // 注意：args 必须是 update(sql, Object...) 的唯一/末尾参数，否则会被当成单个参数绑定
+        jdbcTemplate.update("UPDATE cpe_device SET " + set + " WHERE sn = ?", args.toArray());
+    }
+
+    // ==================== 业务快照（MySQL） ====================
+
+    /** 会话结束/采集完成后刷新业务快照（整份 JSON 覆盖） */
+    public void saveSnapshot(String sn, String json) {
+        jdbcTemplate.update("""
+                INSERT INTO cpe_device_snapshot (sn, snapshot_json, updated_at) VALUES (?,?,?)
+                ON DUPLICATE KEY UPDATE snapshot_json = VALUES(snapshot_json), updated_at = VALUES(updated_at)
+                """, sn, json, System.currentTimeMillis());
+    }
+
+    public String findSnapshot(String sn) {
+        List<String> list = jdbcTemplate.queryForList(
+                "SELECT snapshot_json FROM cpe_device_snapshot WHERE sn = ?", String.class, sn);
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    /** 首次上报的初始化下发（反向连接账密 + 周期上报）是否已完成 */
+    public boolean isInitProvisioned(String sn) {
+        Integer n = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM cpe_device WHERE sn = ? AND init_provisioned = 1", Integer.class, sn);
+        return n != null && n > 0;
+    }
+
+    /** 标记首次下发完成（以 SN 为标识落库） */
+    public void markInitProvisioned(String sn) {
+        jdbcTemplate.update(
+                "UPDATE cpe_device SET init_provisioned = 1, init_provisioned_at = ?, updated_at = ? WHERE sn = ?",
+                System.currentTimeMillis(), System.currentTimeMillis(), sn);
     }
 
     private static final String DEVICE_BRIEF_COLS =
@@ -391,13 +423,22 @@ public class CpeStore {
         return n == null ? 0 : n;
     }
 
-    /** 兜底：把卡在 running 的任务判死 */
+    /** 某设备某类型、某来源的在队/在跑任务数（系统自动任务防重复用） */
+    public int countActiveTasks(String sn, String type, String createdBy) {
+        Integer n = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM cpe_task
+                WHERE sn = ? AND type = ? AND created_by = ? AND status IN ('queued','running')
+                """, Integer.class, sn, type, createdBy);
+        return n == null ? 0 : n;
+    }
+
+    /** 兜底：卡在 running 的任务回队重试（设备下次上报续跑），不判死 */
     public void failStaleRunningTasks(long olderThanMs) {
         long deadline = System.currentTimeMillis() - olderThanMs;
         jdbcTemplate.update("""
-                UPDATE cpe_task SET status='fail', fault_string='会话超时中断', finished_at=?
+                UPDATE cpe_task SET status='queued', fault_string='执行超时回队，待设备下次上报续跑'
                 WHERE status='running' AND started_at IS NOT NULL AND started_at < ?
-                """, System.currentTimeMillis(), deadline);
+                """, deadline);
     }
 
     private String toJson(Object o) {

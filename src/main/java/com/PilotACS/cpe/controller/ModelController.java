@@ -52,7 +52,8 @@ public class ModelController {
         out.put("isp", isps);
         out.put("ports", List.of("1", "2", "4", "8"));
         out.put("speeds", List.of("10/100", "10/100/1000", "10/100/1000/2500"));
-        out.put("wifiSpecs", List.of("2.4G", "2.4G+5G", "2.4G+5G+6G"));
+        // 只保留能实测到的频段口径：检测端只识别 2.4G / 5G，给 6G 必判不满足
+        out.put("wifiSpecs", List.of("2.4G", "2.4G+5G"));
         return Result.ok(out);
     }
 }

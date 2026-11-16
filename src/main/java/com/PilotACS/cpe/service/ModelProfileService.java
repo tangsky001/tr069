@@ -6,8 +6,10 @@
 
 package com.PilotACS.cpe.service;
 
+import com.PilotACS.cpe.config.CpeProperties;
 import com.PilotACS.cpe.model.CpeParam;
 import com.PilotACS.cpe.model.IspVariant;
+import com.PilotACS.cpe.rpc.TaskPlanner;
 import com.PilotACS.cpe.session.CwmpSession;
 import com.PilotACS.cpe.store.CpeStore;
 import com.PilotACS.common.log.Logs;
@@ -43,29 +45,26 @@ public class ModelProfileService {
 
     private final CpeStore store;
     private final CapabilityDetector capabilityDetector;
+    private final CpeProperties props;
+    private final TaskPlanner planner;
 
-    /** 台账没写运营商时，从参数树私有节点识别一次并回填（已写的不再动） */
+    /** 台账没写运营商时，从落库的参数树私有节点识别一次并回填（已写的不再动） */
     public String detectIsp(String sn) {
         try {
             Map<String, Object> device = store.findDevice(sn);
             if (device == null) {
+                Logs.warn(Logs.Module.CPE, "运营商识别跳过：设备台账不存在", "sn", sn);
                 return null;
             }
             String isp = str(device.get("isp"));
             if (isp != null && !isp.isBlank()) {
                 return isp;
             }
-            IspVariant hit = null;
-            for (String path : store.loadParams(sn).keySet()) {
-                hit = IspVariant.ofPath(path);
-                if (hit != null) {
-                    break;
-                }
-            }
+            Map<String, CpeParam> params = store.loadParams(sn);
+            String hit = detectIspFromPaths(sn, params.keySet());
             if (hit == null) {
                 // 没认出来：把参数树里 X_ 开头的二段节点取样打出来，方便补前缀表
                 Set<String> samples = new LinkedHashSet<>();
-                Map<String, CpeParam> params = store.loadParams(sn);
                 for (String path : params.keySet()) {
                     int i = path.indexOf(".X_");
                     if (i < 0) {
@@ -79,16 +78,158 @@ public class ModelProfileService {
                 }
                 Logs.info(Logs.Module.CPE, "运营商识别未命中", "sn", sn,
                         "参数数", params.size(), "私有节点样本", samples);
-                maybeProbeTree(sn, params.size());
+            }
+            return hit;
+        } catch (Exception e) {
+            Logs.warn(Logs.Module.CPE, "运营商识别异常", "sn", sn, "原因", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * 从一批参数路径识别运营商并回填台账。会话内可直接传入内存参数树，
+     * 不依赖参数落库时序（避免刚采完就识别时库里还读不到）
+     */
+    public String detectIspFromPaths(String sn, java.util.Collection<String> paths) {
+        if (paths == null || paths.isEmpty()) {
+            return null;
+        }
+        try {
+            Map<String, Object> device = store.findDevice(sn);
+            String known = device == null ? null : str(device.get("isp"));
+            if (known != null && !known.isBlank()) {
+                // 已申报/已识别过的不再覆盖
+                return known;
+            }
+            IspVariant hit = null;
+            for (String path : paths) {
+                hit = IspVariant.ofPath(path);
+                if (hit != null) {
+                    break;
+                }
+            }
+            if (hit == null) {
                 return null;
             }
             store.updateDeviceColumns(sn, Map.of("isp", hit.code()));
-            Logs.info(Logs.Module.CPE, "按私有节点识别运营商", "sn", sn, "运营商", hit.code());
+            Logs.info(Logs.Module.CPE, "按私有节点识别运营商", "sn", sn,
+                    "运营商", hit.code(), "参数数", paths.size());
             return hit.code();
         } catch (Exception e) {
-            Logs.debug(Logs.Module.CPE, "运营商识别跳过: {}", e.getMessage());
+            // 识别/回填失败不能拖垮会话收尾
+            Logs.warn(Logs.Module.CPE, "运营商识别回填失败", "sn", sn, "原因", e.toString());
             return null;
         }
+    }
+
+    /** 会话结束调用：识别运营商；认不出且树不完整就排一次探测任务（下次 Inform 执行） */
+    public String detectIspAfterSession(String sn) {
+        String isp = detectIsp(sn);
+        if (isp == null) {
+            maybeProbeTree(sn, store.loadParams(sn).size());
+        }
+        return isp;
+    }
+
+    /**
+     * Inform 时调用：运营商未知且树不完整 → 直接把探测任务插进**当前会话队列**，
+     * 首个 Inform 这轮就把全树采完，会话结束时 detectIsp 即可认出运营商
+     */
+    private void probeInSession(CwmpSession s) {
+        String sn = s.getSn();
+        if (ispProbeDone.contains(sn)) {
+            return;
+        }
+        ispProbeDone.add(sn);
+        int count = s.getData().all().size();
+        if (count >= FULL_TREE_MIN_PARAMS) {
+            Logs.info(Logs.Module.CPE, "参数树已采全且无私有节点，不再探测", "sn", sn, "参数数", count);
+            return;
+        }
+        if (store.countActiveTasks(sn, "AdaptProbe") > 0) {
+            // 库里已有探测任务：会话装载时会跑，不重复排
+            return;
+        }
+        long id = store.insertTask(sn, "AdaptProbe", Map.of(), "system-isp-detect");
+        Map<String, Object> row = store.getTask(id);
+        String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
+        s.getQueue().add(planner.build(row, s.getData(), root, s.getModelParams()));
+        Logs.info(Logs.Module.CPE, "运营商未知且参数树不完整，本会话立即全树探测",
+                "sn", sn, "参数数", count, "任务", id);
+    }
+
+    /** 系统业务刷新任务的创建人标识（防重复排队用） */
+    public static final String BIZ_REFRESH_BY = "system-biz-refresh";
+
+    /**
+     * Inform 时调用：库里有业务参数树 → 本会话排一条轻量 GPV 刷 WAN/WIFI/SIP 最新值。
+     * 只 GPV 不 GPN 扫描（十几个 RPC），落库按差异收敛（值没变不写库），会话结束快照有差异才更新。
+     */
+    public void refreshBizInSession(CwmpSession s) {
+        try {
+            java.util.List<String> leaves = bizRefreshNames(s.getSn());
+            if (leaves.isEmpty()) {
+                // 新设备还没有树：全树探测已由 attachModel/probeInSession 安排
+                return;
+            }
+            if (store.countActiveTasks(s.getSn(), TaskPlanner.TYPE_GPV, BIZ_REFRESH_BY) > 0) {
+                return;
+            }
+            long id = store.insertTask(s.getSn(), TaskPlanner.TYPE_GPV,
+                    Map.of("names", leaves, "bizRefresh", true), BIZ_REFRESH_BY);
+            Map<String, Object> row = store.getTask(id);
+            String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
+            s.getQueue().add(planner.build(row, s.getData(), root, s.getModelParams()));
+            Logs.debug(Logs.Module.CPE, "本会话排业务参数轻量刷新",
+                    "sn", s.getSn(), "参数数", leaves.size(), "任务", id);
+        } catch (Exception e) {
+            Logs.warn(Logs.Module.CPE, "业务参数刷新排程失败", "sn", s.getSn(), "原因", e.toString());
+        }
+    }
+
+    /** 库里业务域（WAN/WIFI/SIP）叶子路径；没有树返回空集合。供会话内刷新与控制台采集共用 */
+    public java.util.List<String> bizRefreshNames(String sn) {
+        Map<String, CpeParam> params = store.loadParams(sn);
+        if (params.isEmpty()) {
+            return java.util.List.of();
+        }
+        com.PilotACS.cpe.model.DeviceData data = new com.PilotACS.cpe.model.DeviceData();
+        data.loadAll(params);
+        String root = BusinessPaths.detectRoot(data, props.getDefaultRootNode());
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        java.util.Set<String> bad = badParamNames.getOrDefault(sn, java.util.Set.of());
+        for (String br : BusinessPaths.businessRoots(root)) {
+            for (Map.Entry<String, CpeParam> e : params.entrySet()) {
+                String p = e.getKey();
+                if (!p.startsWith(br) || p.endsWith(".")) {
+                    continue;
+                }
+                // 空壳路径（GPN 登记过但从未采到值）与已学习的 9005 坏名：不排进 GPV，省得每轮撞 Fault
+                CpeParam v = e.getValue();
+                if (v == null || v.value() == null || v.value().isBlank() || bad.contains(p)) {
+                    continue;
+                }
+                out.add(p);
+            }
+        }
+        return new java.util.ArrayList<>(out);
+    }
+
+    // ==================== 9005 坏参数名学习（GPV 报 9005 的名字直接过滤，避免重复二分） ====================
+
+    /** 设备不认的参数名：sn -> 名字集合（重启后重建，代价只是一轮重新学习） */
+    private final Map<String, java.util.Set<String>> badParamNames = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 记住设备不认的参数名，后续采集直接跳过 */
+    public void rememberBadParam(String sn, String name) {
+        if (sn != null && name != null) {
+            badParamNames.computeIfAbsent(sn, k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(name);
+        }
+    }
+
+    /** 过滤设备不认的参数名 */
+    public java.util.Set<String> badParamsOf(String sn) {
+        return badParamNames.getOrDefault(sn, java.util.Set.of());
     }
 
     /** 参数树缺私有节点时自动排一次全树探测（AdaptProbe：GPN 全树 → 会话引擎补 GPV） */
@@ -116,9 +257,16 @@ public class ModelProfileService {
             Map<String, Object> device = store.findDevice(s.getSn());
             String isp = str(device.get("isp"));
             if (isp == null || isp.isBlank()) {
-                // 台账还没写运营商：Inform 时也按存量参数树识别一次
-                detectIsp(s.getSn());
-                return;
+                // 台账还没写运营商：先用**会话内存里的参数树**识别（不依赖落库时序），再退到落库树
+                String detected = detectIspFromPaths(s.getSn(), s.getData().all().keySet());
+                if (detected == null) {
+                    detected = detectIsp(s.getSn());
+                }
+                if (detected == null) {
+                    probeInSession(s);
+                    return;
+                }
+                isp = detected;
             }
             String brand = normalizeBrand(s.getManufacturer());
             String model = str(s.getProductClass());

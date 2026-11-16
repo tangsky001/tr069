@@ -13,7 +13,9 @@ import com.PilotACS.cpe.model.SoapMessage;
 import com.PilotACS.cpe.model.TaskRun;
 import com.PilotACS.cpe.rpc.TaskPlanner;
 import com.PilotACS.cpe.service.BusinessPaths;
+import com.PilotACS.cpe.service.BusinessSnapshotService;
 import com.PilotACS.cpe.service.CapabilityDetector;
+import com.PilotACS.cpe.service.InitProvisionService;
 import com.PilotACS.cpe.service.ModelProfileService;
 import com.PilotACS.cpe.session.CwmpSession;
 import com.PilotACS.cpe.session.SessionRegistry;
@@ -30,6 +32,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -63,6 +66,8 @@ public class CwmpService {
     private final TaskPlanner planner;
     private final CapabilityDetector capabilityDetector;
     private final ModelProfileService modelProfileService;
+    private final InitProvisionService initProvisionService;
+    private final BusinessSnapshotService snapshotService;
 
     // ==================== 入口 ====================
 
@@ -82,11 +87,10 @@ public class CwmpService {
         String newSessionId = null;
         if (session == null) {
             if (msg.getName() == null) {
-                // 部分（如收到反向连接后）设备用空 POST 启动会话（TR-069 3.3.3）：
-                // 此时还没有会话，回 Inform 请求让设备上报身份，下一 POST 才是 Inform
-                Logs.info(Logs.Module.CPE, "设备以空 POST 请求建会话，回 Inform 索取设备信息",
-                        "ACS", "path/query 已接受");
-                return new Reply(200, SoapBuilder.informRequest("0"), null);
+                // 无会话的空 POST：多为设备收尾（TR-069 A.3.2 里空响应即结束会话）。
+                // 不能再回 Inform 请求——Inform 只能 CPE→ACS，个别设备不认会立刻重发空 POST 形成风暴
+                Logs.debug(Logs.Module.CPE, "无会话空 POST，回 200 空响应结束会话");
+                return Reply.empty(200);
             }
             if (!"Inform".equals(msg.getName())) {
                 // 没有会话又不报 Inform（含空 POST），直接 400
@@ -97,6 +101,12 @@ public class CwmpService {
             }
             session = registry.create(msg.getSerialNumber());
             newSessionId = session.getSessionId();
+            // 同 SN 旧会话被顶替时必须完整收尾：在飞任务回队、参数落库、快照刷新。
+            // 否则任务卡 running，新会话 loadQueuedTasks 装不到它（只装 queued）→ "无待执行任务"
+            CwmpSession superseded = registry.lastSuperseded();
+            if (superseded != null) {
+                endSession(superseded, "设备重新 Inform，会话被新会话顶替");
+            }
         }
         session.touch();
 
@@ -164,6 +174,10 @@ public class CwmpService {
 
         // 绑定机型模板（品牌+型号+版本+运营商），有则挂到会话上供组装用
         modelProfileService.attachModel(s);
+        // 首次上报：查库判断是否已下发反向连接账密与周期上报，未下发则本会话立即下发
+        initProvisionService.provisionIfNeeded(s);
+        // 每次上报：有参数树就排一条轻量 GPV 刷 WAN/WIFI/SIP 最新值（差异落库）
+        modelProfileService.refreshBizInSession(s);
 
         Logs.info(Logs.Module.CPE, "设备上报 Inform", "sn", s.getSn(),
                 "厂商", s.getManufacturer(), "型号", s.getProductClass(),
@@ -231,7 +245,7 @@ public class CwmpService {
             return;
         }
         if (msg.isFault()) {
-            onTaskFault(s, cur, msg);
+            onTaskFault(s, cur, msg, req);
             return;
         }
         String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
@@ -249,15 +263,11 @@ public class CwmpService {
                 // 扫描步骤结束：业务叶子补 GPV（能力探测/业务采集的第二阶段）
                 if (TaskPlanner.TYPE_REFRESH_BIZ.equals(cur.getType())
                         && !planner.hasRemainingPurpose(cur, "scan")) {
-                    planner.appendBizGpv(cur, s.getData(), root);
+                    planner.appendGpv(cur, bizLeaves(s, root), "collect");
                 }
                 if (TaskPlanner.TYPE_ADAPT_PROBE.equals(cur.getType())
                         && !planner.hasRemainingPurpose(cur, "probe")) {
-                    List<String> leaves = new ArrayList<>();
-                    for (String br : BusinessPaths.businessRoots(root)) {
-                        leaves.addAll(s.getData().leaves(br));
-                    }
-                    planner.appendGpv(cur, leaves, "collect");
+                    planner.appendGpv(cur, bizLeaves(s, root), "collect");
                 }
             }
             case GPV -> {
@@ -281,6 +291,12 @@ public class CwmpService {
                 completeTask(s, cur, Map.of("applied", msg.getStatus() == 0, "status", msg.getStatus()));
                 Logs.info(Logs.Module.CPE, "参数下发完成", "sn", s.getSn(), "任务", cur.getTaskId(),
                         "参数数", req.getValues() == null ? 0 : req.getValues().size());
+                if (Boolean.TRUE.equals(cur.getParams().get(InitProvisionService.PARAM_FLAG))) {
+                    // 首次初始化下发成功：台账打标，后续上报不再重复下发
+                    store.markInitProvisioned(s.getSn());
+                    Logs.info(Logs.Module.CPE, "首次初始化参数下发成功，已落库", "sn", s.getSn(),
+                            "任务", cur.getTaskId());
+                }
             }
             case ADD_OBJECT -> {
                 completeTask(s, cur, Map.of("instanceNumber", msg.getInstanceNumber(), "status", msg.getStatus()));
@@ -303,17 +319,70 @@ public class CwmpService {
         }
     }
 
-    private void onTaskFault(CwmpSession s, TaskRun cur, SoapMessage msg) {
+    private void onTaskFault(CwmpSession s, TaskRun cur, SoapMessage msg, RpcRequest req) {
         StringBuilder detail = new StringBuilder(msg.getFaultString() == null ? "" : msg.getFaultString());
         if (!msg.getSetFaults().isEmpty()) {
             detail.append('；');
             msg.getSetFaults().forEach(f -> detail.append(f.name()).append(':').append(f.faultString()).append(' '));
+        }
+        String purpose = s.getPendingPurpose();
+        if ("scan".equals(purpose) || "probe".equals(purpose)) {
+            // 扫描/探测步骤失败（常见 9005：设备没有这棵业务子树，如 Services.VoiceService.）：
+            // 跳过即可，不能拖死整个采集任务；扫完就按已扫到的叶子补 GPV
+            Logs.warn(Logs.Module.CPE, "扫描步骤失败，跳过继续", "sn", s.getSn(), "任务", cur.getTaskId(),
+                    "步骤", purpose, "错误码", msg.getFaultCode(), "详情", detail.toString());
+            String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
+            if (!planner.hasRemainingPurpose(cur, "scan") && !planner.hasRemainingPurpose(cur, "probe")) {
+                planner.appendGpv(cur, bizLeaves(s, root), "collect");
+            }
+            return;
+        }
+        // GPV 采集步骤遇到 9005/9003（某个参数名不被设备接受）：拆分批次定位坏名，单个坏名直接丢弃，
+        // 不能让一条脏名把整轮采集判死
+        if ("collect".equals(purpose) && req != null && req.getKind() == RpcRequest.Kind.GPV
+                && (msg.getFaultCode() == 9005 || msg.getFaultCode() == 9003)) {
+            List<String> names = req.getNames();
+            if (names != null && names.size() > 1) {
+                int mid = names.size() / 2;
+                String key = "task-" + cur.getTaskId();
+                cur.getSteps().addFirst(new TaskRun.RpcStep(
+                        RpcRequest.gpv(new ArrayList<>(names.subList(mid, names.size())), key), "collect"));
+                cur.getSteps().addFirst(new TaskRun.RpcStep(
+                        RpcRequest.gpv(new ArrayList<>(names.subList(0, mid)), key), "collect"));
+                Logs.debug(Logs.Module.CPE, "参数采集含无效名，拆分重试: sn={} 参数数={} 错误码={}",
+                        s.getSn(), names.size(), msg.getFaultCode());
+                return;
+            }
+            if (names != null) {
+                // 记住这颗坏名：后续采集直接过滤，不必每轮重新二分
+                modelProfileService.rememberBadParam(s.getSn(), names.get(0));
+                Logs.warn(Logs.Module.CPE, "跳过设备不认的参数", "sn", s.getSn(), "任务", cur.getTaskId(),
+                        "参数", names, "错误码", msg.getFaultCode());
+                return;
+            }
+        }
+        if (Boolean.TRUE.equals(cur.getParams().get(InitProvisionService.PARAM_FLAG))) {
+            // 首次初始化下发失败：放开去重，下次 Inform 再试
+            initProvisionService.retryLater(s.getSn());
         }
         store.updateTask(cur.getTaskId(), "fail", String.valueOf(msg.getFaultCode()), detail.toString(), null);
         cur.markCompleted();
         s.setCurrent(null);
         Logs.warn(Logs.Module.CPE, "任务执行失败", "sn", s.getSn(), "任务", cur.getTaskId(),
                 "类型", cur.getType(), "错误码", msg.getFaultCode(), "详情", detail.toString());
+    }
+
+    /** 业务域叶子（滤掉该设备不认的参数名），补 GPV 用 */
+    private List<String> bizLeaves(CwmpSession s, String root) {
+        List<String> leaves = new ArrayList<>();
+        for (String br : BusinessPaths.businessRoots(root)) {
+            leaves.addAll(s.getData().leaves(br));
+        }
+        Set<String> bad = modelProfileService.badParamsOf(s.getSn());
+        if (!bad.isEmpty()) {
+            leaves.removeIf(bad::contains);
+        }
+        return leaves;
     }
 
     private void handleTransferComplete(CwmpSession s, SoapMessage msg) {
@@ -366,6 +435,7 @@ public class CwmpService {
             RpcRequest req = step.request();
             req.setId(s.getSessionId() + "-" + s.getRpcCount());
             s.setPending(req);
+            s.setPendingPurpose(step.purpose());
             s.setRpcCount(s.getRpcCount() + 1);
             store.updateTask(cur.getTaskId(), "running", null, null, null);
             return req;
@@ -401,6 +471,9 @@ public class CwmpService {
             result.put("rootNode", root);
         } else if (TaskPlanner.TYPE_REFRESH_BIZ.equals(cur.getType())) {
             result.put("collectStatus", s.getData().all().isEmpty() ? "empty" : "success");
+        } else if (TaskPlanner.TYPE_GPV.equals(cur.getType())) {
+            // 控制台/业务轻量刷新的采集结果口径与 RefreshBusiness 一致
+            result.put("collectStatus", s.getData().all().isEmpty() ? "empty" : "success");
         }
         store.updateTask(cur.getTaskId(), "success", null, null, toJson(result));
     }
@@ -414,13 +487,41 @@ public class CwmpService {
         s.setEnded(true);
         TaskRun cur = s.getCurrent();
         if (cur != null && !cur.finished() && !cur.isCompleted()) {
-            store.updateTask(cur.getTaskId(), "fail", "0", "会话提前结束，任务未完成: " + reason, null);
+            // 会话中断不判死：任务回队，设备下次上报续跑（与"排队等待设备上线"语义一致）
+            store.updateTask(cur.getTaskId(), "queued", null, "会话中断(" + reason + ")，待续跑", null);
         }
         store.saveDeviceParams(s.getSn(), s.getData().all(), s.getData().dirtyPaths(), s.getData().isFullSync());
-        modelProfileService.detectIsp(s.getSn());
+        // 先用本会话内存树识别（不等读库），认不出再走落库树 + 必要时排探测
+        if (modelProfileService.detectIspFromPaths(s.getSn(), s.getData().all().keySet()) == null) {
+            modelProfileService.detectIspAfterSession(s.getSn());
+        }
+        refreshSnapshot(s);
         registry.remove(s);
         Logs.info(Logs.Module.CPE, "会话结束", "sn", s.getSn(), "原因", reason,
                 "RPC数", s.getRpcCount(), "参数数", s.getData().all().size());
+    }
+
+    /** 会话收尾时刷新业务快照落库（MySQL cpe_device_snapshot）；内容没变化就跳过写库 */
+    private void refreshSnapshot(CwmpSession s) {
+        if (s.getData().all().isEmpty()) {
+            return;
+        }
+        try {
+            String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
+            Map<String, Object> snap = snapshotService.snapshot(store.findDevice(s.getSn()),
+                    s.getData(), root, "success", null);
+            String json = snapshotService.toJson(snap);
+            if (json == null) {
+                return;
+            }
+            if (json.equals(store.findSnapshot(s.getSn()))) {
+                // 快照没差异：跳过，只有刷新时间随 /business 读取时动态算
+                return;
+            }
+            store.saveSnapshot(s.getSn(), json);
+        } catch (Exception e) {
+            Logs.warn(Logs.Module.CPE, "业务快照刷新失败", "sn", s.getSn(), "原因", e.toString());
+        }
     }
 
     /** 定时巡检：超时会话收尾、卡死任务判死、超时未上报的设备翻离线 */

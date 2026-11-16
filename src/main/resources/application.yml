@@ -69,6 +69,8 @@ acs:
     cr-username: itsm
     cr-password: itsm
     cr-timeout-ms: 3000
+    # 首次上报自动下发的周期 Inform 间隔（秒）
+    init-periodic-inform-seconds: 300
     # 同步采集类接口等待设备回参的最大秒数
     collect-timeout-seconds: 120
 

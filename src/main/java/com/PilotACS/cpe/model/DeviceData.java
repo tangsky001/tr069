@@ -41,15 +41,19 @@ public class DeviceData {
         }
     }
 
-    /** 更新值与时间戳；路径未登记过（直接 GPV 未先 GPN）时按叶子补录 */
+    /** 更新值与时间戳；路径未登记过（直接 GPV 未先 GPN）时按叶子补录。有差异才算脏，没差异跳过落库 */
     public void putValue(String path, String value, String type, long ts) {
         CpeParam old = params.get(path);
         if (old != null) {
             params.put(path, new CpeParam(path, value, type, old.object(), old.writable(), ts));
+            if (!java.util.Objects.equals(old.value(), value)
+                    || !java.util.Objects.equals(old.type(), type)) {
+                dirty.add(path);
+            }
         } else {
             params.put(path, new CpeParam(path, value, type, false, true, ts));
+            dirty.add(path);
         }
-        dirty.add(path);
     }
 
     public CpeParam get(String path) {

@@ -53,7 +53,10 @@ public class TaskService {
             }
             String crUrl = device == null ? null : str(device.get("connection_request_url"));
             if (crUrl != null && !crUrl.isBlank()) {
-                connectionRequestService.wake(crUrl);
+                // 只用配置账密唤醒；设备上报的 CR 用户名（密码不可知）不再参与猜配
+                connectionRequestService.wake(crUrl,
+                        paramEndingWith(sn, "ManagementServer.ConnectionRequestUsername"),
+                        paramEndingWith(sn, "ManagementServer.ConnectionRequestPassword"));
             }
             Logs.info(Logs.Module.CPE, "任务排队等待设备上线", "sn", sn, "任务", id, "类型", type);
         }
@@ -93,6 +96,24 @@ public class TaskService {
             }
         }
         return new LinkedHashMap<>();
+    }
+
+    /** 参数树里按后缀取值（如 ManagementServer.ConnectionRequestUsername） */
+    private String paramEndingWith(String sn, String suffix) {
+        try {
+            for (Map.Entry<String, com.PilotACS.cpe.model.CpeParam> e : store.loadParams(sn).entrySet()) {
+                if (!e.getKey().endsWith(suffix) || e.getValue() == null) {
+                    continue;
+                }
+                String v = e.getValue().value();
+                if (v != null && !v.isBlank()) {
+                    return v;
+                }
+            }
+        } catch (Exception ignore) {
+            // 设备还没采集参数树：退回配置里的默认账号
+        }
+        return null;
     }
 
     private String str(Object o) {

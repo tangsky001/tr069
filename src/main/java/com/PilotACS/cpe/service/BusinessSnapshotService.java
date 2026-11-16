@@ -8,6 +8,7 @@ package com.PilotACS.cpe.service;
 
 import com.PilotACS.cpe.model.CpeParam;
 import com.PilotACS.cpe.model.DeviceData;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.text.SimpleDateFormat;
@@ -25,12 +26,52 @@ import java.util.Set;
 @Service
 public class BusinessSnapshotService {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     public Map<String, Object> snapshot(Map<String, Object> deviceRow, Map<String, CpeParam> params,
                                         String collectStatus, String message) {
         DeviceData data = new DeviceData();
         data.loadAll(params);
         String root = BusinessPaths.detectRoot(data, null);
         return snapshot(deviceRow, data, root, collectStatus, message);
+    }
+
+    /** 快照序列化为 JSON（落库用）；失败返回 null */
+    public String toJson(Map<String, Object> snap) {
+        try {
+            return JSON.writeValueAsString(snap);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 反序列化落库的快照 JSON；解析失败返回 null（调用方现算兜底） */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> readSnapshot(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return JSON.readValue(json, Map.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 读取落库快照后，用台账最新时间覆盖（快照生成时刻的"注册/最后联系/运行时长"会过时） */
+    public void refreshTimes(Map<String, Object> snapshot, Map<String, Object> deviceRow) {
+        if (snapshot == null) {
+            return;
+        }
+        Long bootMs = longOf(deviceRow.get("last_boot_ms"));
+        Long informMs = longOf(deviceRow.get("last_inform_ms"));
+        snapshot.put("registerTime", fmt(bootMs));
+        snapshot.put("lastContactTime", fmt(informMs));
+        // 运行时长动态推算：采集时刻的 UpTime + 距最近一次上报经过的时间
+        if (informMs != null && snapshot.get("upTimeSeconds") instanceof Number n) {
+            long up = n.longValue() + Math.max(0, (System.currentTimeMillis() - informMs) / 1000);
+            snapshot.put("uptimeText", uptimeText(String.valueOf(up)));
+        }
     }
 
     public Map<String, Object> snapshot(Map<String, Object> deviceRow, DeviceData data, String root,
@@ -45,6 +86,7 @@ public class BusinessSnapshotService {
         out.put("opticText", opticText(data));
         String upTime = firstValue(data, "UpTime");
         out.put("uptimeText", uptimeText(upTime));
+        out.put("upTimeSeconds", secondsOf(upTime));
         Long bootMs = longOf(deviceRow.get("last_boot_ms"));
         out.put("registerTime", fmt(bootMs));
         out.put("lastContactTime", fmt(longOf(deviceRow.get("last_inform_ms"))));
@@ -69,7 +111,14 @@ public class BusinessSnapshotService {
                 for (String kind : List.of("WANIPConnection", "WANPPPConnection")) {
                     String obj = base + kind + ".";
                     for (int i : data.instances(obj)) {
-                        out.add(wanEntry(data, obj + i + ".", kind.equals("WANIPConnection") ? "IP" : "PPP", i));
+                        String prefix = obj + i + ".";
+                        // 幽灵实例过滤：GPN 能列出但 GPV 采不到任何值（设备实际不存在该连接）
+                        String ctype = data.value(prefix + "ConnectionType");
+                        String cstat = data.value(prefix + "ConnectionStatus");
+                        if ((ctype == null || ctype.isBlank()) && (cstat == null || cstat.isBlank())) {
+                            continue;
+                        }
+                        out.add(wanEntry(data, prefix, kind.equals("WANIPConnection") ? "IP" : "PPP", i));
                     }
                 }
             }
@@ -168,14 +217,29 @@ public class BusinessSnapshotService {
         }
         for (int lanDev : data.instances(root + "LANDevice.")) {
             String base = root + "LANDevice." + lanDev + ".LANWLANConfiguration.";
-            for (int i : data.instances(base)) {
+            java.util.List<Integer> ids = data.instances(base);
+            if (ids.isEmpty()) {
+                // 厂商变体：部分固件（如 SKYW/移动定制）少写 LAN 前缀 → WLANConfiguration
+                base = root + "LANDevice." + lanDev + ".WLANConfiguration.";
+                ids = data.instances(base);
+            }
+            for (int i : ids) {
                 String p = base + i + ".";
+                // 频段判据优先级：X_CMCC_RFBand(0=2.4G,1=5G) → Standard → Channel。
+                // 不能拿 ax 当 5G 专属：Wi-Fi 6 的 ax 在 2.4G/5G 上同名
+                String band = bandOfRfBand(data.value(p + "X_CMCC_RFBand"));
+                if (band == null) {
+                    band = bandOfTr098(data.value(p + "Standard"));
+                }
+                if (band == null) {
+                    band = bandOfChannel(data.value(p + "Channel"));
+                }
                 out.add(wifiEntry(p, i,
                         data.value(p + "SSID"),
                         boolValue(data, p + "Enable", null),
                         "Up".equals(data.value(p + "Status")),
                         data.value(p + "Status"),
-                        bandOfTr098(data.value(p + "Standard")),
+                        band,
                         orElse(data.value(p + "WPAEncryptionModes"), data.value(p + "WEPKeyIndex")),
                         orElse(data.value(p + "KeyPassphrase"), data.value(p + "PreSharedKey")),
                         data));
@@ -230,7 +294,7 @@ public class BusinessSnapshotService {
                 }
                 String band = data.value(radio + "OperatingFrequencyBand");
                 if (band != null) {
-                    return band.contains("2.4") ? "2.4G" : band.contains("5") ? "5G" : band;
+                    return band.contains("2.4") ? "2.4G" : band.contains("5") ? "5.8G" : band;
                 }
             }
         }
@@ -242,12 +306,46 @@ public class BusinessSnapshotService {
             return null;
         }
         Set<String> toks = Set.of(standard.toLowerCase().split("[,;\\s]+"));
-        boolean b5 = toks.contains("a") || toks.contains("ac") || toks.contains("ax");
+        // 严格口径：a/ac 只在 5G，b/g/n 只在 2.4G；ax 两边都有 → 不作判据（留给 RFBand/Channel）
+        boolean b5 = toks.contains("a") || toks.contains("ac");
         boolean b24 = toks.contains("b") || toks.contains("g") || toks.contains("n");
         if (b5 && b24) {
-            return "2.4G+5G";
+            return "2.4G+5.8G";
         }
-        return b5 ? "5G" : b24 ? "2.4G" : standard;
+        return b5 ? "5.8G" : b24 ? "2.4G" : null;
+    }
+
+    /** CMCC 私有 X_CMCC_RFBand：0=2.4G，1=5G（2 预留 6G）；其余返回 null */
+    private String bandOfRfBand(String rfBand) {
+        if (rfBand == null || rfBand.isBlank()) {
+            return null;
+        }
+        try {
+            int v = (int) Double.parseDouble(rfBand.trim());
+            return switch (v) {
+                case 0 -> "2.4G";
+                case 1 -> "5.8G";
+                default -> null;
+            };
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 按工作信道推断频段：1~14 → 2.4G，>14 → 5.8G；0(自动)/解析失败返回 null */
+    private String bandOfChannel(String channel) {
+        if (channel == null || channel.isBlank()) {
+            return null;
+        }
+        try {
+            int ch = (int) Double.parseDouble(channel.trim());
+            if (ch <= 0) {
+                return null;
+            }
+            return ch <= 14 ? "2.4G" : "5.8G";
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // ---------------- SIP ----------------
@@ -359,6 +457,17 @@ public class BusinessSnapshotService {
 
     private String orElse(String a, String b) {
         return a != null && !a.isBlank() ? a : b;
+    }
+
+    private Long secondsOf(String seconds) {
+        if (seconds == null || seconds.isBlank()) {
+            return null;
+        }
+        try {
+            return (long) Double.parseDouble(seconds.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private Long longOf(Object o) {

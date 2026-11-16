@@ -376,6 +376,8 @@ CREATE TABLE IF NOT EXISTS `cpe_device` (
     `last_inform_ms`        BIGINT       DEFAULT NULL COMMENT '最近 Inform 毫秒时间戳',
     `last_boot_ms`          BIGINT       DEFAULT NULL COMMENT '最近 1 BOOT 毫秒时间戳',
     `last_bootstrap_ms`     BIGINT       DEFAULT NULL COMMENT '最近 0 BOOTSTRAP 毫秒时间戳',
+    `init_provisioned`      TINYINT      DEFAULT 0 COMMENT '1 首次上报已下发反向连接账密+周期上报',
+    `init_provisioned_at`   BIGINT       DEFAULT NULL COMMENT '首次下发毫秒时间戳',
     `created_at`            BIGINT       DEFAULT NULL COMMENT '建档毫秒时间戳',
     `updated_at`            BIGINT       DEFAULT NULL COMMENT '更新毫秒时间戳',
     PRIMARY KEY (`sn`),
@@ -383,12 +385,19 @@ CREATE TABLE IF NOT EXISTS `cpe_device` (
     KEY `idx_cpe_dev_inform` (`last_inform_ms`)
 ) ENGINE = InnoDB COMMENT '光猫台账（CWMP/TR-069）';
 
+CREATE TABLE IF NOT EXISTS `cpe_device_snapshot` (
+    `sn`            VARCHAR(64) NOT NULL COMMENT '序列号（主键）',
+    `snapshot_json` MEDIUMTEXT  COMMENT '业务快照 JSON（WAN/LAN/WIFI/SIP）',
+    `updated_at`    BIGINT      DEFAULT NULL COMMENT '刷新毫秒时间戳',
+    PRIMARY KEY (`sn`)
+) ENGINE = InnoDB COMMENT '光猫业务快照（会话结束/采集完成时刷新）';
+
 CREATE TABLE IF NOT EXISTS `cpe_task` (
     `id`             BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
     `task_no`        VARCHAR(40) DEFAULT NULL COMMENT '任务编号',
     `sn`             VARCHAR(64) NOT NULL COMMENT '设备序列号',
     `type`           VARCHAR(40) NOT NULL COMMENT '任务类型 Reboot/GPV/SPV/RefreshBusiness 等',
-    `params_json`    TEXT        COMMENT '任务参数 JSON',
+    `params_json`    MEDIUMTEXT  COMMENT '任务参数 JSON（业务刷新的叶子清单可能很大）',
     `status`         VARCHAR(16) DEFAULT 'queued' COMMENT 'queued/running/success/fail',
     `fault_code`     VARCHAR(16) DEFAULT NULL COMMENT 'TR-069 FaultCode',
     `fault_string`   VARCHAR(255) DEFAULT NULL COMMENT '失败详情',

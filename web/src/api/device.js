@@ -193,7 +193,8 @@ export function collectDeviceBusiness(sn) {
   return request({
     url: '/device/' + encodeURIComponent(sn) + '/business/collect',
     method: 'post',
-    timeout: 60000
+    // 后端 collect-timeout-seconds=120s，留余量给设备慢回；此前 60s 前端先超时报错
+    timeout: 300000
   })
 }
 

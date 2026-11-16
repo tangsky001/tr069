@@ -61,6 +61,9 @@ public class CpeProperties {
     /** 反向连接超时（毫秒） */
     private int crTimeoutMs = 3000;
 
+    /** 首次上报自动下发的周期 Inform 间隔（秒） */
+    private int initPeriodicInformSeconds = 300;
+
     /** 采集类同步任务等待设备回参的最大秒数（业务采集/能力测试） */
     private int collectTimeoutSeconds = 120;
 

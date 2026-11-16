@@ -353,10 +353,16 @@ public class DeviceController {
     public Result<Map<String, Object>> business(@PathVariable String sn) {
         requireOnu(sn, "view");
         Map<String, Object> device = store.findDevice(sn);
-        Map<String, CpeParam> params = store.loadParams(sn);
-        String status = params.isEmpty() ? "empty" : "success";
-        return Result.ok(snapshotService.snapshot(device, params, status,
-                "empty".equals(status) ? "设备还没有采集过参数" : null));
+        // 优先读落库快照（每次会话结束实时刷新），没有再现算
+        Map<String, Object> snap = snapshotService.readSnapshot(store.findSnapshot(sn));
+        if (snap == null) {
+            Map<String, CpeParam> params = store.loadParams(sn);
+            String status = params.isEmpty() ? "empty" : "success";
+            snap = snapshotService.snapshot(device, params, status,
+                    "empty".equals(status) ? "设备还没有采集过参数" : null);
+        }
+        snapshotService.refreshTimes(snap, device);
+        return Result.ok(snap);
     }
 
     @GetMapping("/business/batch")
@@ -370,9 +376,14 @@ public class DeviceController {
             }
             try {
                 Map<String, Object> device = store.findDevice(sn.trim());
-                Map<String, CpeParam> params = store.loadParams(sn.trim());
-                out.put(sn.trim(), snapshotService.snapshot(device, params,
-                        params.isEmpty() ? "empty" : "success", null));
+                Map<String, Object> snap = snapshotService.readSnapshot(store.findSnapshot(sn.trim()));
+                if (snap == null) {
+                    Map<String, CpeParam> params = store.loadParams(sn.trim());
+                    snap = snapshotService.snapshot(device, params,
+                            params.isEmpty() ? "empty" : "success", null);
+                }
+                snapshotService.refreshTimes(snap, device);
+                out.put(sn.trim(), snap);
             } catch (Exception e) {
                 out.put(sn.trim(), snapshotService.snapshot(Map.of("sn", sn.trim()), Map.of(), "empty",
                         "设备不存在或未上报"));
@@ -384,14 +395,27 @@ public class DeviceController {
     @PostMapping("/{sn}/business/collect")
     public Result<Map<String, Object>> collect(@PathVariable String sn) {
         requireOnu(sn, "operate");
-        long taskId = taskService.createTask(sn, "RefreshBusiness", Map.of(), "console");
+        // 有参数树走轻量 GPV（只刷 WAN/WIFI/SIP 叶子，十几秒内回来）；没树才做 GPN 全扫描
+        java.util.List<String> leaves = modelProfileService.bizRefreshNames(sn);
+        long taskId = leaves.isEmpty()
+                ? taskService.createTask(sn, "RefreshBusiness", Map.of(), "console")
+                : taskService.createTask(sn, "GetParameterValues", Map.of("names", leaves), "console");
         Map<String, Object> task = taskService.awaitTask(taskId, props.getCollectTimeoutSeconds());
         Map<String, Object> result = task == null ? Map.of() : taskService.resultOf(task);
         String status = str(result.getOrDefault("collectStatus", "timeout"));
         Map<String, Object> device = store.findDevice(sn);
         Map<String, CpeParam> params = store.loadParams(sn);
-        return Result.ok(snapshotService.snapshot(device, params, status,
-                "timeout".equals(status) ? "采集超时，设备没有在等待时间内回参" : null));
+        Map<String, Object> snap = snapshotService.snapshot(device, params, status,
+                "timeout".equals(status) ? "采集超时，设备没有在等待时间内回参" : null);
+        if (!"timeout".equals(status)) {
+            // 采集成功：快照同步落库，下次面板直接读快照
+            try {
+                store.saveSnapshot(sn, snapshotService.toJson(snap));
+            } catch (Exception ignore) {
+                // 落库失败不影响本次返回
+            }
+        }
+        return Result.ok(snap);
     }
 
     // ==================== 机型适配 ====================

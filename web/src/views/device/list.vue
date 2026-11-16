@@ -954,7 +954,8 @@ import {
   fetchSipLines, submitSipEdit, dispatchDevices, exportDevices as exportDevicesApi,
   fetchPollConfig, fetchRpcProgressLabels,
   setTelnetEnabled,
-  fetchTelnetCredentials
+  fetchTelnetCredentials,
+  collectDeviceBusiness
 } from '@/api/device'
 import { fetchRpcResult } from '@/api/rpc'
 import { fetchGroupMembers, fetchGroupTree, moveGroupMemberByRef } from '@/api/group'
@@ -991,6 +992,8 @@ export default {
       bindTargetName: '',
       bindSaving: false,
       bizMap: {},
+      // 点击 WAN/WIFI/SIP 触发的后台静默采集：sn -> true 进行中
+      bizRefreshing: {},
       bizTimer: null,
       listTimer: null,
       // 下发进度：sn -> { tasks: [{ label, phase, ... }], rpcPending: n }，只含还在跑的任务
@@ -1452,6 +1455,7 @@ export default {
     openWifiEdit(row, item) {
       // 加密/密码真正可写的参数名与当前值由后端判定下发（不同固件参数名不同），
       // 前端不再自己猜协议参数
+      this.refreshBizQuietly(row.sn)
       this.wifiEditForm = {
         sn: row.sn,
         // 频段、实例号、开关都取后端判好的，前端不再自己解析路径与猜状态
@@ -1545,6 +1549,25 @@ export default {
     openWanParams(sn) {
       this.wanDialogSn = sn
       this.wanVisible = true
+      this.refreshBizQuietly(sn)
+    },
+
+    /**
+     * 点击 WAN/WIFI/SIP 时后台静默发起一轮实时采集：
+     * 弹窗先用当前快照打开（不阻塞），采集完成后列表自动换成最新值；
+     * 有差异落库更新，没差异后端跳过。同一台设备进行中不重复发起。
+     */
+    async refreshBizQuietly(sn) {
+      if (!sn || this.bizRefreshing[sn]) return
+      this.$set(this.bizRefreshing, sn, true)
+      try {
+        await collectDeviceBusiness(sn)
+      } catch (e) {
+        // 静默：设备不在线/超时不打扰弹窗
+      } finally {
+        this.$set(this.bizRefreshing, sn, false)
+        this.loadBiz()
+      }
     },
 
     // SIP 语音参数：同样只看本地快照。这里刻意不调 collectDeviceBusiness——
@@ -1581,6 +1604,7 @@ export default {
       this.sipDialogPath = (item && item.path) || ''
       this.sipShowPwd = false
       this.sipLines = []
+      this.refreshBizQuietly(sn)
       this.sipEditForm = {
         sn,
         path: (item && item.path) || '',

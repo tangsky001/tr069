@@ -240,14 +240,26 @@ public class CapabilityDetector {
         return null;
     }
 
-    /** "2.4G" / "2.4G+5G" / "双频" → 频段集合 */
+    /** "2.4G" / "2.4G+5G" / "双频" → 频段集合（口径只有 2.4G / 5G，与 detectWifiBands 对齐） */
     private Set<String> bandsOf(String spec) {
         Set<String> out = new LinkedHashSet<>();
         String s = spec.toLowerCase();
-        if (s.contains("2.4") || s.contains("单频")) {
+        for (String token : s.split("[+/、,，\\s]+")) {
+            if (token.isEmpty()) {
+                continue;
+            }
+            if (token.contains("2.4")) {
+                out.add("2.4G");
+            }
+            if (token.contains("5")) {
+                out.add("5G");
+            }
+        }
+        if (s.contains("单频")) {
             out.add("2.4G");
         }
-        if (s.contains("5") || s.contains("双") || s.contains("三")) {
+        if (s.contains("双频")) {
+            out.add("2.4G");
             out.add("5G");
         }
         if (out.isEmpty()) {
