@@ -93,6 +93,22 @@ public class CpeStore {
         return jdbcTemplate.queryForMap("SELECT * FROM cpe_device WHERE sn = ?", sn);
     }
 
+    /** MAC 参数值反查设备 SN（工单页「设备标识」一个框查用） */
+    public List<String> findSnsByParamValue(String value) {
+        return cpeJdbcTemplate.queryForList("""
+                SELECT DISTINCT device_sn FROM cpe_device_param
+                WHERE value LIKE ? AND (path LIKE '%MACAddress' OR path LIKE '%LOID' OR path LIKE '%LogicalID')
+                LIMIT 200
+                """, String.class, "%" + value + "%");
+    }
+
+    /** 房间号反查设备 SN：台账 cpe_device.room_no 模糊匹配（工单页筛选用） */
+    public List<String> findSnsByRoom(String room) {
+        return jdbcTemplate.queryForList(
+                "SELECT sn FROM cpe_device WHERE room_no LIKE ? LIMIT 500",
+                String.class, "%" + room + "%");
+    }
+
     public boolean deviceExists(String sn) {
         Integer n = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cpe_device WHERE sn = ?", Integer.class, sn);
         return n != null && n > 0;

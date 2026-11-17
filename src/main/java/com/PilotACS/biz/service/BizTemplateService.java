@@ -56,22 +56,21 @@ public class BizTemplateService {
         query.orderByDesc(BizTemplate::getUpdatedAt);
         List<Map<String, Object>> views = new ArrayList<>();
         for (BizTemplate template : templateMapper.selectList(query)) {
-            List<BizTemplateItem> items = itemsOf(template.getId());
+            // 前端（业务模板页 / 设备列表批量下发 / 工单建单）统一按 {template, items} 嵌套消费，
+            // items 用富成员视图（带配置模板名/类型/可用性），列表就能直接铺成员链
+            List<BizTemplateItemView> items = toItemViews(itemsOf(template.getId()));
+            Map<String, Object> tpl = new LinkedHashMap<>();
+            tpl.put("id", template.getId());
+            tpl.put("name", template.getName());
+            tpl.put("groupName", template.getGroupName());
+            tpl.put("remark", template.getRemark());
+            tpl.put("enabled", template.getEnabled() != null && template.getEnabled());
+            tpl.put("continueOnError", template.getContinueOnError() != null && template.getContinueOnError());
+            tpl.put("createdAt", template.getCreatedAt());
+            tpl.put("updatedAt", template.getUpdatedAt());
             Map<String, Object> view = new LinkedHashMap<>();
-            view.put("id", template.getId());
-            view.put("name", template.getName());
-            view.put("groupName", template.getGroupName());
-            view.put("remark", template.getRemark());
-            view.put("enabled", template.getEnabled() != null && template.getEnabled());
-            view.put("continueOnError", template.getContinueOnError() != null && template.getContinueOnError());
-            view.put("itemCount", items.size());
-            // 列表页要展示每条业务的意图链：成员的配置模板类型按序拼出来
-            view.put("categories", items.stream()
-                    .map(item -> categoryOf(item.getTemplateKey()))
-                    .filter(code -> !code.isBlank())
-                    .toList());
-            view.put("createdAt", template.getCreatedAt());
-            view.put("updatedAt", template.getUpdatedAt());
+            view.put("template", tpl);
+            view.put("items", items);
             views.add(view);
         }
         return views;
@@ -244,13 +243,6 @@ public class BizTemplateService {
     }
 
     // ==================== 内部实现 ====================
-
-    /** 成员引用的配置模板类型代码（列表摘要用） */
-    private String categoryOf(String templateKey) {
-        Long key = parseKey(templateKey);
-        Map<String, Object> cfg = key == null ? null : templateResolver.findView(key);
-        return cfg == null ? "" : String.valueOf(cfg.get("category"));
-    }
 
     private Long parseKey(String templateKey) {
         if (templateKey == null || templateKey.isBlank()) {

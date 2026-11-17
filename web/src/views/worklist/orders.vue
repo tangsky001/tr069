@@ -51,7 +51,7 @@
             placeholder="全部"
             style="width: 180px"
           >
-            <el-option v-for="s in statusOptions" :key="s" :label="statusLabel(s)" :value="s" />
+            <el-option v-for="s in statusOptions" :key="s.code" :label="s.label" :value="s.code" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -295,6 +295,7 @@
 <script>
 import { fetchInstances, fetchSteps, fetchWorklistStatuses, fetchTemplateMeta, fetchVariables, createWorklist, updateWorklist, deleteWorklist } from '@/api/worklist'
 import { fetchBizTemplates } from '@/api/bizTemplate'
+import { fetchGroupTree } from '@/api/group'
 
 /**
  * 工单：横向筛选条 + 执行记录列表。
@@ -407,7 +408,31 @@ export default {
           })
           .catch(() => {})
       }
+      if (this.groupOptions.length === 0) {
+        this.loadGroupOptions()
+      }
       this.resetCreateForm()
+    },
+    /** 分组下拉：光猫表域分组树拍平（跳过根节点），带层级路径便于区分同名分组 */
+    loadGroupOptions() {
+      fetchGroupTree('ONU')
+        .then(res => {
+          const options = []
+          const walk = (nodes, path) => {
+            ;(nodes || []).forEach(n => {
+              if (n.kind !== 'group' || !n.id) {
+                walk(n.children, path)
+                return
+              }
+              const label = path ? path + ' / ' + n.name : n.name
+              options.push({ id: n.id, name: label })
+              walk(n.children, label)
+            })
+          }
+          walk((res && res.data) || [], '')
+          this.groupOptions = options
+        })
+        .catch(() => { this.groupOptions = [] })
     },
     resetCreateForm() {
       this.createForm = { sn: '', groupId: '', roomNo: '', templateSel: '', values: {}, worklistType: 'normal', extra: '', remark: '', active: true }
@@ -540,15 +565,6 @@ export default {
       this.timeRange = null
       this.statuses = []
       this.load()
-    },
-    statusLabel(status) {
-      // 下拉项中文跟随后端列表页同款对照；枚举没认出的原样展示
-      const map = {
-        build: '构建中', bind: '绑定中', reserve: '预约中', standby: '等待执行',
-        running: '执行中', sending: '下发中', success: '成功',
-        fail: '失败', failed: '失败', abnormal: '异常', expire: '已过期'
-      }
-      return map[status] || status
     },
     execTimeText(row) {
       const start = row.timeExecStartText || row.timeInitText || '-'

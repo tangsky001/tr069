@@ -15,7 +15,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 @EnableScheduling
 @MapperScan({"com.PilotACS.mapper", "com.PilotACS.olt.mapper", "com.PilotACS.group.mapper", "com.PilotACS.acl",
-        "com.PilotACS.template.mapper", "com.PilotACS.biz.mapper"})
+        "com.PilotACS.template.mapper", "com.PilotACS.biz.mapper", "com.PilotACS.worklist.mapper"})
 public class PilotAcsApplication {
     public static void main(String[] args) {
         SpringApplication.run(PilotAcsApplication.class, args);

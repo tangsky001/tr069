@@ -122,8 +122,12 @@
               <template slot-scope="{ row }">{{ row.lastInformText || '—' }}</template>
             </el-table-column>
 
-            <!-- 操作：进详情做运维操作（改备注/重启/批量下发等），移动改归属分组 -->
-            <el-table-column label="操作" width="120" fixed="right">
+            <el-table-column label="备注" min-width="120" show-overflow-tooltip>
+              <template slot-scope="{ row }">{{ row.remark || '—' }}</template>
+            </el-table-column>
+
+            <!-- 操作：进详情做运维操作（重启/批量下发等），备注直接改（同设备管理弹窗/API），移动改归属分组 -->
+            <el-table-column label="操作" width="150" fixed="right">
               <template slot-scope="{ row }">
                 <el-button
                   type="text"
@@ -131,6 +135,7 @@
                   icon="el-icon-view"
                   @click="goDetail(row)"
                 >详情</el-button>
+                <el-button v-if="canMove" type="text" size="mini" icon="el-icon-edit-outline" @click="openRemark(row)">备注</el-button>
                 <el-button v-if="canMove" type="text" size="mini" icon="el-icon-position" @click="openMove(row)">移动</el-button>
               </template>
             </el-table-column>
@@ -253,6 +258,37 @@
       :title="aclTitle"
       member-type="ONU"
     />
+
+    <!-- 房间号 / 备注：与设备管理页同一弹窗同一 API（POST /device/{sn}/remark），
+         房间号用于下发时替换模板里的 %room% -->
+    <el-dialog title="修改房间号与备注" :visible.sync="remarkVisible" width="460px" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="序列号">
+          <span class="remark-sn">{{ remarkRow ? remarkRow.memberRef : '-' }}</span>
+        </el-form-item>
+        <el-form-item label="房间号">
+          <el-input
+            v-model="remarkForm.roomNo"
+            placeholder="如 0001，下发时替换 %room%"
+            maxlength="32"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input
+            v-model="remarkForm.remark"
+            type="textarea"
+            :rows="3"
+            placeholder="设备说明，可留空"
+            maxlength="255"
+          />
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button @click="remarkVisible = false">取消</el-button>
+        <el-button type="primary" :loading="remarkSaving" @click="submitRemark">保存</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
@@ -266,6 +302,7 @@ import {
   deleteGroup,
   moveGroupMemberByRef
 } from '@/api/group'
+import { updateDeviceRemark } from '@/api/device'
 import AclDialog from './components/AclDialog'
 
 /**
@@ -321,7 +358,12 @@ export default {
       aclVisible: false,
       aclScopeType: 'group',
       aclScopeId: null,
-      aclTitle: ''
+      aclTitle: '',
+      // 房间号 / 备注弹窗（同设备管理页）
+      remarkVisible: false,
+      remarkRow: null,
+      remarkForm: { roomNo: '', remark: '' },
+      remarkSaving: false
     }
   },
   computed: {
@@ -386,6 +428,34 @@ export default {
         return
       }
       this.$router.push('/device-detail/' + row.memberRef)
+    },
+    // ---------- 房间号 / 备注（与设备管理页同一 API） ----------
+    openRemark(row) {
+      this.remarkRow = row
+      this.remarkForm = { roomNo: row.roomNo || '', remark: row.remark || '' }
+      this.remarkVisible = true
+    },
+    async submitRemark() {
+      const row = this.remarkRow
+      if (!row || !row.memberRef) {
+        return
+      }
+      const payload = {
+        roomNo: this.remarkForm.roomNo || '',
+        remark: this.remarkForm.remark || ''
+      }
+      this.remarkSaving = true
+      try {
+        await updateDeviceRemark(row.memberRef, payload)
+        row.roomNo = payload.roomNo
+        row.remark = payload.remark
+        this.$message.success('已保存')
+        this.remarkVisible = false
+      } catch (e) {
+        this.$message.error('保存失败: ' + ((e && e.message) || '未知错误'))
+      } finally {
+        this.remarkSaving = false
+      }
     },
     /** 取消节点选中：回到根节点视角 */
     clearNode() {
@@ -726,6 +796,10 @@ export default {
   color: #909399;
   font-size: 13px;
   font-weight: 400;
+}
+.remark-sn {
+  color: #606266;
+  word-break: break-all;
 }
 .head-actions {
   display: flex;

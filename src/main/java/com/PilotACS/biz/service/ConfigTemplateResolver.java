@@ -4,6 +4,7 @@ import com.PilotACS.template.service.ConfigTemplateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 
 /** 配置模板桥接：业务模板模块只依赖本接口，避免两模块间交叉依赖蔓延 */
@@ -26,5 +27,10 @@ public class ConfigTemplateResolver {
     /** 配置模板是否为增量业务 */
     public boolean incrementalOf(Long id) {
         return configTemplateService.incrementalOf(id);
+    }
+
+    /** 按业务类型列配置模板（工单默认模板挑选用） */
+    public List<Map<String, Object>> list(String category, String keyword) {
+        return configTemplateService.list(category, keyword);
     }
 }

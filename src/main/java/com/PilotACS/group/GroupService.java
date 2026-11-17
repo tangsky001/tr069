@@ -558,6 +558,10 @@ public class GroupService {
         row.setStatusLevel(statusLevel(status));
         if (device != null) {
             row.setSoftwareVersion((String) device.get("software_version"));
+            Object roomNo = device.get("room_no");
+            row.setRoomNo(roomNo == null ? "" : String.valueOf(roomNo));
+            Object remark = device.get("remark");
+            row.setRemark(remark == null ? "" : String.valueOf(remark));
             String isp = String.valueOf(device.get("isp"));
             if (isp == null || "null".equals(isp) || isp.isBlank()) {
                 isp = modelProfileService.detectIsp(sn);

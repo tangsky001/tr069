@@ -64,6 +64,12 @@ public class GroupMemberView {
     @Schema(description = "最近上报时间文案（ONU 台账）")
     private String lastInformText;
 
+    @Schema(description = "机房编号（ONU 台账，下发时替换模板 %room%）")
+    private String roomNo;
+
+    @Schema(description = "备注（ONU 台账）")
+    private String remark;
+
     @Schema(description = "绑定时间")
     private LocalDateTime boundAt;
 

@@ -317,14 +317,12 @@ export default {
       this.saving = true
       try {
         await saveBizTemplate({
-          template: {
-            id: this.editForm.id,
-            name: this.editForm.name,
-            groupName: this.editForm.groupName,
-            remark: this.editForm.remark,
-            enabled: this.editForm.enabled,
-            continueOnError: this.editForm.continueOnError
-          },
+          id: this.editForm.id,
+          name: this.editForm.name,
+          groupName: this.editForm.groupName,
+          remark: this.editForm.remark,
+          enabled: this.editForm.enabled,
+          continueOnError: this.editForm.continueOnError,
           items: items.map((i, index) => ({
             templateKey: i.templateKey,
             itemOrder: index + 1,
