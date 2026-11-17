@@ -64,6 +64,7 @@ public class DeviceController {
     private final DispatchService dispatchService;
     private final BusinessSnapshotService snapshotService;
     private final ModelProfileService modelProfileService;
+    private final com.PilotACS.cpe.service.CapabilityDetector capabilityDetector;
     /** 光猫资源组 ACL：台账可见性与单设备操作校验（权限归属在「光猫设备」分配树页完成） */
     private final DeviceAclService aclService;
 
@@ -424,21 +425,58 @@ public class DeviceController {
     public Result<Map<String, Object>> adaptTest(@PathVariable String sn,
                                                  @RequestBody Map<String, Object> declared) {
         requireOnu(sn, "operate");
-        long taskId = taskService.createTask(sn, "AdaptProbe", declared, "console");
-        Map<String, Object> task = taskService.awaitTask(taskId, props.getCollectTimeoutSeconds());
+        // 参数树已采全（与 ModelProfileService.FULL_TREE_MIN_PARAMS 同口径）：直接用库里树比对，
+        // 不打扰设备——全树探测每台设备只值得做一次，重复测试零 RPC 秒回
+        Map<String, CpeParam> stored = store.loadParams(sn);
+        if (stored.size() >= 100) {
+            DeviceData data = new DeviceData();
+            data.loadAll(stored);
+            Object rootObj = store.findDevice(sn).get("root_node");
+            String root = rootObj == null || String.valueOf(rootObj).isBlank()
+                    ? "InternetGatewayDevice." : String.valueOf(rootObj);
+            Map<String, Object> detected = capabilityDetector.detect(data, root);
+            Map<String, Object> out = new LinkedHashMap<>(
+                    capabilityDetector.check(declared, detected, data, root));
+            out.put("collectStatus", "success");
+            out.put("collectInterrupted", false);
+            out.put("rootNode", root);
+            return Result.ok(out);
+        }
+        // 树没采全才走设备探测：复用排队任务防重复建单，等待窗口放宽到 280s（前端超时 300s）
+        long taskId = store.findActiveTaskId(sn, "AdaptProbe");
+        if (taskId > 0) {
+            store.updateTaskParams(taskId, toJson(declared));
+        } else {
+            taskId = taskService.createTask(sn, "AdaptProbe", declared, "console");
+        }
+        Map<String, Object> task = taskService.awaitTask(taskId, 280);
         if (task == null) {
             throw new BusinessException(500, "能力测试任务不存在");
         }
+        String status = str(task.get("status"));
         Map<String, Object> result = taskService.resultOf(task);
         Map<String, Object> out = new LinkedHashMap<>(result);
-        out.put("collectInterrupted", "fail".equals(str(task.get("status"))));
-        if ("fail".equals(str(task.get("status")))) {
+        out.put("collectInterrupted", !"success".equals(status));
+        if ("fail".equals(status)) {
             out.put("collectStatus", "fail");
             out.put("reasons", List.of(str(task.get("fault_string"))));
+            out.put("supported", false);
+        } else if (!"success".equals(status)) {
+            out.put("collectStatus", "queued");
+            out.put("reasons", List.of(
+                    "设备当前无活跃会话，任务已排队，等设备下一轮上报（周期上报约 5 分钟）自动执行，请稍后重试"));
             out.put("supported", false);
         }
         out.put("taskId", taskId);
         return Result.ok(out);
+    }
+
+    private String toJson(Object value) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value);
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     @PostMapping("/{sn}/adaptation/save")
@@ -461,71 +499,8 @@ public class DeviceController {
     }
 
     private Map<String, Object> modelCapabilities(DeviceData data, String root) {
-        // 复用探测器的实测逻辑（只是不做比对）
-        return Map.of(
-                "lanPortCount", lanPortCount(data),
-                "wifiBands", wifiBands(data),
-                "sipCount", sipCount(data));
-    }
-
-    private int lanPortCount(DeviceData data) {
-        Set<String> keys = new java.util.LinkedHashSet<>();
-        java.util.regex.Pattern tr098 = java.util.regex.Pattern
-                .compile("\\.LANDevice\\.(\\d+)\\.LANEthernetInterface(?:Config)?\\.(\\d+)\\.");
-        java.util.regex.Pattern tr181 = java.util.regex.Pattern.compile("\\.Ethernet\\.Interface\\.(\\d+)\\.");
-        for (String p : data.allPaths("")) {
-            var m = tr098.matcher(p);
-            if (m.find()) {
-                keys.add(m.group(1) + '.' + m.group(2));
-                continue;
-            }
-            m = tr181.matcher(p);
-            if (m.find()) {
-                keys.add(m.group(1));
-            }
-        }
-        return keys.size();
-    }
-
-    private List<String> wifiBands(DeviceData data) {
-        Set<String> bands = new java.util.LinkedHashSet<>();
-        for (String p : data.allPaths("")) {
-            String leaf = p.substring(p.lastIndexOf('.') + 1);
-            String v = data.value(p);
-            if (v == null || v.isBlank()) {
-                continue;
-            }
-            if ("OperatingFrequencyBand".equals(leaf)) {
-                if (v.contains("2.4")) {
-                    bands.add("2.4G");
-                }
-                if (v.contains("5")) {
-                    bands.add("5G");
-                }
-            } else if ("Standard".equals(leaf) || "OperatingStandards".equals(leaf)) {
-                Set<String> toks = Set.of(v.toLowerCase().split("[,;\\s]+"));
-                if (toks.contains("b") || toks.contains("g") || toks.contains("n")) {
-                    bands.add("2.4G");
-                }
-                if (toks.contains("a") || toks.contains("ac") || toks.contains("ax")) {
-                    bands.add("5G");
-                }
-            }
-        }
-        return new ArrayList<>(bands);
-    }
-
-    private int sipCount(DeviceData data) {
-        java.util.regex.Pattern pat = java.util.regex.Pattern
-                .compile("\\.VoiceService\\.(\\d+)\\.VoiceProfile\\.(\\d+)\\.Line\\.(\\d+)\\.");
-        Set<String> lines = new java.util.LinkedHashSet<>();
-        for (String p : data.allPaths("")) {
-            var m = pat.matcher(p);
-            if (m.find()) {
-                lines.add(m.group(1) + '.' + m.group(2) + '.' + m.group(3));
-            }
-        }
-        return lines.size();
+        // 实测口径统一走探测器（含 bgn 连写等标准串解析），不再各自维护一份
+        return new LinkedHashMap<>(capabilityDetector.detect(data, root));
     }
 
     // ==================== 工具 ====================

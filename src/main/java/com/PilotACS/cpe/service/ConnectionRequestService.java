@@ -7,6 +7,7 @@
 package com.PilotACS.cpe.service;
 
 import com.PilotACS.cpe.config.CpeProperties;
+import com.PilotACS.cpe.session.SessionRegistry;
 import com.PilotACS.common.log.Logs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,20 +21,37 @@ import java.util.Base64;
 import java.util.List;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * ACS → CPE 反向连接：
- * GET 设备的 ConnectionRequestURL，Digest（回退 Basic）认证。
+ * GET 设备的 ConnectionRequestURL，Digest（回退 Basic）认证，失败带退避重试。
  */
 @Service
 @RequiredArgsConstructor
 public class ConnectionRequestService {
 
     private final CpeProperties props;
+    private final SessionRegistry registry;
 
-    /** 唤醒设备（用配置里的默认账号） */
+    private static final int MAX_KICKS = 10;
+
+    private final ScheduledExecutorService retryPool =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "cr-retry");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private final Map<String, ScheduledFuture<?>> pendingKicks = new ConcurrentHashMap<>();
+
+    /** 唤醒（用配置里的默认账号） */
     public boolean wake(String url) {
         return wake(url, null, null);
     }
@@ -96,6 +114,41 @@ public class ConnectionRequestService {
                 foreignCred ? "提示" : null,
                 foreignCred ? "设备侧 CR 账密被外部平台改过，请重新下发 ConnectionRequestUsername/Password" : null);
         return false;
+    }
+
+    /** 唤醒并带重试：立即一次，失败 5s 后再踢、之后每 30s，最多 10 次；出现活会话即停 */
+    public void wakeWithRetry(String sn, String url, String username, String password) {
+        if (url == null || url.isBlank()) {
+            return;
+        }
+        ScheduledFuture<?> old = pendingKicks.remove(sn);
+        if (old != null) {
+            old.cancel(false);
+        }
+        kick(sn, url, username, password, 0, 0);
+    }
+
+    private void kick(String sn, String url, String username, String password, int round, long delayMs) {
+        ScheduledFuture<?> f = retryPool.schedule(() -> {
+            try {
+                if (registry.bySn(sn) != null) {
+                    Logs.info(Logs.Module.CPE, "设备已有活会话，停止反向连接", "sn", sn, "已踢", round + 1);
+                    return;
+                }
+                if (wake(url, username, password)) {
+                    Logs.info(Logs.Module.CPE, "反向连接成功", "sn", sn, "第几次", round + 1);
+                    return;
+                }
+                if (round + 1 >= MAX_KICKS) {
+                    Logs.warn(Logs.Module.CPE, "反向连接重试放弃", "sn", sn, "次数", MAX_KICKS);
+                    return;
+                }
+                kick(sn, url, username, password, round + 1, round == 0 ? 5_000L : 30_000L);
+            } catch (Exception e) {
+                Logs.warn(Logs.Module.CPE, "反向连接重试异常", "sn", sn, "原因", e.getMessage());
+            }
+        }, delayMs, TimeUnit.MILLISECONDS);
+        pendingKicks.put(sn, f);
     }
 
     private HttpURLConnection open(String url) throws Exception {

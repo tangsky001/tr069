@@ -53,8 +53,9 @@ public class TaskService {
             }
             String crUrl = device == null ? null : str(device.get("connection_request_url"));
             if (crUrl != null && !crUrl.isBlank()) {
-                // 只用配置账密唤醒；设备上报的 CR 用户名（密码不可知）不再参与猜配
-                connectionRequestService.wake(crUrl,
+                // 只用配置账密唤醒；设备上报的 CR 用户名（密码不可知）不再参与猜配。
+                // 带重试退避（异步），不再在 REST 线程里同步等 3s 超时
+                connectionRequestService.wakeWithRetry(sn, crUrl,
                         paramEndingWith(sn, "ManagementServer.ConnectionRequestUsername"),
                         paramEndingWith(sn, "ManagementServer.ConnectionRequestPassword"));
             }

@@ -818,7 +818,7 @@
         </el-form-item>
         <el-form-item label="SIP 数量">
           <el-select v-model="adaptForm.sipCount" style="width:220px">
-            <el-option v-for="o in portOptions" :key="o" :label="o" :value="o" />
+            <el-option v-for="o in sipOptions" :key="o" :label="o" :value="o" />
           </el-select>
         </el-form-item>
         <el-form-item label="WIFI 规格">
@@ -1018,6 +1018,7 @@ export default {
       // 后端不认的值会按「不申报」处理，等于白填
       ispOptions: [],
       portOptions: [],
+      sipOptions: [],
       speedOptions: [],
       wifiOptions: [],
       wanVisible: false,
@@ -2199,6 +2200,7 @@ export default {
           const data = (res && res.data) || {}
           this.ispOptions = data.isp || []
           this.portOptions = data.ports || []
+          this.sipOptions = data.sips || []
           this.speedOptions = data.speeds || []
           this.wifiOptions = data.wifiSpecs || []
         })

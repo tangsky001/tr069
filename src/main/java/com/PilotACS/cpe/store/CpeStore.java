@@ -295,10 +295,12 @@ public class CpeStore {
     public long saveModel(String brand, String model, String version, String isp, String ispVersion,
                           String rootNode, String capabilityJson, String sourceSn, Map<String, CpeParam> params) {
         long now = System.currentTimeMillis();
-        Long id = cpeJdbcTemplate.queryForObject(
+        // 注意：queryForObject 查无结果会抛 Incorrect result size，不能用「== null 判新增」
+        List<Long> ids = cpeJdbcTemplate.queryForList(
                 "SELECT id FROM cpe_model WHERE brand=? AND model=? AND version=? AND isp=?",
                 Long.class, brand, model, version, isp);
-        if (id == null) {
+        long id;
+        if (ids.isEmpty()) {
             cpeJdbcTemplate.update("""
                     INSERT INTO cpe_model (brand, model, version, isp, isp_version, root_node,
                                            capability_json, source_sn, status, created_at, updated_at)
@@ -308,6 +310,7 @@ public class CpeStore {
                     "SELECT id FROM cpe_model WHERE brand=? AND model=? AND version=? AND isp=?",
                     Long.class, brand, model, version, isp);
         } else {
+            id = ids.get(0);
             cpeJdbcTemplate.update("""
                     UPDATE cpe_model SET isp_version=?, root_node=?, capability_json=?, source_sn=?,
                                           status='ready', updated_at=? WHERE id=?
@@ -437,6 +440,19 @@ public class CpeStore {
                 "SELECT COUNT(*) FROM cpe_task WHERE sn = ? AND type = ? AND status IN ('queued','running')",
                 Integer.class, sn, type);
         return n == null ? 0 : n;
+    }
+
+    /** 某设备某类型最早的在队/在跑任务 id，没有返回 0（复用排队任务防重复建单用） */
+    public long findActiveTaskId(String sn, String type) {
+        List<Map<String, Object>> list = jdbcTemplate.queryForList(
+                "SELECT id FROM cpe_task WHERE sn = ? AND type = ? AND status IN ('queued','running') "
+                        + "ORDER BY id ASC LIMIT 1", sn, type);
+        return list.isEmpty() ? 0 : ((Number) list.get(0).get("id")).longValue();
+    }
+
+    /** 覆写任务参数（复用排队任务时同步最新申报值） */
+    public void updateTaskParams(long id, String paramsJson) {
+        jdbcTemplate.update("UPDATE cpe_task SET params_json = ? WHERE id = ?", paramsJson, id);
     }
 
     /** 某设备某类型、某来源的在队/在跑任务数（系统自动任务防重复用） */

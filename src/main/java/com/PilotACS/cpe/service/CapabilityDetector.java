@@ -30,7 +30,8 @@ public class CapabilityDetector {
             Pattern.compile("\\.LANDevice\\.(\\d+)\\.LANEthernetInterface(?:Config)?\\.(\\d+)\\.");
     private static final Pattern LAN_IF_TR181 = Pattern.compile("\\.Ethernet\\.Interface\\.(\\d+)\\.");
     private static final Pattern WIFI_TR098 =
-            Pattern.compile("\\.LANDevice\\.(\\d+)\\.LANWLANConfiguration\\.(\\d+)\\.");
+            // 兼容标准名 LANWLANConfiguration 与私有名 WLANConfiguration（如 CIOT）
+            Pattern.compile("\\.LANDevice\\.(\\d+)\\.(?:LAN)?WLANConfiguration\\.(\\d+)\\.");
     private static final Pattern WIFI_RADIO_TR181 = Pattern.compile("\\.WiFi\\.Radio\\.(\\d+)\\.");
     private static final Pattern SIP_LINE =
             Pattern.compile("\\.VoiceService\\.(\\d+)\\.VoiceProfile\\.(\\d+)\\.Line\\.(\\d+)\\.");
@@ -128,20 +129,9 @@ public class CapabilityDetector {
                     }
                 }
                 case "OperatingStandards", "Standard", "RadioStandard" -> {
-                    // 有的设备整串报 802.11b/g/n、802.11ax，先剥前缀再拆 token
+                    // 有的设备整串报 802.11b/g/n、bgn 连写、802.11ax，先剥前缀再按字符拆
                     for (String raw : v.toLowerCase().split("[,;/、\\s]+")) {
-                        String t = raw.replace("802.11", "").trim();
-                        switch (t) {
-                            case "b", "g", "d" -> bands(clear, radio).add("2.4G");
-                            case "a", "ac" -> bands(clear, radio).add("5G");
-                            // WiFi4/6/7 双频通吃，单独出现定不了频段
-                            case "n", "ax", "be" -> {
-                                bands(ambiguous, radio).add("2.4G");
-                                bands(ambiguous, radio).add("5G");
-                            }
-                            default -> {
-                            }
-                        }
+                        parseStandard(raw, radio, clear, ambiguous);
                     }
                 }
                 default -> {
@@ -176,6 +166,34 @@ public class CapabilityDetector {
 
     private Set<String> bands(Map<String, Set<String>> map, String radio) {
         return map.computeIfAbsent(radio, k -> new LinkedHashSet<>());
+    }
+
+    /** 解析一个标准 token（如 bgn / an / 802.11ax）：b/g/d→2.4G、a/ac→5G、n/ax/be→双频模糊 */
+    private void parseStandard(String token, String radio,
+                               Map<String, Set<String>> clear, Map<String, Set<String>> ambiguous) {
+        String t = token.replace("802.11", "").trim();
+        boolean fuzzy = false;
+        if (t.contains("ax") || t.contains("be")) {
+            fuzzy = true;
+            t = t.replace("ax", "").replace("be", "");
+        }
+        if (t.contains("ac")) {
+            bands(clear, radio).add("5G");
+            t = t.replace("ac", "");
+        }
+        for (char ch : t.toCharArray()) {
+            switch (ch) {
+                case 'b', 'g', 'd' -> bands(clear, radio).add("2.4G");
+                case 'a' -> bands(clear, radio).add("5G");
+                case 'n' -> fuzzy = true;
+                default -> {
+                }
+            }
+        }
+        if (fuzzy) {
+            bands(ambiguous, radio).add("2.4G");
+            bands(ambiguous, radio).add("5G");
+        }
     }
 
     /** 参数路径所属的射频实例标识，不属于任何射频返回 null */
@@ -230,19 +248,30 @@ public class CapabilityDetector {
             addCheck(checks, reasons, "网口速率", speedText(dSpeed), dSpeed >= declaredMax,
                     speedText(declaredMax));
         }
-        // WIFI 频段
+        // WIFI 频段（申报「无」= 用户确认没有，跳过比对）
         String wifiSpec = str(declared.get("wifiSpec"));
         if (wifiSpec != null && !wifiSpec.isBlank()) {
             Set<String> declaredBands = bandsOf(wifiSpec);
-            List<String> missing = declaredBands.stream().filter(b -> !dBands.contains(b)).toList();
-            addCheck(checks, reasons, "WIFI 频段", String.join("+", dBands), missing.isEmpty(),
-                    String.join("+", declaredBands));
+            String actual = dBands.isEmpty() ? "无" : String.join("+", dBands);
+            if (declaredBands.isEmpty()) {
+                addSkip(checks, "WIFI 频段", "申报无，不比对");
+            } else {
+                List<String> missing = declaredBands.stream().filter(b -> !dBands.contains(b)).toList();
+                addCheck(checks, reasons, "WIFI 频段", actual, missing.isEmpty(),
+                        String.join("+", declaredBands));
+            }
         }
-        // SIP 路数
-        Integer sipCount = intOf(declared.get("sipCount"));
-        if (sipCount != null) {
-            addCheck(checks, reasons, "SIP 路数", String.valueOf(dSip), dSip >= sipCount,
-                    sipCount + " 路");
+        // SIP 路数（申报「无」= 用户确认没有，跳过比对）
+        String sipStr = str(declared.get("sipCount"));
+        if (sipStr != null && !sipStr.isBlank()) {
+            boolean none = sipStr.contains("无");
+            Integer sipCount = none ? null : intOf(sipStr);
+            if (none) {
+                addSkip(checks, "SIP 路数", "申报无，不比对");
+            } else if (sipCount != null) {
+                addCheck(checks, reasons, "SIP 路数", String.valueOf(dSip), dSip >= sipCount,
+                        sipCount + " 路");
+            }
         }
 
         // 探针记录（给前端展示探测到了哪些参数）
@@ -274,6 +303,16 @@ public class CapabilityDetector {
         if (!pass) {
             reasons.add(label + "不达标：实测 " + detectedText + "，低于申报 " + declaredText);
         }
+    }
+
+    /** 申报「无」的能力项：跳过比对，仅占位展示（checked=false，前端渲染为 —） */
+    private void addSkip(List<Map<String, Object>> checks, String label, String detail) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("label", label);
+        c.put("checked", false);
+        c.put("pass", false);
+        c.put("detail", detail);
+        checks.add(c);
     }
 
     private void addProbe(List<Map<String, Object>> probes, String capability,
@@ -308,10 +347,13 @@ public class CapabilityDetector {
         return null;
     }
 
-    /** "2.4G" / "2.4G+5G" / "双频" → 频段集合（口径只有 2.4G / 5G，与 detectWifiBands 对齐） */
+    /** "2.4G" / "2.4G+5G" / "双频" → 频段集合；「无」返回空集表示要求实测也没有 */
     private Set<String> bandsOf(String spec) {
         Set<String> out = new LinkedHashSet<>();
         String s = spec.toLowerCase();
+        if (s.contains("无") || s.contains("none")) {
+            return out;
+        }
         for (String token : s.split("[+/、,，\\s]+")) {
             if (token.isEmpty()) {
                 continue;

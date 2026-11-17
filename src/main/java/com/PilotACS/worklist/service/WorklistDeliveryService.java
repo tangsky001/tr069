@@ -58,8 +58,14 @@ public class WorklistDeliveryService {
 
     private static final DateTimeFormatter DESC_STAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
-    /** 整包下发轮询执行记录的最长等待：半小时足够 7 个成员串行跑完 */
-    private static final long BIZ_EXEC_TIMEOUT_MS = 30 * 60_000L;
+    /** 整包下发单次等待上限：超时降级失败，交给重试 */
+    private static final long BIZ_EXEC_TIMEOUT_MS = 5 * 60_000L;
+
+    /** 下发失败重试上限（共 3 次尝试），退避 30s / 120s */
+    private static final int MAX_ATTEMPTS = 3;
+
+    private final java.util.concurrent.ConcurrentHashMap<Long, Integer> attempts =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 生成工单流水号（幂等键），格式 {@code ADMIN-{业务}-{时间戳}-{自增}-{随机}} */
     private String newWorklistDesc(String category) {
@@ -320,7 +326,7 @@ public class WorklistDeliveryService {
         fields.replaceAll((k, v) -> v instanceof String s ? WorklistVariables.resolve(s, room, desc) : v);
         boolean incremental = templateResolver.incrementalOf(tpl);
 
-        WorklistStepRecord step = addStep(w.getId(), 0,
+        WorklistStepRecord step = addStep(w.getId(),
                 "意图下发: " + w.getWorklistName(), "IntentDelivery", fields);
         long startMs = System.currentTimeMillis();
         Map<String, Object> result = intentDeliveryService.deliver(
@@ -329,15 +335,30 @@ public class WorklistDeliveryService {
         boolean ok = Boolean.TRUE.equals(result.get("success"));
         finishStep(step, ok, duration, toJson(result));
         if (ok) {
-            succeed(w, null);
+            succeed(w, verifySummary(result));
         } else {
-            fail(w, String.valueOf(result.get("error")));
+            failOrRetry(w, String.valueOf(result.get("error")));
         }
+    }
+
+    /** 回读确认结果拼进工单结果文案 */
+    private String verifySummary(Map<String, Object> result) {
+        Object v = result.get("verified");
+        if (v == null) {
+            return null;
+        }
+        return switch (String.valueOf(v)) {
+            case "yes" -> "回读确认 " + result.get("verifyTotal") + " 个参数全部生效";
+            case "partial" -> "回读不一致 " + result.get("verifyDiff") + "/" + result.get("verifyTotal")
+                    + " 个参数，详见步骤记录";
+            case "unknown" -> "回读确认未完成";
+            default -> null;
+        };
     }
 
     /** 业务模板整包下发：复用业务模板执行器，轮询执行记录到终态后回写工单 */
     private void runBizDelivery(Worklist w, Long bizTemplateId) {
-        WorklistStepRecord step = addStep(w.getId(), 0,
+        WorklistStepRecord step = addStep(w.getId(),
                 "整包下发 · 业务模板", "BizTemplate", Map.of("templateId", bizTemplateId));
         try {
             Long execId = bizExecutionService.execute(bizTemplateId, w.getSn(),
@@ -359,7 +380,7 @@ public class WorklistDeliveryService {
                 Thread.sleep(5000);
             }
             if (exec == null) {
-                fail(w, "整包下发超时未完成");
+                failOrRetry(w, "整包下发超时未完成");
                 step.setStatus("fail");
                 step.setErrorMsg("整包下发超时未完成");
                 stepMapper.updateById(step);
@@ -373,13 +394,13 @@ public class WorklistDeliveryService {
             if (ok) {
                 succeed(w, summary);
             } else {
-                fail(w, "整包下发未全部成功: " + summary);
+                failOrRetry(w, "整包下发未全部成功: " + summary);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             fail(w, "整包下发被中断");
         } catch (Exception e) {
-            fail(w, e.getMessage());
+            failOrRetry(w, e.getMessage());
         }
     }
 
@@ -387,7 +408,7 @@ public class WorklistDeliveryService {
     private void runRpcDelivery(Worklist w, boolean reboot) {
         String rpc = reboot ? "Reboot" : "FactoryReset";
         String comment = reboot ? "重启设备" : "恢复出厂";
-        WorklistStepRecord step = addStep(w.getId(), 0, comment, rpc, Map.of());
+        WorklistStepRecord step = addStep(w.getId(), comment, rpc, Map.of());
         try {
             long taskId = taskService.createTask(w.getSn(), rpc, Map.of(), "worklist");
             Map<String, Object> task = taskService.awaitTask(taskId, 200);
@@ -535,16 +556,14 @@ public class WorklistDeliveryService {
 
     // ==================== 步骤与状态工具 ====================
 
-    /** 记录工单的一条执行步骤。已有同序号步骤则覆盖，避免重试灌入重复步骤 */
-    public WorklistStepRecord addStep(Long worklistId, int stepIndex, String comment,
+    /** 记录工单的一条执行步骤（追加，保留每次尝试的历史） */
+    public WorklistStepRecord addStep(Long worklistId, String comment,
                                       String rpc, Object requestArgs) {
-        stepMapper.delete(new LambdaQueryWrapper<WorklistStepRecord>()
-                .eq(WorklistStepRecord::getWorklistId, worklistId)
-                .eq(WorklistStepRecord::getStepIndex, stepIndex));
-
+        Long count = stepMapper.selectCount(new LambdaQueryWrapper<WorklistStepRecord>()
+                .eq(WorklistStepRecord::getWorklistId, worklistId));
         WorklistStepRecord step = new WorklistStepRecord();
         step.setWorklistId(worklistId);
-        step.setStepIndex(stepIndex);
+        step.setStepIndex(count == null ? 0 : count.intValue());
         step.setComment(comment);
         step.setRpc(rpc);
         step.setRequestArgs(toJson(requestArgs));
@@ -566,12 +585,32 @@ public class WorklistDeliveryService {
     }
 
     private void succeed(Worklist w, String summary) {
+        attempts.remove(w.getId());
         w.setStatus("success");
         w.setResult(summary);
         w.setTimeExecFinish(LocalDateTime.now());
         w.setUpdatedAt(LocalDateTime.now());
         worklistMapper.updateById(w);
         log.info("工单下发成功: id={}, sn={}", w.getId(), w.getSn());
+    }
+
+    /** 模板/整包下发失败：未达上限则退回预约态延时重试（30s/120s），否则终态失败 */
+    private void failOrRetry(Worklist w, String reason) {
+        int n = attempts.merge(w.getId(), 1, Integer::sum);
+        if (n < MAX_ATTEMPTS) {
+            long backoffSec = n == 1 ? 30 : 120;
+            Worklist patch = new Worklist();
+            patch.setId(w.getId());
+            patch.setStatus("reserve");
+            patch.setTimeReserve(LocalDateTime.now().plusSeconds(backoffSec));
+            patch.setResult("第 " + n + " 次下发失败，" + backoffSec + " 秒后重试: " + reason);
+            patch.setUpdatedAt(LocalDateTime.now());
+            worklistMapper.updateById(patch);
+            log.info("工单转入重试: id={}, 第{}次, {}秒后重试, 原因={}", w.getId(), n, backoffSec, reason);
+            return;
+        }
+        attempts.remove(w.getId());
+        fail(w, "重试 " + MAX_ATTEMPTS + " 次仍失败: " + reason);
     }
 
     private void fail(Worklist w, String reason) {

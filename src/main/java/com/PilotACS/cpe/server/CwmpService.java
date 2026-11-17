@@ -15,6 +15,7 @@ import com.PilotACS.cpe.rpc.TaskPlanner;
 import com.PilotACS.cpe.service.BusinessPaths;
 import com.PilotACS.cpe.service.BusinessSnapshotService;
 import com.PilotACS.cpe.service.CapabilityDetector;
+import com.PilotACS.cpe.service.ConnectionRequestService;
 import com.PilotACS.cpe.service.InitProvisionService;
 import com.PilotACS.cpe.service.ModelProfileService;
 import com.PilotACS.cpe.session.CwmpSession;
@@ -48,6 +49,8 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class CwmpService {
+
+    private final ConnectionRequestService connectionRequestService;
 
     /** 一次 HTTP 交互的输出：HTTP 状态 + 报文 + 需要下发的会话 cookie */
     public record Reply(int httpStatus, String body, String newSessionId) {
@@ -140,7 +143,11 @@ public class CwmpService {
         }
         handleInform(s, msg);
         s.setState(CwmpSession.STATE_INFORMED);
-        return new Reply(200, SoapBuilder.informResponse(sessionRpcId(s)), s.getSessionId());
+        // InformResponse 的报文头 ID 必须回传设备请求里的 ID（TR-069 3.1.3），
+        // 严格固件校验不过会丢弃响应并不再发空 POST，会话从此取不到任何任务
+        return new Reply(200, SoapBuilder.informResponse(
+                msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
+                s.getSessionId());
     }
 
     private void handleInform(CwmpSession s, SoapMessage msg) {
@@ -507,6 +514,8 @@ public class CwmpService {
             // 设备每轮跑到会话上限就断，永远跑不完 → 无限排队
             store.markTaskResume(cur.getTaskId());
             store.updateTask(cur.getTaskId(), "queued", null, "会话中断(" + reason + ")，待续跑", null);
+            // 回队后立刻反踢续跑，不等下一轮周期上报（大树 99 次上限要多个会话接力）
+            connectionRequestService.wakeWithRetry(s.getSn(), s.getConnectionRequestUrl(), null, null);
         }
         store.saveDeviceParams(s.getSn(), s.getData().all(), s.getData().dirtyPaths(), s.getData().isFullSync());
         // 先用本会话内存树识别（不等读库），认不出再走落库树 + 必要时排探测

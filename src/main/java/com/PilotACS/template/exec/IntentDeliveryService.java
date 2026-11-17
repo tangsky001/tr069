@@ -80,6 +80,7 @@ public class IntentDeliveryService {
             // 逐条执行计划；AddObject 返回的新实例号回填到后续步骤的 __NEW__ 占位
             boolean allOk = true;
             String newInstance = null;
+            Map<String, String> expected = new LinkedHashMap<>();
             for (Map.Entry<String, String> step : plan) {
                 String desc = step.getKey();
                 Map<String, Object> taskParams = parseParams(step.getValue());
@@ -115,12 +116,30 @@ public class IntentDeliveryService {
                 }
                 detail.add(row("执行: " + desc, realPath, ok ? "ok" : "fail",
                         ok ? "" : String.valueOf(stepResult == null ? "无结果" : stepResult.get("fault"))));
+                if (ok && "SetParameterValues".equals(type)
+                        && taskParams.get("values") instanceof List<?> vlist) {
+                    for (Object item : vlist) {
+                        if (item instanceof Map<?, ?> mv) {
+                            String name = String.valueOf(mv.get("name"));
+                            String val = String.valueOf(mv.get("value"));
+                            // 口令类参数设备常回掩码，不参与回读比对
+                            if (name.contains("Password") || name.contains("PreSharedKey")
+                                    || name.contains("KeyPassphrase")) {
+                                continue;
+                            }
+                            expected.put(name, val);
+                        }
+                    }
+                }
                 if (!ok) {
                     allOk = false;
                     break; // 一条失败即中止，避免半套参数继续发
                 }
             }
             out.put("success", allOk);
+            if (allOk) {
+                verify(sn, expected, detail, out);
+            }
             out.put("error", allOk ? "" : "存在失败步骤，详见 detail");
             return out;
         } catch (BusinessException e) {
@@ -175,6 +194,50 @@ public class IntentDeliveryService {
         } catch (Exception e) {
             throw new BusinessException("任务参数解析失败: " + e.getMessage());
         }
+    }
+
+    // ==================== 回读确认 ====================
+
+    /** 下发成功后 GPV 回读比对，确认设备真正生效 */
+    private void verify(String sn, Map<String, String> expected,
+                        List<Map<String, String>> detail, Map<String, Object> out) {
+        if (expected.isEmpty()) {
+            out.put("verified", "skip");
+            return;
+        }
+        try {
+            long taskId = taskService.createTask(sn, "GetParameterValues",
+                    Map.of("names", List.copyOf(expected.keySet())), "verify");
+            taskService.awaitTask(taskId, 60);
+            DeviceData data = new DeviceData();
+            data.loadAll(store.loadParams(sn));
+            int diff = 0;
+            for (Map.Entry<String, String> e : expected.entrySet()) {
+                String actual = data.has(e.getKey()) ? data.value(e.getKey()) : null;
+                if (actual == null) {
+                    detail.add(row("回读确认", e.getKey(), "fail", "设备未上报该参数"));
+                    diff++;
+                } else if (!same(actual, e.getValue())) {
+                    detail.add(row("回读确认", e.getKey(), "fail",
+                            "期望 " + e.getValue() + "，设备实际 " + actual));
+                    diff++;
+                }
+            }
+            out.put("verified", diff == 0 ? "yes" : "partial");
+            out.put("verifyTotal", expected.size());
+            out.put("verifyDiff", diff);
+            if (diff == 0) {
+                detail.add(row("回读确认", expected.size() + " 个参数全部一致", "ok", ""));
+            }
+        } catch (Exception e) {
+            log.warn("回读确认失败 sn={}", sn, e);
+            out.put("verified", "unknown");
+            detail.add(row("回读确认", "", "skip", "回读失败: " + e.getMessage()));
+        }
+    }
+
+    private static boolean same(String a, String b) {
+        return a.trim().equalsIgnoreCase(b.trim());
     }
 
     private static Map<String, String> row(String step, String path, String status, String message) {
@@ -315,24 +378,29 @@ public class IntentDeliveryService {
     private void renderWifi(String root, DeviceData data, String category, Map<String, Object> fields,
                             List<Map.Entry<String, String>> plan, List<Map<String, String>> detail) {
         boolean band5 = "WIFI_58G".equals(category);
-        List<Integer> instances = data.instances(root + "LANDevice.1.LANWLANConfiguration.");
+        // 兼容标准名 LANWLANConfiguration 与私有变体 WLANConfiguration（如 CIOT）
+        String cfgBase = root + "LANDevice.1.LANWLANConfiguration.";
+        if (data.instances(cfgBase).isEmpty()) {
+            cfgBase = root + "LANDevice.1.WLANConfiguration.";
+        }
+        List<Integer> instances = data.instances(cfgBase);
         if (instances.isEmpty()) {
-            throw new BusinessException("设备参数树无 LANWLANConfiguration 实例，无法下发 WiFi");
+            throw new BusinessException("设备参数树无 WLAN 配置实例，无法下发 WiFi");
         }
         // 按频段选实例：看 Standard 叶子里的频段关键字，找不到就取第 1/第 2 个
         String base = null;
         for (Integer i : instances) {
-            String std = findLeafValue(data, root + "LANDevice.1.LANWLANConfiguration." + i, "Standard");
+            String std = findLeafValue(data, cfgBase + i, "Standard");
             String s = std == null ? "" : std.toLowerCase(Locale.ROOT);
             boolean has5 = s.contains("802.11a") || s.contains("802.11ac") || s.contains("802.11ax");
             if (band5 == has5) {
-                base = root + "LANDevice.1.LANWLANConfiguration." + i + ".";
+                base = cfgBase + i + ".";
                 break;
             }
         }
         if (base == null) {
             int pick = band5 && instances.size() > 1 ? instances.get(1) : instances.get(0);
-            base = root + "LANDevice.1.LANWLANConfiguration." + pick + ".";
+            base = cfgBase + pick + ".";
             detail.add(row("频段实例匹配", base, "ok", "未识别到频段标记，按序取实例 " + pick));
         }
 

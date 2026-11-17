@@ -129,21 +129,9 @@ public class DispatchService {
             }
         } else {
             int idx = instance == null ? findWifiInstance(data, root, band, 1) : instance;
-            String prefix = root + "LANDevice.1.LANWLANConfiguration." + idx + ".";
-            // LANDevice 实例号不一定是 1，探实际实例
-            List<Integer> lans = data.instances(root + "LANDevice.");
-            if (lans.isEmpty() || !lans.contains(1)) {
-                prefix = null;
-                for (String p : data.allPaths("")) {
-                    if (p.contains(".LANWLANConfiguration." + idx + ".")) {
-                        prefix = p.substring(0, p.indexOf(".LANWLANConfiguration.") + 1)
-                                + "LANWLANConfiguration." + idx + ".";
-                        break;
-                    }
-                }
-                if (prefix == null) {
-                    throw new IllegalStateException("设备参数树中未发现 WLAN 配置节点");
-                }
+            String prefix = wlanBase(data, root, idx);
+            if (prefix == null) {
+                throw new IllegalStateException("设备参数树中未发现 WLAN 配置节点");
             }
             if (ssid != null && data.has(prefix + "SSID")) {
                 out.add(nv(prefix + "SSID", ssid, "string"));
@@ -166,6 +154,19 @@ public class DispatchService {
         return out;
     }
 
+    /** TR-098 WLAN 配置对象前缀：兼容标准名 LANWLANConfiguration 与私有变体 WLANConfiguration（如 CIOT） */
+    private String wlanBase(DeviceData data, String root, int idx) {
+        for (String seg : new String[]{"LANWLANConfiguration", "WLANConfiguration"}) {
+            String marker = "." + seg + "." + idx + ".";
+            for (String p : data.allPaths("")) {
+                if (p.contains(marker)) {
+                    return p.substring(0, p.indexOf(marker) + 1) + seg + "." + idx + ".";
+                }
+            }
+        }
+        return null;
+    }
+
     /** 按频段找 WLAN 实例号，找不到退回默认值 */
     private int findWifiInstance(DeviceData data, String root, String band, int def) {
         if (band == null || band.isBlank()) {
@@ -184,8 +185,8 @@ public class DispatchService {
                 }
             }
         }
-        // TR-098：LANWLANConfiguration.{i}.Standard 推频段（LANDevice 实例号不一定是 1，扫全树）
-        var pat = java.util.regex.Pattern.compile("\\.LANDevice\\.(\\d+)\\.LANWLANConfiguration\\.(\\d+)\\.");
+        // TR-098：WLANConfiguration.{i}.Standard 推频段（兼容 LANWLANConfiguration 与私有变体 WLANConfiguration）
+        var pat = java.util.regex.Pattern.compile("\\.LANDevice\\.(\\d+)\\.(?:LAN)?WLANConfiguration\\.(\\d+)\\.");
         for (String p : data.allPaths("")) {
             var m = pat.matcher(p);
             if (m.find() && (p.endsWith(".Standard") || p.endsWith(".OperatingStandards"))) {

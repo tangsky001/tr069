@@ -5,6 +5,7 @@
 ## Maven 构建产物
 #############
 target/
+test/
 *.class
 *.war
 *.ear
