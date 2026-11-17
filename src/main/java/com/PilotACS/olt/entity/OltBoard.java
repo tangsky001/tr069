@@ -69,6 +69,10 @@ public class OltBoard {
     @TableField(exist = false)
     private String panelKind;
 
+    /** 灯带丝印标题：PON 板按型号认出 GPON / XGPON / EPON / XEPON，其它板写 GE / 10GE / PORT */
+    @TableField(exist = false)
+    private String stripTitle;
+
     /** 是不是主控板（型号档案给出，页面据此决定要不要画管理口） */
     @TableField(exist = false)
     private Boolean controlBoard;

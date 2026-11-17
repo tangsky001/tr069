@@ -271,6 +271,21 @@ public class OltController {
         }
     }
 
+    @Operation(summary = "保存配置：把运行配置写进设备 flash，掉电不丢")
+    @PostMapping("/{id}/save-config")
+    public Result<OltDetail> saveConfig(@PathVariable Long id, HttpServletRequest httpRequest) {
+        try {
+            return Result.ok(oltService.saveConfig(id, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.OLT, "保存配置异常 id={}", id, e);
+            return Result.fail("保存配置失败：" + e.getMessage());
+        }
+    }
+
     @Operation(summary = "单条 ONT 按需查询：光信息 / 版本 / 注册历史，点列表里某条的图标时触发")
     @PostMapping("/{id}/ont-query")
     public Result<OltOntQueryResult> queryOnt(@PathVariable Long id,

@@ -35,16 +35,16 @@
       <el-table-column type="selection" width="42" align="center" />
       <el-table-column label="ID" type="index" width="48" align="center" />
       <el-table-column label="PON" prop="ponType" width="70" align="center" />
-      <el-table-column label="端口" width="90" align="center">
+      <el-table-column label="端口" width="65" align="center">
         <template slot-scope="{ row }">{{ row.iface }}</template>
       </el-table-column>
-      <el-table-column label="ONT ID" width="80" align="center">
+      <el-table-column label="ONT ID" width="65" align="center">
         <template slot-scope="{ row }">
           <!-- ONT ID 可点：点开查 display ont capability 0/<槽位> <端口> <ONT ID>，硬件能力/状态 -->
           <span class="ont-link" @click="openQuery('capability', row)">{{ row.ontId }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="配置状态" width="170">
+      <el-table-column label="配置状态" width="70">
         <template slot-scope="{ row }">
           <span class="ont-auth">{{ row.authMethod }}</span>
           <div class="ont-config-line">
@@ -60,25 +60,25 @@
         </template>
       </el-table-column>
       <!-- 管理 IP / MAC / 线路 / 业务模板：同步采集时后端已随单台详情采回，直接显示 -->
-      <el-table-column label="管理IP" width="150" align="center">
+      <el-table-column label="管理IP" width="140" align="center">
         <template slot-scope="{ row }">{{ ipOf(row) || '-' }}</template>
       </el-table-column>
-      <el-table-column label="MAC" width="170" align="center">
+      <el-table-column label="MAC" width="150" align="center">
         <template slot-scope="{ row }">{{ macOf(row) || '-' }}</template>
       </el-table-column>
-      <el-table-column label="业务流" width="90" align="center">
+      <el-table-column label="业务流" width="75" align="center">
         <template slot-scope="{ row }">
           <span class="ont-link" @click="openServicePorts(row)">查看</span>
         </template>
       </el-table-column>
-      <el-table-column label="线路模板" width="80" align="center">
+      <el-table-column label="线路模板" width="75" align="center">
         <template slot-scope="{ row }">
           <span :class="{ 'ont-link': lineText(row) }" @click="toggleOntConfig(row)">
             {{ lineText(row) || '-' }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="业务模板" width="80" align="center">
+      <el-table-column label="业务模板" width="75" align="center">
         <template slot-scope="{ row }">
           <span :class="{ 'ont-link': srvText(row) }" @click="toggleOntConfig(row)">
             {{ srvText(row) || '-' }}
@@ -88,7 +88,7 @@
       <el-table-column label="ONT 描述" min-width="120">
         <template slot-scope="{ row }">{{ row.desc || '-' }}</template>
       </el-table-column>
-      <el-table-column label="状态" width="70" align="center">
+      <el-table-column label="状态" width="60" align="center">
         <template slot-scope="{ row }">
           <span class="ont-state" :class="row.online ? 'ont-state-online' : 'ont-state-offline'">
             {{ row.stateText }}

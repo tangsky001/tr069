@@ -253,6 +253,12 @@
             <!-- 光口下方的卡扣，像真的 SFP 笼 -->
             <rect class="bp-socket-latch" x="28" :y="rowY(index) + 46" width="12" height="3" rx="0.8" />
           </g>
+
+          <!-- 口内链路/激活灯：和管理口 ETH 同一套画法——绿=链路（在线闪/告警红/离线灰），黄=激活 -->
+          <g class="bp-port-leds">
+            <circle class="bp-led" :class="'bp-led-' + stateOf(port)" cx="27" :cy="rowY(index) + 40.5" r="1.8" />
+            <circle v-if="stateOf(port) === 'online'" class="bp-port-act" cx="39" :cy="rowY(index) + 40.5" r="1.8" />
+          </g>
         </g>
       </g>
 
@@ -390,8 +396,9 @@ export default {
     portsTop() {
       return this.portTop + LED_HEAD + Math.ceil(this.ports.length / 2) * LED_PITCH + 8
     },
-    /** 灯区丝印标题：PON 板写 PON，以太口板写 GE / 10GE */
+    /** 灯区丝印标题：后端按面板样式与型号算好（GPON / XGPON / EPON / XEPON / GE / 10GE），这里兜底旧口径 */
     stripTitle() {
+      if (this.board.stripTitle) return this.board.stripTitle
       if (this.panel === 'pon') return 'PON'
       if (this.panel === 'ge') return 'GE'
       if (this.panel === 'xge') return '10GE'
@@ -693,6 +700,12 @@ export default {
   stroke-width: 0.7;
 }
 .bp-mgmt-act {
+  fill: #f0b34a;
+  stroke: #14171c;
+  stroke-width: 0.7;
+}
+/* 业务口笼内的激活灯：黄常亮（链路灯复用 bp-led 三态） */
+.bp-port-act {
   fill: #f0b34a;
   stroke: #14171c;
   stroke-width: 0.7;

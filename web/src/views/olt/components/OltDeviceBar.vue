@@ -7,6 +7,7 @@
         <el-button size="mini" icon="el-icon-edit" @click="$emit('edit')">编辑</el-button>
         <el-button size="mini" type="primary" icon="el-icon-refresh-right" :loading="syncing" @click="$emit('sync')">同步</el-button>
         <el-button size="mini" type="warning" icon="el-icon-cpu" :loading="testing" @click="$emit('test')">诊断测试</el-button>
+        <el-button size="mini" type="success" icon="el-icon-download" :loading="saving" @click="$emit('save-config')">保存配置</el-button>
         <el-button size="mini" type="danger" icon="el-icon-delete" @click="$emit('delete')">删除</el-button>
         <span class="olt-auto">
           <el-switch :value="autoRefresh" @input="$emit('update:autoRefresh', $event)" />
@@ -80,6 +81,10 @@ export default {
       default: false
     },
     testing: {
+      type: Boolean,
+      default: false
+    },
+    saving: {
       type: Boolean,
       default: false
     },

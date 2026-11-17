@@ -11,10 +11,12 @@
       :testing="testing"
       :auto-refresh="autoRefresh"
       :poll-seconds="pollSeconds"
+      :saving="savingConfig"
       @back="goBack"
       @edit="openEdit"
       @sync="handleSync()"
       @test="handleTest"
+      @save-config="handleSaveConfig"
       @delete="handleDelete"
       @update:autoRefresh="autoRefresh = $event"
       @update:pollSeconds="pollSeconds = $event"
@@ -172,6 +174,10 @@
           />
         </el-tab-pane>
 
+        <el-tab-pane label="链路聚合" name="ola">
+          <div class="olt-placeholder">链路聚合（OLA，占位）：待接入真实 OLT 采集数据后展示聚合组与成员口。</div>
+        </el-tab-pane>
+
         <el-tab-pane label="ONT 配置/状态" name="ont">
           <!-- 汇总窗（总数 / 在线 / 离线）由面板渲染，和操作按钮排在同一行 -->
           <olt-ont-status-panel
@@ -189,10 +195,6 @@
 
         <el-tab-pane label="ONT 注册" name="ontreg">
           <olt-ont-reg-panel :olt-id="detailId" :olt-ip="device.host || ''" />
-        </el-tab-pane>
-
-        <el-tab-pane label="OLA" name="ola">
-          <div class="olt-placeholder">OLA（光链路聚合，占位）：待接入真实 OLT 采集数据后展示聚合组与成员口。</div>
         </el-tab-pane>
 
         <el-tab-pane label="ONU 后板编辑面板" name="onu">

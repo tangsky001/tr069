@@ -69,6 +69,51 @@ public final class OltBoardCatalog {
         return null;
     }
 
+    /**
+     * 灯带丝印标题：PON 业务板按型号认出具体制式（GPON / XGPON / EPON / XEPON），
+     * 主控/以太上行板写 GE，10GE 上联板写 10GE，其余写 PORT。
+     * 页面只透传，不再自己判——设备侧知识统一放这层。
+     */
+    public static String stripTitleOf(String panelKind, String boardType) {
+        switch (panelKind == null ? "" : panelKind) {
+            case "pon":
+                return ponStripTitle(boardType);
+            case "ge":
+                return "GE";
+            case "xge":
+                return "10GE";
+            default:
+                return "PORT";
+        }
+    }
+
+    /**
+     * 从板卡型号认 PON 制式（华为业务板的型号字母段就标着制式）：
+     * XGP 开头（XGBD/XGPD/XGFS/XGSH）与 CGP 开头（CGPD/CGHF/CGUD）是 XGPON，
+     * XEP 开头是 XEPON（10G EPON），GP 开头（GPBD/GPFA/GTGH…）是 GPON，
+     * EP 开头（EPBD/EPFA/EPSD/ETG…）是 EPON，认不出就只写 PON。
+     */
+    public static String ponTypeOf(String boardType) {
+        return ponStripTitle(boardType);
+    }
+
+    private static String ponStripTitle(String boardType) {
+        String type = boardType == null ? "" : boardType.toUpperCase(Locale.ROOT);
+        if (type.contains("XEP")) {
+            return "XEPON";
+        }
+        if (type.contains("XGP") || type.contains("CGP")) {
+            return "XGPON";
+        }
+        if (type.contains("GP")) {
+            return "GPON";
+        }
+        if (type.contains("EP")) {
+            return "EPON";
+        }
+        return "PON";
+    }
+
     /** 没配档案的板卡按端口类型推断面板样式，让主控板、上联板也有像样的面板 */
     public static String panelKindOf(String portMode) {
         String mode = portMode == null ? "" : portMode.toUpperCase(Locale.ROOT);

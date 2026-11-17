@@ -275,6 +275,8 @@ public class OltService {
             board.setPanelKind(OltBoardCatalog.panelKindOf(board.getPortMode()));
             board.setControlBoard(Boolean.FALSE);
         }
+        // 灯带丝印随面板样式走，PON 板具体制式由型号档案/型号字符串在后端认好
+        board.setStripTitle(OltBoardCatalog.stripTitleOf(board.getPanelKind(), board.getBoardType()));
         fillBoardStatus(board);
     }
 
@@ -589,6 +591,31 @@ public class OltService {
         return dispatchConfig(id, List.of(command), operator, "确认所有业务板");
     }
 
+    /**
+     * 保存配置：把运行配置写进 flash（各厂商都是 save），掉电不丢。
+     * 保存本身不改业务数据，不做重采；设备答完 y 后要写几十秒 flash，期间不接别的活。
+     */
+    public OltDetail saveConfig(Long id, String operator) {
+        OltDevice device = requireDevice(id);
+        String command = profileOf(id).saveCommand();
+        if (command == null) {
+            throw new IllegalArgumentException("该厂商还没有接入存盘命令");
+        }
+        long start = System.currentTimeMillis();
+        try {
+            List<String> outputs = telnetService.sendConfig(device, List.of(command), false);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+                    "保存配置：" + command, String.join("\n", outputs),
+                    System.currentTimeMillis() - start, operator);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    "保存配置失败：" + message, null, System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException("保存配置失败：" + message, e);
+        }
+        return detail(id);
+    }
+
     /** 快速同步：一次短连接把板卡（型号 / 板卡类型 / 槽位 / 机框槽位数）拿回来写库 */
     public OltDetail quickSync(Long id, String operator) {
         return quickSync(id, operator, null);
@@ -819,7 +846,7 @@ public class OltService {
         }
     }
 
-    /** 有多少台在线 ONT 还缺 MAC：后台补采的唯一判据 */
+    /** 有多少台在线 ONT 还缺 MAC 或管理 IP：后台补采的唯一判据 */
     private static long countOntsMissingDetail(List<OltBoard> boards) {
         if (boards == null) {
             return 0;
@@ -830,8 +857,9 @@ public class OltService {
                 .filter(port -> port.getOnts() != null)
                 .flatMap(port -> port.getOnts().stream())
                 .filter(ont -> ont.getOntId() != null)
-                .filter(ont -> ont.getMac() == null && !Boolean.FALSE.equals(ont.getOnline())
-                        && !Boolean.TRUE.equals(ont.getMacUnavailable()))
+                .filter(ont -> !Boolean.FALSE.equals(ont.getOnline())
+                        && ((ont.getMac() == null && !Boolean.TRUE.equals(ont.getMacUnavailable()))
+                                || ont.getMgmtIp() == null))
                 .count();
     }
 
@@ -4047,6 +4075,9 @@ public class OltService {
                 continue;
             }
             List<Map<String, Object>> cardPorts = new ArrayList<>();
+            // PON 制式按板卡型号认（GPON / XGPON / EPON / XEPON），随每一行 ONT 下发；非 PON 板没有 ONT，不标
+            String ponType = "pon".equalsIgnoreCase(board.getPanelKind())
+                    ? OltBoardCatalog.ponTypeOf(board.getBoardType()) : null;
             for (OltPort port : board.getPorts()) {
                 List<OltOnt> onts = port.getOnts();
                 cardPorts.add(ontCardPort(port, onts == null ? List.of() : onts));
@@ -4064,6 +4095,7 @@ public class OltService {
                     row.put("portNo", port.getPortNo());
                     row.put("portName", port.getPortName() == null ? "" : port.getPortName());
                     row.put("iface", port.getIface());
+                    row.put("ponType", ponType);
                     row.put("ontId", ont.getOntId());
                     // 平铺列表按「PON 口/ONU ID」显示，与状态面板共用同一份行
                     row.put("ponNo", port.getPortNo());

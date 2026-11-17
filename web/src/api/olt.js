@@ -369,6 +369,19 @@ export function enableOntAutoFind(id) {
 }
 
 /**
+ * 保存配置：下发 save，把运行配置写进设备 flash，掉电不丢。
+ *
+ * 设备答完确认后要写几十秒 flash，超时放宽到 3 分钟。
+ */
+export function saveOltConfig(id) {
+  return request({
+    url: '/olt/' + id + '/save-config',
+    method: 'post',
+    timeout: 180000
+  })
+}
+
+/**
  * 删除业务板上的全部 ONT：后端按库里的板卡定位槽位（如 0/2）和采到 ONT 的端口，
  * 逐口下发 ont delete <端口> all（设备逐条问 y/n），成功后整机重采。
  *

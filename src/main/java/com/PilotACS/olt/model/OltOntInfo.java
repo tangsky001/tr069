@@ -24,6 +24,9 @@ public class OltOntInfo {
     @Schema(description = "ONT IP 0 地址/掩码，如 10.172.10.17/24")
     private String ip;
 
+    @Schema(description = "回显里明确写了 ONT IP : -（设备没上报管理地址）；没出现 IP 行时为 null，二者要区分开")
+    private Boolean ipEmpty;
+
     @Schema(description = "MAC 地址：部分版本的单台详情回显里有，没有时采集侧按认证码还原")
     private String mac;
 

@@ -5,6 +5,7 @@ import {
   quickSyncOlt,
   refreshOlt,
   confirmOltBoards,
+  saveOltConfig,
   createDbaProfile,
   deleteDbaProfiles,
   addLineTcont,
@@ -43,6 +44,7 @@ export const oltDetailMixin = {
       loading: false,
       syncing: false,
       testing: false,
+      savingConfig: false,
       confirmingBoards: false,
       detail: { device: null, boards: [], records: [], vlan: null, template: null },
       // 页面自动刷新：后台每 5 分钟自己去采，这里只按间隔把最新数据拉到页面上，不碰设备
@@ -101,6 +103,8 @@ export const oltDetailMixin = {
           description: board.description || '',
           temperature: board.temperature,
           panel: board.panelKind || 'generic',
+          // 灯带丝印（GPON / XGPON / EPON / XEPON / GE / 10GE）：后端按型号认好，只透传
+          stripTitle: board.stripTitle || '',
           controlBoard: !!board.controlBoard,
           // 整机（鸿升光）才有：前面板有几个 PON / 上联口 / NMS，由型号决定
           frontPanel: board.frontPanel || null,
@@ -585,6 +589,32 @@ export const oltDetailMixin = {
         .catch(() => {})
         .finally(() => {
           this.testing = false
+        })
+    },
+    /** 保存配置：下发 save 写 flash，掉电不丢；写盘要几十秒，先确认再发 */
+    handleSaveConfig() {
+      if (!this.detailId) return
+      this.$confirm(
+        '把当前运行配置写入 OLT 的 flash，掉电后配置不丢。写盘要几十秒且期间设备不接其它操作，是否继续？',
+        '保存配置',
+        { confirmButtonText: '保存', cancelButtonText: '取消', type: 'warning' }
+      )
+        .then(() => {
+          this.savingConfig = true
+          return saveOltConfig(this.detailId)
+        })
+        .then(res => {
+          if (res && res.data) {
+            this.applyDetail(res.data)
+          }
+          this.$message.success('已保存到设备 flash，可在「采集记录」查看回显')
+        })
+        .catch(e => {
+          if (e === 'cancel' || (e && e.message && e.message.includes('cancel'))) return
+          this.$message.error((e && e.message) || '保存配置失败')
+        })
+        .finally(() => {
+          this.savingConfig = false
         })
     },
     handleSync(silent) {

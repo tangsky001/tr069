@@ -1952,8 +1952,13 @@ public final class OltInfoParser {
         info.setMac(mac.find() ? normalizeMac(mac.group(1)) : null);
         // ONT IP 后必须紧跟空白：这样不会误配到第一行的「ONT IP索引 : 0」
         Matcher ip = ONT_IPCONFIG_IP.matcher(text);
-        if (ip.find() && !"-".equals(ip.group(1))) {
-            info.setIp(ip.group(1));
+        if (ip.find()) {
+            if (!"-".equals(ip.group(1))) {
+                info.setIp(ip.group(1));
+            } else {
+                // 明确回了「-」：设备没上报管理地址，记下来免得下一轮再问一遍
+                info.setIpEmpty(Boolean.TRUE);
+            }
         }
         return info;
     }

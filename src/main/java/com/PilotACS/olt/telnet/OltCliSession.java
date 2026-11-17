@@ -76,6 +76,13 @@ public class OltCliSession implements Closeable {
     /** 交互式命令的收尾条件：要么停在追问（要继续应答），要么回到提示符（结束） */
     private static final List<Pattern> INTERACTIVE_STOPS = List.of(INTERACTIVE_ASK, SHELL_PROMPT);
 
+    /**
+     * 华为 config 视图 {@code save} 的参数停点：回显停在
+     * {@code { <cr>|configuration<K>|data<K> }:} 上，敲回车选默认值才开写。
+     */
+    private static final Pattern SAVE_BRACE_PROMPT = Pattern.compile(
+            "(?m)\\{[^{}]*<cr>[^{}]*\\}\\s*[:：]?\\s*\\z");
+
     /** 参数提示最多回几次车，防止设备反复要参数时死循环 */
     private static final int MAX_PARAM_ROUNDS = 3;
 
@@ -1259,7 +1266,13 @@ public class OltCliSession implements Closeable {
         return outputs;
     }
 
-    /** 存盘专用：华为 save 先停在 y/n 确认，答完写 flash 几十秒（期间不接任何命令）；不等完就返回的话下一条任务必然被拒 */
+    /**
+     * 存盘专用。各家问法不一样：
+     * - 有的停在「Are you sure ... (y/n)[n]:」，答 y 才真的会存；
+     * - 华为 config 视图（MA5600T/MA5680T）停在 {@code { <cr>|configuration<K>|data<K> }:} 参数提示上，
+     *   敲回车选默认值就开写（现场确认敲两下回车），答 y 会被拒「Too many parameters」。
+     * 写 flash 要几十秒（期间不接任何命令），必须等提示符回来再返回，否则下一条任务必然被拒。
+     */
     private String runSave() {
         long start = System.currentTimeMillis();
         saving = true;
@@ -1269,7 +1282,22 @@ public class OltCliSession implements Closeable {
             client.sendLine("save");
             String out = client.readUntilAny(INTERACTIVE_STOPS, Math.min(commandTimeoutMs, 8000));
             whole.append(out);
-            if (isAsking(out)) {
+            if (isAsking(out) && SAVE_BRACE_PROMPT.matcher(tailOf(out)).find()) {
+                // 华为式参数停点：回车选 <cr> 默认值，有的固件要敲两下才继续
+                for (int round = 0; round < 2 && isAsking(out)
+                        && SAVE_BRACE_PROMPT.matcher(tailOf(out)).find(); round++) {
+                    transcript.append("[应答] <回车>\n");
+                    client.resetBuffer();
+                    client.sendLine("");
+                    out = client.readUntilAny(INTERACTIVE_STOPS, Math.min(commandTimeoutMs, 8000));
+                    whole.append(out);
+                }
+                // 选完参数设备开始写 flash，等提示符回来
+                if (!SHELL_PROMPT.matcher(tailOf(out)).find()) {
+                    out = client.readUntilAny(List.of(SHELL_PROMPT), SAVE_TIMEOUT_MS);
+                    whole.append(out);
+                }
+            } else if (isAsking(out)) {
                 // 停在「Are you sure ... (y/n)[n]:」：答 y 才真的会存
                 transcript.append("[应答] y\n");
                 client.resetBuffer();
@@ -1491,15 +1519,17 @@ public class OltCliSession implements Closeable {
         return any;
     }
 
-    /** 给还缺 MAC 的在线 ONT 发 display ont ipconfig，补到就跳过 */
+    /** 给还缺 MAC 或管理 IP 的在线 ONT 发 display ont ipconfig，补到就跳过 */
     private void enrichOntProfiles(Integer slotNo, int portNo, List<OltOnt> onts, int timeout,
                                    List<String> notes) {
         if (slotNo == null || onts == null || onts.isEmpty()) {
             return;
         }
-        // 部分版本的单台详情不给 MAC（现场这台 MA5683T 就没有），只有 ipconfig 里有
-        if (onts.stream().anyMatch(ont -> ont.getMac() == null && !Boolean.FALSE.equals(ont.getOnline())
-                && !Boolean.TRUE.equals(ont.getMacUnavailable()))) {
+        // 部分版本的单台详情不给 MAC（现场这台 MA5683T 就没有），只有 ipconfig 里有；
+        // 管理 IP 同理：mgmtIp 为 null 表示还没查过（查过但没有用空串标记），别反复问
+        if (onts.stream().anyMatch(ont -> !Boolean.FALSE.equals(ont.getOnline())
+                && ((ont.getMac() == null && !Boolean.TRUE.equals(ont.getMacUnavailable()))
+                        || ont.getMgmtIp() == null))) {
             enrichOntIpconfig(slotNo, portNo, onts, timeout, notes);
         }
     }
@@ -1511,9 +1541,10 @@ public class OltCliSession implements Closeable {
         try {
             boolean noted = false;
             for (OltOnt ont : onts) {
-                if (ont.getOntId() == null || ont.getMac() != null
-                        || Boolean.FALSE.equals(ont.getOnline())
-                        || Boolean.TRUE.equals(ont.getMacUnavailable())) {
+                // MAC 补到（或确认学不到）且管理 IP 查过（含空串=设备没上报）就不再问这台
+                if (ont.getOntId() == null || Boolean.FALSE.equals(ont.getOnline())
+                        || (ont.getMac() != null || Boolean.TRUE.equals(ont.getMacUnavailable()))
+                                && ont.getMgmtIp() != null) {
                     continue;
                 }
                 String text = runCommand("display ont ipconfig " + portNo + " " + ont.getOntId(), timeout);
@@ -1528,9 +1559,17 @@ public class OltCliSession implements Closeable {
                     continue;
                 }
                 OltOntInfo info = OltInfoParser.parseOntIpconfig(text);
-                // 只落 MAC：管理 IP 属于「点开详情」才采的数据，这条命令顺带给的也不入库
+                // MAC 与管理 IP 一起落：这条命令本来就是逐台发的，顺带给的数据没理由只留一半；
+                // 设备明确回了「-」就落空串（查过、没有），和没查过的 null 区分开
                 if (ont.getMac() == null && info.getMac() != null) {
                     ont.setMac(info.getMac());
+                }
+                if (ont.getMgmtIp() == null) {
+                    if (info.getIp() != null) {
+                        ont.setMgmtIp(info.getIp());
+                    } else if (Boolean.TRUE.equals(info.getIpEmpty())) {
+                        ont.setMgmtIp("");
+                    }
                 }
                 // 设备明确回了 0000-0000-0000：这台没学到 MAC，标记一下，下一轮别再问它
                 if (ont.getMac() == null && ZERO_MAC.matcher(text).find()) {

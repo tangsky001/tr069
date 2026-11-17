@@ -62,6 +62,15 @@
               :disabled="!selectedId"
               @click="handleTest"
             >诊断测试</el-button>
+            <el-button
+              v-if="$has('olt:update')"
+              type="success"
+              size="small"
+              icon="el-icon-download"
+              :loading="savingConfig"
+              :disabled="!selectedId"
+              @click="handleSaveConfig"
+            >保存配置</el-button>
             <span class="olt-auto">
               <el-switch v-model="autoRefresh" />
               <span class="olt-auto-label">自动刷新</span>
@@ -127,7 +136,7 @@
 
 <script>
 import OltGroupTree from './components/OltGroupTree'
-import { fetchOltList, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive } from '@/api/olt'
+import { fetchOltList, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive, saveOltConfig } from '@/api/olt'
 import { fetchGroupMembers } from '@/api/group'
 import { componentOfVendor } from './vendors'
 
@@ -142,6 +151,7 @@ export default {
       loading: false,
       syncing: false,
       testing: false,
+      savingConfig: false,
       resources: [],
       selectedId: null,
       // 台账列表的自动刷新（30 秒起），默认关；面板数据由视图自己按 10 秒拉
@@ -340,8 +350,32 @@ export default {
         .finally(() => {
           this.syncing = false
         })
-    }
+    },
 
+    /** 保存配置：下发 save 写 flash，掉电不丢；写盘要几十秒，先确认再发 */
+    handleSaveConfig() {
+      if (!this.selectedId) return
+      this.$confirm(
+        '把当前运行配置写入 OLT 的 flash，掉电后配置不丢。写盘要几十秒且期间设备不接其它操作，是否继续？',
+        '保存配置',
+        { confirmButtonText: '保存', cancelButtonText: '取消', type: 'warning' }
+      )
+        .then(() => {
+          this.savingConfig = true
+          return saveOltConfig(this.selectedId)
+        })
+        .then(() => {
+          this.$message.success('已保存到设备 flash，回显见下方面板的「采集记录」')
+          this.loadList()
+        })
+        .catch(e => {
+          if (e === 'cancel') return
+          this.$message.error((e && e.message) || '保存配置失败')
+        })
+        .finally(() => {
+          this.savingConfig = false
+        })
+    }
   }
 }
 </script>
