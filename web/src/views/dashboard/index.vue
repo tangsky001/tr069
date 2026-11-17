@@ -13,7 +13,7 @@
       </el-col>
     </el-row>
 
-    <!-- 第一行：两张状态环形图 -->
+    <!-- 第一行：两张状态环形图；OLT 状态分布卡片内嵌中国地图（按资源分组树省级节点着色，点省份进 OLT 管理） -->
     <el-row :gutter="16">
       <el-col :xs="24" :lg="12">
         <el-card shadow="never" class="panel">
@@ -21,7 +21,16 @@
             <span><i class="el-icon-monitor" /> OLT 状态分布</span>
             <el-button type="text" icon="el-icon-refresh" @click="load">刷新</el-button>
           </div>
-          <div ref="oltChart" class="chart chart-donut" />
+          <div class="olt-status-body">
+            <div ref="oltChart" class="chart chart-donut donut-inline" />
+            <china-map
+              bare
+              member-type="OLT"
+              :height="240"
+              class="map-inline"
+              @province-select="goProvince"
+            />
+          </div>
         </el-card>
       </el-col>
       <el-col :xs="24" :lg="12">
@@ -35,8 +44,8 @@
       </el-col>
     </el-row>
 
+    <!-- 第二行：左 OLT 设备表 + 实时事件，右 光猫分布与同步摘要 -->
     <el-row :gutter="16">
-      <!-- 左：OLT 设备表 + 实时事件 -->
       <el-col :xs="24" :lg="12">
         <el-card shadow="never" class="panel">
           <div slot="header" class="panel-header">
@@ -132,6 +141,7 @@
 import * as echarts from 'echarts'
 import { fetchOverview } from '@/api/dashboard'
 import { createDashboardSocket } from '@/utils/dashboardSocket'
+import ChinaMap from '@/components/ChinaMap'
 
 const COLOR_ONLINE = '#67c23a'
 const COLOR_OFFLINE = '#f56c6c'
@@ -139,6 +149,7 @@ const COLOR_UNKNOWN = '#c0c4cc'
 
 export default {
   name: 'Dashboard',
+  components: { ChinaMap },
   data() {
     return {
       loading: false,
@@ -194,6 +205,10 @@ export default {
     Object.values(this.charts).forEach(chart => chart && chart.dispose())
   },
   methods: {
+    /** 点省份 → 进 OLT 管理，那里的分组树按省展开选设备 */
+    goProvince() {
+      this.$router.push('/olt/management')
+    },
     initCharts() {
       this.charts = {
         olt: echarts.init(this.$refs.oltChart),
@@ -396,6 +411,19 @@ export default {
 }
 .chart-bar {
   height: 240px;
+}
+/* OLT 状态分布卡片内：左环形图 + 右中国地图（裸模式，不带卡片壳） */
+.olt-status-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.donut-inline {
+  flex: 0 0 200px;
+}
+.map-inline {
+  flex: 1;
+  min-width: 0;
 }
 .hidden {
   display: none;

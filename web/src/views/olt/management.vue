@@ -71,6 +71,11 @@
               :disabled="!selectedId"
               @click="handleSaveConfig"
             >保存配置</el-button>
+            <el-button
+              size="small"
+              :icon="mapVisible ? 'el-icon-arrow-up' : 'el-icon-map-location'"
+              @click="mapVisible = !mapVisible"
+            >{{ mapVisible ? '收起地图' : '省份地图' }}</el-button>
             <span class="olt-auto">
               <el-switch v-model="autoRefresh" />
               <span class="olt-auto-label">自动刷新</span>
@@ -122,6 +127,8 @@
       </el-card>
 
       <!-- 主体：按下拉选中的厂商渲染对应视图，切设备当场换面板，不用来回跳页面 -->
+      <china-map v-if="mapVisible" member-type="OLT" title="OLT 省份分布" @province-select="mapVisible = false" />
+
       <component
         :is="vendorView"
         v-if="selectedId"
@@ -136,6 +143,7 @@
 
 <script>
 import OltGroupTree from './components/OltGroupTree'
+import ChinaMap from '@/components/ChinaMap'
 import { fetchOltList, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive, saveOltConfig } from '@/api/olt'
 import { fetchGroupMembers } from '@/api/group'
 import { componentOfVendor } from './vendors'
@@ -145,13 +153,14 @@ import { componentOfVendor } from './vendors'
  */
 export default {
   name: 'OltManagement',
-  components: { OltGroupTree },
+  components: { OltGroupTree, ChinaMap },
   data() {
     return {
       loading: false,
       syncing: false,
       testing: false,
       savingConfig: false,
+      mapVisible: false,
       resources: [],
       selectedId: null,
       // 台账列表的自动刷新（30 秒起），默认关；面板数据由视图自己按 10 秒拉

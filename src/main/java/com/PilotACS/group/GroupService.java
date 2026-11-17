@@ -18,6 +18,7 @@ import com.PilotACS.common.security.UserContext;
 import com.PilotACS.group.model.GroupMemberView;
 import com.PilotACS.group.model.GroupMemberBrief;
 import com.PilotACS.group.model.GroupNodeView;
+import com.PilotACS.group.model.ProvinceMapVO;
 import com.PilotACS.common.log.Logs;
 import com.PilotACS.service.SysOperLogService;
 import com.PilotACS.olt.entity.OltDevice;
@@ -29,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -39,20 +41,7 @@ import java.util.stream.Collectors;
 
 /**
  * 分组管理服务：默认只有固定根节点「资源根组」，分组节点逐级手动创建落库。
- *
- * <p>建组流程：右键节点 → 弹窗列出该节点区划的下级候选（根节点列 34 省，
- * 省节点列市，市节点列区县；自定义节点只能手输名称）→ 选中后确定才落库。
- * 节点落库时记录 civil_code（所选区划编号），下一级的候选就由它决定。</p>
- *
- * <p>节点引用 nodeRef：{@code ROOT}（固定根，未绑定设备的默认归属）/ {@code G:id}（已落库分组）。
- * 成员类型 memberType：{@code OLT}（OLT 台账，member_id=olt_device.id）/
- * {@code ONU}（光猫，member_ref=光猫标识如 SN，设备模块接入前归属关系先行落库）。</p>
- *
- * <p><b>物理分表：</b>OLT 与光猫各一套表（olt_res_group / onu_res_group、
- * olt_res_group_member / onu_res_group_member、olt_res_acl / onu_res_acl），
- * 两棵树互相独立、权限也各自独立。本服务逻辑只写一套，公共入口用
- * {@link GroupScopeContext#with} 标记当前域，动态表名拦截器落到对应物理表；
- * 未标记（内部调用/老接口）默认 OLT 域。</p>
+
  */
 @Service
 @RequiredArgsConstructor
@@ -90,6 +79,102 @@ public class GroupService {
     public List<GroupNodeView> tree(String memberType) {
         String type = normalizeMemberType(memberType);
         return GroupScopeContext.with(type, () -> doTree(type));
+    }
+
+    /** 地图上有设备的省统一用的高亮蓝 */
+    private static final String PROVINCE_DEVICE_COLOR = "#5b9bd5";
+    /** 地图上无设备的省统一用的中性灰 */
+    private static final String PROVINCE_EMPTY_COLOR = "#eef1f6";
+
+    /**
+     * 省份地图汇总：以区划骨架的 34 省为全集（没建过分组的省也要下发颜色，否则地图整幅灰白），
+
+     */
+    public ProvinceMapVO provinceMap(String memberType) {
+        String type = normalizeMemberType(memberType);
+        List<GroupNodeView> tree = GroupScopeContext.with(type, () -> doTree(type));
+        GroupNodeView root = tree.isEmpty() ? null : tree.get(0);
+        // 树里出现过的省级节点（区划节点只有创建过才落库，所以不能只遍历树）
+        Map<String, GroupNodeView> treeByName = new HashMap<>();
+        if (root != null && root.getChildren() != null) {
+            for (GroupNodeView node : root.getChildren()) {
+                if (node.getLevel() == 1 && node.getName() != null) {
+                    treeByName.put(node.getName(), node);
+                }
+            }
+        }
+
+        List<ProvinceMapVO.Province> rows = new ArrayList<>();
+        List<CivilCodeNode> allProvinces = civilCodeService.children(null);
+        int index = 0;
+        for (CivilCodeNode province : allProvinces) {
+            GroupNodeView hit = treeByName.get(province.getName());
+            long value = hit == null ? 0 : hit.getMemberTotal();
+            ProvinceMapVO.Province row = new ProvinceMapVO.Province();
+            row.setName(province.getName());
+            row.setValue(value);
+            row.setColor(value > 0 ? PROVINCE_DEVICE_COLOR : pastelOf(index, province.getName()));
+            rows.add(row);
+            index++;
+        }
+        // 有设备的省按设备数降序排在前面（右侧清单直接按顺序渲染），无设备的殿后
+        rows.sort(Comparator.comparingLong(ProvinceMapVO.Province::getValue).reversed());
+
+        ProvinceMapVO vo = new ProvinceMapVO();
+        vo.setProvinces(rows);
+        return vo;
+    }
+
+    /**
+     * 无设备省份的随机观感底色：色相按黄金角（137.5°）散开——相邻省色相必然差得远，
+
+     */
+    private static String pastelOf(int index, String name) {
+        int seed = index * 31 + (name == null ? 0 : name.hashCode());
+        int hue = (int) Math.round((index * 137.508 + Math.floorMod(seed, 17)) % 360);
+        int sat = 55 + Math.floorMod(seed, 3) * 10;
+        int light = 78 + Math.floorMod(seed, 4) * 4;
+        return hslToHex(hue, sat / 100.0, light / 100.0);
+    }
+
+    /** HSL(h:0-360, s/l:0-1) → #RRGGBB，供前端地图直接使用 */
+    private static String hslToHex(int h, double s, double l) {
+        double c = (1 - Math.abs(2 * l - 1)) * s;
+        double hp = (h % 360) / 60.0;
+        double x = c * (1 - Math.abs(hp % 2 - 1));
+        double r1;
+        double g1;
+        double b1;
+        if (hp < 1) {
+            r1 = c;
+            g1 = x;
+            b1 = 0;
+        } else if (hp < 2) {
+            r1 = x;
+            g1 = c;
+            b1 = 0;
+        } else if (hp < 3) {
+            r1 = 0;
+            g1 = c;
+            b1 = x;
+        } else if (hp < 4) {
+            r1 = 0;
+            g1 = x;
+            b1 = c;
+        } else if (hp < 5) {
+            r1 = x;
+            g1 = 0;
+            b1 = c;
+        } else {
+            r1 = c;
+            g1 = 0;
+            b1 = x;
+        }
+        double m = l - c / 2;
+        int r = (int) Math.round((r1 + m) * 255);
+        int g = (int) Math.round((g1 + m) * 255);
+        int b = (int) Math.round((b1 + m) * 255);
+        return String.format("#%02x%02x%02x", r, g, b);
     }
 
     private List<GroupNodeView> doTree(String type) {

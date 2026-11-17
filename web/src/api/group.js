@@ -16,6 +16,12 @@ export function fetchGroupTree(memberType) {
   return request({ url: '/group/tree', method: 'get', params: { memberType }})
 }
 
+// 省份地图汇总：省级节点设备数与地图填充色（颜色后端裁定，前端只渲染）
+// 返回 { provinces: [{ name, value, color }] }，有设备的省按设备数降序在前
+export function fetchProvinceMap(memberType) {
+  return request({ url: '/group/province-map', method: 'get', params: { memberType }})
+}
+
 // 建组候选：父节点下一级可选区划（根→34 省，省→市，市→区县；自定义节点无候选）
 export function fetchGroupCandidates(parentRef, memberType) {
   return request({ url: '/group/candidates', method: 'get', params: { parentRef: parentRef || 'ROOT', memberType }})

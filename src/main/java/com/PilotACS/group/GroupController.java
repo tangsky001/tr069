@@ -15,6 +15,7 @@ import com.PilotACS.group.model.GroupMemberView;
 import com.PilotACS.group.model.GroupMoveRequest;
 import com.PilotACS.group.model.GroupNodeView;
 import com.PilotACS.group.model.GroupRenameRequest;
+import com.PilotACS.group.model.ProvinceMapVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -45,6 +46,13 @@ public class GroupController {
     @GetMapping("/tree")
     public Result<List<GroupNodeView>> tree(@RequestParam(value = "memberType", required = false) String memberType) {
         return Result.ok(groupService.tree(memberType));
+    }
+
+    /** 省份地图汇总：省级节点设备数与配色（颜色后端裁定，前端只渲染）；memberType=OLT/ONU（默认 OLT） */
+    @Operation(summary = "省份地图汇总：根下省级节点的设备数与地图填充色（有设备的省高亮蓝+清单在前，无设备的省随机观感粉彩）；memberType=OLT/ONU（默认 OLT）")
+    @GetMapping("/province-map")
+    public Result<ProvinceMapVO> provinceMap(@RequestParam(value = "memberType", required = false) String memberType) {
+        return Result.ok(groupService.provinceMap(memberType));
     }
 
     /** 建组候选：父节点下一级可选的区划列表（根节点列省份，省列市，市列区县）；OLT/ONU 各自的树 */
