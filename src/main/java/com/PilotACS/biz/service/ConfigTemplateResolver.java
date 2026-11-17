@@ -1,0 +1,30 @@
+package com.PilotACS.biz.service;
+
+import com.PilotACS.template.service.ConfigTemplateService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+
+/** 配置模板桥接：业务模板模块只依赖本接口，避免两模块间交叉依赖蔓延 */
+@Component
+@RequiredArgsConstructor
+public class ConfigTemplateResolver {
+
+    private final ConfigTemplateService configTemplateService;
+
+    /** 按 id 取配置模板视图（含意图摘要），不存在返回 null */
+    public Map<String, Object> findView(Long id) {
+        return configTemplateService.findView(id);
+    }
+
+    /** 取配置模板意图字段（含入参覆盖前的默认值） */
+    public Map<String, Object> fieldsOf(Long id) {
+        return configTemplateService.fieldsOf(id);
+    }
+
+    /** 配置模板是否为增量业务 */
+    public boolean incrementalOf(Long id) {
+        return configTemplateService.incrementalOf(id);
+    }
+}

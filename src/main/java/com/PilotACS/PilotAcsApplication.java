@@ -14,7 +14,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 // PilotACS TR-069 ACS 启动入口
 @SpringBootApplication
 @EnableScheduling
-@MapperScan({"com.PilotACS.mapper", "com.PilotACS.olt.mapper", "com.PilotACS.group.mapper", "com.PilotACS.acl"})
+@MapperScan({"com.PilotACS.mapper", "com.PilotACS.olt.mapper", "com.PilotACS.group.mapper", "com.PilotACS.acl",
+        "com.PilotACS.template.mapper", "com.PilotACS.biz.mapper"})
 public class PilotAcsApplication {
     public static void main(String[] args) {
         SpringApplication.run(PilotAcsApplication.class, args);
