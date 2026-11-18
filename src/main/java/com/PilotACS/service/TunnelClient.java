@@ -41,7 +41,11 @@ public class TunnelClient {
 
     // ==================== 写死的参数 ====================
 
-    /** 隧道服务器清单：每轮连接前并发探测延迟，选延迟最低的建连；按需增删 */
+    /**
+     * 隧道服务器清单：每轮连接前并发探测延迟，选延迟最低的建连；按需增删。
+     * 顺序即主备顺序，与服务端 TunnelDomains 域名清单一一对应——
+     * 第 i 台服务端配 tunnel.server-id=i，用清单里第 i 个域名做后缀
+     */
     private static final List<Server> SERVERS = List.of(
             new Server("total.i-ddns.com", 7000, false, "主隧道服务器"),
             new Server("total.hiwyz.com", 7000, false, "腾讯云备用隧道服务器"),
@@ -85,6 +89,9 @@ public class TunnelClient {
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
+
+    // 当前已连接的隧道服务器（最近一次握手成功的那台；断线重连后自动更新）
+    private volatile Server currentServer;
 
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
@@ -205,9 +212,22 @@ public class TunnelClient {
 
     /** 外网访问域名：去掉隧道服务器 host 的第一段做后缀，total.hiwyz.com → xxx.hiwyz.com */
     private static String publicDomain(Server s, String subdomain) {
+        return subdomain + "." + domainSuffix(s);
+    }
+
+    /** 域名后缀：total.i-ddns.com → i-ddns.com */
+    private static String domainSuffix(Server s) {
         int dot = s.host().indexOf('.');
-        String suffix = dot > 0 ? s.host().substring(dot + 1) : s.host();
-        return subdomain + "." + suffix;
+        return dot > 0 ? s.host().substring(dot + 1) : s.host();
+    }
+
+    /**
+     * 当前隧道对应的外网域名后缀（最近一次握手成功的服务器；从未连上按主服务器）。
+     * 供外网云登录地址拼接：连在哪台上，二维码就该指向哪台的域名。
+     */
+    public String currentDomainSuffix() {
+        Server s = currentServer != null ? currentServer : SERVERS.get(0);
+        return domainSuffix(s);
     }
 
     // ==================== 建连 + 握手 ====================
@@ -258,6 +278,7 @@ public class TunnelClient {
         }
 
         // 外网访问域名按各台服务器自己的后缀派生：total.hiwyz.com → xxx.hiwyz.com
+        currentServer = s;
         Logs.info(Logs.Module.TUNNEL, "连接成功 {} 域名={}", s.name(), publicDomain(s, subdomain));
         // 心跳只绑本次连接的 socket：重连切到别的服务器后旧心跳线程自然退出
         executor.submit(() -> heartbeatLoop(raw));

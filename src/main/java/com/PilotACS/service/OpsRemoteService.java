@@ -63,6 +63,8 @@ public class OpsRemoteService {
     private final JwtUtil jwtUtil;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    // 隧道客户端延迟获取：TunnelClient 构造依赖本类，直接注入会循环依赖
+    private final org.springframework.beans.factory.ObjectProvider<TunnelClient> tunnelClient;
 
     // 内网登录地址：跟下发给设备的连接请求地址保持一致
     @Value("${acs.public-host:127.0.0.1}")
@@ -266,12 +268,15 @@ public class OpsRemoteService {
         return "http://" + host + ":" + serverPort;
     }
 
-    // 外网穿透地址：有子域名拼 http://{subdomain}.{DOMAIN_SUFFIX}:{PUBLIC_PORT}
+    // 外网穿透地址：有子域名拼 http://{subdomain}.{当前隧道域名后缀}:{PUBLIC_PORT}
+    // 后缀跟随当前实际连接的隧道服务器（多隧道选优可能连在备用上），没连过按主服务器
     private String cloudBaseUrl(String subdomain) {
         if (subdomain == null || subdomain.isBlank()) {
             return "https://acs.example.com";
         }
-        return "http://" + subdomain.trim() + "." + DOMAIN_SUFFIX + ":" + PUBLIC_PORT;
+        TunnelClient tunnel = tunnelClient.getIfAvailable();
+        String suffix = tunnel != null ? tunnel.currentDomainSuffix() : DOMAIN_SUFFIX;
+        return "http://" + subdomain.trim() + "." + suffix + ":" + PUBLIC_PORT;
     }
 
     // 扫码登录链接：地址 + token 查询参数
