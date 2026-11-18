@@ -236,6 +236,12 @@ export const constantRoutes = [
         meta: { title: '操作日志', icon: 'el-icon-document', permission: 'system:view' }
       },
       {
+        path: 'realtime-logs',
+        name: 'SystemRealtimeLogs',
+        component: () => import('@/views/system/realtime-logs'),
+        meta: { title: '实时日志', icon: 'el-icon-cpu', permission: 'system:view' }
+      },
+      {
         path: 'ops',
         name: 'SystemOps',
         component: () => import('@/views/system/ops'),

@@ -39,7 +39,6 @@ public class TunnelClient {
 
     private final OpsRemoteService opsRemoteService;
 
-    // ==================== 写死的参数 ====================
 
     /**
      * 隧道服务器清单：每轮连接前并发探测延迟，选延迟最低的建连；按需增删。
