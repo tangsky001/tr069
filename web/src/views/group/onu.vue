@@ -87,7 +87,7 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="终端型号" min-width="150">
+            <el-table-column label="终端型号" min-width="100">
               <template slot-scope="{ row }">{{ row.name || '—' }}</template>
             </el-table-column>
 
@@ -122,7 +122,7 @@
               <template slot-scope="{ row }">{{ row.lastInformText || '—' }}</template>
             </el-table-column>
 
-            <el-table-column label="备注" min-width="120" show-overflow-tooltip>
+            <el-table-column label="备注" min-width="60" show-overflow-tooltip>
               <template slot-scope="{ row }">{{ row.remark || '—' }}</template>
             </el-table-column>
 

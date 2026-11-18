@@ -419,7 +419,8 @@ export default {
         .then(res => {
           const options = []
           const walk = (nodes, path) => {
-            ;(nodes || []).forEach(n => {
+            const list = nodes || []
+            list.forEach(n => {
               if (n.kind !== 'group' || !n.id) {
                 walk(n.children, path)
                 return
