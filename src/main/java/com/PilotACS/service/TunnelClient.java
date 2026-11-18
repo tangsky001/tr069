@@ -25,12 +25,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-// 纯 Java 隧道客户端：启动后连公网服务器建立长连接（自定义帧协议），实现外网云登录
+// 纯 Java 隧道客户端：启动后连公网服务器建立长连接（自定义帧协议），实现外网云登录。
+// 支持多隧道地址主备：清单顺序即主备顺序，主连不上依次切备，恢复后回落主
 @Service
 @RequiredArgsConstructor
 public class TunnelClient {
@@ -39,16 +41,24 @@ public class TunnelClient {
 
     // ==================== 写死的参数 ====================
 
-    // 公网服务器地址
-    private static final String SERVER_HOST = "total.i-ddns.com";
-    // 公网服务器隧道监听端口
-    private static final int SERVER_PORT = 7000;
-    // 是否用 TLS
-    private static final boolean USE_TLS = false;
+    /** 隧道服务器清单：每轮连接前并发探测延迟，选延迟最低的建连；按需增删 */
+    private static final List<Server> SERVERS = List.of(
+            new Server("total.i-ddns.com", 7000, false, "主隧道服务器"),
+            new Server("total.hiwyz.com", 7000, false, "腾讯云备用隧道服务器"),
+            new Server("total.hiwyz.cn", 7000, false, "阿里云备用隧道服务器"),
+            new Server("total.i-ddns.cn", 7000, false, "公共云备用隧道服务器")
+    );
+
+    // 建连超时（毫秒）：主服务器不通时不能让整轮切换卡死在 TCP 连接上
+    private static final int CONNECT_TIMEOUT_MS = 5000;
     // 心跳间隔（秒）
     private static final int HEARTBEAT_INTERVAL = 30;
-    // 重连间隔（秒）
+    // 全部服务器都连不上时的重连间隔（秒）
     private static final int RECONNECT_INTERVAL = 10;
+
+    /** 一台隧道服务器：地址 / 端口 / 是否 TLS / 名称（打日志用） */
+    private record Server(String host, int port, boolean tls, String name) {
+    }
 
     // 本地服务端口（跟随 server.port）
     @Value("${server.port:8888}")
@@ -91,45 +101,130 @@ public class TunnelClient {
         Logs.info(Logs.Module.TUNNEL, "客户端已停止");
     }
 
-    // ==================== 连接循环（含重连） ====================
+    // ==================== 连接循环（探测选优 + 重连） ====================
 
     private void connectLoop() {
         while (running.get()) {
             try {
-                connect();
+                // 每轮先并发探测各台延迟，按延迟从低到高依次尝试建连
+                List<Probe> probes = probeServers();
+                if (probes.isEmpty()) {
+                    Logs.warn(Logs.Module.TUNNEL, "全部隧道服务器探测失败", "服务器数", SERVERS.size());
+                }
+                boolean connected = false;
+                for (Probe p : probes) {
+                    if (!running.get()) {
+                        break;
+                    }
+                    try {
+                        connect(p.server(), p.latencyMs());
+                        // connect 正常返回 = 连接已断开（readLoop 退出）
+                        connected = true;
+                        break;
+                    } catch (Exception e) {
+                        Logs.warn(Logs.Module.TUNNEL, p.server().name() + "连接失败",
+                                "地址", p.server().host() + ":" + p.server().port(), "原因", e.getMessage());
+                    }
+                }
+                // 断开或整轮失败都等一轮再重新探测（网络恢复后自动选回最快的）
                 if (running.get()) {
-                    Logs.info(Logs.Module.TUNNEL, "连接断开", "重连间隔(秒)", RECONNECT_INTERVAL);
-                    Thread.sleep(RECONNECT_INTERVAL * 1000L);
+                    Logs.info(Logs.Module.TUNNEL, connected ? "连接断开" : "本轮未能建立隧道",
+                            "重连间隔(秒)", RECONNECT_INTERVAL);
+                    sleep(RECONNECT_INTERVAL * 1000L);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
-            } catch (Exception e) {
-                Logs.warn(Logs.Module.TUNNEL, "连接失败", "原因", e.getMessage());
-                if (running.get()) {
-                    try {
-                        Thread.sleep(RECONNECT_INTERVAL * 1000L);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
             }
         }
     }
 
+    /** 一次探测结果：服务器 + TCP 建连延迟（毫秒） */
+    private record Probe(Server server, long latencyMs) {
+    }
+
+    /**
+     * 并发探测所有隧道服务器的 TCP 建连延迟，返回可达清单（按延迟升序）。
+     * 探测只建 TCP 不握手，服务端会自行丢弃这种空连接。
+     */
+    private List<Probe> probeServers() throws InterruptedException {
+        List<Probe> probes = new java.util.ArrayList<>();
+        @SuppressWarnings("unchecked")
+        Probe[] results = new Probe[SERVERS.size()];
+        Thread[] threads = new Thread[SERVERS.size()];
+        for (int i = 0; i < SERVERS.size(); i++) {
+            final int idx = i;
+            Server s = SERVERS.get(i);
+            threads[i] = new Thread(() -> results[idx] = probeOne(s));
+            threads[i].setName("tunnel-probe-" + i);
+            threads[i].start();
+        }
+        for (Thread t : threads) {
+            t.join();
+        }
+        List<String> failedNames = new java.util.ArrayList<>();
+        for (int i = 0; i < results.length; i++) {
+            if (results[i] != null) {
+                probes.add(results[i]);
+            } else {
+                failedNames.add(SERVERS.get(i).name());
+            }
+        }
+        probes.sort(java.util.Comparator.comparingLong(Probe::latencyMs));
+        if (!probes.isEmpty()) {
+            Probe best = probes.get(0);
+            Logs.info(Logs.Module.TUNNEL, "隧道探测完成，选择延迟最低的 " + best.server().name());
+            // 明细逐台一行：可达的打延迟（升序），探测失败的单独标明
+            for (Probe p : probes) {
+                Logs.info(Logs.Module.TUNNEL, "隧道探测明细", "服务器", p.server().name(),
+                        "延迟", p.latencyMs() + "ms");
+            }
+            for (String name : failedNames) {
+                Logs.info(Logs.Module.TUNNEL, "隧道探测明细", "服务器", name, "状态", "探测失败");
+            }
+        }
+        return probes;
+    }
+
+    /** 单台探测：TCP 建连计时，失败返回 null */
+    private Probe probeOne(Server s) {
+        long start = System.currentTimeMillis();
+        try (Socket sock = new Socket()) {
+            sock.connect(new java.net.InetSocketAddress(s.host(), s.port()), CONNECT_TIMEOUT_MS);
+            return new Probe(s, System.currentTimeMillis() - start);
+        } catch (Exception e) {
+            // DNS 解析失败等原因对排查没多少帮助（UnknownHostException 只回显域名），直接告探测失败
+            Logs.warn(Logs.Module.TUNNEL, s.name() + "探测失败");
+            return null;
+        }
+    }
+
+    private void sleep(long ms) throws InterruptedException {
+        Thread.sleep(ms);
+    }
+
+    /** 外网访问域名：去掉隧道服务器 host 的第一段做后缀，total.hiwyz.com → xxx.hiwyz.com */
+    private static String publicDomain(Server s, String subdomain) {
+        int dot = s.host().indexOf('.');
+        String suffix = dot > 0 ? s.host().substring(dot + 1) : s.host();
+        return subdomain + "." + suffix;
+    }
+
     // ==================== 建连 + 握手 ====================
 
-    private void connect() throws IOException {
-        Logs.info(Logs.Module.TUNNEL, "正在连接服务器");
+    private void connect(Server s, long latencyMs) throws IOException {
+        Logs.info(Logs.Module.TUNNEL, "正在连接{}，当前延迟[{}ms]", s.name(), latencyMs);
 
         Socket raw;
-        if (USE_TLS) {
-            SSLSocket ssl = (SSLSocket) SSLSocketFactory.getDefault().createSocket(SERVER_HOST, SERVER_PORT);
+        if (s.tls()) {
+            SSLSocket ssl = (SSLSocket) SSLSocketFactory.getDefault().createSocket();
+            ssl.connect(new java.net.InetSocketAddress(s.host(), s.port()), CONNECT_TIMEOUT_MS);
             ssl.startHandshake();
             raw = ssl;
         } else {
-            raw = new Socket(SERVER_HOST, SERVER_PORT);
+            raw = new Socket();
+            // 带超时建连：主服务器不通时不能让整轮主备切换卡死在 TCP 连接上
+            raw.connect(new java.net.InetSocketAddress(s.host(), s.port()), CONNECT_TIMEOUT_MS);
         }
         raw.setKeepAlive(true);
         raw.setSoTimeout(0);
@@ -158,11 +253,14 @@ public class TunnelClient {
                 opsRemoteService.regenerateSubdomain();
             }
             closeQuietly();
-            return;
+            // 握手被拒也算这台不可用：抛出去让主备循环切下一台
+            throw new IOException("握手被拒绝: " + msg);
         }
 
-        Logs.info(Logs.Module.TUNNEL, "连接成功", "域名", subdomain + ".i-ddns.com");
-        executor.submit(this::heartbeatLoop);
+        // 外网访问域名按各台服务器自己的后缀派生：total.hiwyz.com → xxx.hiwyz.com
+        Logs.info(Logs.Module.TUNNEL, "连接成功 {} 域名={}", s.name(), publicDomain(s, subdomain));
+        // 心跳只绑本次连接的 socket：重连切到别的服务器后旧心跳线程自然退出
+        executor.submit(() -> heartbeatLoop(raw));
         readLoop();
     }
 
@@ -299,8 +397,9 @@ public class TunnelClient {
 
     // ==================== 心跳循环 ====================
 
-    private void heartbeatLoop() {
-        while (running.get() && socket != null && !socket.isClosed()) {
+    private void heartbeatLoop(Socket own) {
+        // 只为自己这条连接发心跳：own != socket 说明连接已被新一轮重连替换
+        while (running.get() && own != null && !own.isClosed() && own == socket) {
             try {
                 Thread.sleep(HEARTBEAT_INTERVAL * 1000L);
                 synchronized (out) {

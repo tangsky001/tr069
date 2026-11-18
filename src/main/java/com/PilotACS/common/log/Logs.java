@@ -64,7 +64,7 @@ public final class Logs {
     }
 
     public static void info(Module module, String action, Object... args) {
-        // 消息里带 {} 占位符时按 SLF4J 占位符风格输出（兼容移植代码）
+        // 消息里带 {} 占位符时按 SLF4J 占位符风格输出
         if (isPlaceholderStyle(action, args)) {
             logger().info(prefix(module) + action, args);
         } else {

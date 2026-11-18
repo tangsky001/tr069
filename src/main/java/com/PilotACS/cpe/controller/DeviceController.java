@@ -13,6 +13,7 @@ import com.PilotACS.cpe.model.CpeParam;
 import com.PilotACS.cpe.model.IspVariant;
 import com.PilotACS.cpe.model.DeviceData;
 import com.PilotACS.cpe.service.BusinessSnapshotService;
+import com.PilotACS.cpe.service.DeviceAdminService;
 import com.PilotACS.cpe.service.DispatchService;
 import com.PilotACS.cpe.service.ModelProfileService;
 import com.PilotACS.cpe.service.TaskService;
@@ -67,6 +68,12 @@ public class DeviceController {
     private final com.PilotACS.cpe.service.CapabilityDetector capabilityDetector;
     /** 光猫资源组 ACL：台账可见性与单设备操作校验（权限归属在「光猫设备」分配树页完成） */
     private final DeviceAclService aclService;
+    /** 本地管理：超管账号查询、Telnet 状态/开关/凭据（移植自旧项目直发通道语义） */
+    private final DeviceAdminService deviceAdminService;
+    /** SIP 语音：线路清单与按路直发（移植自旧项目 DeviceSipService） */
+    private final com.PilotACS.cpe.service.DeviceSipService deviceSipService;
+    /** 操作审计：重启/恢复出厂/直发下发等设备操作写 sys_oper_log */
+    private final com.PilotACS.service.SysOperLogService operLogService;
 
     private static final Map<String, String> ACTION_TEXT = Map.of(
             "view", "查看", "operate", "操作", "update", "编辑", "delete", "删除");
@@ -317,7 +324,11 @@ public class DeviceController {
         for (String sn : sns) {
             requireOnu(sn, "operate");
         }
-        return Result.ok(dispatchService.dispatch(body));
+        Map<String, Object> out = dispatchService.dispatch(body);
+        // 直发通道审计：受理即发不建工单，操作流水记入 sys_oper_log，进度看 cpe_task
+        operLogService.log("设备", "直发下发（不走工单）",
+                "设备=" + sns + "，受理成功=" + out.get("submitted") + "，失败=" + out.get("failed"));
+        return Result.ok(out);
     }
 
     @PostMapping("/{sn}/rpc/{rpcName}")
@@ -327,7 +338,74 @@ public class DeviceController {
         requireOnu(sn, "operate");
         Map<String, Object> params = args == null ? Map.of() : args;
         long taskId = taskService.createTask(sn, rpcName, params, "console");
+        String action = switch (rpcName) {
+            case "Reboot" -> "重启设备";
+            case "FactoryReset" -> "恢复出厂设置";
+            default -> "下发RPC " + rpcName;
+        };
+        operLogService.log("设备", action, "sn=" + sn + "，任务=" + taskId);
         return Result.ok(Map.of("queued", true, "taskId", taskId));
+    }
+
+    @GetMapping("/{sn}/admin-account")
+    public Result<Map<String, Object>> adminAccount(@PathVariable String sn) {
+        requireOnu(sn, "operate");
+        Map<String, Object> out = deviceAdminService.queryAdminAccount(sn);
+        operLogService.log("设备", "查询超管密码",
+                "sn=" + sn + "，结果=" + out.get("status") + "，账号数="
+                        + (out.get("accounts") == null ? 0 : ((java.util.List<?>) out.get("accounts")).size()));
+        return Result.ok(out);
+    }
+
+    @GetMapping("/{sn}/telnet")
+    public Result<Map<String, Object>> telnetStatus(@PathVariable String sn) {
+        requireOnu(sn, "view");
+        return Result.ok(deviceAdminService.telnetStatus(sn));
+    }
+
+    @PostMapping("/{sn}/telnet")
+    public Result<Map<String, Object>> telnetSwitch(@PathVariable String sn,
+                                                    @RequestBody Map<String, Object> body) {
+        requireOnu(sn, "operate");
+        boolean enabled = Boolean.parseBoolean(str(body.get("enabled")));
+        Boolean wanAccess = body.get("wanAccess") == null ? null
+                : Boolean.parseBoolean(str(body.get("wanAccess")));
+        Map<String, Object> out = deviceAdminService.setTelnet(sn, enabled, wanAccess);
+        operLogService.log("设备", enabled ? "开启 Telnet" : "关闭 Telnet",
+                "sn=" + sn + "，结果=" + out.get("status")
+                        + (wanAccess == null ? "" : "，WAN侧访问=" + wanAccess));
+        return Result.ok(out);
+    }
+
+    @GetMapping("/{sn}/telnet/credentials")
+    public Result<Map<String, Object>> telnetCredentials(@PathVariable String sn) {
+        requireOnu(sn, "operate");
+        Map<String, Object> out = deviceAdminService.telnetCredentials(sn);
+        operLogService.log("设备", "查询 Telnet 凭据",
+                "sn=" + sn + "，结果=" + out.get("status")
+                        + (out.get("enableTaskId") != null ? "（已自动下发开启，任务=" + out.get("enableTaskId") + "）" : ""));
+        return Result.ok(out);
+    }
+
+    // ==================== SIP 语音直发 ====================
+
+    /** 可编辑的语音线路清单（只读本地快照，不唤醒设备） */
+    @GetMapping("/{sn}/sip/lines")
+    public Result<List<Map<String, Object>>> sipLines(@PathVariable String sn) {
+        requireOnu(sn, "view");
+        return Result.ok(deviceSipService.lines(sn));
+    }
+
+    /** 按路下发 SIP 配置：受理即发不建工单，单路失败记录原因后继续其余线路 */
+    @PostMapping("/{sn}/sip")
+    public Result<Map<String, Object>> sipSubmit(@PathVariable String sn,
+                                                 @RequestBody Map<String, Object> body) {
+        requireOnu(sn, "operate");
+        Map<String, Object> out = deviceSipService.submit(sn, body);
+        operLogService.log("设备", "SIP 语音直发下发",
+                "sn=" + sn + "，线路=" + out.get("lines")
+                        + "，受理成功=" + out.get("submitted") + "，失败=" + out.get("failed"));
+        return Result.ok(out);
     }
 
     @PostMapping("/{sn}/params/set")
