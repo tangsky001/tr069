@@ -17,16 +17,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 意图下发服务：把配置模板的意图字段翻译成设备真实参数并执行。
- *
- * 与参考实现的差异：本版不依赖 SQLite 模板包的业务表，而是直接用设备的存量参数树
- * （cpe_model_param，会话期已灌入 DeviceData）做叶子探测——设备上有什么叶子就用什么，
- * 什么都没有就明确记录「跳过/失败」，绝不盲发。
- *
- * 步骤都走现有任务管线（TaskService：ADD / DEL / SPV / REBOOT），一条条同步等待，
- * 保证串行语义，结果逐条记入 plan detail。
- */
+/** 意图下发服务：把配置模板的意图字段翻译成设备真实参数并执行。 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -44,10 +35,7 @@ public class IntentDeliveryService {
 
     // ==================== 入口 ====================
 
-    /**
-     * 下发单个意图（同步阻塞，逐条任务等待）。
-     * 返回 { success, error, detail:[{step, path, status, message}] }。
-     */
+    /** 下发单个意图（同步阻塞，逐条任务等待）。 */
     public Map<String, Object> deliver(String sn, String category, Map<String, Object> fields,
                                        boolean incremental, String username) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -251,10 +239,7 @@ public class IntentDeliveryService {
 
     // ==================== 参数渲染：WAN ====================
 
-    /**
-     * WAN 类意图：先清理存量（非增量时，跳过带 TR069 的连接），再 AddObject，再 SPV。
-     * 建哪个对象由意图决定：PPPoE 路由 / PPPoE 桥接 → WANPPPConnection，其余 → WANIPConnection。
-     */
+    /** WAN 类意图：先清理存量（非增量时，跳过带 TR069 的连接），再 AddObject，再 SPV。 */
     private void renderWan(String root, DeviceData data, String category, Map<String, Object> fields,
                            boolean incremental,
                            List<Map.Entry<String, String>> plan, List<Map<String, String>> detail) {

@@ -5,9 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 设备版本归属：运营商定制版 + 厂商通用版，用短码区分，并识别各自私有节点路径前缀。
- */
+/** 设备版本归属：运营商定制版 + 厂商通用版，用短码区分，并识别各自私有节点路径前缀。 */
 public enum IspVariant {
 
     /** 移动定制 */

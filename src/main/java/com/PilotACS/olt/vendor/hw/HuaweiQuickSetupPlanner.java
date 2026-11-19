@@ -154,7 +154,6 @@ public final class HuaweiQuickSetupPlanner {
             throw new IllegalArgumentException("请填写 TR069 ACS 地址");
         }
         // 只有这三个参数。多给 username / password 会被回 % Too many parameters，
-        // 也就是页面上那句 "% Parameter error, the error locates at '^'" 的来源
         commands.add("ont tr069-server-profile add profile-id " + profileId
                 + " profile-name \"" + TR069_PROFILE_NAME + "\""
                 + " url \"" + url + "\"");

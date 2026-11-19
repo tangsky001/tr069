@@ -77,12 +77,7 @@ public class OltTelnetService {
         return collect(device, withBoards, true);
     }
 
-    /**
-     * 登录并采集。
-     *
-     * @param withOptics 是否采端口光模块数值（{@code display port state}，每口一条，8~20 秒）。
-     *                   自动刷新这类高频轮次传 false，库里的旧值沿用；只有手动同步才采
-     */
+    /** 登录并采集。 */
     public OltSnapshot collect(OltDevice device, boolean withBoards, boolean withOptics) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltSnapshot snapshot = doCollect(device, charset, withBoards, withOptics);
@@ -124,7 +119,6 @@ public class OltTelnetService {
             return sessionPool.execute(device, charset, strict, session -> session.collect(true));
         }
         // 端口光模块数值（display port state，每口一条、单台设备 8~20 秒）只在手动同步时采；
-        // 自动刷新这类高频轮次跳过，端口列表沿用库里的旧值
         Set<OltCliSession.Section> portPart = withOptics
                 ? EnumSet.of(OltCliSession.Section.TEMPERATURES,
                         OltCliSession.Section.PORT_STATES, OltCliSession.Section.OPTICS)
@@ -132,10 +126,8 @@ public class OltTelnetService {
         List<Part> parts = List.of(
                 new Part(portPart, false),
                 // 全量采集不逐台补 ONT 详情（每台一两条命令、设备侧秒级）：库里已有的详情由
-                // OltService 按上一轮数据对回，还缺的走后台补采，别把每轮同步拖成几分钟
                 new Part(EnumSet.of(OltCliSession.Section.ONTS), false),
                 // 线路模板 / 业务模板的逐条详情不在全量里采：那是「点开才看」的数据，
-                // 只在模板页签的按需同步（scope=template）里采
                 new Part(EnumSet.of(OltCliSession.Section.VLANS), false));
         List<Future<OltSnapshot>> futures = new ArrayList<>(parts.size());
         List<Long> partStarts = new ArrayList<>(parts.size());

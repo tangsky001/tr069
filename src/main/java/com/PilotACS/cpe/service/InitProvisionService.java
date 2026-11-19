@@ -22,15 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 首次上报初始化下发（以 SN 为标识，只下发一次）：
- * <ul>
- *   <li>反向连接账号密码：ManagementServer.ConnectionRequestUsername / Password</li>
- *   <li>周期上报间隔：ManagementServer.PeriodicInformInterval</li>
- * </ul>
- * 流程：Inform 时查台账 init_provisioned，已下发则跳过；未下发则排一条 SPV 到当前会话队列
- * （插到队首，优先于探测任务），设备回 SetParameterValuesResponse 后落库标记。
- */
+/** 首次上报初始化下发（以 SN 为标识，只下发一次）： */
 @Service
 @RequiredArgsConstructor
 public class InitProvisionService {
@@ -40,10 +32,20 @@ public class InitProvisionService {
     /** 任务参数里的初始化标记：SPV 成功后据此回写台账 */
     public static final String PARAM_FLAG = "initProvision";
 
-    /** 本次启动内已排过初始化的 SN（同一会话/重复 Inform 不重复排） */
+    /** 本次启动内已排过初始化的 SN（同一会话/重复 Inform 不重复排）。 */
     private final Set<String> scheduled = ConcurrentHashMap.newKeySet();
     /** 下发失败次数：达到上限后不再自动重试，避免设备不支持时每轮刷一次 */
     private final Map<String, Integer> failures = new ConcurrentHashMap<>();
+
+    /** 内存护栏：进程内缓存最大条目数（按 SN 记录，正常设备规模远小于该值） */
+    private static final int MAX_TRACKED_SNS = 50_000;
+
+    private void trackScheduled(String sn) {
+        if (scheduled.size() >= MAX_TRACKED_SNS) {
+            scheduled.clear();
+        }
+        scheduled.add(sn);
+    }
 
     private final CpeStore store;
     private final CpeProperties props;
@@ -57,7 +59,7 @@ public class InitProvisionService {
         }
         try {
             if (store.isInitProvisioned(sn)) {
-                scheduled.add(sn);
+                trackScheduled(sn);
                 return;
             }
             if (store.countActiveTasks(sn, TaskPlanner.TYPE_SPV, CREATED_BY) > 0) {
@@ -65,7 +67,7 @@ public class InitProvisionService {
                 return;
             }
             long taskId = schedule(s);
-            scheduled.add(sn);
+            trackScheduled(sn);
             Logs.info(Logs.Module.CPE, "首次上报，下发反向连接账密与周期上报",
                     "sn", sn, "任务", taskId,
                     "反向连接账号", props.getCrUsername(),
@@ -75,6 +77,15 @@ public class InitProvisionService {
         }
     }
 
+    /** 设备恢复出厂（0 BOOTSTRAP）：清掉内存去重与失败计数，允许初始化参数重新下发 */
+    public void resetForBootstrap(String sn) {
+        if (sn == null) {
+            return;
+        }
+        scheduled.remove(sn);
+        failures.remove(sn);
+    }
+
     /** 下发失败（设备 Fault）：放开去重等下次 Inform 重试；连续失败 3 次则放弃自动下发 */
     public void retryLater(String sn) {
         if (sn == null) {
@@ -82,7 +93,7 @@ public class InitProvisionService {
         }
         int n = failures.merge(sn, 1, Integer::sum);
         if (n >= 3) {
-            scheduled.add(sn);
+            trackScheduled(sn);
             Logs.warn(Logs.Module.CPE, "首次初始化参数多次下发失败，停止自动重试", "sn", sn, "失败次数", n);
         } else {
             scheduled.remove(sn);

@@ -6,10 +6,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 省份地图汇总：省级节点的设备数与配色。
- * 颜色在后端统一裁定（每省一个随机观感的稳定颜色），前端只负责渲染，不再自己算色。
- */
+/** 省份地图汇总：省级节点的设备数与配色。 */
 @Data
 @Schema(description = "省份地图汇总：每省设备数与配色（颜色后端裁定，前端只渲染）")
 public class ProvinceMapVO {

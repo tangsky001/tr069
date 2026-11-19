@@ -20,10 +20,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 首页概览 WebSocket：维护所有已连接会话，业务方调 broadcast() 推 JSON 消息
- * <p>消息格式：{type: "olt-status", data: {...}}
- */
+/** 首页概览 WebSocket：维护所有已连接会话，业务方调 broadcast() 推 JSON 消息 */
 @Component
 @RequiredArgsConstructor
 public class DashboardWsHandler extends TextWebSocketHandler {

@@ -24,10 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * 设备/分组级 ACL 管理：细到每台设备的看/操作/编辑/删除授权。
- * 仅 SUPER_ADMIN（代码级全权限）与持有 acl:manage 权限码的角色可操作。
- */
+/** 设备/分组级 ACL 管理：细到每台设备的看/操作/编辑/删除授权。 */
 @Tag(name = "设备级 ACL", description = "按用户授予某分组/某台设备的查看与操作权限")
 @RestController
 @RequestMapping("/acl")

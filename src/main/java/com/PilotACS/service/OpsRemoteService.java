@@ -34,7 +34,6 @@ import java.util.Map;
 import java.util.UUID;
 
 // 装维 APP 远程运维配置服务
-// 二维码 Token 即 itms 对接账号的会话令牌：APP 扫码后拿它当 X-Token，身份与权限都绑定 itms 账号
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -269,7 +268,6 @@ public class OpsRemoteService {
     }
 
     // 外网穿透地址：有子域名拼 http://{subdomain}.{当前隧道域名后缀}:{PUBLIC_PORT}
-    // 后缀跟随当前实际连接的隧道服务器（多隧道选优可能连在备用上），没连过按主服务器
     private String cloudBaseUrl(String subdomain) {
         if (subdomain == null || subdomain.isBlank()) {
             return "https://acs.example.com";

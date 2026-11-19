@@ -443,7 +443,6 @@ public class OltSessionPool {
                 OltCliSession session = slot.session;
                 boolean alive = session != null && session.isAlive();
                 // 正在跑任务的槽位必须排最后：并发分段采集时几个任务要落到不同槽位，
-                // 不然全挤在一条会话上串行，后排的任务还会排队超时被取消
                 int score = (slot.executor.getActiveCount() > 0 ? 1_000_000 : 0)
                         + (alive ? 0 : 1_000)
                         + slot.executor.getQueue().size();

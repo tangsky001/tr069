@@ -15,10 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * OLT 七张表的自动补建与字段补齐
- * <p>DDL 与 sql/mysql.sql 保持一致；老库升级时新列靠 ALTER 自动补
- */
+/** OLT 七张表的自动补建与字段补齐 */
 @Component
 @RequiredArgsConstructor
 public class OltSchemaInitializer implements InitializingBean {

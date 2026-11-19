@@ -24,13 +24,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
-/**
- * CPE 参数树/机型模板库专用 SQLite 数据源（template.pack）。
- * <p>库文件随打包内置在 resources/data/template.pack，首次启动（或运行目录没有时）
- * 释放到 acs.cpe.sqlite-path 指定的运行目录路径再打开。
- * <p>存储职责：设备参数树（能力树）+ 机型模板库留在 SQLite；
- * 设备台账/下发任务在 MySQL（见 CpeMysqlSchemaInitializer 与 sql/mysql.sql）。
- */
+/** CPE 参数树/机型模板库专用 SQLite 数据源（template.pack）。 */
 @Configuration
 public class CpeDatabaseConfig {
 

@@ -14,12 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * template.pack（SQLite）自动建表兜底：
- * 首次启动释放的内置库已含表结构；这里再保证一遍（CREATE IF NOT EXISTS 幂等）。
- * <p>存储职责：设备参数树（能力树）+ 机型模板（品牌+型号+版本号+运营商）留在 SQLite；
- * 设备台账 / 下发任务在 MySQL（见 CpeMysqlSchemaInitializer 与 sql/mysql.sql）。
- */
+/** template.pack（SQLite）自动建表兜底： */
 @Component
 public class CpeSchemaInitializer implements InitializingBean {
 

@@ -12,25 +12,16 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * CPE（光猫）CWMP 接入配置，对应 application.yml 的 acs.cpe 段
- */
+/** CPE（光猫）CWMP 接入配置，对应 application.yml 的 acs.cpe 段 */
 @Data
 @Component
 @ConfigurationProperties(prefix = "acs.cpe")
 public class CpeProperties {
 
-    /**
-     * 设备 ACS URL 可指向的路径列表（不带 /api，设备直连）。
-     * 每个路径都直接挂 CWMP 端点（多地址判定）；CPE 端口上的其他任意路径
-     * （含不带路径的 http://host:9090/?sn=xxx）自动转发到列表第一个路径。
-     */
+    /** 设备 ACS URL 可指向的路径列表（不带 /api，设备直连）。 */
     private List<String> paths = List.of("/acs");
 
-    /**
-     * CPE 设备直连监听端口列表（独立于 server 主端口）。
-     * 主端口上的 CPE 路径会被拒绝，主端口只服务管理端 REST API。
-     */
+    /** CPE 设备直连监听端口列表（独立于 server 主端口）。 */
     private List<Integer> ports = List.of(9090, 8080, 8012, 6060, 5481, 9092, 6890, 9095, 7013);
 
     /** 同设备互斥：是否校验 ACS 用户名密码（Basic，空则不校验） */
@@ -46,10 +37,10 @@ public class CpeProperties {
     /** GetParameterValues 单次批量参数个数 */
     private int gpvBatchSize = 32;
 
-    /**
-     * 设备参数树/机型模板 SQLite 库文件（相对运行目录）。
-     * 内置包 resources/data/template.pack，首次启动释放到该路径。
-     */
+    /** SPV 下发受理成功后是否回读校验（追加 verify GPV 步，比对设备实际生效值） */
+    private boolean spvReadback = true;
+
+    /** 设备参数树/机型模板 SQLite 库文件（相对运行目录）。 */
     private String sqlitePath = "data/template.pack";
 
     /** 设备台账/下发任务表是否启动时自动补建（MySQL，DDL 与 sql/mysql.sql 一致） */
@@ -67,6 +58,25 @@ public class CpeProperties {
 
     /** 采集类同步任务等待设备回参的最大秒数（业务采集/能力测试） */
     private int collectTimeoutSeconds = 120;
+
+    /** Redis 会话生命周期 TTL（秒）：cpe:session:{sn} 的过期时间。 */
+    private int sessionTtlSeconds = 180;
+
+    /** CWMP 报文体积上限（字节），超出直接拒绝，防止无鉴权大报文内存 DoS */
+    private int maxBodyBytes = 1024 * 1024;
+
+    /** SN 粒度令牌桶限流开关（cpe:limit:token:{sn}，风暴报文拦在 Redis 会话之外） */
+    private boolean rateLimitEnabled = true;
+    /** 令牌桶容量（突发放行数） */
+    private int rateLimitCapacity = 10;
+    /** 每分钟回填令牌数 */
+    private int rateLimitRefillPerMinute = 12;
+
+    /** 设备档案缓存 cpe:info:{sn} 的 TTL（秒），低频更新，避免每次 Inform 查 MySQL */
+    private int deviceInfoTtlSeconds = 600;
+
+    /** Redis 派发队列 tr069:queue:rpc 的长度上限（LTRIM 裁剪，防堆积无限膨胀） */
+    private int taskQueueMaxSize = 10000;
 
     /** 前端轮询节奏建议值，后端统一下发 */
     private int listPollSeconds = 10;

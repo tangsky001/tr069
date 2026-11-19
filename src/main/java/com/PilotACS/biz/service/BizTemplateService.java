@@ -25,10 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 业务模板：一组配置意图模板（WAN / WiFi / SIP / 其他）的有序集合，
- * 对应一次完整业务开通，整包按顺序串行下发（IntentDeliveryService 按机型翻译）。
- */
+/** 业务模板：一组配置意图模板（WAN / WiFi / SIP / 其他）的有序集合， */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -57,7 +54,6 @@ public class BizTemplateService {
         List<Map<String, Object>> views = new ArrayList<>();
         for (BizTemplate template : templateMapper.selectList(query)) {
             // 前端（业务模板页 / 设备列表批量下发 / 工单建单）统一按 {template, items} 嵌套消费，
-            // items 用富成员视图（带配置模板名/类型/可用性），列表就能直接铺成员链
             List<BizTemplateItemView> items = toItemViews(itemsOf(template.getId()));
             Map<String, Object> tpl = new LinkedHashMap<>();
             tpl.put("id", template.getId());

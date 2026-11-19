@@ -13,11 +13,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 设备/分组级 ACL：细到每一台设备的看/操作/编辑/删除授权。
- * <p>principal = 用户；scope = 单台设备（device + olt id）或分组节点（group + ROOT/G:id）。
- * 判定规则见 {@link DeviceAclService}。</p>
- */
+/** 设备/分组级 ACL：细到每一台设备的看/操作/编辑/删除授权。 */
 @Data
 @TableName("res_acl")
 public class ResAcl {

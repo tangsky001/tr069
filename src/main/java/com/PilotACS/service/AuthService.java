@@ -41,6 +41,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AuthService {
 
+    /** 登录爆破防护参数：同一用户名窗口期内失败达上限后锁定 */
+    private static final int MAX_LOGIN_FAILS = 5;
+    private static final Duration LOGIN_FAIL_WINDOW = Duration.ofMinutes(15);
+    private static final String LOGIN_FAIL_KEY = "acs:auth:fail:";
+
     private final SysUserService userService;
     private final SysRolePermissionMapper rolePermissionMapper;
     private final SysLoginLogMapper loginLogMapper;
@@ -52,8 +57,21 @@ public class AuthService {
         String ip = IpUtil.getClientIp(request);
         String userAgent = request.getHeader("User-Agent");
         ClientType source = ClientType.of(request.getHeader(AuthConstant.CLIENT_HEADER));
+        // 爆破防护：锁定期内直接拒绝（放最前面，用户名枚举的爆破节奏也被拦住）
+        String failKey = LOGIN_FAIL_KEY + dto.getUsername();
+        String fails = null;
+        try {
+            fails = redisTemplate.opsForValue().get(failKey);
+        } catch (Exception e) {
+            Logs.warn(Logs.Module.AUTH, "登录失败计数读取失败（放行本次登录）", "原因", e.getMessage());
+        }
+        if (fails != null && parseFails(fails) >= MAX_LOGIN_FAILS) {
+            log(dto.getUsername(), ip, source, false, userAgent);
+            throw new BusinessException("失败次数过多，账号已临时锁定，请 " + LOGIN_FAIL_WINDOW.toMinutes() + " 分钟后再试");
+        }
         SysUser user = userService.lambdaQuery().eq(SysUser::getUsername, dto.getUsername()).one();
         if (user == null) {
+            countFail(failKey);
             log(dto.getUsername(), ip, source, false, userAgent);
             throw new BusinessException("用户名或密码错误");
         }
@@ -61,9 +79,23 @@ public class AuthService {
             log(user.getUsername(), ip, source, false, userAgent);
             throw new BusinessException("账号已禁用");
         }
-        if (!PasswordUtil.encrypt(dto.getPassword(), user.getSalt()).equals(user.getPassword())) {
+        boolean legacyHash = PasswordUtil.isLegacy(user.getPassword());
+        if (!PasswordUtil.verify(dto.getPassword(), user.getSalt(), user.getPassword())) {
+            countFail(failKey);
             log(user.getUsername(), ip, source, false, userAgent);
             throw new BusinessException("用户名或密码错误");
+        }
+        if (legacyHash) {
+            // 存量单轮 SHA-256 在登录成功时透明升级为 PBKDF2 慢哈希。
+            try {
+                SysUser rehash = new SysUser();
+                rehash.setId(user.getId());
+                rehash.setPassword(PasswordUtil.hash(dto.getPassword(), user.getSalt()));
+                userService.updateById(rehash);
+            } catch (Exception e) {
+                Logs.warn(Logs.Module.AUTH, "密码哈希透明升级失败（不影响本次登录）", "用户", user.getUsername(),
+                        "原因", e.getMessage());
+            }
         }
         LoginUser lu = buildLoginUser(user, source);
         String token = jwtUtil.create(user.getId(), user.getUsername(), Map.of());
@@ -86,6 +118,12 @@ public class AuthService {
         upd.setLastLoginSource(source.name());
         userService.updateById(upd);
         log(user.getUsername(), ip, source, true, userAgent);
+        // 登录成功清空失败计数
+        try {
+            redisTemplate.delete(failKey);
+        } catch (Exception ignore) {
+            // 计数清理失败不影响登录
+        }
 
         Map<String, Object> result = new HashMap<>();
         result.put("token", token);
@@ -126,6 +164,23 @@ public class AuthService {
             throw e;
         } catch (Exception e) {
             throw new BusinessException(AuthConstant.UNAUTHORIZED, "登录已失效");
+        }
+    }
+
+    private void countFail(String failKey) {
+        try {
+            redisTemplate.opsForValue().increment(failKey);
+            redisTemplate.expire(failKey, LOGIN_FAIL_WINDOW);
+        } catch (Exception e) {
+            Logs.warn(Logs.Module.AUTH, "登录失败计数写入失败", "原因", e.getMessage());
+        }
+    }
+
+    private int parseFails(String s) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 

@@ -19,13 +19,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.util.Set;
 
-/**
- * 设备级 ACL 拦截器：在 API 层统一拦截 /olt/{id}** 端点。
- *
- * <p>GET → 需 view 授权；POST/DELETE → 需 operate 授权。
- * 无设备 id 的端点（list/save/delete/options/test/session-pool/web-accounts）不在此拦：
- * list 在 service 里按可见性过滤，save/delete（设备 id 在请求体里）在 OltService 内检查。</p>
- */
+/** 设备级 ACL 拦截器：在 API 层统一拦截 /olt/{id}** 端点。 */
 @Component
 @RequiredArgsConstructor
 public class OltAclInterceptor implements HandlerInterceptor {

@@ -20,11 +20,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
-/**
- * 实时日志采集器：挂在 Logback 根 Logger 上，把控制台输出的每条日志格式化后
- * 交给 RealtimeLogWsHandler 推给前端。独立类，不复用其它 WebSocket 的逻辑。
- * <p>格式化口径与控制台一致：时间 级别 [logger] 消息（异常附完整堆栈）
- */
+/** 实时日志采集器：挂在 Logback 根 Logger 上，把控制台输出的每条日志格式化后 */
 @Component
 public class RealtimeLogAppender extends AppenderBase<ILoggingEvent> {
 

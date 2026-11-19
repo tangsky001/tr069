@@ -12,12 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-/**
- * 设备/分组级 ACL 表自动补建（DDL 与 sql/mysql.sql 保持一致）。
- *
- * <p>OLT 与光猫权限各一套表（olt_res_acl / onu_res_acl），结构与规则相同、数据互不混；
- * 旧单表 res_acl 若存在，启动时自动迁到 olt_res_acl（旧表保留不清，便于回退）。</p>
- */
+/** 设备/分组级 ACL 表自动补建（DDL 与 sql/mysql.sql 保持一致）。 */
 @Component
 public class AclSchemaInitializer implements InitializingBean {
 

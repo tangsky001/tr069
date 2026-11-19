@@ -14,12 +14,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 自定义分组节点：挂在区划树上的补充节点（如「北京其他区域」）。
- *
- * <p>分组树骨架 = civilCode.csv 的省→市→区县（自动存在，不可建删），
- * 自定义节点通过 parent_civil_code 挂在区划节点下，或通过 parent_id 挂在其它自定义节点下。</p>
- */
+/** 自定义分组节点：挂在区划树上的补充节点（如「北京其他区域」）。 */
 @Data
 @TableName("res_group")
 @Schema(description = "自定义分组节点（挂在区划树上）")

@@ -21,15 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 行政区划代码表（civilCode.csv）处理。
- *
- * <p>资源文件格式三列：{@code 编号,名称,上级}，首行表头，省级行的上级是空格。
- * 启动时整表读进内存建树并缓存（全国三千多区县，几十 KB），之后查询零 IO。</p>
- *
- * <p>给分组管理用：分组树可以按行政区划搭骨架（省 → 市 → 区县），
- * 设备再挂到区划节点上；也供设备地址、工单片区等场景取区划链路。</p>
- */
+/** 行政区划代码表（civilCode.csv）处理。 */
 @Service
 public class CivilCodeService {
 
@@ -125,10 +117,7 @@ public class CivilCodeService {
         return node(code) != null;
     }
 
-    /**
-     * 从省到本级的区划链：110108 → [北京市(11), 市辖区(1101), 海淀区(110108)]。
-     * 编号不存在返回空列表。
-     */
+    /** 从省到本级的区划链：110108 → [北京市(11), 市辖区(1101), 海淀区(110108)]。 */
     public List<CivilCodeNode> path(String code) {
         List<CivilCodeNode> chain = new ArrayList<>();
         CivilCodeNode current = node(code);

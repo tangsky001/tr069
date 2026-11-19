@@ -20,10 +20,7 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 import java.net.URI;
 import java.util.Map;
 
-/**
- * 实时日志 WebSocket 握手鉴权（独立类，不复用概览 WebSocket 的拦截器）：
- * token 走 X-Token 头或 ?token= 查询参数，JWT + Redis 会话双重校验通过才放行
- */
+/** 实时日志 WebSocket 握手鉴权（独立类，不复用概览 WebSocket 的拦截器）： */
 @Component
 public class RealtimeLogWsAuthInterceptor implements HandshakeInterceptor {
 

@@ -18,11 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 配置意图模板：只描述「要开通成什么样」，不下发任何数据。
- * 字段定义（meta）由本服务统一下发，前端按它渲染表单；
- * 下发链路在 IntentDeliveryService，按设备数据模型把意图翻译成真实参数。
- */
+/** 配置意图模板：只描述「要开通成什么样」，不下发任何数据。 */
 @Service
 @RequiredArgsConstructor
 public class ConfigTemplateService {
@@ -37,7 +33,6 @@ public class ConfigTemplateService {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("categories", TemplateFieldDefs.CATEGORIES);
         // 只有 WAN 类业务有「先清理存量再新建」的覆盖语义，增量开关只对它们有意义；
-        // 清单由这里统一下发，前端不做前缀推断
         data.put("incrementalCategories", TemplateFieldDefs.CATEGORIES.stream()
                 .map(c -> c.get("code"))
                 .filter(code -> code != null && code.toUpperCase(Locale.ROOT).startsWith("WAN_"))
@@ -178,7 +173,6 @@ public class ConfigTemplateService {
         view.put("remark", template.getRemark());
         Map<String, Object> fields = readFields(template.getFields());
         // 读出口也归一一次：存量模板里的历史脏值（Internet / Internet,TR069 混合大小写）
-        // 不用等重新保存就按设备口径显示
         normalizeServiceList(fields);
         view.put("fields", fields);
         // 列表页的「开通意图」摘要与类型标签色：字段定义在服务端，取值中文也只在这边查得到

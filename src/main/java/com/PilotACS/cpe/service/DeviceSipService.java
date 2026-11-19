@@ -26,12 +26,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * SIP 语音：可编辑线路清单 + 按路拆单直发（受理即发不建工单）。
- * <p>移植自旧项目 DeviceSipService + SipEdit：线路清单只读本地快照不唤醒设备；
- * 下发只提交业务字段（号码/认证账号/密码/服务器），按勾选的路逐路建 SPV 任务，
- * 单路失败记录原因后继续其余线路。
- */
+/** SIP 语音：可编辑线路清单 + 按路拆单直发（受理即发不建工单）。 */
 @Service
 @RequiredArgsConstructor
 public class DeviceSipService {
@@ -141,11 +136,7 @@ public class DeviceSipService {
 
     // ==================== 按路下发 ====================
 
-    /**
-     * 按路下发 SIP 配置（受理即发，不建工单）。
-     * body: { lines[], number, authUser, password, registrar, registrarPort, proxy, proxyPort, username }
-     * 返回 { lines, submitted, failed, tasks, failures }
-     */
+    /** 按路下发 SIP 配置（受理即发，不建工单）。 */
     public Map<String, Object> submit(String sn, Map<String, Object> body) {
         Map<String, Object> device = requireDevice(sn);
         DeviceData data = deviceData(sn);
@@ -234,10 +225,7 @@ public class DeviceSipService {
         }
     }
 
-    /**
-     * 枚举参数树里的语音线路：路号 → [Line 前缀, VoiceProfile 前缀]。
-     * 跨 VoiceService/VoiceProfile 逐层实例枚举，同一路号取第一个出现的实例。
-     */
+    /** 枚举参数树里的语音线路：路号 → [Line 前缀, VoiceProfile 前缀]。 */
     private Map<Integer, String[]> linePrefixes(DeviceData data, String root) {
         Map<Integer, String[]> out = new LinkedHashMap<>();
         String base = BusinessPaths.voiceRoot(root);

@@ -11,9 +11,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 解析后的 CPE SOAP 请求/响应报文
- */
+/** 解析后的 CPE SOAP 请求/响应报文 */
 @Data
 public class SoapMessage {
 
@@ -51,6 +49,17 @@ public class SoapMessage {
     private String tcFaultString;
     private String startValue;
     private String endValue;
+
+    // ---- Download 响应 ----
+    /** Status 0=已完成 1=进行中（最终成败等 7 TRANSFER COMPLETE） */
+    private String startTime;
+    private String completeTime;
+
+    // ---- SOAP Header 扩展 ----
+    /** 设备声明本会话不再发后续请求（1 时 ACS 不得在该响应里再带 RPC） */
+    private boolean noMoreRequests;
+    /** 设备声明的会话超时（秒，0=未声明，用 ACS 默认） */
+    private long sessionTimeoutSeconds;
 
     // ---- Fault ----
     private boolean fault;

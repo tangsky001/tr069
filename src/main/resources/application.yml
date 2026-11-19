@@ -72,6 +72,20 @@ acs:
     init-periodic-inform-seconds: 300
     # 同步采集类接口等待设备回参的最大秒数
     collect-timeout-seconds: 120
+    # SPV 下发受理成功后回读校验（追加 verify GPV 步，比对设备实际生效值，偏差记进任务结果）
+    spv-readback: true
+    # 会话生命周期 Redis TTL（秒）：cpe:session:{sn} 过期即会话销毁（仅合法报文续期，防僵尸会话）
+    session-ttl-seconds: 180
+    # CWMP 报文体积上限（字节），超出直接拒绝（Netty 聚合器硬切，防大报文 DoS）
+    max-body-bytes: 1048576
+    # SN 粒度令牌桶限流（cpe:limit:token:{sn}，风暴报文拦在 Redis 会话之外）
+    rate-limit-enabled: true
+    rate-limit-capacity: 10
+    rate-limit-refill-per-minute: 12
+    # 设备档案缓存 cpe:info:{sn} TTL（秒），Inform 落台账时同步覆写
+    device-info-ttl-seconds: 600
+    # Redis 派发队列 tr069:queue:rpc 长度上限（LTRIM 封顶，防堆积膨胀）
+    task-queue-max-size: 10000
 
 mybatis-plus:
   configuration:

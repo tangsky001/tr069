@@ -29,11 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 操作审计日志服务：修改密码、新建/删除分组、移动设备、ACL 授权等关键动作
- * 都通过 {@link #log(String, String, String)} 落库，系统管理页可查询。
- * <p>表在服务初始化时自动补建（CREATE TABLE IF NOT EXISTS，老库无感升级）。</p>
- */
+/** 操作审计日志服务：修改密码、新建/删除分组、移动设备、ACL 授权等关键动作 */
 @Service
 public class SysOperLogService extends ServiceImpl<SysOperLogMapper, SysOperLog> implements InitializingBean {
 
@@ -72,10 +68,7 @@ public class SysOperLogService extends ServiceImpl<SysOperLogMapper, SysOperLog>
         }
     }
 
-    /**
-     * 记一条操作日志：操作人与 IP 从当前请求上下文取，
-     * 无请求上下文（定时任务等内部调用）时记为 system。
-     */
+    /** 记一条操作日志：操作人与 IP 从当前请求上下文取， */
     public void log(String module, String action, String detail) {
         try {
             SysOperLog entry = new SysOperLog();

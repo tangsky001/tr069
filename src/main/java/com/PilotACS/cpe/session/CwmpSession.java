@@ -12,16 +12,13 @@ import com.PilotACS.cpe.model.RpcRequest;
 import com.PilotACS.cpe.model.TaskRun;
 import lombok.Data;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
-/**
- * 一个 CPE 的 CWMP 会话
- * <p>三态：0=已建会话等 Inform → 1=Inform 已回、等空 POST → 2=ACS RPC 在飞
- */
+/** 一个 CPE 的 CWMP 会话 */
 @Data
 public class CwmpSession {
 
@@ -35,12 +32,15 @@ public class CwmpSession {
     /** 设备 ID 形如 oui-productClass-sn（Inform 时填） */
     private String deviceId;
 
-    private int state = STATE_CREATED;
+    /** 会话状态（sweep/REST 跨线程读，Netty 线程写） */
+    private volatile int state = STATE_CREATED;
 
     /** 在飞 RPC 的步骤用途（scan/probe/collect/apply），Fault 时判断能不能跳过着继续 */
-    private String pendingPurpose;
+    private volatile String pendingPurpose;
     private final long created = System.currentTimeMillis();
     private volatile long lastActivity = created;
+    /** 设备 SOAP 头声明的会话超时（毫秒，0=未声明，用 ACS 默认） */
+    private volatile long timeoutMs;
     /** 一次性基本信息（Inform 时填） */
     private String manufacturer;
     private String oui;
@@ -61,12 +61,13 @@ public class CwmpSession {
     private transient Map<String, Object> modelRow;
     private transient Map<String, CpeParam> modelParams;
 
-    /** 待执行任务队列（会话开始时快照 + 会话中新创建的任务） */
-    private final Deque<TaskRun> queue = new ArrayDeque<>();
-    private TaskRun current;
+    /** 待执行任务队列（会话开始时快照 + 会话中新创建的任务）。 */
+    private final Deque<TaskRun> queue = new ConcurrentLinkedDeque<>();
+    /** 当前任务（sweep/REST 跨线程读） */
+    private volatile TaskRun current;
     /** 当前在飞的 ACS RPC（state=2 时非空） */
-    private RpcRequest pending;
-    private int rpcCount;
+    private volatile RpcRequest pending;
+    private volatile int rpcCount;
 
     /** 会话是否已结束（防重复收尾） */
     private volatile boolean ended;
@@ -77,6 +78,15 @@ public class CwmpSession {
 
     public boolean expired(long timeoutMs) {
         return System.currentTimeMillis() - lastActivity > timeoutMs;
+    }
+
+    /** 空闲超时口径：设备 SOAP 头声明过 SessionTimeout 则优先（限 30s~30min），否则用 ACS 默认 */
+    public long effectiveTimeout(long defaultMs) {
+        long t = timeoutMs;
+        if (t <= 0) {
+            return defaultMs;
+        }
+        return Math.min(Math.max(t, 30_000L), 30 * 60_000L);
     }
 
     /** 该会话是否还有活干（队列或当前任务还有步骤） */

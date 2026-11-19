@@ -11,9 +11,7 @@ import lombok.Data;
 import java.util.List;
 import java.util.Map;
 
-/**
- * ACS 下发给 CPE 的一条 RPC 请求（会话里同时只有一条在飞）
- */
+/** ACS 下发给 CPE 的一条 RPC 请求（会话里同时只有一条在飞） */
 @Data
 public class RpcRequest {
 
@@ -46,6 +44,9 @@ public class RpcRequest {
     private String url;
     private String fileName;
     private long fileSize;
+    /** Download 请求的下载服务器账密（可选，任务参数透传） */
+    private String username;
+    private String password;
 
     // ---- CUSTOM ----
     private Map<String, Object> args;

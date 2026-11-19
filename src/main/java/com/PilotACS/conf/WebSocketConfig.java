@@ -16,10 +16,7 @@ import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
-/**
- * WebSocket 注册：概览 /ws/dashboard、实时日志 /ws/realtime-log
- * <p>注意 /api 前缀只对 @RestController 生效，这里就是 /ws/xxx，前端连接时带 ?token=
- */
+/** WebSocket 注册：概览 /ws/dashboard、实时日志 /ws/realtime-log */
 @Configuration
 @EnableWebSocket
 @RequiredArgsConstructor

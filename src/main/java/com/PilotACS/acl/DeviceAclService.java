@@ -26,19 +26,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * 设备/分组级 ACL 判定与维护。
- *
- * <p><b>判定规则（自上而下，命中即止）：</b></p>
- * <ol>
- *   <li>superAdmin / OPS_ADMIN → 全部放行；未登录（内部调用）→ 放行</li>
- *   <li>设备级（scope=device）有该设备的任何 ACL 记录 → 严格按 ACL：当前用户须有含对应动作的授权</li>
- *   <li>否则沿分组归属链自下而上（设备所在分组 → 父分组 → … → ROOT）：第一个有 ACL 记录的层级严格决定</li>
- *   <li>整条链上都没有任何 ACL 记录 → 不受 ACL 限制（沿用角色权限码体系，保持兼容）</li>
- * </ol>
- *
- * <p>动作：view（查看）、operate（登录运维/同步/下发）、update（编辑）、delete（删除）。</p>
- */
+/** 设备/分组级 ACL 判定与维护。 */
 @Service
 @RequiredArgsConstructor
 public class DeviceAclService {
@@ -60,9 +48,7 @@ public class DeviceAclService {
         return user != null && (user.isSuperAdmin() || "OPS_ADMIN".equals(user.getRole()));
     }
 
-    /**
-     * 单台设备 + 动作是否允许。user 为 null（内部调用）视为放行。
-     */
+    /** 单台设备 + 动作是否允许。user 为 null（内部调用）视为放行。 */
     public boolean allowed(LoginUser user, Long oltId, String action) {
         if (user == null || isAdmin(user) || !ACTIONS.contains(action)) {
             return true;
@@ -70,10 +56,7 @@ public class DeviceAclService {
         return !denied(aclMapper.selectList(null), user, "OLT", String.valueOf(oltId), action);
     }
 
-    /**
-     * 光猫（ONU，按 SN）+ 动作是否允许。user 为 null（内部调用）视为放行。
-     * 判定链与 OLT 一致：设备级 ACL → 分组归属链自下而上（未归属光猫按资源根组 ROOT）。
-     */
+    /** 光猫（ONU，按 SN）+ 动作是否允许。user 为 null（内部调用）视为放行。 */
     public boolean allowedOnu(LoginUser user, String sn, String action) {
         if (user == null || isAdmin(user) || !ACTIONS.contains(action)) {
             return true;
@@ -82,10 +65,7 @@ public class DeviceAclService {
                 !denied(aclMapper.selectList(null), user, GroupService.MEMBER_TYPE_ONU, sn, action));
     }
 
-    /**
-     * 返回该用户看不到（无 view 授权）的光猫 SN 集合；
-     * null = 不限制（管理员 / 全库无 ACL 配置），调用方据此跳过过滤。
-     */
+    /** 返回该用户看不到（无 view 授权）的光猫 SN 集合； */
     public Set<String> hiddenOnuRefs(LoginUser user) {
         if (user == null || isAdmin(user)) {
             return null;
@@ -120,10 +100,7 @@ public class DeviceAclService {
         return hidden;
     }
 
-    /**
-     * 返回该用户看不到（无 view 授权）的设备 id 集合；
-     * null = 不限制（管理员 / 全库无 ACL 配置），调用方据此跳过过滤。
-     */
+    /** 返回该用户看不到（无 view 授权）的设备 id 集合； */
     public Set<Long> hiddenOltIds(LoginUser user) {
         if (user == null || isAdmin(user)) {
             return null;

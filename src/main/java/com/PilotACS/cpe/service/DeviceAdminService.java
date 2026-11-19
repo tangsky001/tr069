@@ -27,9 +27,7 @@ import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 设备本地管理与敏感信息读取：超管账号查询、Telnet 状态/开关/凭据。
- */
+/** 设备本地管理与敏感信息读取：超管账号查询、Telnet 状态/开关/凭据。 */
 @Service
 @RequiredArgsConstructor
 public class DeviceAdminService {
@@ -58,9 +56,7 @@ public class DeviceAdminService {
 
     // ==================== 超管账号查询 ====================
 
-    /**
-     * 查询设备本地账号（含超管 telecomadmin 等）。
-     */
+    /** 查询设备本地账号（含超管 telecomadmin 等）。 */
     public Map<String, Object> queryAdminAccount(String sn) {
         Map<String, Object> device = requireDevice(sn);
         String root = rootOf(device);
@@ -80,7 +76,6 @@ public class DeviceAdminService {
         }
 
         // 第一轮候选：参数树里真实采到过的账号路径 + 运营商定制超管节点，都没有再上通用形态。
-        // 一次 GPV 批量读，设备对不认识的节点整批回 fault 时会话侧会自动拆分定位坏名
         Map<String, CpeParam> tree = mergedTree(sn);
         List<String> candidates = adminCandidates(root, isp, tree);
         ReadResult read = readValues(sn, candidates, READ_TIMEOUT_SECONDS);
@@ -114,11 +109,7 @@ public class DeviceAdminService {
         }
     }
 
-    /**
-     * 建一条 GPV 任务读指定参数，等任务完成后再短轮询取值。
-     * <p>GPV 的值先进会话内存，会话收尾才落库；任务完成与会话收尾之间有时间差，
-     * 所以完成任务后最多再等 6 秒，发现参数条目连续两轮不再增加就提前收工。
-     */
+    /** 建一条 GPV 任务读指定参数，等任务完成后再短轮询取值。 */
     private ReadResult readValues(String sn, List<String> names, int timeoutSeconds) {
         if (names.isEmpty()) {
             return ReadResult.of("fail", "没有可读取的参数路径", Map.of());
@@ -267,10 +258,7 @@ public class DeviceAdminService {
 
     // ==================== Telnet 状态 / 开关 / 凭据 ====================
 
-    /**
-     * 查询设备 Telnet 使能状态。
-     * 返回 { sn, online, status, enabled, path, message, statusText, statusLevel }
-     */
+    /** 查询设备 Telnet 使能状态。 */
     public Map<String, Object> telnetStatus(String sn) {
         Map<String, Object> device = requireDevice(sn);
         Map<String, Object> out = baseOut(sn, device);
@@ -301,10 +289,7 @@ public class DeviceAdminService {
         return finish(out, enabled ? "enabled" : "disabled", null, null);
     }
 
-    /**
-     * 开启 / 关闭 Telnet（可选同时切换 WAN 侧访问）。
-     * body: { enabled, wanAccess(可选) }；返回 { sn, status, taskId, path, message, statusText, statusLevel }
-     */
+    /** 开启 / 关闭 Telnet（可选同时切换 WAN 侧访问）。 */
     public Map<String, Object> setTelnet(String sn, boolean enabled, Boolean wanAccess) {
         Map<String, Object> device = requireDevice(sn);
         Map<String, Object> out = baseOut(sn, device);
@@ -341,11 +326,7 @@ public class DeviceAdminService {
                 "设备离线，指令已排队（任务 " + taskId + "），等设备上报后自动执行");
     }
 
-    /**
-     * 查询 Telnet 状态及默认账号密码；未开启会自动下发开启指令再读。
-     * 返回 { sn, online, status, enabled, path, message, username, password, port,
-     *        credentialStatus, enablePath, enableTaskId, statusText, statusLevel }
-     */
+    /** 查询 Telnet 状态及默认账号密码；未开启会自动下发开启指令再读。 */
     public Map<String, Object> telnetCredentials(String sn) {
         Map<String, Object> device = requireDevice(sn);
         Map<String, Object> out = baseOut(sn, device);
@@ -513,9 +494,7 @@ public class DeviceAdminService {
         return out;
     }
 
-    /**
-     * 合并参数树：落库树打底，活跃会话的内存树覆盖（GPV 刚采的值落库有延迟，会话里的最新）。
-     */
+    /** 合并参数树：落库树打底，活跃会话的内存树覆盖（GPV 刚采的值落库有延迟，会话里的最新）。 */
     private Map<String, CpeParam> mergedTree(String sn) {
         Map<String, CpeParam> out = new LinkedHashMap<>();
         try {

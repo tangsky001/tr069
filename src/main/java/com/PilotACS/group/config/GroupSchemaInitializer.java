@@ -3,6 +3,7 @@
  * @date:   2026年11月15日 上午3:04:04.492
  *
  */
+
 package com.PilotACS.group.config;
 
 import com.PilotACS.common.log.Logs;
@@ -11,14 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-/**
- * 分组表自动补建与数据迁移。
- *
- * <p><b>OLT 与光猫物理分表</b>：各一套树 + 归属（olt_res_group / onu_res_group、
- * olt_res_group_member / onu_res_group_member），结构完全相同，数据互不混；
- * 旧的单表 res_group / res_group_member 若存在，启动时自动按 member_type
- * 分流迁移到对应新表（旧表保留不清，便于回退）。</p>
- */
+/** 分组表自动补建与数据迁移。 */
 @Component
 public class GroupSchemaInitializer implements InitializingBean {
 

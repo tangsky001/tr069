@@ -5,9 +5,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-/**
- * 品牌名转换：厂商英文名/缩写 → 中文品牌名，未登记的原样返回。
- */
+/** 品牌名转换：厂商英文名/缩写 → 中文品牌名，未登记的原样返回。 */
 public final class BrandName {
 
     private static final Map<String, String> NAMES = build();
@@ -24,9 +22,7 @@ public final class BrandName {
         return NAMES.getOrDefault(key, raw.trim());
     }
 
-    /**
-     * 厂商全称 → 中文标签（台账/详情展示用）：
-     */
+    /** 厂商全称 → 中文标签（台账/详情展示用）： */
     public static String label(String manufacturer) {
         if (manufacturer == null || manufacturer.isBlank()) {
             return null;

@@ -32,7 +32,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 // 纯 Java 隧道客户端：启动后连公网服务器建立长连接（自定义帧协议），实现外网云登录。
-// 支持多隧道地址主备：清单顺序即主备顺序，主连不上依次切备，恢复后回落主
 @Service
 @RequiredArgsConstructor
 public class TunnelClient {
@@ -40,11 +39,7 @@ public class TunnelClient {
     private final OpsRemoteService opsRemoteService;
 
 
-    /**
-     * 隧道服务器清单：每轮连接前并发探测延迟，选延迟最低的建连；按需增删。
-     * 顺序即主备顺序，与服务端 TunnelDomains 域名清单一一对应——
-     * 第 i 台服务端配 tunnel.server-id=i，用清单里第 i 个域名做后缀
-     */
+    /** 隧道服务器清单：每轮连接前并发探测延迟，选延迟最低的建连；按需增删。 */
     private static final List<Server> SERVERS = List.of(
             new Server("total.i-ddns.com", 7000, false, "主隧道服务器"),
             new Server("total.hiwyz.com", 7000, false, "腾讯云备用隧道服务器"),
@@ -149,10 +144,7 @@ public class TunnelClient {
     private record Probe(Server server, long latencyMs) {
     }
 
-    /**
-     * 并发探测所有隧道服务器的 TCP 建连延迟，返回可达清单（按延迟升序）。
-     * 探测只建 TCP 不握手，服务端会自行丢弃这种空连接。
-     */
+    /** 并发探测所有隧道服务器的 TCP 建连延迟，返回可达清单（按延迟升序）。 */
     private List<Probe> probeServers() throws InterruptedException {
         List<Probe> probes = new java.util.ArrayList<>();
         @SuppressWarnings("unchecked")
@@ -220,10 +212,7 @@ public class TunnelClient {
         return dot > 0 ? s.host().substring(dot + 1) : s.host();
     }
 
-    /**
-     * 当前隧道对应的外网域名后缀（最近一次握手成功的服务器；从未连上按主服务器）。
-     * 供外网云登录地址拼接：连在哪台上，二维码就该指向哪台的域名。
-     */
+    /** 当前隧道对应的外网域名后缀（最近一次握手成功的服务器；从未连上按主服务器）。 */
     public String currentDomainSuffix() {
         Server s = currentServer != null ? currentServer : SERVERS.get(0);
         return domainSuffix(s);

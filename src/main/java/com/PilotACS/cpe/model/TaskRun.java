@@ -13,9 +13,7 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * 会话内一个任务的执行上下文：任务被拆成一串 RPC 步骤，逐步下发
- */
+/** 会话内一个任务的执行上下文：任务被拆成一串 RPC 步骤，逐步下发 */
 @Data
 public class TaskRun {
 

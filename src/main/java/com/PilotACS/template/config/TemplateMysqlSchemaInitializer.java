@@ -8,9 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * 配置模板 / 业务模板四张表自动补建（MySQL，DDL 与 sql/mysql.sql 保持一致）。
- */
+/** 配置模板 / 业务模板四张表自动补建（MySQL，DDL 与 sql/mysql.sql 保持一致）。 */
 @Component
 @RequiredArgsConstructor
 public class TemplateMysqlSchemaInitializer implements InitializingBean {

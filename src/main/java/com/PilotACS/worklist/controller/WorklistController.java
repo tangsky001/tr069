@@ -142,12 +142,7 @@ public class WorklistController {
         private String bizTemplateName;
     }
 
-    /**
-     * 工单执行记录，按设备或状态查询。
-     *
-     * <p>筛选条：keyword（SN/MAC 一个框查）、worklistNo（工单号/流水号）、room（房间号，
-     * 经设备台账反查）、timeStart/timeEnd（执行时间区间）、status（逗号分隔多值）。</p>
-     */
+    /** 工单执行记录，按设备或状态查询。 */
     @Operation(summary = "工单执行记录分页：keyword/worklistNo/room/时间区间/状态多值筛选")
     @GetMapping("/instances")
     @RequiresPermission("worklist:view")

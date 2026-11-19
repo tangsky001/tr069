@@ -54,8 +54,12 @@ public class AuthInterceptor implements HandlerInterceptor {
             return false;
         }
         LoginUser user = objectMapper.readValue(json, LoginUser.class);
-        // 滑动续期
-        redisTemplate.expire(AuthConstant.TOKEN_KEY_PREFIX + jti, Duration.ofHours(jwtUtil.getExpireHours()));
+        // 滑动续期：只在剩余 TTL 短于标准时长时续——不能无条件覆盖，
+        Long ttl = redisTemplate.getExpire(AuthConstant.TOKEN_KEY_PREFIX + jti);
+        long renewSeconds = jwtUtil.getExpireHours() * 3600;
+        if (ttl == null || ttl < 0 || ttl < renewSeconds) {
+            redisTemplate.expire(AuthConstant.TOKEN_KEY_PREFIX + jti, Duration.ofHours(jwtUtil.getExpireHours()));
+        }
         // 方法上有注解用方法的，否则回退类级注解（模块级权限）
         RequiresPermission rp = hm.getMethodAnnotation(RequiresPermission.class);
         if (rp == null) {

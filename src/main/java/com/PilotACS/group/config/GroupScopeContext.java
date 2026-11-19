@@ -8,15 +8,7 @@ package com.PilotACS.group.config;
 
 import java.util.function.Supplier;
 
-/**
- * 分组表域上下文：OLT 与光猫（ONU）各自一套分组表，请求线程内用 ThreadLocal
- * 标记当前操作落在哪个域，由 MybatisPlusConfig 的动态表名拦截器把
- * {@code res_group / res_group_member / res_acl} 映射到
- * {@code olt_* / onu_*} 物理表。
- *
- * <p>规则：未设置（内部调用、老接口）默认 OLT，与历史行为一致；
- * ONU 语义的方法必须显式 {@link #with} 包裹。</p>
- */
+/** 分组表域上下文：OLT 与光猫（ONU）各自一套分组表，请求线程内用 ThreadLocal */
 public final class GroupScopeContext {
 
     public static final String OLT = "OLT";
@@ -70,10 +62,7 @@ public final class GroupScopeContext {
         });
     }
 
-    /**
-     * 物理表名映射：只动分组三件套（树 / 成员归属 / ACL），
-     * 其余表原样返回。未设置域时默认 OLT（老接口行为不变）。
-     */
+    /** 物理表名映射：只动分组三件套（树 / 成员归属 / ACL）， */
     public static String mapTable(String tableName) {
         String prefix = ONU.equals(get()) ? "onu_" : "olt_";
         return switch (tableName) {

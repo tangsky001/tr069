@@ -30,13 +30,7 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * 管理端下发工单：建单、预约调度、转下发、记录步骤、推进状态。
- *
- * <p>状态流转：build（未激活）→ standby（设备未登记/离线）→ reserve（在线，预约 10 秒）
-→ sending（执行中）→ success / fail。调度扫描由 {@code @Scheduled} 驱动，
-实际下发在本服务的工作线程串行执行（意图下发是同步阻塞的）。</p>
- */
+/** 管理端下发工单：建单、预约调度、转下发、记录步骤、推进状态。 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -75,12 +69,7 @@ public class WorklistDeliveryService {
                 DESC_SEQ.incrementAndGet(), ThreadLocalRandom.current().nextInt(1000));
     }
 
-    /**
-     * 创建下发工单。
-     *
-     * <p>建单不立即下发：按 SN 找台账——找不到就留在「等待执行」（standby），设备登记后由调度跟上；
-     * 找到则同步房间号进台账，设备在线进入「预约中」（reserve），满 10 秒由调度执行下发。</p>
-     */
+    /** 创建下发工单。 */
     public Worklist create(String sn, String category, String worklistDesc,
                            Map<String, String> values, String username, Long templateId,
                            OrderExtras ext) {
@@ -89,7 +78,6 @@ public class WorklistDeliveryService {
         }
         if (worklistDesc == null || worklistDesc.isBlank()) {
             // 页面上直接点提交时调用方不给流水号；流水号是幂等键，
-            // 交给前端生成的话撞号时两单合成一单，后一单被幂等掉
             worklistDesc = newWorklistDesc(category);
         }
 
@@ -193,11 +181,7 @@ public class WorklistDeliveryService {
 
     // ==================== 待执行工单调度 ====================
 
-    /**
-     * 扫描等待执行 / 预约中的工单：
-     * 设备已登记且在线 → 预约满 10 秒执行下发；设备未登记 → 一直等待。
-     * 状态先抢占成 sending 再下发，防止下一轮扫描重复执行。
-     */
+    /** 扫描等待执行 / 预约中的工单： */
     @Scheduled(fixedDelay = 10000, initialDelay = 5000)
     public void deliverPendingWorklists() {
         List<Worklist> pending;
@@ -320,7 +304,6 @@ public class WorklistDeliveryService {
             }
         });
         // 房间号以台账为准重算 %room%：建单时设备可能还没登记，兜底值已写进参数，
-        // 不重算的话 WiFi SSID / SIP 账号会按 0000 下发
         String room = device == null ? null : (String) device.get("room_no");
         String desc = device == null ? null : (String) device.get("remark");
         fields.replaceAll((k, v) -> v instanceof String s ? WorklistVariables.resolve(s, room, desc) : v);
@@ -479,10 +462,7 @@ public class WorklistDeliveryService {
         return "build".equals(status) || "standby".equals(status) || "reserve".equals(status);
     }
 
-    /**
-     * 修改工单。房间号改动同步设备台账（与建单同口径）；设备标识改动只在
-     * build/standby/reserve 阶段允许；未激活单改回激活后进入「等待执行」。
-     */
+    /** 修改工单。房间号改动同步设备台账（与建单同口径）；设备标识改动只在 */
     public Worklist update(Long id, OrderUpdate cmd) {
         Worklist w = worklistMapper.selectById(id);
         if (w == null) {

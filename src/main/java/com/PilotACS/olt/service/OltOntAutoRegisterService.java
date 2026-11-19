@@ -3,6 +3,7 @@
  * @date:   2026年11月15日 上午3:04:04.498
  *
  */
+
 package com.PilotACS.olt.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -139,6 +140,9 @@ public class OltOntAutoRegisterService {
                 Logs.info(Logs.Module.SYSTEM, "ONT 自动注册本轮完成",
                         "扫描", scanned, "注册成功", registered);
             }
+        } catch (Exception e) {
+            // @Scheduled 的 fixedDelay 任务抛未捕获异常会被调度器取消后续执行，
+            Logs.error(Logs.Module.SYSTEM, "ONT 自动注册本轮异常（下一轮继续）", e);
         } finally {
             running.set(false);
         }

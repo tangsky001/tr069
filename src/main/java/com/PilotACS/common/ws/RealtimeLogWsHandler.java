@@ -22,12 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 实时日志 WebSocket（独立于概览 WebSocket，不共用任何逻辑）：
- * 前端打开实时日志页即建立会话，关闭页面即结束会话；
- * 后端控制台日志经 RealtimeLogAppender 汇入 publish()，逐条推给所有在线会话。
- * <p>消息格式：{type: "realtime-log", data: {text, level}}，连接建立后先补发最近历史 {type: "realtime-log-backlog", data: [...]}
- */
+/** 实时日志 WebSocket（独立于概览 WebSocket，不共用任何逻辑）： */
 @Component
 public class RealtimeLogWsHandler extends TextWebSocketHandler {
 
@@ -59,10 +54,7 @@ public class RealtimeLogWsHandler extends TextWebSocketHandler {
         sessions.remove(session);
     }
 
-    /**
-     * 由 RealtimeLogAppender 调用：一行日志推给所有在线会话并写入环形缓冲。
-     * 本方法与 Appender 均不落日志，避免 推送→日志→再推送 的自激循环
-     */
+    /** 由 RealtimeLogAppender 调用：一行日志推给所有在线会话并写入环形缓冲。 */
     public void publish(String level, String text) {
         Map<String, Object> line = Map.of("text", text, "level", level);
         synchronized (backlog) {

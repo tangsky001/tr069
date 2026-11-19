@@ -76,10 +76,7 @@ public class OltCliSession implements Closeable {
     /** 交互式命令的收尾条件：要么停在追问（要继续应答），要么回到提示符（结束） */
     private static final List<Pattern> INTERACTIVE_STOPS = List.of(INTERACTIVE_ASK, SHELL_PROMPT);
 
-    /**
-     * 华为 config 视图 {@code save} 的参数停点：回显停在
-     * {@code { <cr>|configuration<K>|data<K> }:} 上，敲回车选默认值才开写。
-     */
+    /** 华为 config 视图 {@code save} 的参数停点：回显停在 */
     private static final Pattern SAVE_BRACE_PROMPT = Pattern.compile(
             "(?m)\\{[^{}]*<cr>[^{}]*\\}\\s*[:：]?\\s*\\z");
 
@@ -196,7 +193,7 @@ public class OltCliSession implements Closeable {
 
     public static String usernameOf(OltDevice device) {
         String username = device.getUsername();
-        return username == null || username.isBlank() ? DEFAULT_USERNAME : username.trim();
+        return sanitize(username == null || username.isBlank() ? DEFAULT_USERNAME : username.trim());
     }
 
     public static String passwordOf(OltDevice device) {
@@ -204,7 +201,18 @@ public class OltCliSession implements Closeable {
         if (password == null || password.isBlank()) {
             return DEFAULT_PASSWORD;
         }
-        return com.PilotACS.olt.util.OltCrypto.decrypt(password);
+        return sanitize(com.PilotACS.olt.util.OltCrypto.decrypt(password));
+    }
+
+    /** 控制字符过滤：凭据是整行发给设备 CLI 的，混入 \r\n 等控制字符等于向设备注入命令 */
+    private static String sanitize(String cred) {
+        StringBuilder sb = new StringBuilder(cred.length());
+        for (char c : cred.toCharArray()) {
+            if (c >= 0x20 && c != 0x7F) {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     /** 按页签同步的采集段：页面点进哪个页签就只采对应段，不再一次采全部 */
@@ -384,7 +392,6 @@ public class OltCliSession implements Closeable {
         String versionText = "";
         if (model == null || OltVendorProfiles.of(vendor).wholeDevice()) {
             // 横幅和板卡回显里都没有型号（部分版本横幅只有版权声明），补一条版本命令；
-            // 一体化整机没有板卡回显，型号只能从版本命令里来
             for (String command : versionCommands(vendor)) {
                 String out = runCommand(command, Math.min(commandTimeoutMs, VERSION_PROBE_TIMEOUT_MS));
                 if (out != null && !out.isBlank() && !isRejected(out)) {
@@ -1266,13 +1273,7 @@ public class OltCliSession implements Closeable {
         return outputs;
     }
 
-    /**
-     * 存盘专用。各家问法不一样：
-     * - 有的停在「Are you sure ... (y/n)[n]:」，答 y 才真的会存；
-     * - 华为 config 视图（MA5600T/MA5680T）停在 {@code { <cr>|configuration<K>|data<K> }:} 参数提示上，
-     *   敲回车选默认值就开写（现场确认敲两下回车），答 y 会被拒「Too many parameters」。
-     * 写 flash 要几十秒（期间不接任何命令），必须等提示符回来再返回，否则下一条任务必然被拒。
-     */
+    /** 存盘专用。各家问法不一样： */
     private String runSave() {
         long start = System.currentTimeMillis();
         saving = true;
@@ -1526,7 +1527,6 @@ public class OltCliSession implements Closeable {
             return;
         }
         // 部分版本的单台详情不给 MAC（现场这台 MA5683T 就没有），只有 ipconfig 里有；
-        // 管理 IP 同理：mgmtIp 为 null 表示还没查过（查过但没有用空串标记），别反复问
         if (onts.stream().anyMatch(ont -> !Boolean.FALSE.equals(ont.getOnline())
                 && ((ont.getMac() == null && !Boolean.TRUE.equals(ont.getMacUnavailable()))
                         || ont.getMgmtIp() == null))) {
@@ -1560,7 +1560,6 @@ public class OltCliSession implements Closeable {
                 }
                 OltOntInfo info = OltInfoParser.parseOntIpconfig(text);
                 // MAC 与管理 IP 一起落：这条命令本来就是逐台发的，顺带给的数据没理由只留一半；
-                // 设备明确回了「-」就落空串（查过、没有），和没查过的 null 区分开
                 if (ont.getMac() == null && info.getMac() != null) {
                     ont.setMac(info.getMac());
                 }

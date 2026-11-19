@@ -7,6 +7,7 @@
 package com.PilotACS.cpe.store;
 
 import com.PilotACS.cpe.model.CpeParam;
+import com.PilotACS.cpe.rpc.TaskPlanner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -18,15 +19,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
-/**
- * CPE 存储访问层，按职责拆两库：
- * <ul>
- *   <li>MySQL（主库 jdbcTemplate）：设备台账 cpe_device、下发任务 cpe_task</li>
- *   <li>SQLite template.pack（cpeJdbcTemplate）：设备参数树（能力树）cpe_device_param、
- *       机型模板 cpe_model/cpe_model_param（品牌+型号+版本号+运营商 绑定参数树）</li>
- * </ul>
- */
+/** CPE 存储访问层，按职责拆两库： */
 @Repository
 public class CpeStore {
 
@@ -79,14 +74,22 @@ public class CpeStore {
                 oui, manufacturer, productClass, hw, sw, crUrl, cwmpVersion, rootNode, lastInform, now);
     }
 
-    public void markEvents(String sn, Long bootMs, Long bootstrapMs) {
+    /** Inform 事件码落台账：0 BOOTSTRAP / 1 BOOT / 2 PERIODIC / 4 VALUE CHANGE / 6 CONNECTION REQUEST /
+     *  8 DIAGNOSTICS COMPLETE（口径与 Netcwmp event.c 一致；null 表示本次 Inform 未携带该事件） */
+    public void markEvents(String sn, Long bootMs, Long bootstrapMs, Long periodicMs, Long valueChangeMs,
+                           Long connReqMs, Long diagMs) {
         jdbcTemplate.update("""
                 UPDATE cpe_device SET
                     last_boot_ms = COALESCE(?, last_boot_ms),
                     last_bootstrap_ms = COALESCE(?, last_bootstrap_ms),
+                    last_periodic_ms = COALESCE(?, last_periodic_ms),
+                    last_valuechange_ms = COALESCE(?, last_valuechange_ms),
+                    last_connreq_ms = COALESCE(?, last_connreq_ms),
+                    last_diag_ms = COALESCE(?, last_diag_ms),
                     updated_at = ?
                 WHERE sn = ?
-                """, bootMs, bootstrapMs, System.currentTimeMillis(), sn);
+                """, bootMs, bootstrapMs, periodicMs, valueChangeMs, connReqMs, diagMs,
+                System.currentTimeMillis(), sn);
     }
 
     public Map<String, Object> findDevice(String sn) {
@@ -149,9 +152,11 @@ public class CpeStore {
 
     /** 超过窗口没上报的设备翻成离线 */
     public void markOfflineStale(long deadlineMs) {
-        jdbcTemplate.update(
-                "UPDATE cpe_device SET status='offline', updated_at=? WHERE status='online' AND last_inform_ms < ?",
-                System.currentTimeMillis(), deadlineMs);
+        // last_inform_ms 为 NULL 的行（外部导入、从未上报的台账）也要能翻离线，否则永远显示 online
+        jdbcTemplate.update("""
+                UPDATE cpe_device SET status='offline', updated_at=?
+                WHERE status='online' AND (last_inform_ms IS NULL OR last_inform_ms < ?)
+                """, System.currentTimeMillis(), deadlineMs);
     }
 
     public void updateDeviceColumns(String sn, Map<String, Object> cols) {
@@ -204,6 +209,13 @@ public class CpeStore {
                 System.currentTimeMillis(), System.currentTimeMillis(), sn);
     }
 
+    /** 设备恢复出厂（0 BOOTSTRAP）：管理参数被设备清空，放开标记让初始化参数重新下发 */
+    public void clearInitProvisioned(String sn) {
+        jdbcTemplate.update(
+                "UPDATE cpe_device SET init_provisioned = 0, init_provisioned_at = NULL, updated_at = ? WHERE sn = ?",
+                System.currentTimeMillis(), sn);
+    }
+
     private static final String DEVICE_BRIEF_COLS =
             "sn, oui, manufacturer, product_class, software_version, isp, status, last_inform_ms, connection_request_url";
 
@@ -245,15 +257,24 @@ public class CpeStore {
         return out;
     }
 
-    /** 会话结束统一落库：全树刷新 → 整树重写；否则只写脏路径 */
-    public void saveDeviceParams(String sn, Map<String, CpeParam> all, Set<String> dirty, boolean fullSync) {
+    /** 会话结束统一落库：全树刷新 → 整树重写；否则只写脏路径 + 按墓碑清行 */
+    public void saveDeviceParams(String sn, Map<String, CpeParam> all, Set<String> dirty, boolean fullSync,
+                                 Set<String> tombstones) {
         cpeTxTemplate.executeWithoutResult(st -> {
             if (fullSync) {
                 cpeJdbcTemplate.update("DELETE FROM cpe_device_param WHERE device_sn = ?", sn);
                 insertParams(sn, all.values());
-            } else if (dirty != null && !dirty.isEmpty()) {
-                List<CpeParam> changed = dirty.stream().map(all::get).filter(p -> p != null).toList();
-                insertParams(sn, changed);
+            } else {
+                if (dirty != null && !dirty.isEmpty()) {
+                    List<CpeParam> changed = dirty.stream().map(all::get).filter(p -> p != null).toList();
+                    insertParams(sn, changed);
+                }
+                // 墓碑：本会话 DeleteObject 删掉的实例子树，同步清库行
+                if (tombstones != null && !tombstones.isEmpty()) {
+                    cpeJdbcTemplate.batchUpdate(
+                            "DELETE FROM cpe_device_param WHERE device_sn = ? AND path = ?",
+                            tombstones.stream().map(p -> new Object[]{sn, p}).toList());
+                }
             }
         });
     }
@@ -376,7 +397,8 @@ public class CpeStore {
 
     public long insertTask(String sn, String type, Map<String, Object> params, String createdBy) {
         long now = System.currentTimeMillis();
-        String taskNo = "T" + now + String.format("%04d", (int) (now % 10000));
+        // 任务号必须带高熵后缀：同毫秒并发建任务时 now%10000 后缀必然碰撞，
+        String taskNo = "T" + now + UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
         jdbcTemplate.update("""
                 INSERT INTO cpe_task (task_no, sn, type, params_json, status, created_by, created_at)
                 VALUES (?,?,?,?, 'queued', ?, ?)
@@ -464,19 +486,39 @@ public class CpeStore {
         return n == null ? 0 : n;
     }
 
-    /** 兜底：卡在 running 的任务回队重试（设备下次上报续跑），不判死 */
-    public void failStaleRunningTasks(long olderThanMs) {
+    /** 写操作类任务：重发等于真实二次执行（再重启一次/再建一个实例/再下载一次）， */
+    /** 与 TaskPlanner.WRITE_TYPES 单一出处：写操作类卡死超时判 fail 不回队（重发=二次执行） */
+    private static final String NON_RETRIABLE_TYPES =
+            TaskPlanner.WRITE_TYPES.stream()
+                    .map(t -> "'" + t + "'")
+                    .collect(java.util.stream.Collectors.joining(",", "(", ")"));
+
+    /** 兜底：卡在 running 的任务按类型分流——采集类回队续跑（不判死）； */
+    public void failStaleRunningTasks(long olderThanMs, java.util.Set<Long> excludeTaskIds) {
         long deadline = System.currentTimeMillis() - olderThanMs;
+        StringBuilder placeholders = new StringBuilder();
+        List<Object> args = new ArrayList<>();
+        args.add(deadline);
+        if (excludeTaskIds != null && !excludeTaskIds.isEmpty()) {
+            for (Long id : excludeTaskIds) {
+                placeholders.append(placeholders.length() == 0 ? "" : ',').append('?');
+                args.add(id);
+            }
+        }
+        String tail = placeholders.length() == 0 ? "" : " AND id NOT IN (" + placeholders + ")";
         jdbcTemplate.update("""
-                UPDATE cpe_task SET status='queued', fault_string='执行超时回队，待设备下次上报续跑'
-                WHERE status='running' AND started_at IS NOT NULL AND started_at < ?
-                """, deadline);
+                UPDATE cpe_task SET
+                    status = CASE WHEN type IN %s THEN 'fail' ELSE 'queued' END,
+                    fault_code = CASE WHEN type IN %s THEN 'timeout' ELSE fault_code END,
+                    fault_string = CASE WHEN type IN %s
+                        THEN '下发后未收到设备回执（执行超时）。写操作类不自动重发——重发等于真实二次执行，请确认设备实际状态后重新下发'
+                        ELSE '执行超时回队，待设备下次上报续跑' END
+                WHERE status='running' AND started_at IS NOT NULL AND started_at < ?%s
+                """.formatted(NON_RETRIABLE_TYPES, NON_RETRIABLE_TYPES, NON_RETRIABLE_TYPES, tail),
+                args.toArray());
     }
 
-    /**
-     * 会话中断回队时给任务打续跑标记（params_json.resume=true）：
-     * 下次装载按断点续传——已采到的参数不再重发，避免"整树重排→设备中途断→回队→再整树重排"的无限循环
-     */
+    /** 会话中断回队时给任务打续跑标记（params_json.resume=true）： */
     public void markTaskResume(long id) {
         Map<String, Object> row = getTask(id);
         if (row == null) {

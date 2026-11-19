@@ -6,6 +6,7 @@
 
 package com.PilotACS.report;
 
+import com.PilotACS.common.log.Logs;
 import com.PilotACS.report.model.StatisticsInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -69,8 +70,9 @@ public class StatisticsReportTask {
     public void scheduledSendStatistics() {
         try {
             sendPost(collect());
-        } catch (Exception ignored) {
-            // 上报失败不记日志，等下个周期自然重试
+        } catch (Exception e) {
+            // 上报失败降级 debug：不中断下个周期，但排障时可见（连长期连不上也无从知晓）
+            Logs.debug(Logs.Module.SYSTEM, "统计上报失败（下个周期重试）", "原因", e.getMessage());
         }
     }
 

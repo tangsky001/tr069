@@ -12,10 +12,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 打印专用模块：全项目日志统一从这里输出，业务类
-
- */
+/** 打印专用模块：全项目日志统一从这里输出，业务类 */
 public final class Logs {
 
     /** 业务模块，中文名即日志前缀 */

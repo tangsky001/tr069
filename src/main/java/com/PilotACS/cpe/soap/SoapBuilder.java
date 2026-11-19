@@ -11,9 +11,7 @@ import com.PilotACS.cpe.model.RpcRequest;
 import java.util.List;
 import java.util.Map;
 
-/**
- * ACS → CPE 的 SOAP 报文生成
- */
+/** ACS → CPE 的 SOAP 报文生成 */
 public final class SoapBuilder {
 
     private static final String ENVELOPE_OPEN =
@@ -36,10 +34,7 @@ public final class SoapBuilder {
                 + "</soap-env:Envelope>";
     }
 
-    /**
-     * ACS 侧 Inform 请求：部分设备（收到反向连接后）用空 POST 启动会话（TR-069 3.3.3），
-     * 此时 ACS 尚不知道设备身份，回 Inform 请求索取设备信息。
-     */
+    /** ACS 侧 Inform 请求：部分设备（收到反向连接后）用空 POST 启动会话（TR-069 3.3.3）， */
     public static String informRequest(String id) {
         return ENVELOPE_OPEN
                 + header(id)
@@ -92,6 +87,13 @@ public final class SoapBuilder {
         return sb.toString();
     }
 
+    /** TransferCompleteResponse（TR-069 要求 ACS 应答，否则设备保留 7 TRANSFER COMPLETE 事件反复重发） */
+    public static String transferCompleteResponse(String id) {
+        return ENVELOPE_OPEN
+                + header(id)
+                + "<soap-env:Body><cwmp:TransferCompleteResponse/>" + "</soap-env:Body></soap-env:Envelope>";
+    }
+
     /** ACS 侧 Fault 响应（如设备在错误状态下发了不允许的 RPC） */
     public static String acsFault(int code, String message) {
         return ENVELOPE_OPEN
@@ -127,6 +129,23 @@ public final class SoapBuilder {
         return sb.toString();
     }
 
+    /** SPV 值类型白名单：前端/API 传非法 type（如 "xsd:string"、空串、乱值）不影响报文结构， */
+    private static final java.util.Set<String> XSD_TYPES = java.util.Set.of(
+            "string", "int", "unsignedInt", "long", "unsignedLong", "boolean",
+            "dateTime", "date", "time", "base64", "hexBinary", "float", "double");
+
+    private static String xsdType(String t) {
+        if (t == null) {
+            return "string";
+        }
+        String s = t.trim();
+        int i = s.indexOf(':');
+        if (i >= 0) {
+            s = s.substring(i + 1);
+        }
+        return XSD_TYPES.contains(s) ? s : "string";
+    }
+
     private static String spv(RpcRequest r) {
         StringBuilder sb = new StringBuilder();
         sb.append("<cwmp:SetParameterValues><ParameterList soap-enc:arrayType=\"cwmp:ParameterValueStruct[")
@@ -134,7 +153,7 @@ public final class SoapBuilder {
         if (r.getValues() != null) {
             for (RpcRequest.NameValue nv : r.getValues()) {
                 sb.append("<ParameterValueStruct><Name>").append(esc(nv.name()))
-                        .append("</Name><Value xsi:type=\"xsd:").append(nv.type() == null ? "string" : nv.type())
+                        .append("</Name><Value xsi:type=\"xsd:").append(xsdType(nv.type()))
                         .append("\">").append(esc(nv.value())).append("</Value></ParameterValueStruct>");
             }
         }
@@ -147,7 +166,8 @@ public final class SoapBuilder {
         return "<cwmp:Download><CommandKey>" + esc(r.taskKey()) + "</CommandKey>"
                 + "<FileType>" + esc(r.getFileType() == null ? "1 Firmware Upgrade Image" : r.getFileType())
                 + "</FileType><URL>" + esc(r.getUrl()) + "</URL>"
-                + "<Username></Username><Password></Password>"
+                + "<Username>" + esc(r.getUsername()) + "</Username>"
+                + "<Password>" + esc(r.getPassword()) + "</Password>"
                 + "<FileSize>" + r.getFileSize() + "</FileSize>"
                 + "<TargetFileName>" + esc(r.getFileName() == null ? "" : r.getFileName()) + "</TargetFileName>"
                 + "<DelaySeconds>0</DelaySeconds><SuccessURL></SuccessURL><FailureURL></FailureURL>"
@@ -156,23 +176,32 @@ public final class SoapBuilder {
 
     /** 透传型自定义 RPC：方法名 + 结构化参数 */
     private static String custom(RpcRequest r) {
+        String method = elementName(r.getMethod(), "RPC 方法名");
         StringBuilder sb = new StringBuilder();
-        sb.append("<cwmp:").append(r.getMethod());
+        sb.append("<cwmp:").append(method);
         Map<String, Object> args = r.getArgs();
         if (args == null || args.isEmpty()) {
             sb.append("/>");
         } else {
             sb.append('>');
             appendStruct(sb, args);
-            sb.append("</cwmp:").append(r.getMethod()).append('>');
+            sb.append("</cwmp:").append(method).append('>');
         }
         return sb.toString();
+    }
+
+    /** 元素名白名单校验：esc() 只转义叶子值，方法名/参数键名是直接拼进标签的， */
+    private static String elementName(String name, String what) {
+        if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_.-]*")) {
+            throw new IllegalArgumentException(what + "含非法字符: " + name);
+        }
+        return name;
     }
 
     @SuppressWarnings("unchecked")
     private static void appendStruct(StringBuilder sb, Map<String, Object> map) {
         for (Map.Entry<String, Object> e : map.entrySet()) {
-            String name = e.getKey();
+            String name = elementName(e.getKey(), "参数名");
             Object v = e.getValue();
             sb.append('<').append(name).append('>');
             if (v instanceof Map<?, ?> m) {

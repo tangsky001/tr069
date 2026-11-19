@@ -405,7 +405,6 @@ public class TelnetClient implements Closeable {
                 pending = bigger;
             }
             // ByteBuf 直读进 ByteBuffer 写入区：Netty 的 readBytes(ByteBuffer) 按 dst.remaining() 整段读不截断，
-            // 必须先把 limit 收到「刚好本包 n 字节」，否则小包读不够会抛异常丢数据
             int writePos = pending.position();
             pending.limit(writePos + n);
             buf.readBytes(pending);

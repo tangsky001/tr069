@@ -19,10 +19,7 @@ import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 机型能力探测：从参数树里实测 网口数/网口速率/WIFI 频段/SIP 路数，
- * 与前端申报值（isp/lanPorts/lanSpeed/sipCount/wifiSpec）逐项比对。
- */
+/** 机型能力探测：从参数树里实测 网口数/网口速率/WIFI 频段/SIP 路数， */
 @Component
 public class CapabilityDetector {
 
@@ -74,35 +71,39 @@ public class CapabilityDetector {
                 continue;
             }
             String v = data.value(p);
-            if (v == null) {
+            if (v == null || v.isBlank()) {
                 continue;
             }
-            Matcher m = Pattern.compile("(\\d+)").matcher(v);
-            if (m.find()) {
-                int n = Integer.parseInt(m.group(1));
-                if (n > max) {
-                    max = n;
-                }
-            } else if (v.matches("(?i).*2\\.?5G.*")) {
-                max = Math.max(max, 2500);
-            } else if (v.matches("(?i).*1G|1000.*")) {
-                max = Math.max(max, 1000);
-            }
+            max = Math.max(max, parseMbps(v));
         }
         return max;
     }
 
-    /**
-     * 实测 WIFI 频段。
-     * <p>判定口径：
-     * <ul>
-     * <li>每个射频实例独立判定，再取并集；</li>
-     * <li>标准 b/g → 2.4G，a/ac → 5G；n/ax/be（WiFi4/6/7）在 2.4G 和 5G 上都存在，
-     *     单独出现时只能算"模糊证据"——WiFi6 的 2.4G 射频经常只报 AX，不能当 5G；</li>
-     * <li>模糊射频靠另一颗射频的清晰证据补齐（双频机必是一颗 2.4G 一颗 5G）；</li>
-     * <li>兜底：实测到 5G 的家用光猫必然带 2.4G 频段，不存在"只有 5G"的机型。</li>
-     * </ul>
-     */
+    /** 口径换算："1000000"/"1000Mbps"/"1Gbps"/"2.5G" → Mbps；解析不了返回 0 */
+    private int parseMbps(String v) {
+        String up = v.trim().toUpperCase();
+        try {
+            // G 级单位必须先于纯数字匹配：否则 "1Gbps" 会被 (\d+) 抓成 1Mbps
+            Matcher g = Pattern.compile("([0-9.]+)\\s*G(BPS|BIT)?").matcher(up);
+            if (g.find()) {
+                return (int) Math.round(Double.parseDouble(g.group(1)) * 1000);
+            }
+            Matcher m = Pattern.compile("([0-9.]+)\\s*(K(BPS|BIT)?|MBPS|M(BIT)?)?").matcher(up);
+            if (m.find()) {
+                double n = Double.parseDouble(m.group(1));
+                String unit = m.group(2);
+                if (unit != null && unit.startsWith("K")) {
+                    n /= 1000;
+                }
+                return (int) Math.round(n);
+            }
+        } catch (NumberFormatException ignore) {
+            // 语义不明的字符串按 0 处理
+        }
+        return 0;
+    }
+
+    /** 实测 WIFI 频段。 */
     private List<String> detectWifiBands(DeviceData data, String root) {
         Map<String, Set<String>> clear = new LinkedHashMap<>();
         Map<String, Set<String>> ambiguous = new LinkedHashMap<>();
@@ -220,10 +221,7 @@ public class CapabilityDetector {
         return lines.size();
     }
 
-    /**
-     * 实测 vs 申报 逐项比对。
-     * 申报：isp/lanPorts/lanSpeed/sipCount/wifiSpec（来自 capability-options 的口径）
-     */
+    /** 实测 vs 申报 逐项比对。 */
     public Map<String, Object> check(Map<String, Object> declared, Map<String, Object> detected,
                                      DeviceData data, String root) {
         List<Map<String, Object>> checks = new ArrayList<>();

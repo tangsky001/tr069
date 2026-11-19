@@ -22,10 +22,7 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 import java.net.URI;
 import java.util.Map;
 
-/**
- * WebSocket 握手鉴权：token 走 X-Token 头或 ?token= 查询参数（与 AuthInterceptor 同一套口径），
- * 校验 JWT + Redis 会话都在才放行，用户名放进握手 attributes
- */
+/** WebSocket 握手鉴权：token 走 X-Token 头或 ?token= 查询参数（与 AuthInterceptor 同一套口径）， */
 @Component
 @RequiredArgsConstructor
 public class DashboardWsAuthInterceptor implements HandshakeInterceptor {

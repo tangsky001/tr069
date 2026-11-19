@@ -3,6 +3,7 @@
  * @date:   2026年11月15日 上午3:04:04.768
  *
  */
+
 package com.PilotACS.olt.service;
 import com.PilotACS.common.log.Logs;
 
@@ -120,7 +121,6 @@ public class OltQuickSetupConfigService {
         request.setAcsPassword(defaultAcsPassword);
         request.setDbaBandwidthMbps(DEFAULT_DBA_BANDWIDTH_MBPS);
         // 模板 ID 默认统一用一个号：现场对着设备看配置时一眼能认出是同一套。
-        // 区间由设备定（10~512 / 1~32），这里不重复写死，取 planner 的默认与下限
         request.setDbaProfileId(HuaweiQuickSetupPlanner.DEFAULT_PROFILE_ID);
         request.setLineProfileId(HuaweiQuickSetupPlanner.DEFAULT_PROFILE_ID);
         request.setSrvProfileId(HuaweiQuickSetupPlanner.DEFAULT_PROFILE_ID);

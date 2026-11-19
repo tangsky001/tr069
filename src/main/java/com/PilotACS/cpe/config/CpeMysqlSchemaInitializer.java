@@ -15,9 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * 光猫台账/下发任务表自动补建（MySQL，DDL 与 sql/mysql.sql 保持一致）。
- */
+/** 光猫台账/下发任务表自动补建（MySQL，DDL 与 sql/mysql.sql 保持一致）。 */
 @Component
 @RequiredArgsConstructor
 public class CpeMysqlSchemaInitializer implements InitializingBean {
@@ -45,6 +43,10 @@ public class CpeMysqlSchemaInitializer implements InitializingBean {
                 `last_inform_ms`        BIGINT       DEFAULT NULL COMMENT '最近 Inform 毫秒时间戳',
                 `last_boot_ms`          BIGINT       DEFAULT NULL COMMENT '最近 1 BOOT 毫秒时间戳',
                 `last_bootstrap_ms`     BIGINT       DEFAULT NULL COMMENT '最近 0 BOOTSTRAP 毫秒时间戳',
+                `last_periodic_ms`      BIGINT       DEFAULT NULL COMMENT '最近 2 PERIODIC 毫秒时间戳',
+                `last_valuechange_ms`   BIGINT       DEFAULT NULL COMMENT '最近 4 VALUE CHANGE 毫秒时间戳',
+                `last_connreq_ms`       BIGINT       DEFAULT NULL COMMENT '最近 6 CONNECTION REQUEST 毫秒时间戳（CR 唤醒成功观测点）',
+                `last_diag_ms`          BIGINT       DEFAULT NULL COMMENT '最近 8 DIAGNOSTICS COMPLETE 毫秒时间戳',
                 `init_provisioned`      TINYINT      DEFAULT 0 COMMENT '1 首次上报已下发反向连接账密+周期上报',
                 `init_provisioned_at`   BIGINT       DEFAULT NULL COMMENT '首次下发毫秒时间戳',
                 `created_at`            BIGINT       DEFAULT NULL COMMENT '建档毫秒时间戳',
@@ -113,6 +115,18 @@ public class CpeMysqlSchemaInitializer implements InitializingBean {
         addColumnIfMissing("init_provisioned_at",
                 "ALTER TABLE `cpe_device` ADD COLUMN `init_provisioned_at` BIGINT DEFAULT NULL "
                         + "COMMENT '首次下发毫秒时间戳'");
+        addColumnIfMissing("last_periodic_ms",
+                "ALTER TABLE `cpe_device` ADD COLUMN `last_periodic_ms` BIGINT DEFAULT NULL "
+                        + "COMMENT '最近 2 PERIODIC 毫秒时间戳'");
+        addColumnIfMissing("last_valuechange_ms",
+                "ALTER TABLE `cpe_device` ADD COLUMN `last_valuechange_ms` BIGINT DEFAULT NULL "
+                        + "COMMENT '最近 4 VALUE CHANGE 毫秒时间戳'");
+        addColumnIfMissing("last_connreq_ms",
+                "ALTER TABLE `cpe_device` ADD COLUMN `last_connreq_ms` BIGINT DEFAULT NULL "
+                        + "COMMENT '最近 6 CONNECTION REQUEST 毫秒时间戳（CR 唤醒成功观测点）'");
+        addColumnIfMissing("last_diag_ms",
+                "ALTER TABLE `cpe_device` ADD COLUMN `last_diag_ms` BIGINT DEFAULT NULL "
+                        + "COMMENT '最近 8 DIAGNOSTICS COMPLETE 毫秒时间戳'");
     }
 
     /** 老库升级：cpe_task.params_json TEXT(64KB) 装不下业务刷新的叶子清单 → MEDIUMTEXT（幂等） */

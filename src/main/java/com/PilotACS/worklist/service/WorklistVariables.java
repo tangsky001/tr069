@@ -8,10 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 工单变量：某业务类型建单时要填哪些意图字段（键即配置模板的字段键），
- * 变量值在下发时按同键覆盖配置模板字段，并做 %room% / %desc% 占位替换。
- */
+/** 工单变量：某业务类型建单时要填哪些意图字段（键即配置模板的字段键）， */
 public final class WorklistVariables {
 
     /** 房间号没登记时的兜底值 */
@@ -40,9 +37,7 @@ public final class WorklistVariables {
         return out;
     }
 
-    /**
-     * 把调用方没填的变量补上模板默认值；空值键直接移除（下发时字段用模板默认值）。
-     */
+    /** 把调用方没填的变量补上模板默认值；空值键直接移除（下发时字段用模板默认值）。 */
     public static Map<String, String> applyDefaults(String category, Map<String, String> values) {
         Map<String, String> filled = values == null ? new LinkedHashMap<>() : new LinkedHashMap<>(values);
         String cat = category == null ? "" : category.trim();

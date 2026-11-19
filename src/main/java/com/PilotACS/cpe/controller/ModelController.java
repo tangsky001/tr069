@@ -21,9 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 机型模板库接口（前端 /models/**）
- */
+/** 机型模板库接口（前端 /models/**） */
 @RestController
 @RequestMapping("/models")
 @RequiredArgsConstructor

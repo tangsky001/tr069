@@ -591,10 +591,7 @@ public class OltService {
         return dispatchConfig(id, List.of(command), operator, "确认所有业务板");
     }
 
-    /**
-     * 保存配置：把运行配置写进 flash（各厂商都是 save），掉电不丢。
-     * 保存本身不改业务数据，不做重采；设备答完 y 后要写几十秒 flash，期间不接别的活。
-     */
+    /** 保存配置：把运行配置写进 flash（各厂商都是 save），掉电不丢。 */
     public OltDetail saveConfig(Long id, String operator) {
         OltDevice device = requireDevice(id);
         String command = profileOf(id).saveCommand();
@@ -3847,7 +3844,6 @@ public class OltService {
             record.setSuccess(success);
             record.setMessage(cut(message, 1000));
             // rawOutput 不再进台账：每次同步的完整 telnet 回显动辄几十 KB，台账只留
-            // 结果一行话（message），回显在测试接口的即时响应里仍有，要排查去抓包或重跑诊断
             record.setCostMs((int) Math.min(costMs, Integer.MAX_VALUE));
             record.setOperator(cut(operator, 64));
             recordMapper.insert(record);

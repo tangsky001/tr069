@@ -18,12 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 前端下发 → 自动组装成 SetParameterValues 任务。
- * <p>不管前端给的是 WiFi 业务字段还是原始参数三元组，这里都按设备登记的
- * 数据模型（TR-098/TR-181，来自机型模板/参数树）自动拼出目标路径与类型，
- * 页面不需要知道任何路径差异。
- */
+/** 前端下发 → 自动组装成 SetParameterValues 任务。 */
 @Service
 @RequiredArgsConstructor
 public class DispatchService {
@@ -31,10 +26,7 @@ public class DispatchService {
     private final CpeStore store;
     private final TaskService taskService;
 
-    /**
-     * POST /device/dispatch
-     * 请求：{ sns[], category, values{}, templateId, wifi{instance,ssid,encryption,password,enabled,band}, username }
-     */
+    /** POST /device/dispatch */
     public Map<String, Object> dispatch(Map<String, Object> req) {
         List<String> sns = snsOf(req.get("sns"));
         String username = str(req.get("username"));

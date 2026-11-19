@@ -6,17 +6,7 @@
 
 package com.PilotACS.cpe.model;
 
-/**
- * 一个 CWMP 参数
- *
- * @param path     全路径，如 InternetGatewayDevice.LANDevice.1.LANWLANConfiguration.1.SSID
- *                 对象节点以 '.' 结尾
- * @param value    值（统一存字符串；对象节点为 null）
- * @param type     xsd 类型：string/int/unsignedInt/boolean/dateTime...
- * @param object   是否对象节点
- * @param writable 是否可写
- * @param ts       取值时间戳（毫秒），用于新鲜度判断
- */
+/** 一个 CWMP 参数 */
 public record CpeParam(String path, String value, String type, boolean object, boolean writable, long ts) {
 
     public static final long TS_UNKNOWN = 0;

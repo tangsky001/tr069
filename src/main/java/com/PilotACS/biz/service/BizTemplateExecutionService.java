@@ -23,10 +23,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * 业务模板整包下发执行器：串行逐成员下发（意图下发服务按机型翻译），
- * 进度实时写入执行记录行，前端轮询 /executions/{id} 取进度。
- */
+/** 业务模板整包下发执行器：串行逐成员下发（意图下发服务按机型翻译）， */
 @Slf4j
 @Service
 @RequiredArgsConstructor

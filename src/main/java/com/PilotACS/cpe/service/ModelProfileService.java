@@ -24,13 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 机型模板库：品牌+型号+版本号+运营商 唯一绑定一份设备参数树。
- * <ul>
- *   <li>设备 Inform 时按 身份+运营商 匹配模板挂到会话，后续下发自动按模板组装</li>
- *   <li>能力测试达标后把实测参数树整树入库（adaptation/save）</li>
- * </ul>
- */
+/** 机型模板库：品牌+型号+版本号+运营商 唯一绑定一份设备参数树。 */
 @Service
 @RequiredArgsConstructor
 public class ModelProfileService {
@@ -86,10 +80,7 @@ public class ModelProfileService {
         }
     }
 
-    /**
-     * 从一批参数路径识别运营商并回填台账。会话内可直接传入内存参数树，
-     * 不依赖参数落库时序（避免刚采完就识别时库里还读不到）
-     */
+    /** 从一批参数路径识别运营商并回填台账。会话内可直接传入内存参数树， */
     public String detectIspFromPaths(String sn, java.util.Collection<String> paths) {
         if (paths == null || paths.isEmpty()) {
             return null;
@@ -131,10 +122,7 @@ public class ModelProfileService {
         return isp;
     }
 
-    /**
-     * Inform 时调用：运营商未知且树不完整 → 直接把探测任务插进**当前会话队列**，
-     * 首个 Inform 这轮就把全树采完，会话结束时 detectIsp 即可认出运营商
-     */
+    /** Inform 时调用：运营商未知且树不完整 → 直接把探测任务插进**当前会话队列**， */
     private void probeInSession(CwmpSession s) {
         String sn = s.getSn();
         if (ispProbeDone.contains(sn)) {
@@ -161,10 +149,7 @@ public class ModelProfileService {
     /** 系统业务刷新任务的创建人标识（防重复排队用） */
     public static final String BIZ_REFRESH_BY = "system-biz-refresh";
 
-    /**
-     * Inform 时调用：库里有业务参数树 → 本会话排一条轻量 GPV 刷 WAN/WIFI/SIP 最新值。
-     * 只 GPV 不 GPN 扫描（十几个 RPC），落库按差异收敛（值没变不写库），会话结束快照有差异才更新。
-     */
+    /** Inform 时调用：库里有业务参数树 → 本会话排一条轻量 GPV 刷 WAN/WIFI/SIP 最新值。 */
     public void refreshBizInSession(CwmpSession s) {
         try {
             java.util.List<String> leaves = bizRefreshNames(s.getSn());
@@ -220,9 +205,12 @@ public class ModelProfileService {
     /** 设备不认的参数名：sn -> 名字集合（重启后重建，代价只是一轮重新学习） */
     private final Map<String, java.util.Set<String>> badParamNames = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** 记住设备不认的参数名，后续采集直接跳过 */
+    /** 记住设备不认的参数名，后续采集直接跳过。 */
     public void rememberBadParam(String sn, String name) {
         if (sn != null && name != null) {
+            if (badParamNames.size() >= 50_000) {
+                badParamNames.clear();
+            }
             badParamNames.computeIfAbsent(sn, k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(name);
         }
     }
@@ -297,12 +285,7 @@ public class ModelProfileService {
         }
     }
 
-    /**
-     * 适配入库：测试达标后把设备参数树整树存为（品牌+型号+版本+运营商）的模板
-     *
-     * @param declared 前端申报 { isp, lanPorts, lanSpeed, sipCount, wifiSpec }
-     * @return 模板 id
-     */
+    /** 适配入库：测试达标后把设备参数树整树存为（品牌+型号+版本+运营商）的模板 */
     public long saveTemplate(String sn, Map<String, Object> declared, Map<String, Object> detected) {
         Map<String, Object> device = store.findDevice(sn);
         String isp = IspVariant.canonical(str(declared.get("isp")));

@@ -13,11 +13,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * TR-098 / TR-181 两个数据模型的路径差异收口：
- * 识别根节点、给出各业务域（WAN/LAN/WIFI/SIP/设备信息）的路径前缀。
- * 下发组装只认这里给出的前缀，前端不需要关心数据模型差异。
- */
+/** TR-098 / TR-181 两个数据模型的路径差异收口： */
 public final class BusinessPaths {
 
     public static final String ROOT_TR098 = "InternetGatewayDevice.";

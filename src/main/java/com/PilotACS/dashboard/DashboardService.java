@@ -23,9 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 首页概览数据：左 OLT（设备台账 + 在线离线状态），右光猫（板卡端口快照聚合）
- */
+/** 首页概览数据：左 OLT（设备台账 + 在线离线状态），右光猫（板卡端口快照聚合） */
 @Service
 @RequiredArgsConstructor
 public class DashboardService {

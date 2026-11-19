@@ -19,10 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 业务快照派生：从设备参数树按数据模型（TR-098/TR-181）整理出
- * WAN/LAN/WIFI/SIP 清单与台账派生字段。所有文案/格式化都在后端算好。
- */
+/** 业务快照派生：从设备参数树按数据模型（TR-098/TR-181）整理出 */
 @Service
 public class BusinessSnapshotService {
 
@@ -84,7 +81,14 @@ public class BusinessSnapshotService {
         out.put("ip", firstValue(data, "ExternalIPAddress"));
         out.put("ponType", ponType(data));
         out.put("opticText", opticText(data));
-        String upTime = firstValue(data, "UpTime");
+        // 系统运行时长优先取 DeviceInfo.UpTime（精确路径）；全树模糊匹配会把
+        String upTime = data.value(root + "DeviceInfo.UpTime");
+        if (upTime == null || upTime.isBlank()) {
+            upTime = firstValue(data, "DeviceInfo.UpTime");
+        }
+        if (upTime == null || upTime.isBlank()) {
+            upTime = firstValue(data, "UpTime");
+        }
         out.put("uptimeText", uptimeText(upTime));
         out.put("upTimeSeconds", secondsOf(upTime));
         Long bootMs = longOf(deviceRow.get("last_boot_ms"));
@@ -242,7 +246,6 @@ public class BusinessSnapshotService {
             for (int i : ids) {
                 String p = base + i + ".";
                 // 频段判据优先级：X_CMCC_RFBand(0=2.4G,1=5G) → Standard → Channel。
-                // 不能拿 ax 当 5G 专属：Wi-Fi 6 的 ax 在 2.4G/5G 上同名
                 String band = bandOfRfBand(data.value(p + "X_CMCC_RFBand"));
                 if (band == null) {
                     band = bandOfTr098(data.value(p + "Standard"));

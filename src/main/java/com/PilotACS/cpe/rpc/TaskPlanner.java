@@ -22,9 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 任务 → RPC 步骤展开器
- */
+/** 任务 → RPC 步骤展开器 */
 @Component
 @RequiredArgsConstructor
 public class TaskPlanner {
@@ -43,6 +41,10 @@ public class TaskPlanner {
     public static final String TYPE_REFRESH_BIZ = "RefreshBusiness";
     /** 机型适配探测：GPN 全树 + 关键参数 GPV */
     public static final String TYPE_ADAPT_PROBE = "AdaptProbe";
+
+    /** 写操作类任务：重发等于真实二次执行（再下发一遍/再重启一次/再下载一次）， */
+    public static final java.util.Set<String> WRITE_TYPES = java.util.Set.of(
+            TYPE_SPV, TYPE_REBOOT, TYPE_FACTORY_RESET, TYPE_DOWNLOAD, TYPE_ADD, TYPE_DEL, TYPE_CUSTOM);
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -72,10 +74,9 @@ public class TaskPlanner {
                 if (names.isEmpty()) {
                     names = strList(params.get("paths"));
                 }
-                // 续跑（会话中断回队）：跳过参数树里已经采到的名字，只补缺口。
-                // 否则大任务每轮整树重发，设备跑到会话上限就断，永远完不成 → 无限排队
+                // 续跑（会话中断回队）：跳过参数树里"已经采到值"的名字，只补缺口。
                 if (Boolean.TRUE.equals(params.get("resume")) && !names.isEmpty()) {
-                    List<String> remaining = names.stream().filter(n -> !data.has(n)).toList();
+                    List<String> remaining = names.stream().filter(n -> data.value(n) == null).toList();
                     Logs.info(Logs.Module.CPE, "任务断点续跑", "任务", run.getTaskId(),
                             "总数", names.size(), "已采", names.size() - remaining.size(),
                             "待采", remaining.size());
@@ -94,6 +95,10 @@ public class TaskPlanner {
             case TYPE_SPV -> {
                 List<RpcRequest.NameValue> values = nameValues(params);
                 run.getSteps().add(new TaskRun.RpcStep(RpcRequest.spv(values, key), "apply"));
+                if (props.isSpvReadback() && !values.isEmpty()) {
+                    // 回读校验（参考实现：下发后回读写下的参数确认设备实际生效值）：
+                    appendGpv(run, values.stream().map(RpcRequest.NameValue::name).toList(), "verify");
+                }
             }
             case TYPE_ADD -> {
                 RpcRequest r = RpcRequest.of(RpcRequest.Kind.ADD_OBJECT, key);
@@ -109,9 +114,14 @@ public class TaskPlanner {
                     RpcRequest.of(RpcRequest.Kind.REBOOT, key), "apply"));
             case TYPE_FACTORY_RESET -> run.getSteps().add(new TaskRun.RpcStep(
                     RpcRequest.of(RpcRequest.Kind.FACTORY_RESET, key), "apply"));
-            case TYPE_DOWNLOAD -> run.getSteps().add(new TaskRun.RpcStep(
-                    RpcRequest.download(key, str(params.get("fileType")), str(params.get("url")),
-                            str(params.get("fileName")), num(params.get("fileSize"))), "apply"));
+            case TYPE_DOWNLOAD -> {
+                RpcRequest r = RpcRequest.download(key, str(params.get("fileType")), str(params.get("url")),
+                        str(params.get("fileName")), num(params.get("fileSize")));
+                // 下载服务器账密透传：此前写死空串，设备下载 401 时无线索
+                r.setUsername(str(params.get("username")));
+                r.setPassword(str(params.get("password")));
+                run.getSteps().add(new TaskRun.RpcStep(r, "apply"));
+            }
             case TYPE_METHODS -> run.getSteps().add(new TaskRun.RpcStep(
                     RpcRequest.of(RpcRequest.Kind.GET_RPC_METHODS, key), "apply"));
             case TYPE_CUSTOM -> run.getSteps().add(new TaskRun.RpcStep(
@@ -136,8 +146,6 @@ public class TaskPlanner {
             case TYPE_ADAPT_PROBE -> {
                 if (Boolean.TRUE.equals(params.get("resume"))) {
                     // 会话中断回队：树已经在会话里（GPN 全量做过了），只补采没取到值的业务叶子。
-                    // 不加这条会每轮重跑 GPN+全量 GPV，恰好吃满设备单会话请求上限（Inform+99），
-                    // 后面排队的任务（初始化 SPV 等）永远轮不到
                     List<String> missing = uncollectedBizLeaves(data, root);
                     Logs.info(Logs.Module.CPE, "探测任务断点续跑", "任务", run.getTaskId(),
                             "待采", missing.size());
@@ -192,10 +200,7 @@ public class TaskPlanner {
         return out;
     }
 
-    /**
-     * 业务域里还没取到值的叶子（GPN 只登记路径 value=null，GPV 采完才有值）。
-     * 续跑时只补这些，避免整树重采
-     */
+    /** 业务域里还没取到值的叶子（GPN 只登记路径 value=null，GPV 采完才有值）。 */
     private List<String> uncollectedBizLeaves(DeviceData data, String root) {
         List<String> out = new ArrayList<>();
         for (String br : BusinessPaths.businessRoots(root)) {
@@ -225,7 +230,8 @@ public class TaskPlanner {
     @SuppressWarnings("unchecked")
     private List<String> strList(Object o) {
         if (o instanceof List<?> l) {
-            return (List<String>) l;
+            // JSON 里的数字/布尔元素不能强转 String（CCE）：统一 String.valueOf
+            return l.stream().map(x -> x == null ? "" : String.valueOf(x)).toList();
         }
         return List.of();
     }
@@ -240,6 +246,17 @@ public class TaskPlanner {
     }
 
     private long num(Object o) {
-        return o instanceof Number n ? n.longValue() : 0;
+        if (o instanceof Number n) {
+            return n.longValue();
+        }
+        // 前端表单经常把 fileSize 传成字符串（"209715200"）：解析成数值，
+        if (o instanceof String s && !s.isBlank()) {
+            try {
+                return (long) Double.parseDouble(s.trim());
+            } catch (NumberFormatException ignore) {
+                // 非数值字符串
+            }
+        }
+        return 0;
     }
 }

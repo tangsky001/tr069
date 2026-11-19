@@ -7,10 +7,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * 配置意图模板的类型清单与字段定义（静态数据）。
- * 只描述意图，不写参数路径——路径由下发时按设备数据模型决定。
- */
+/** 配置意图模板的类型清单与字段定义（静态数据）。 */
 public final class TemplateFieldDefs {
 
     private TemplateFieldDefs() {
@@ -190,17 +187,14 @@ public final class TemplateFieldDefs {
         defs.add(def(category, "vlan_priority", "802.1p QoS 优先级", "number", null, null,
                 Map.of("tip", "0-7，为空表示不下发", "min", 0, "max", 7)));
         // 选项值用设备口径（大写）：设备上 X_CMCC_ServiceList 实测只有
-        // INTERNET / TR069 / VOIP / IPTV 这几种写法，发 "Internet" 过去会被判 9007
         if (bridge) {
             // 桥接的业务模式是「这条桥给谁用」，与路由业务不是一套取值：
-            // Other 是纯二层透传，不发业务绑定
             defs.add(def(category, "service_list", "桥接业务模式", "enum", "OTHER",
                     List.of(opt("OTHER", "其他 / Other（默认）"),
                             opt("INTERNET", "上网 / Internet"),
                             opt("IPTV", "电视 / IPTV"),
                             opt("OTT", "OTT")), null));
             // 桥接类型决定建哪个对象：IP→WANIPConnection(IP_Bridged)，
-            // PPPoE→WANPPPConnection(PPPoE_Bridged)
             defs.add(def(category, "bridge_type", "桥接类型", "enum", "IP",
                     List.of(opt("IP", "IP（默认）"), opt("PPPoE", "PPPoE")), null));
         } else {

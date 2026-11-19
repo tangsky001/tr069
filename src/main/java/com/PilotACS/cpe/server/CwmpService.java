@@ -11,6 +11,9 @@ import com.PilotACS.cpe.model.CpeParam;
 import com.PilotACS.cpe.model.RpcRequest;
 import com.PilotACS.cpe.model.SoapMessage;
 import com.PilotACS.cpe.model.TaskRun;
+import com.PilotACS.cpe.redis.DeviceInfoCache;
+import com.PilotACS.cpe.redis.RedisSessionLifecycle;
+import com.PilotACS.cpe.redis.SnRateLimiter;
 import com.PilotACS.cpe.rpc.TaskPlanner;
 import com.PilotACS.cpe.service.BusinessPaths;
 import com.PilotACS.cpe.service.BusinessSnapshotService;
@@ -34,23 +37,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
-/**
- * CWMP 会话核心：三态状态机 + Inform 处理 + RPC 单飞循环。
- * <p>流程：
- * <pre>
- * state 0：只接受 Inform → 回 InformResponse → state 1
- * state 1：空 POST（设备就绪）→ 取下一个任务展开成 RPC → state 2
- *          TransferComplete → 归因到任务；GetRPCMethods → 固定清单
- * state 2：只接受 ACS 所发 RPC 的响应/Fault → 应用结果 → 继续下一 RPC 或收尾
- * </pre>
- */
+/** CWMP 会话核心：三态状态机 + Inform 处理 + RPC 单飞循环。 */
 @Service
 @RequiredArgsConstructor
 public class CwmpService {
 
     private final ConnectionRequestService connectionRequestService;
+    private final SnRateLimiter rateLimiter;
+    private final RedisSessionLifecycle lifecycle;
+    private final DeviceInfoCache infoCache;
 
     /** 一次 HTTP 交互的输出：HTTP 状态 + 报文 + 需要下发的会话 cookie */
     public record Reply(int httpStatus, String body, String newSessionId) {
@@ -74,11 +74,7 @@ public class CwmpService {
 
     // ==================== 入口 ====================
 
-    /**
-     * 处理 CPE 的一次 POST（body 为空表示空 POST）
-     *
-     * @param remoteAddr 设备来源地址，无 Cookie 会话时按它兜底找回会话
-     */
+    /** 处理 CPE 的一次 POST（body 为空表示空 POST） */
     public Reply processRequest(String body, String cookieSessionId, String remoteAddr) {
         SoapMessage msg;
         try {
@@ -88,51 +84,158 @@ public class CwmpService {
             return Reply.empty(400);
         }
 
-        CwmpSession session = registry.bySessionId(cookieSessionId);
-        String newSessionId = null;
-        if (session == null) {
-            if (msg.getName() == null) {
-                // 无 Cookie 的空 POST：老设备不回传 session cookie，它的空 POST 找不到会话，
-                // 会话里排的任务永远装不上。按 Inform 时记下的来源地址找回会话；
-                // 只有"已 Inform 等 RPC"状态的会话才认（state 0 没身份，state 2 在飞响应不能空答）
-                CwmpSession fallback = registry.byRemoteAddr(remoteAddr);
-                if (fallback != null && fallback.getState() == CwmpSession.STATE_INFORMED) {
-                    session = fallback;
-                    Logs.info(Logs.Module.CPE, "设备不带 Cookie，按来源地址找回会话", "sn", session.getSn(),
-                            "地址", remoteAddr);
-                } else {
-                    // 真没有会话：多为设备收尾（TR-069 A.3.2 里空响应即结束会话）。
-                    // 不能再回 Inform 请求——Inform 只能 CPE→ACS，个别设备不认会立刻重发空 POST 形成风暴。
-                    // 有些老固件会话结束后仍每 2 秒重发空 POST 要任务，按规范回空响应即可，降为 debug 防刷屏
-                    Logs.debug(Logs.Module.CPE, "无会话空 POST，回 200 空响应结束会话", "地址", remoteAddr);
-                    return Reply.empty(200);
-                }
+        // 【前置限流】有 SN 按 SN 限流，空 POST/解析不出 SN 的按来源 IP 限流；
+        String limitId = limitId(msg, remoteAddr);
+        if (!rateLimiter.tryAcquire(limitId)) {
+            Logs.warn(Logs.Module.CPE, "报文限流丢弃（回 200 空响应）", "地址", remoteAddr,
+                    "主体", limitId, "报文", msg.getName() == null ? "空POST" : msg.getName());
+            return Reply.empty(200);
+        }
+
+        CwmpSession known = registry.bySessionId(cookieSessionId);
+        if (known != null) {
+            return locked(known.getSn(), () -> handleKnown(known, msg, remoteAddr));
+        }
+        if (msg.getName() == null) {
+            // 无 Cookie 的空 POST：老设备不回传 session cookie，它的空 POST 找不到会话，
+            CwmpSession fallback = registry.byRemoteAddr(remoteAddr);
+            if (fallback != null && fallback.getState() == CwmpSession.STATE_INFORMED) {
+                Logs.info(Logs.Module.CPE, "设备不带 Cookie，按来源地址找回会话", "sn", fallback.getSn(),
+                        "地址", remoteAddr);
+                return locked(fallback.getSn(), () -> handleKnown(fallback, msg, remoteAddr));
             }
-            if (!"Inform".equals(msg.getName())) {
-                // 没有会话又不报 Inform（含空 POST），直接 400
-                return new Reply(400, SoapBuilder.acsFault(8000, "No session, Inform required"), null);
+            // 真没有会话：多为设备收尾（TR-069 A.3.2 里空响应即结束会话）。
+            Logs.debug(Logs.Module.CPE, "无会话空 POST，回 200 空响应结束会话", "地址", remoteAddr);
+            return Reply.empty(200);
+        }
+        if (!"Inform".equals(msg.getName())) {
+            // 无 Cookie 的 RPC 响应/Fault/TransferComplete：同样按来源地址找回会话。
+            CwmpSession fallback = registry.byRemoteAddr(remoteAddr);
+            if (fallback != null && fallback.getState() != CwmpSession.STATE_CREATED) {
+                Logs.info(Logs.Module.CPE, "设备不带 Cookie，按来源地址找回会话", "sn", fallback.getSn(),
+                        "地址", remoteAddr, "报文", msg.getName());
+                return locked(fallback.getSn(), () -> handleKnown(fallback, msg, remoteAddr));
             }
-            if (msg.getSerialNumber() == null || msg.getSerialNumber().isBlank()) {
-                return new Reply(400, SoapBuilder.acsFault(8000, "Invalid device id"), null);
-            }
-            session = registry.create(msg.getSerialNumber());
-            session.setRemoteAddr(remoteAddr);
-            newSessionId = session.getSessionId();
-            Logs.debug(Logs.Module.CPE, "会话来源地址已记录", "sn", session.getSn(), "地址", remoteAddr);
-            // 同 SN 旧会话被顶替时必须完整收尾：在飞任务回队、参数落库、快照刷新。
-            // 否则任务卡 running，新会话 loadQueuedTasks 装不到它（只装 queued）→ "无待执行任务"
-            CwmpSession superseded = registry.lastSuperseded();
-            if (superseded != null) {
-                endSession(superseded, "设备重新 Inform，会话被新会话顶替");
+            return new Reply(400, SoapBuilder.acsFault(8000, "No session, Inform required"), null);
+        }
+        if (msg.getSerialNumber() == null || msg.getSerialNumber().isBlank()) {
+            return new Reply(400, SoapBuilder.acsFault(8000, "Invalid device id"), null);
+        }
+        return locked(msg.getSerialNumber(), () -> handleNewInform(msg.getSerialNumber(), msg, remoteAddr));
+    }
+
+    /** 限流主体：有 SN 按 SN，否则按来源 IP（前缀区分，避免撞同一令牌桶） */
+    private String limitId(SoapMessage msg, String remoteAddr) {
+        String sn = msg.getSerialNumber();
+        return (sn != null && !sn.isBlank()) ? sn : ("ip:" + remoteAddr);
+    }
+
+    /** 设备 SOAP 头声明的会话超时落到会话（CwmpSession.effectiveTimeout 里做上下限收敛） */
+    private void applyHeaderTimeout(CwmpSession s, SoapMessage msg) {
+        if (msg.getSessionTimeoutSeconds() > 0) {
+            long old = s.getTimeoutMs();
+            s.setTimeoutMs(msg.getSessionTimeoutSeconds() * 1000L);
+            if (old == 0) {
+                Logs.debug(Logs.Module.CPE, "设备声明会话超时", "sn", s.getSn(),
+                        "秒", msg.getSessionTimeoutSeconds());
             }
         }
-        session.touch();
+    }
 
-        return switch (session.getState()) {
-            case CwmpSession.STATE_CREATED -> onCreated(session, msg);
-            case CwmpSession.STATE_INFORMED -> onInformed(session, msg);
-            default -> onRpcRunning(session, msg);
+    /** per-SN 串行处理锁（ReentrantLock 可重入：死会话重建走同一把锁） */
+    private <T> T locked(String sn, Supplier<T> action) {
+        ReentrantLock lock = registry.lockFor(sn);
+        lock.lock();
+        try {
+            return action.get();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Cookie/地址找回的既有会话处理：先校验仍是现役会话，死了按无会话分支处理 */
+    private Reply handleKnown(CwmpSession s, SoapMessage msg, String remoteAddr) {
+        if (!registry.isCurrent(s)) {
+            // 会话已被顶替/收尾/TTL 判死：TransferComplete 仍要归因（落库与会话无关）；
+            if ("TransferComplete".equals(msg.getName())) {
+                handleTransferComplete(s, msg);
+                // 会话已死也必须应答 TC，否则设备保留 7 TRANSFER COMPLETE 事件反复重发
+                return new Reply(200, SoapBuilder.transferCompleteResponse(
+                        msg.getId() == null || msg.getId().isBlank() ? "acs-tc" : msg.getId()), null);
+            }
+            if ("Inform".equals(msg.getName()) && msg.getSerialNumber() != null
+                    && !msg.getSerialNumber().isBlank()) {
+                return newInformNestedSafe(s.getSn(), msg.getSerialNumber(), msg, remoteAddr);
+            }
+            if (msg.getName() == null) {
+                Logs.debug(Logs.Module.CPE, "空 POST 命中已收尾会话，回空响应结束", "sn", s.getSn());
+                return Reply.empty(200);
+            }
+            return new Reply(400, SoapBuilder.acsFault(8000, "Session no longer valid"), null);
+        }
+        if ("Inform".equals(msg.getName()) && msg.getSerialNumber() != null
+                && !msg.getSerialNumber().isBlank()) {
+            // 会话进行中又收到 Inform（周期上报撞上反向连接会话/设备重发）：
+            if (!msg.getSerialNumber().equals(s.getSn())) {
+                Logs.warn(Logs.Module.CPE, "Cookie 与报文 SN 不匹配，按报文 SN 重建会话",
+                        "会话SN", s.getSn(), "报文SN", msg.getSerialNumber());
+            }
+            return newInformNestedSafe(s.getSn(), msg.getSerialNumber(), msg, remoteAddr);
+        }
+        s.touch();
+        applyHeaderTimeout(s, msg);
+        Reply reply = switch (s.getState()) {
+            case CwmpSession.STATE_CREATED -> onCreated(s, msg);
+            case CwmpSession.STATE_INFORMED -> onInformed(s, msg);
+            default -> onRpcRunning(s, msg);
         };
+        // 只有合法报文（200 且会话未收尾）才续期；被拒的报文（4xx/异常）不给会话续命
+        if (reply.httpStatus() == 200 && !s.isEnded()) {
+            lifecycle.renew(s);
+        }
+        return reply;
+    }
+
+    /** 持有 currentSn 锁的前提下处理另一 SN 的新 Inform：条纹锁不同桶时嵌套取锁有 ABBA 死锁风险，
+     *  改 tryLock 限时获取，取不到让设备重发（无 Cookie 走正常入口，不再嵌套） */
+    private Reply newInformNestedSafe(String currentSn, String newSn, SoapMessage msg, String remoteAddr) {
+        if (newSn.equals(currentSn) || registry.lockFor(newSn) == registry.lockFor(currentSn)) {
+            // 同一把条纹锁（同桶）：ReentrantLock 可重入，直接处理
+            return handleNewInform(newSn, msg, remoteAddr);
+        }
+        try {
+            if (registry.lockFor(newSn).tryLock(3, TimeUnit.SECONDS)) {
+                try {
+                    return handleNewInform(newSn, msg, remoteAddr);
+                } finally {
+                    registry.lockFor(newSn).unlock();
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        Logs.warn(Logs.Module.CPE, "跨 SN Inform 锁竞争，回 400 让设备重发", "持锁SN", currentSn, "报文SN", newSn);
+        return new Reply(400, SoapBuilder.acsFault(8000, "Session conflict, resend Inform"), null);
+    }
+
+    /** 新 Inform 建会话：顶替旧会话并完整收尾（返回值带回旧会话，不再依赖共享字段） */
+    private Reply handleNewInform(String sn, SoapMessage msg, String remoteAddr) {
+        SessionRegistry.Created created = registry.create(sn);
+        CwmpSession session = created.session();
+        // 同 SN 旧会话被顶替时必须完整收尾：在飞任务回队、参数落库、快照刷新。
+        if (created.superseded() != null) {
+            endSession(created.superseded(), "设备重新 Inform，会话被新会话顶替");
+        }
+        session.setRemoteAddr(remoteAddr);
+        session.touch();
+        applyHeaderTimeout(session, msg);
+        lifecycle.register(session);
+        Logs.debug(Logs.Module.CPE, "会话来源地址已记录", "sn", sn, "地址", remoteAddr);
+        Reply reply = onCreated(session, msg);
+        if (reply.httpStatus() == 200 && !session.isEnded()) {
+            lifecycle.renew(session);
+        }
+        return reply;
     }
 
     // ==================== state 0：等 Inform ====================
@@ -141,10 +244,16 @@ public class CwmpService {
         if (!"Inform".equals(msg.getName())) {
             return new Reply(400, SoapBuilder.acsFault(8000, "Inform required"), null);
         }
-        handleInform(s, msg);
+        try {
+            handleInform(s, msg);
+        } catch (Exception e) {
+            // Inform 处理异常（DB 抖动等）：收尾本次会话回 500，设备稍后重试；
+            Logs.error(Logs.Module.CPE, "Inform 处理失败，会话终止待设备重试", e, "sn", s.getSn());
+            endSession(s, "Inform 处理异常");
+            return Reply.empty(500);
+        }
         s.setState(CwmpSession.STATE_INFORMED);
         // InformResponse 的报文头 ID 必须回传设备请求里的 ID（TR-069 3.1.3），
-        // 严格固件校验不过会丢弃响应并不再发空 POST，会话从此取不到任何任务
         return new Reply(200, SoapBuilder.informResponse(
                 msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
                 s.getSessionId());
@@ -167,20 +276,57 @@ public class CwmpService {
         s.setSoftwareVersion(s.getData().value(root + "DeviceInfo.SoftwareVersion"));
         s.setHardwareVersion(s.getData().value(root + "DeviceInfo.HardwareVersion"));
 
-        // 事件落台账（0 BOOTSTRAP / 1 BOOT）
+        // 事件落台账（0 BOOTSTRAP / 1 BOOT / 2 PERIODIC / 4 VALUE CHANGE / 6 CONNECTION REQUEST /
+        // 8 DIAGNOSTICS COMPLETE；7 TRANSFER COMPLETE 走 handleTransferComplete 归因，不经此处）。
+        // 匹配口径参照 Netcwmp event.c：按 "码 前缀" 区分，"1 BOOT" 不会误吞 "11 M REBOOT"。
         long now = System.currentTimeMillis();
         Long boot = null;
         Long bootstrap = null;
+        Long periodic = null;
+        Long valueChange = null;
+        Long connReq = null;
+        Long diag = null;
         for (String ev : msg.getEvents()) {
             if (ev.startsWith("1 BOOT")) {
                 boot = now;
             } else if (ev.startsWith("0 BOOTSTRAP")) {
                 bootstrap = now;
                 s.setBootstrap(true);
+                // 恢复出厂/首次建档：设备侧管理参数已被清空，放开初始化标记重新下发
+                // （CR 账密、周期上报间隔不重发的话，反向连接踢不动、设备也不再按期上报）
+                try {
+                    store.clearInitProvisioned(s.getSn());
+                    initProvisionService.resetForBootstrap(s.getSn());
+                    Logs.info(Logs.Module.CPE, "检测到 0 BOOTSTRAP，初始化参数将重新下发", "sn", s.getSn());
+                } catch (Exception e) {
+                    Logs.warn(Logs.Module.CPE, "BOOTSTRAP 重置初始化标记失败", "sn", s.getSn(), "原因", e.toString());
+                }
+            } else if (ev.startsWith("2 PERIODIC")) {
+                periodic = now;
+            } else if (ev.startsWith("4 VALUE CHANGE")) {
+                valueChange = now;
+            } else if (ev.startsWith("6 CONNECTION REQUEST")) {
+                connReq = now;
+            } else if (ev.startsWith("8 DIAGNOSTICS COMPLETE")) {
+                diag = now;
+            } else if (!ev.isBlank()) {
+                Logs.debug(Logs.Module.CPE, "未特殊处理的事件码", "sn", s.getSn(), "事件", ev);
             }
         }
+        if (connReq != null) {
+            // CR 唤醒闭环观测点：反向连接踢成功 → 设备带 6 CONNECTION REQUEST 事件 Inform 上来
+            Logs.info(Logs.Module.CPE, "设备经 Connection Request 唤醒上报", "sn", s.getSn(),
+                    "地址", s.getRemoteAddr());
+        } else if (registry.consumeKick(s.getSn())) {
+            // 设备没带 6 事件但 Inform 落在唤醒窗口内：同样归因为 CR 唤醒（兼容不规范设备）
+            Logs.info(Logs.Module.CPE, "设备 Inform 落在唤醒窗口内，归因为 Connection Request 触发",
+                    "sn", s.getSn(), "事件", msg.getEvents());
+        }
+        if (diag != null) {
+            Logs.info(Logs.Module.CPE, "设备诊断完成上报", "sn", s.getSn(), "事件", msg.getEvents());
+        }
 
-        // 台账 upsert：Inform 一到就刷新设备档案
+        // 台账 upsert：Inform 一到就刷新设备档案，并同步覆写 Redis 档案缓存
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("sn", s.getSn());
         row.put("oui", s.getOui());
@@ -192,7 +338,8 @@ public class CwmpService {
         row.put("root_node", root);
         row.put("last_inform_ms", now);
         store.upsertDevice(row);
-        store.markEvents(s.getSn(), boot, bootstrap);
+        infoCache.put(s.getSn(), row);
+        store.markEvents(s.getSn(), boot, bootstrap, periodic, valueChange, connReq, diag);
 
         // 绑定机型模板（品牌+型号+版本+运营商），有则挂到会话上供组装用
         modelProfileService.attachModel(s);
@@ -211,6 +358,11 @@ public class CwmpService {
 
     private Reply onInformed(CwmpSession s, SoapMessage msg) {
         if (msg.isEmptyPost()) {
+            // 设备已声明本会话不再收请求（TR-069 A.3.2.1）：不再派 RPC，直接收尾
+            if (msg.isNoMoreRequests()) {
+                endSession(s, "设备声明无后续请求(NoMoreRequests)");
+                return Reply.empty(200);
+            }
             // 设备就绪，取下一个任务展开成 RPC；没有活干就收尾
             RpcRequest next = nextRpc(s);
             if (next == null) {
@@ -222,7 +374,10 @@ public class CwmpService {
         }
         if ("TransferComplete".equals(msg.getName())) {
             handleTransferComplete(s, msg);
-            return Reply.empty(200);
+            // 一个 HTTP 往返只能带一个 SOAP 报文：先应答 TC，设备发下一个空 POST 再继续派 RPC。
+            return new Reply(200, SoapBuilder.transferCompleteResponse(
+                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
+                    s.getSessionId());
         }
         if ("GetRPCMethods".equals(msg.getName())) {
             return new Reply(200, SoapBuilder.getRpcMethodsResponse(
@@ -239,15 +394,18 @@ public class CwmpService {
         // 个别设备会把 TransferComplete 夹在会话中途发，同样归因
         if ("TransferComplete".equals(msg.getName())) {
             handleTransferComplete(s, msg);
-            RpcRequest next = nextRpc(s);
-            if (next == null) {
-                endSession(s, "任务执行完毕");
-                return Reply.empty(200);
-            }
-            return new Reply(200, SoapBuilder.request(next), s.getSessionId());
+            // 先应答 TC，下一个空 POST 再继续派 RPC（一个响应只能带一个 SOAP 报文）
+            return new Reply(200, SoapBuilder.transferCompleteResponse(
+                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
+                    s.getSessionId());
         }
         applyResponse(s, msg);
         if (s.isEnded()) {
+            return Reply.empty(200);
+        }
+        // 设备声明不再收请求：不派下一个 RPC（TR-069 A.3.2.1），剩余任务留在队列等下个会话
+        if (msg.isNoMoreRequests()) {
+            endSession(s, "设备声明无后续请求(NoMoreRequests)");
             return Reply.empty(200);
         }
         RpcRequest next = nextRpc(s);
@@ -273,10 +431,15 @@ public class CwmpService {
         String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
         switch (req.getKind()) {
             case GPN -> {
+                // GPN 只带回结构信息（object/writable），不带值：合并时保留已有 value/type，
                 for (CpeParam p : msg.getResults()) {
                     CpeParam known = s.getData().get(p.path());
-                    s.getData().put(new CpeParam(p.path(), null, null, p.object(), p.writable(),
-                            known == null ? p.ts() : known.ts()));
+                    if (known == null) {
+                        s.getData().put(new CpeParam(p.path(), null, null, p.object(), p.writable(), p.ts()));
+                    } else if (known.object() != p.object() || known.writable() != p.writable()) {
+                        s.getData().put(new CpeParam(p.path(), known.value(), known.type(),
+                                p.object(), p.writable(), known.ts()));
+                    }
                 }
                 // 全量 GPN → 落库时整树重写
                 if (!req.isNextLevel() && req.getPath() != null && req.getPath().equals(root)) {
@@ -300,19 +463,59 @@ public class CwmpService {
                         s.getData().put(new CpeParam(p.path(), p.value(), p.type(), false, true, p.ts()));
                     }
                 }
-                // 设备没回的参数记空串
+                // 设备没回的参数：不再写空串进参数树——历史实现无条件 put 必标脏，
                 if (req.getNames() != null) {
+                    List<String> missing = new ArrayList<>();
                     for (String n : req.getNames()) {
                         if (!s.getData().has(n)) {
-                            s.getData().put(new CpeParam(n, "", "string", false, true, 0));
+                            missing.add(n);
+                        }
+                    }
+                    if (!missing.isEmpty()) {
+                        Logs.warn(Logs.Module.CPE, "设备未回报部分请求参数", "sn", s.getSn(),
+                                "任务", cur.getTaskId(), "参数", missing);
+                    }
+                }
+                // 回读校验步：把设备实际回报值与任务下发值比对，偏差记进任务结果；
+                if ("verify".equals(s.getPendingPurpose())) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> expected = cur.getCollected().containsKey("verifyExpected")
+                            ? (Map<String, String>) cur.getCollected().get("verifyExpected")
+                            : spvExpected(cur.getParams());
+                    cur.getCollected().put("verifyExpected", expected);
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> deviations = (Map<String, String>) cur.getCollected()
+                            .computeIfAbsent("readbackDeviations", k -> new LinkedHashMap<String, String>());
+                    for (CpeParam p : msg.getResults()) {
+                        String exp = expected.get(p.path());
+                        if (exp != null && p.value() != null && !exp.equals(p.value())) {
+                            deviations.put(p.path(), "下发值[" + exp + "] 设备值[" + p.value() + "]");
                         }
                     }
                 }
             }
             case SPV -> {
-                completeTask(s, cur, Map.of("applied", msg.getStatus() == 0, "status", msg.getStatus()));
-                Logs.info(Logs.Module.CPE, "参数下发完成", "sn", s.getSn(), "任务", cur.getTaskId(),
-                        "参数数", req.getValues() == null ? 0 : req.getValues().size());
+                // 下发受理成功（Status 0=已生效 / 1=待重启生效）就把新值写回会话参数树：
+                if ((msg.getStatus() == 0 || msg.getStatus() == 1) && req.getValues() != null) {
+                    long ts = System.currentTimeMillis();
+                    for (RpcRequest.NameValue nv : req.getValues()) {
+                        s.getData().putValue(nv.name(), nv.value(),
+                                nv.type() == null ? "string" : nv.type(), ts);
+                    }
+                }
+                if (cur.peek() != null) {
+                    // 还有回读校验步（verify GPV）：受理结果先暂存，等回读步走完统一收口
+                    cur.getCollected().put("applied", msg.getStatus() == 0);
+                    cur.getCollected().put("status", msg.getStatus());
+                    Logs.info(Logs.Module.CPE, "参数下发已受理，等待回读校验", "sn", s.getSn(),
+                            "任务", cur.getTaskId(), "参数数",
+                            req.getValues() == null ? 0 : req.getValues().size(), "待重启", msg.getStatus() == 1);
+                } else {
+                    completeTask(s, cur, Map.of("applied", msg.getStatus() == 0, "status", msg.getStatus()));
+                    Logs.info(Logs.Module.CPE, "参数下发完成", "sn", s.getSn(), "任务", cur.getTaskId(),
+                            "参数数", req.getValues() == null ? 0 : req.getValues().size(),
+                            "待重启", msg.getStatus() == 1);
+                }
                 if (Boolean.TRUE.equals(cur.getParams().get(InitProvisionService.PARAM_FLAG))) {
                     // 首次初始化下发成功：台账打标，后续上报不再重复下发
                     store.markInitProvisioned(s.getSn());
@@ -325,13 +528,23 @@ public class CwmpService {
                 s.getData().put(new CpeParam(pathOf(req.getPath(), msg.getInstanceNumber()), null, null, true,
                         true, System.currentTimeMillis()));
             }
-            case DELETE_OBJECT -> completeTask(s, cur, Map.of("deleted", req.getPath()));
+            case DELETE_OBJECT -> {
+                // 删除成功：该对象实例子树从内存树摘除并打墓碑，落库时同步清行
+                List<String> removed = s.getData().removeSubtree(req.getPath());
+                completeTask(s, cur, Map.of("deleted", req.getPath(), "removedParams", removed.size()));
+            }
             case REBOOT -> {
                 completeTask(s, cur, Map.of("reboot", true));
                 Logs.info(Logs.Module.CPE, "设备重启指令已受理", "sn", s.getSn(), "任务", cur.getTaskId());
             }
             case FACTORY_RESET -> completeTask(s, cur, Map.of("factoryReset", true));
-            case DOWNLOAD -> completeTask(s, cur, Map.of("download", true, "url", String.valueOf(req.getUrl())));
+            case DOWNLOAD -> completeTask(s, cur, Map.of(
+                    "download", true,
+                    "url", String.valueOf(req.getUrl()),
+                    // Status 1=进行中：最终成败由 7 TRANSFER COMPLETE 按 CommandKey 归因回写
+                    "status", msg.getStatus(),
+                    "startTime", String.valueOf(msg.getStartTime()),
+                    "completeTime", String.valueOf(msg.getCompleteTime())));
             case GET_RPC_METHODS -> completeTask(s, cur, Map.of("methods", msg.getMethods()));
             case CUSTOM -> completeTask(s, cur, Map.of());
         }
@@ -350,7 +563,6 @@ public class CwmpService {
         String purpose = s.getPendingPurpose();
         if ("scan".equals(purpose) || "probe".equals(purpose)) {
             // 扫描/探测步骤失败（常见 9005：设备没有这棵业务子树，如 Services.VoiceService.）：
-            // 跳过即可，不能拖死整个采集任务；扫完就按已扫到的叶子补 GPV
             Logs.warn(Logs.Module.CPE, "扫描步骤失败，跳过继续", "sn", s.getSn(), "任务", cur.getTaskId(),
                     "步骤", purpose, "错误码", msg.getFaultCode(), "详情", detail.toString());
             String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
@@ -359,8 +571,22 @@ public class CwmpService {
             }
             return;
         }
+        if ("verify".equals(purpose)) {
+            // 回读校验步失败不推翻下发结果：SPV 已被设备受理（Status 0/1），
+            Logs.warn(Logs.Module.CPE, "回读校验步失败，按受理结果收口", "sn", s.getSn(), "任务", cur.getTaskId(),
+                    "错误码", msg.getFaultCode(), "详情", detail.toString());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("applied", Boolean.TRUE.equals(cur.getCollected().get("applied")));
+            Object st = cur.getCollected().get("status");
+            result.put("status", st instanceof Number n ? n.intValue() : 0);
+            result.put("readback", "skipped(" + msg.getFaultCode() + ")");
+            store.updateTask(cur.getTaskId(), "success", null, null, toJson(result));
+            lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+            cur.markCompleted();
+            s.setCurrent(null);
+            return;
+        }
         // GPV 采集步骤遇到 9005/9003（某个参数名不被设备接受）：拆分批次定位坏名，单个坏名直接丢弃，
-        // 不能让一条脏名把整轮采集判死
         if ("collect".equals(purpose) && req != null && req.getKind() == RpcRequest.Kind.GPV
                 && (msg.getFaultCode() == 9005 || msg.getFaultCode() == 9003)) {
             List<String> names = req.getNames();
@@ -388,6 +614,7 @@ public class CwmpService {
             initProvisionService.retryLater(s.getSn());
         }
         store.updateTask(cur.getTaskId(), "fail", String.valueOf(msg.getFaultCode()), detail.toString(), null);
+        lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
         cur.markCompleted();
         s.setCurrent(null);
         Logs.warn(Logs.Module.CPE, "任务执行失败", "sn", s.getSn(), "任务", cur.getTaskId(),
@@ -412,15 +639,25 @@ public class CwmpService {
         long taskId = 0;
         var m = TASK_KEY.matcher(key);
         if (m.find()) {
-            taskId = Long.parseLong(m.group(1));
+            try {
+                taskId = Long.parseLong(m.group(1));
+            } catch (NumberFormatException e) {
+                // 超过 long 上界的异常 CommandKey 不归因，也不能让整个请求 500（设备会重发 TC 死循环）
+                Logs.warn(Logs.Module.CPE, "TransferComplete CommandKey 非法，忽略归因",
+                        "sn", s == null ? "?" : s.getSn(), "commandKey", key);
+            }
         }
         if (taskId > 0) {
             boolean ok = msg.getTcFaultCode() == 0;
             store.updateTask(taskId, ok ? "success" : "fail",
                     ok ? null : String.valueOf(msg.getTcFaultCode()),
                     ok ? null : msg.getTcFaultString(), null);
-            Logs.info(Logs.Module.CPE, "TransferComplete", "sn", s.getSn(), "任务", taskId,
+            Logs.info(Logs.Module.CPE, "TransferComplete", "sn", s == null ? "?" : s.getSn(), "任务", taskId,
                     "错误码", msg.getTcFaultCode(), "完成时间", msg.getEndValue());
+        } else if (!key.isBlank()) {
+            // 非本 ACS 产生的 CommandKey（外部平台任务等）：归因不了就明确记日志，不再静默丢弃
+            Logs.debug(Logs.Module.CPE, "TransferComplete 非本 ACS 任务，忽略归因",
+                    "sn", s == null ? "?" : s.getSn(), "commandKey", key, "错误码", msg.getTcFaultCode());
         }
     }
 
@@ -447,11 +684,15 @@ public class CwmpService {
                 continue;
             }
             if (s.getRpcCount() >= props.getMaxRpcCount()) {
-                store.updateTask(cur.getTaskId(), "fail", "0",
-                        "会话 RPC 次数超限(" + props.getMaxRpcCount() + ")", null);
-                cur.markCompleted();
+                // 达到会话 RPC 上限：本任务打断点续跑标记回队（不判死），队列里排在其后的任务
+                store.markTaskResume(cur.getTaskId());
+                store.updateTask(cur.getTaskId(), "queued", null,
+                        "会话 RPC 次数超限(" + props.getMaxRpcCount() + ")，待续跑", null);
+                lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
                 s.setCurrent(null);
-                continue;
+                // 立刻反踢续跑：current 已置空，endSession 的"回队反踢"分支不会再触发，
+                connectionRequestService.wakeWithRetry(s.getSn(), s.getConnectionRequestUrl(), null, null);
+                return null;
             }
             TaskRun.RpcStep step = cur.poll();
             RpcRequest req = step.request();
@@ -459,9 +700,34 @@ public class CwmpService {
             s.setPending(req);
             s.setPendingPurpose(step.purpose());
             s.setRpcCount(s.getRpcCount() + 1);
-            store.updateTask(cur.getTaskId(), "running", null, null, null);
+            // 进度持久化（参考实现的逐 RPC 记录语义的轻量版）：复用每步必有的 updateTask
+            store.updateTask(cur.getTaskId(), "running", null,
+                    "进度 " + cur.getSentSteps() + "/" + (cur.getSentSteps() + cur.getSteps().size()), null);
+            // Redis 会话镜像：rpcState → RUNNING，记 currentTaskId（跨 Inform 的任务执行状态，
+            lifecycle.rpcRunning(s.getSn(), cur.getTaskId());
             return req;
         }
+    }
+
+    /** SPV 任务的期望值表（values Map 或 items 三元组两种入参形态），回读比对用 */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> spvExpected(Map<String, Object> params) {
+        Map<String, String> out = new LinkedHashMap<>();
+        Object values = params.get("values");
+        if (values instanceof Map<?, ?> m) {
+            ((Map<Object, Object>) m).forEach((k, v) ->
+                    out.put(String.valueOf(k), v == null ? "" : String.valueOf(v)));
+        }
+        Object items = params.get("items");
+        if (items instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> it && it.get("name") != null) {
+                    out.put(String.valueOf(it.get("name")),
+                            it.get("value") == null ? "" : String.valueOf(it.get("value")));
+                }
+            }
+        }
+        return out;
     }
 
     private void loadQueuedTasks(CwmpSession s) {
@@ -496,34 +762,63 @@ public class CwmpService {
         } else if (TaskPlanner.TYPE_GPV.equals(cur.getType())) {
             // 控制台/业务轻量刷新的采集结果口径与 RefreshBusiness 一致
             result.put("collectStatus", s.getData().all().isEmpty() ? "empty" : "success");
+        } else if (TaskPlanner.TYPE_SPV.equals(cur.getType())) {
+            // SPV：合并受理结果与回读校验结论（readback: done=一致 / deviation=有偏差 / skipped=未校验）
+            Map<String, Object> collected = new LinkedHashMap<>(cur.getCollected());
+            collected.remove("verifyExpected");
+            result.putAll(collected);
+            Map<?, ?> dev = (Map<?, ?>) collected.get("readbackDeviations");
+            result.put("readback", dev == null ? "skipped" : dev.isEmpty() ? "done" : "deviation");
         }
         store.updateTask(cur.getTaskId(), "success", null, null, toJson(result));
+        lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
     }
 
     // ==================== 会话收尾 ====================
 
+    /** 会话收尾（幂等 + 异步安全）：任何一步 DB 异常都不能让会话残留在注册表里 */
     private void endSession(CwmpSession s, String reason) {
         if (s.isEnded()) {
             return;
         }
         s.setEnded(true);
-        TaskRun cur = s.getCurrent();
-        if (cur != null && !cur.finished() && !cur.isCompleted()) {
-            // 会话中断不判死：任务回队，设备下次上报续跑（与"排队等待设备上线"语义一致）。
-            // 打续跑标记：重排时跳过已采到的参数，否则大任务整树重发，
-            // 设备每轮跑到会话上限就断，永远跑不完 → 无限排队
-            store.markTaskResume(cur.getTaskId());
-            store.updateTask(cur.getTaskId(), "queued", null, "会话中断(" + reason + ")，待续跑", null);
-            // 回队后立刻反踢续跑，不等下一轮周期上报（大树 99 次上限要多个会话接力）
-            connectionRequestService.wakeWithRetry(s.getSn(), s.getConnectionRequestUrl(), null, null);
+        try {
+            TaskRun cur = s.getCurrent();
+            if (cur != null && !cur.finished() && !cur.isCompleted()) {
+                if (TaskPlanner.WRITE_TYPES.contains(cur.getType())) {
+                    // 写操作类（SPV/Reboot/Download/AddObject/DeleteObject/Custom）不回队重发：
+                    store.updateTask(cur.getTaskId(), "fail", "interrupted",
+                            "会话中断(" + reason + ")。写操作类不自动重发——设备可能已实际执行，请确认设备状态后重新下发",
+                            null);
+                    lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+                    if (cur.getParams().get(InitProvisionService.PARAM_FLAG) != null) {
+                        // 初始化下发随会话中断：放开 scheduled 去重，否则该 SN 本进程存活期内永不再下发
+                        initProvisionService.retryLater(s.getSn());
+                    }
+                    Logs.warn(Logs.Module.CPE, "写操作任务随会话中断判失败", "sn", s.getSn(),
+                            "任务", cur.getTaskId(), "类型", cur.getType(), "原因", reason);
+                } else {
+                    // 采集类任务回队续跑（与"排队等待设备上线"语义一致）。
+                    store.markTaskResume(cur.getTaskId());
+                    store.updateTask(cur.getTaskId(), "queued", null, "会话中断(" + reason + ")，待续跑", null);
+                    // 回队后立刻反踢续跑，不等下一轮周期上报（大树 99 次上限要多个会话接力）
+                    connectionRequestService.wakeWithRetry(s.getSn(), s.getConnectionRequestUrl(), null, null);
+                }
+            }
+            store.saveDeviceParams(s.getSn(), s.getData().all(), s.getData().dirtyPaths(),
+                    s.getData().isFullSync(), s.getData().tombstones());
+            // 先用本会话内存树识别（不等读库），认不出再走落库树 + 必要时排探测
+            if (modelProfileService.detectIspFromPaths(s.getSn(), s.getData().all().keySet()) == null) {
+                modelProfileService.detectIspAfterSession(s.getSn());
+            }
+            refreshSnapshot(s);
+        } catch (Exception e) {
+            Logs.error(Logs.Module.CPE, "会话收尾异常（会话已终止，残留任务由兜底回队）", e,
+                    "sn", s.getSn(), "原因", reason);
+        } finally {
+            registry.remove(s);
+            lifecycle.remove(s.getSn(), s.getSessionId());
         }
-        store.saveDeviceParams(s.getSn(), s.getData().all(), s.getData().dirtyPaths(), s.getData().isFullSync());
-        // 先用本会话内存树识别（不等读库），认不出再走落库树 + 必要时排探测
-        if (modelProfileService.detectIspFromPaths(s.getSn(), s.getData().all().keySet()) == null) {
-            modelProfileService.detectIspAfterSession(s.getSn());
-        }
-        refreshSnapshot(s);
-        registry.remove(s);
         Logs.info(Logs.Module.CPE, "会话结束", "sn", s.getSn(), "原因", reason,
                 "RPC数", s.getRpcCount(), "参数数", s.getData().all().size());
     }
@@ -535,8 +830,12 @@ public class CwmpService {
         }
         try {
             String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
-            Map<String, Object> snap = snapshotService.snapshot(store.findDevice(s.getSn()),
-                    s.getData(), root, "success", null);
+            Map<String, Object> device = infoCache.get(s.getSn());
+            if (device == null) {
+                device = store.findDevice(s.getSn());
+                infoCache.put(s.getSn(), device);
+            }
+            Map<String, Object> snap = snapshotService.snapshot(device, s.getData(), root, "success", null);
             String json = snapshotService.toJson(snap);
             if (json == null) {
                 return;
@@ -551,23 +850,69 @@ public class CwmpService {
         }
     }
 
-    /** 定时巡检：超时会话收尾、卡死任务判死、超时未上报的设备翻离线 */
+    /** 定时巡检兜底（Redis 过期事件为主、这里为辅）： */
     @Scheduled(fixedDelay = 10_000)
     public void sweep() {
-        long timeout = props.getSessionTimeoutSeconds() * 1000L;
+        long defaultTimeout = props.getSessionTimeoutSeconds() * 1000L;
         for (CwmpSession s : List.copyOf(registry.allBySn().values())) {
-            if (s.expired(timeout)) {
-                endSession(s, "会话超时");
+            // 设备声明过 SessionTimeout 的会话用自己的口径
+            long timeout = s.effectiveTimeout(defaultTimeout);
+            if (!s.expired(timeout)) {
+                continue;
+            }
+            try {
+                locked(s.getSn(), () -> {
+                    CwmpSession cur = registry.bySn(s.getSn());
+                    if (cur == s && cur.expired(cur.effectiveTimeout(defaultTimeout))) {
+                        endSession(cur, "会话空闲超时");
+                    }
+                    return null;
+                });
+            } catch (Exception e) {
+                Logs.error(Logs.Module.CPE, "会话超时收尾异常", e, "sn", s.getSn());
             }
         }
-        store.failStaleRunningTasks(props.getCollectTimeoutSeconds() * 1000L + 120_000L);
-        store.markOfflineStale(System.currentTimeMillis() - OFFLINE_AFTER_MS);
+        // 卡死任务回队兜底：排除活会话正在执行的任务——接力跑的大任务 started_at 不刷新，
+        try {
+            store.failStaleRunningTasks(props.getCollectTimeoutSeconds() * 1000L + 120_000L,
+                    registry.runningTaskIds());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.CPE, "卡死任务回队异常", e);
+        }
+        try {
+            store.markOfflineStale(System.currentTimeMillis() - OFFLINE_AFTER_MS);
+        } catch (Exception e) {
+            Logs.error(Logs.Module.CPE, "离线标记异常", e);
+        }
+        // CR 唤醒标记过期清理：设备一直不上线时防条目滞留
+        registry.sweepExpiredKicks();
+    }
+
+    /** Redis 会话 TTL 过期回调（SessionExpiryListener）入口：按 sn 就地收尾 */
+    public void endSessionBySn(String sn, String reason) {
+        CwmpSession s = registry.bySn(sn);
+        if (s == null) {
+            return;
+        }
+        locked(sn, () -> {
+            CwmpSession cur = registry.bySn(sn);
+            // 双重确认：事件到达时设备可能刚恢复活动（TTL 已被续期），只收尾确实空闲的会话
+            if (cur == s && cur.expired(cur.effectiveTimeout(props.getSessionTimeoutSeconds() * 1000L))) {
+                endSession(cur, reason);
+            }
+            return null;
+        });
     }
 
     // ==================== 供 REST 层调用 ====================
 
     public CwmpSession findSessionBySn(String sn) {
         return registry.bySn(sn);
+    }
+
+    /** REST 建任务入队用的 per-SN 锁（与会话处理同锁，消除入队/取任务的竞态） */
+    public ReentrantLock lockFor(String sn) {
+        return registry.lockFor(sn);
     }
 
     private String sessionRpcId(CwmpSession s) {

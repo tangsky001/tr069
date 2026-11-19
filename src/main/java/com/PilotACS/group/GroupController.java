@@ -7,6 +7,7 @@
 package com.PilotACS.group;
 
 import com.PilotACS.common.result.Result;
+import com.PilotACS.common.security.RequiresPermission;
 import com.PilotACS.common.security.UserContext;
 import com.PilotACS.group.model.GroupAttachRequest;
 import com.PilotACS.group.model.GroupCreateRequest;
@@ -29,14 +30,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * 分组管理：分组树骨架来自 civilCode.csv（省→市→区县自动存在），
- * 自定义节点挂靠在区划或自定义父节点下；设备归属关系在 res_group_member 表（添加设备时落组）。
- */
+/** 分组管理：分组树骨架来自 civilCode.csv（省→市→区县自动存在）， */
 @Tag(name = "分组管理", description = "区划骨架分组树（civilCode.csv）、自定义子分组（创建/重命名/删除）、组内设备台账")
 @RestController
 @RequestMapping("/group")
 @RequiredArgsConstructor
+@RequiresPermission("group:view")
 public class GroupController {
 
     private final GroupService groupService;
@@ -66,6 +65,7 @@ public class GroupController {
     /** 创建分组（落库）：选区划（层级必须衔接）或自定义名称；OLT/ONU 各自的树 */
     @Operation(summary = "创建分组：父节点下落库；选区划（与父节点层级衔接）或自定义名称；memberType=OLT/ONU（默认 OLT）")
     @PostMapping("/create")
+    @RequiresPermission("group:update")
     public Result<Void> create(@RequestBody GroupCreateRequest request, HttpServletRequest httpRequest) {
         String error = groupService.create(request.getParentRef(), request.getCivilCode(),
                 request.getName(), operator(httpRequest), request.getMemberType());
@@ -75,6 +75,7 @@ public class GroupController {
     /** 重命名自定义分组 */
     @Operation(summary = "重命名自定义分组（区划节点不可改名）；memberType=OLT/ONU（默认 OLT）")
     @PostMapping("/rename")
+    @RequiresPermission("group:update")
     public Result<Void> rename(@RequestBody GroupRenameRequest request) {
         Long id = parseGroupId(request.getId());
         String error = id == null ? "分组不存在" : groupService.rename(id, request.getName(), request.getMemberType());
@@ -84,6 +85,7 @@ public class GroupController {
     /** 删除自定义分组：无下级且无绑定成员才允许 */
     @Operation(summary = "删除自定义分组：有子分组或绑定成员时拒绝；区划节点不可删除；memberType=OLT/ONU（默认 OLT）")
     @PostMapping("/delete")
+    @RequiresPermission("group:update")
     public Result<Void> delete(@RequestBody GroupDeleteRequest request) {
         String error = groupService.delete(request.getId(), request.getMemberType());
         return error == null ? Result.ok() : Result.fail(error);
@@ -101,6 +103,7 @@ public class GroupController {
     /** 移动设备到目标分组：换分组直接改归属；ROOT = 移回根节点 */
     @Operation(summary = "移动设备到目标分组（ROOT=移回根节点），无需先解绑")
     @PostMapping("/move")
+    @RequiresPermission("group:update")
     public Result<Void> move(@RequestBody GroupMoveRequest request, HttpServletRequest httpRequest) {
         String error = groupService.move(request.getNodeRef(), request.getOltId(), operator(httpRequest));
         return error == null ? Result.ok() : Result.fail(error);
@@ -109,6 +112,7 @@ public class GroupController {
     /** 通用归属：光猫等设备模块接入时调用；groupRef 空/ROOT=根节点（不写归属关系） */
     @Operation(summary = "通用归属落库（光猫等设备模块接入用）：memberType=OLT/ONU，memberRef=设备业务标识")
     @PostMapping("/attach")
+    @RequiresPermission("group:update")
     public Result<Void> attach(@RequestBody GroupAttachRequest request) {
         String error = groupService.attach(request.getMemberType(), request.getMemberRef(),
                 request.getMemberLabel(), request.getGroupRef());
@@ -118,6 +122,7 @@ public class GroupController {
     /** 通用移动：光猫等设备模块接入时调用；ROOT = 移回根节点 */
     @Operation(summary = "通用移动（光猫等设备模块接入用）：memberType=OLT/ONU，memberRef=设备业务标识")
     @PostMapping("/move-member")
+    @RequiresPermission("group:update")
     public Result<Void> moveMember(@RequestBody GroupAttachRequest request, HttpServletRequest httpRequest) {
         String error = groupService.moveMember(request.getGroupRef(), request.getMemberType(),
                 request.getMemberRef(), operator(httpRequest));

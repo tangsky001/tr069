@@ -39,10 +39,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * 分组管理服务：默认只有固定根节点「资源根组」，分组节点逐级手动创建落库。
-
- */
+/** 分组管理服务：默认只有固定根节点「资源根组」，分组节点逐级手动创建落库。 */
 @Service
 @RequiredArgsConstructor
 public class GroupService {
@@ -68,10 +65,7 @@ public class GroupService {
     private final DeviceAclService deviceAclService;
     private final SysOperLogService operLogService;
 
-    /**
-     * 分组树：根节点 + 已落库的分组节点（区划节点只有创建过才出现）。
-     * memberType 决定落到哪套表（OLT/ONU 各一棵树）；null 默认 OLT。
-     */
+    /** 分组树：根节点 + 已落库的分组节点（区划节点只有创建过才出现）。 */
     public List<GroupNodeView> tree() {
         return tree(MEMBER_TYPE_OLT);
     }
@@ -86,10 +80,7 @@ public class GroupService {
     /** 地图上无设备的省统一用的中性灰 */
     private static final String PROVINCE_EMPTY_COLOR = "#eef1f6";
 
-    /**
-     * 省份地图汇总：以区划骨架的 34 省为全集（没建过分组的省也要下发颜色，否则地图整幅灰白），
-
-     */
+    /** 省份地图汇总：以区划骨架的 34 省为全集（没建过分组的省也要下发颜色，否则地图整幅灰白）， */
     public ProvinceMapVO provinceMap(String memberType) {
         String type = normalizeMemberType(memberType);
         List<GroupNodeView> tree = GroupScopeContext.with(type, () -> doTree(type));
@@ -125,10 +116,7 @@ public class GroupService {
         return vo;
     }
 
-    /**
-     * 无设备省份的随机观感底色：色相按黄金角（137.5°）散开——相邻省色相必然差得远，
-
-     */
+    /** 无设备省份的随机观感底色：色相按黄金角（137.5°）散开——相邻省色相必然差得远， */
     private static String pastelOf(int index, String name) {
         int seed = index * 31 + (name == null ? 0 : name.hashCode());
         int hue = (int) Math.round((index * 137.508 + Math.floorMod(seed, 17)) % 360);
@@ -315,10 +303,7 @@ public class GroupService {
         return brief;
     }
 
-    /**
-     * 建组候选：某节点下一级可选的区划列表。
-     * 根节点 → 34 个省份；省节点 → 市；市节点 → 区县；区县/自定义节点 → 无候选（只能手输名称）。
-     */
+    /** 建组候选：某节点下一级可选的区划列表。 */
     public List<GroupNodeView> candidates(String parentRef) {
         return candidates(parentRef, MEMBER_TYPE_OLT);
     }
@@ -427,10 +412,7 @@ public class GroupService {
         return String.join(" / ", names);
     }
 
-    /**
-     * 某节点的组内成员，按绑定时间倒序；根节点返回未绑定设备。
-     * OLT：join 实时台账出状态文案；ONU：光猫模块未接入，直接出归属记录快照（状态未知）。
-     */
+    /** 某节点的组内成员，按绑定时间倒序；根节点返回未绑定设备。 */
     public List<GroupMemberView> members(String nodeRef) {
         return members(nodeRef, MEMBER_TYPE_OLT);
     }
@@ -622,11 +604,7 @@ public class GroupService {
         return row;
     }
 
-    /**
-     * 创建分组（落库）：parentRef 指向父节点（null=根节点下）。
-     * 选了区划（civilCode）必须与父节点区划层级衔接（省下选市、市下选区县），
-     * 名称缺省用区划名；不选区划则按自定义名称建组。
-     */
+    /** 创建分组（落库）：parentRef 指向父节点（null=根节点下）。 */
     public String create(String parentRef, String civilCode, String name, String operator) {
         return create(parentRef, civilCode, name, operator, MEMBER_TYPE_OLT);
     }
@@ -755,10 +733,7 @@ public class GroupService {
         return null;
     }
 
-    /**
-     * 设备添加即落组：OltService 新增 OLT 时调用。
-     * groupRef 为空或 ROOT = 挂在根节点（不写归属关系）；其余必须是已落库分组节点。
-     */
+    /** 设备添加即落组：OltService 新增 OLT 时调用。 */
     public String attachAfterCreate(String groupRef, Long oltId, String label) {
         return GroupScopeContext.with(MEMBER_TYPE_OLT, () -> doAttachAfterCreate(groupRef, oltId, label));
     }
@@ -781,10 +756,7 @@ public class GroupService {
         return null;
     }
 
-    /**
-     * 通用归属落库：光猫等设备模块接入时调用。
-     * memberRef = 设备业务标识（ONU 为光猫 SN）；groupRef 空/ROOT = 根节点（不写归属关系）。
-     */
+    /** 通用归属落库：光猫等设备模块接入时调用。 */
     public String attach(String memberType, String memberRef, String label, String groupRef) {
         String type = normalizeMemberType(memberType);
         return GroupScopeContext.with(type, () -> doAttach(type, memberRef, label, groupRef));
@@ -818,10 +790,7 @@ public class GroupService {
         return null;
     }
 
-    /**
-     * 移动设备到目标分组：ROOT = 移回根节点（删除归属关系）。
-     * 与旧"绑定"不同：换分组直接改归属，不需要先解绑。
-     */
+    /** 移动设备到目标分组：ROOT = 移回根节点（删除归属关系）。 */
     public String move(String targetRef, Long oltId, String operator) {
         return GroupScopeContext.with(MEMBER_TYPE_OLT, () -> doMove(targetRef, oltId, operator));
     }
@@ -872,10 +841,7 @@ public class GroupService {
         return null;
     }
 
-    /**
-     * 通用移动：光猫等设备模块接入时调用。
-     * memberRef = 设备业务标识（ONU 为光猫 SN）；ROOT = 移回根节点（删归属关系）。
-     */
+    /** 通用移动：光猫等设备模块接入时调用。 */
     public String moveMember(String targetRef, String memberType, String memberRef, String operator) {
         String type = normalizeMemberType(memberType);
         return GroupScopeContext.with(type, () -> doMoveMember(targetRef, type, memberRef, operator));

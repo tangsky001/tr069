@@ -40,9 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 设备管理接口（前端 web/src/api/device.js）
- */
+/** 设备管理接口（前端 web/src/api/device.js） */
 @RestController
 @RequestMapping("/device")
 @RequiredArgsConstructor
@@ -209,6 +207,7 @@ public class DeviceController {
 
     @GetMapping("/{sn}/status")
     public Result<Map<String, Object>> status(@PathVariable String sn) {
+        requireOnu(sn, "view");
         Map<String, Object> row;
         try {
             row = store.findDevice(sn);
@@ -277,6 +276,10 @@ public class DeviceController {
     @GetMapping("/tasks/active")
     public Result<Map<String, Object>> activeTasks(@RequestParam(required = false) String sns) {
         List<String> list = sns == null || sns.isBlank() ? List.of() : Arrays.asList(sns.split(","));
+        // 逐台 ACL：防绕过资源组隔离枚举任意 SN 的任务
+        for (String sn : list) {
+            requireOnu(sn, "view");
+        }
         Map<String, List<Map<String, Object>>> grouped = store.activeTasksBySn(list);
         Map<String, Object> out = new LinkedHashMap<>();
         for (String sn : list) {
@@ -415,12 +418,24 @@ public class DeviceController {
         if (!(items instanceof List<?> list) || list.isEmpty()) {
             throw new BusinessException(400, "items 不能为空");
         }
+        // 后端统一校验/归一：参数名缺失直接 400（此前 Map.of 遇 null NPE 500 整批失败），
         List<Map<String, Object>> values = new ArrayList<>();
         for (Object o : list) {
-            if (o instanceof Map<?, ?> m) {
-                values.add(Map.of("name", str(m.get("name")), "value", str(m.get("value")),
-                        "type", m.get("type") == null ? "string" : str(m.get("type"))));
+            if (!(o instanceof Map<?, ?> m)) {
+                continue;
             }
+            String name = str(m.get("name"));
+            if (name == null || name.isBlank()) {
+                throw new BusinessException(400, "items 存在缺少 name 的条目");
+            }
+            Map<String, Object> nv = new LinkedHashMap<>();
+            nv.put("name", name);
+            nv.put("value", m.get("value") == null ? "" : str(m.get("value")));
+            nv.put("type", m.get("type") == null ? "string" : str(m.get("type")));
+            values.add(nv);
+        }
+        if (values.isEmpty()) {
+            throw new BusinessException(400, "items 无有效条目");
         }
         taskService.createTask(sn, "SetParameterValues", Map.of("values", values), "console");
         return Result.ok();
@@ -504,7 +519,6 @@ public class DeviceController {
                                                  @RequestBody Map<String, Object> declared) {
         requireOnu(sn, "operate");
         // 参数树已采全（与 ModelProfileService.FULL_TREE_MIN_PARAMS 同口径）：直接用库里树比对，
-        // 不打扰设备——全树探测每台设备只值得做一次，重复测试零 RPC 秒回
         Map<String, CpeParam> stored = store.loadParams(sn);
         if (stored.size() >= 100) {
             DeviceData data = new DeviceData();

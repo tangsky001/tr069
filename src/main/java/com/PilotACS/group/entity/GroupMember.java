@@ -14,15 +14,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 分组成员绑定关系：把设备挂到某个分组节点上。
- *
- * <p>分组节点用 group_ref 统一引用：{@code ROOT} = 固定根（资源根组），
- * {@code G:5} = 自定义分组（res_group.id）。
- * member_type 区分设备体系：{@code OLT} = OLT 台账（member_id = olt_device.id），
- * {@code ONU} = 光猫（member_ref = 光猫业务标识，如 SN；member_id 恒 0），
- * 光猫设备模块接入前归属关系先行落库。</p>
- */
+/** 分组成员绑定关系：把设备挂到某个分组节点上。 */
 @Data
 @TableName("res_group_member")
 @Schema(description = "分组成员绑定关系")

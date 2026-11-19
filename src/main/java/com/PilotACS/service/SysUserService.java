@@ -98,7 +98,7 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
         user.setStatus(1);
         String salt = PasswordUtil.randomSalt();
         user.setSalt(salt);
-        user.setPassword(PasswordUtil.encrypt(dto.getPassword(), salt));
+        user.setPassword(PasswordUtil.hash(dto.getPassword(), salt));
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         this.save(user);
@@ -159,14 +159,14 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
             }
             LoginUser op = operator;
             SysUser opUser = getById(op == null ? id : op.getUserId());
-            if (opUser == null || !PasswordUtil.encrypt(dto.getCurrentPassword(), opUser.getSalt()).equals(opUser.getPassword())) {
+            if (opUser == null || !PasswordUtil.verify(dto.getCurrentPassword(), opUser.getSalt(), opUser.getPassword())) {
                 throw new BusinessException("当前密码错误");
             }
             SysUser upd = new SysUser();
             upd.setId(id);
             String salt = PasswordUtil.randomSalt();
             upd.setSalt(salt);
-            upd.setPassword(PasswordUtil.encrypt(dto.getPassword(), salt));
+            upd.setPassword(PasswordUtil.hash(dto.getPassword(), salt));
             upd.setUpdatedAt(LocalDateTime.now());
             this.updateById(upd);
             operLogService.log("用户", "修改密码", "账号=" + target.getUsername());

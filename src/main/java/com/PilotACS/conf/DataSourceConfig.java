@@ -19,21 +19,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 
-/**
- * MySQL 主库显式声明（@Primary）。
- * <p>背景：cpe 模块引入第二个 DataSource（SQLite template.pack）后，
- * Spring Boot 的 DataSource/JdbcTemplate/事务自动配置会因
- * ConditionalOnMissingBean / ConditionalOnSingleCandidate 全部失效，
- * 必须在这里按原 auto-config 的语义显式补上主库三件套。
- */
+/** MySQL 主库显式声明（@Primary）。 */
 @Configuration
 public class DataSourceConfig {
 
-    /**
-     * MySQL 主库连接池（Hikari），标注 @Primary：MyBatis-Plus/JdbcTemplate/事务都用它。
-     * DataSourceProperties 用 auto-config 注册的那份（@EnableConfigurationProperties 无条件注册），
-     * 这里不要再手写，否则同名 bean 冲突。
-     */
+    /** MySQL 主库连接池（Hikari），标注 @Primary：MyBatis-Plus/JdbcTemplate/事务都用它。 */
     @Bean
     @Primary
     @ConfigurationProperties("spring.datasource.hikari")

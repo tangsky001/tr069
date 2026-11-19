@@ -57,7 +57,6 @@ public class HsgqGponOltProfile extends HsgqOltProfile {
     @Override
     public boolean matches(String output) {
         // 只认鸿升光自己的记号：横幅 "Neutral GPON OLT Operating System"、型号 Neutral-G16 / HSGQ-G08。
-        // 不能只凭 "gpon"——别家 GPON 也会打这个词，认错了整页界面和命令都是错的
         return containsAny(output, "neutral", "hsgq-g");
     }
 

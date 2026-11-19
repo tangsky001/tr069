@@ -8,9 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * 工单两张表自动补建（MySQL，DDL 与 sql/mysql.sql 保持一致，老库无感升级）。
- */
+/** 工单两张表自动补建（MySQL，DDL 与 sql/mysql.sql 保持一致，老库无感升级）。 */
 @Component
 @RequiredArgsConstructor
 public class WorklistSchemaInitializer implements InitializingBean {

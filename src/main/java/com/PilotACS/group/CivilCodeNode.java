@@ -12,12 +12,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * 行政区划节点（civilCode.csv 一行）。
- *
- * <p>编号沿用国标层级：省 2 位（11）、市 2+2 位（1101）、区县 2+2+2 位（110101），
- * 上级编号把三级行政区串成树，分组管理直接拿它当分组树的骨架。</p>
- */
+/** 行政区划节点（civilCode.csv 一行）。 */
 @Data
 public class CivilCodeNode {
 

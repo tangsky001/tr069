@@ -14,10 +14,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/**
- * MyBatis-Plus 插件：动态表名（OLT/ONU 分组表域）+ 分页。
- * 动态表名拦截器必须放在分页拦截器之前，分页生成的 count 语句才能拿到同一张物理表。
- */
+/** MyBatis-Plus 插件：动态表名（OLT/ONU 分组表域）+ 分页。 */
 @Configuration
 public class MybatisPlusConfig {
 

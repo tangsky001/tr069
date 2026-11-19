@@ -8,6 +8,7 @@ package com.PilotACS.controller;
 
 import com.PilotACS.common.log.Logs;
 import com.PilotACS.common.result.Result;
+import com.PilotACS.common.security.RequiresPermission;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,21 +34,18 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * 在线升级：检查版本 → 多线程下载 → 确认重启 / 取消回滚
- *
- * <p>升级服务器复用统计上报的 hserver（total.i-ddns.com:11236），
- * 查询时带 serverId=acs 区分体系。
- *
- * <p>JAR 包名与 pom.xml finalName 一致。
- */
+/** 在线升级：检查版本 → 多线程下载 → 确认重启 / 取消回滚 */
 @RestController
 @RequestMapping("/upgrade")
 @Tag(name = "固件升级", description = "OLT/HGU 固件包上传、下发与升级进度")
+@RequiresPermission("upgrade:view")
 public class UpgradeController {
 
     /** hserver 地址（与统计上报一致） */
     private static final String UPGRADE_SERVER_BASE = "http://total.i-ddns.com:11236";
+
+    /** 分片下载整体驻留内存，体积上限防堆内存被打爆 */
+    private static final long MAX_DOWNLOAD_SIZE = 512L * 1024 * 1024;
 
     /** ACS 的服务端标识 */
     private static final String SERVER_ID = "acs";
@@ -69,9 +67,7 @@ public class UpgradeController {
             .version(HttpClient.Version.HTTP_1_1)
             .build();
 
-    /**
-     * 检查是否有可升级的版本
-     */
+    /** 检查是否有可升级的版本 */
     @GetMapping("/check")
     public Result<Map<String, Object>> check() {
         Map<String, Object> data = new LinkedHashMap<>();
@@ -110,15 +106,22 @@ public class UpgradeController {
         return Result.ok(data);
     }
 
-    /**
-     * 触发后台异步多线程下载升级包
-     */
+    /** 触发后台异步多线程下载升级包 */
     @PostMapping("/download")
+    @RequiresPermission("upgrade:update")
     public Result<Map<String, Object>> startDownload(
             @RequestParam("downloadUrl") String downloadUrl,
             @RequestParam(value = "fileSize", defaultValue = "0") long fileSize) {
 
         Map<String, Object> data = new LinkedHashMap<>();
+        // URL 白名单：downloadUrl 直接创建 HTTP 连接并覆写本服务运行文件，
+        String allowedPrefix = UPGRADE_SERVER_BASE + "/api/version/download/";
+        if (downloadUrl == null || !downloadUrl.startsWith(allowedPrefix)) {
+            return Result.fail("downloadUrl 非法：仅允许升级服务器地址 " + allowedPrefix);
+        }
+        if (fileSize < 0 || fileSize > MAX_DOWNLOAD_SIZE) {
+            return Result.fail("fileSize 超限：最大支持 " + (MAX_DOWNLOAD_SIZE / 1024 / 1024) + "MB");
+        }
         if ("running".equals(DOWNLOAD_STATUS)) {
             data.put("success", false);
             data.put("message", "下载任务正在进行中，请勿重复触发");
@@ -205,9 +208,7 @@ public class UpgradeController {
         return Result.ok(data);
     }
 
-    /**
-     * 下载一个分片
-     */
+    /** 下载一个分片 */
     private byte[] downloadChunk(String url, long start, long end) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -231,9 +232,7 @@ public class UpgradeController {
         }
     }
 
-    /**
-     * 查询后台下载进度
-     */
+    /** 查询后台下载进度 */
     @GetMapping("/progress")
     public Result<Map<String, Object>> progress() {
         Map<String, Object> data = new LinkedHashMap<>();
@@ -250,10 +249,9 @@ public class UpgradeController {
         return Result.ok(data);
     }
 
-    /**
-     * 手动上传 JAR 包升级
-     */
+    /** 手动上传 JAR 包升级 */
     @PostMapping("/upload")
+    @RequiresPermission("upgrade:update")
     public Result<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) {
         Map<String, Object> data = new LinkedHashMap<>();
         if (file == null || file.isEmpty()) {
@@ -287,10 +285,9 @@ public class UpgradeController {
         return Result.ok(data);
     }
 
-    /**
-     * 取消升级并回滚备份
-     */
+    /** 取消升级并回滚备份 */
     @PostMapping("/cancel")
+    @RequiresPermission("upgrade:update")
     public Result<Map<String, Object>> cancel() {
         DOWNLOAD_STATUS = "idle";
         DOWNLOAD_ERROR = "";
@@ -304,10 +301,9 @@ public class UpgradeController {
         return Result.ok(data);
     }
 
-    /**
-     * 确认升级：退出进程（由外部守护进程/脚本用新 jar 重启）
-     */
+    /** 确认升级：退出进程（由外部守护进程/脚本用新 jar 重启） */
     @PostMapping("/restart")
+    @RequiresPermission("upgrade:update")
     public Result<Map<String, Object>> restart() {
         String jarPath = jarPath();
         if (!new File(jarPath).exists()) {

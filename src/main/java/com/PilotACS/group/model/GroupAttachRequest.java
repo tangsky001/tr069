@@ -9,11 +9,7 @@ package com.PilotACS.group.model;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
-/**
- * 通用归属/移动请求（光猫等设备模块接入分组时用）。
- * attach：groupRef + memberType + memberRef（+label）；
- * move-member：groupRef 当作目标节点（ROOT=移回根节点）+ memberType + memberRef。
- */
+/** 通用归属/移动请求（光猫等设备模块接入分组时用）。 */
 @Data
 @Schema(description = "通用归属/移动请求")
 public class GroupAttachRequest {

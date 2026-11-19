@@ -13,10 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 分组树节点：固定根节点（kind=root）+ 已落库分组节点（kind=group，可选区划）。
- * 另复用为「建组候选」行（kind=civil，仅 code/name/level 有值）。
- */
+/** 分组树节点：固定根节点（kind=root）+ 已落库分组节点（kind=group，可选区划）。 */
 @Data
 @Schema(description = "分组树节点 / 建组候选行")
 public class GroupNodeView {

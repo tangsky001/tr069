@@ -13,12 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
 
-/**
- * OLT 设备密码对称加密：AES-GCM。
- * <p>
- * 密文以 "enc:" 前缀标识，没有前缀的按明文处理（兼容存量数据）。
- * 密钥从环境变量 {@code ACS_OLT_CRYPTO_KEY} 读取，默认用内置密钥（仅用于开发环境）。
- */
+/** OLT 设备密码对称加密：AES-GCM。 */
 public final class OltCrypto {
 
     private static final String PREFIX = "enc:";

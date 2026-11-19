@@ -8,10 +8,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 配置意图模板：只描述「要开通成什么样」的意图（IP 协议 / VLAN / 绑定端口等），
- * 不含任何型号参数路径；下发时由意图下发服务按设备数据模型翻译成真实 CWMP 参数。
- */
+/** 配置意图模板：只描述「要开通成什么样」的意图（IP 协议 / VLAN / 绑定端口等）， */
 @Data
 @TableName("config_template")
 @Schema(description = "配置意图模板：意图字段以 JSON 存档，下发时按机型翻译")
