@@ -75,6 +75,9 @@ public class CpeProperties {
     /** 设备档案缓存 cpe:info:{sn} 的 TTL（秒），低频更新，避免每次 Inform 查 MySQL */
     private int deviceInfoTtlSeconds = 600;
 
+    /** 参数树缓存 cpe:params:tree:{sn} 的 TTL（秒），落库时主动失效，TTL 只作兜底 */
+    private int paramTreeTtlSeconds = 600;
+
     /** Redis 派发队列 tr069:queue:rpc 的长度上限（LTRIM 裁剪，防堆积无限膨胀） */
     private int taskQueueMaxSize = 10000;
 

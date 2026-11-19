@@ -52,14 +52,13 @@ public final class SoapBuilder {
     public static String request(RpcRequest r) {
         StringBuilder sb = new StringBuilder();
         sb.append(ENVELOPE_OPEN).append(header(r.getId())).append("<soap-env:Body>");
-        switch (r.getKind()) {
-            case GPN -> sb.append(gpn(r));
+        switch (r.getKind()) {            case GPN -> sb.append(gpn(r));
             case GPV -> sb.append(gpv(r));
             case SPV -> sb.append(spv(r));
-            case ADD_OBJECT -> sb.append("<cwmp:AddObject><ObjectName>").append(esc(r.getPath()))
+            case ADD_OBJECT -> sb.append("<cwmp:AddObject><ObjectName>").append(esc(objectName(r.getPath())))
                     .append("</ObjectName><ParameterKey>").append(esc(r.taskKey()))
                     .append("</ParameterKey></cwmp:AddObject>");
-            case DELETE_OBJECT -> sb.append("<cwmp:DeleteObject><ObjectName>").append(esc(r.getPath()))
+            case DELETE_OBJECT -> sb.append("<cwmp:DeleteObject><ObjectName>").append(esc(objectName(r.getPath())))
                     .append("</ObjectName><ParameterKey>").append(esc(r.taskKey()))
                     .append("</ParameterKey></cwmp:DeleteObject>");
             case REBOOT -> sb.append("<cwmp:Reboot><CommandKey>").append(esc(r.taskKey()))
@@ -94,6 +93,13 @@ public final class SoapBuilder {
                 + "<soap-env:Body><cwmp:TransferCompleteResponse/>" + "</soap-env:Body></soap-env:Envelope>";
     }
 
+    /** AutonomousTransferCompleteResponse（Table 44/45，无参数；Table 5 标注 ACS Responding REQUIRED） */
+    public static String autonomousTransferCompleteResponse(String id) {
+        return ENVELOPE_OPEN
+                + header(id)
+                + "<soap-env:Body><cwmp:AutonomousTransferCompleteResponse/></soap-env:Body></soap-env:Envelope>";
+    }
+
     /** ACS 侧 Fault 响应（如设备在错误状态下发了不允许的 RPC） */
     public static String acsFault(int code, String message) {
         return ENVELOPE_OPEN
@@ -106,6 +112,17 @@ public final class SoapBuilder {
     }
 
     // ---------------- 内部拼装 ----------------
+
+    /**
+     * AddObject/DeleteObject 的 ObjectName 规范要求以 "." 结尾（对象路径）；
+     * 调用方手工拼接的路径容易漏尾点（如 WANIPConnection.1），设备会回 9003 Invalid arguments。
+     */
+    private static String objectName(String path) {
+        if (path == null || path.isBlank()) {
+            return path;
+        }
+        return path.endsWith(".") ? path : path + ".";
+    }
 
     private static String header(String id) {
         return "<soap-env:Header><cwmp:ID soap-env:mustUnderstand=\"1\">" + esc(id) + "</cwmp:ID></soap-env:Header>";

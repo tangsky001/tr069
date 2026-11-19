@@ -60,6 +60,8 @@ public class SoapMessage {
     private boolean noMoreRequests;
     /** 设备声明的会话超时（秒，0=未声明，用 ACS 默认） */
     private long sessionTimeoutSeconds;
+    /** Inform 里设备声明的 HoldRequests：收到 ACS 应答前暂缓新请求（观测用，ACS 无需动作） */
+    private boolean holdRequests;
 
     // ---- Fault ----
     private boolean fault;

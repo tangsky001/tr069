@@ -6,6 +6,8 @@
 
 package com.PilotACS.olt.util;
 
+import com.PilotACS.common.log.Logs;
+
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -28,9 +30,16 @@ public final class OltCrypto {
 
     static {
         String envKey = System.getenv("ACS_OLT_CRYPTO_KEY");
-        byte[] raw = envKey != null && envKey.length() == 16
-                ? envKey.getBytes(StandardCharsets.UTF_8)
-                : DEFAULT_KEY;
+        byte[] raw;
+        if (envKey != null && envKey.length() == 16) {
+            raw = envKey.getBytes(StandardCharsets.UTF_8);
+        } else {
+            // 存量数据用默认密钥加密，不能直接 fail-fast（会阻断启动），
+            // 但必须把风险喊出来：生产环境务必配置 ACS_OLT_CRYPTO_KEY
+            Logs.warn(Logs.Module.OLT, "未配置 ACS_OLT_CRYPTO_KEY（16 字符），使用内置默认密钥——"
+                    + "生产环境必须配置，否则库中加密口令形同明文");
+            raw = DEFAULT_KEY;
+        }
         // 补齐到 16 字节（AES-128）
         if (raw.length < 16) {
             byte[] padded = new byte[16];

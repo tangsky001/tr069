@@ -432,11 +432,7 @@ public class ModelProfileService {
         }
 
         public static String of(String isp) {
-            if (isp == null || isp.isBlank()) {
-                return null;
-            }
-            IspVariant v = IspVariant.of(isp);
-            return v == null ? isp : v.label();
+            return IspVariant.text(isp);
         }
     }
 }

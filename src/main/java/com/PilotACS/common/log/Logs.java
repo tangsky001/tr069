@@ -117,12 +117,15 @@ public final class Logs {
         return '[' + module.label + "] ";
     }
 
-    // kv 两两成对：key1, value1, key2, value2 ...
+    // kv 两两成对：key1, value1, key2, value2 ...；key 为 null 的对（调用方按条件拼参的占位）跳过不输出
     private static String format(Module module, String action, Object... kv) {
         StringBuilder sb = new StringBuilder();
         sb.append('[').append(module.label).append("] ").append(action);
         if (kv != null) {
             for (int i = 0; i + 1 < kv.length; i += 2) {
+                if (kv[i] == null) {
+                    continue;
+                }
                 sb.append('，').append(kv[i]).append('=').append(kv[i + 1]);
             }
         }

@@ -57,10 +57,19 @@ public class OltOntRegTemplate {
     /** 光猫工作模式：HGU / SFU / MIX / MDU */
     private String workMode;
 
-    /** 业务 VLAN 映射；空表示沿用线路模板 */
+    /**
+     * OLT 侧业务 VLAN 映射；空表示不映射业务（不下发 native-vlan 和 service-port）。
+     * 一行一组，可多组：1 个数=透传（service-port vlan V user-vlan V）；
+     * 2 个数=光猫侧 OLT 侧（如「104 46」「4011 46」「4015 46」，每组一条 service-port
+     * translate，首组额外下发 eth1-4 native-vlan 光猫侧 VLAN）。
+     */
     private String serviceVlanMap;
 
-    /** TR069 VLAN 及 ACS 模板，如 46 10 */
+    /**
+     * 下发 TR069 VLAN 及 ACS 地址，如 46 10（TR069 管理 VLAN 46 + OLT 上 tr069-server profile-id 10）。
+     * 非空时注册成功后下发 ont tr069-server-config &lt;port&gt; &lt;ontId&gt; profile-id 10，光猫才能拿到 ACS 地址；
+     * 空 → 不下发，光猫不会来 Inform
+     */
     private String tr069Vlan;
 
     private String iptvVlan;

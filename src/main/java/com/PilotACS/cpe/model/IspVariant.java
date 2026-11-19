@@ -68,6 +68,18 @@ public enum IspVariant {
         return LOOKUP.get(raw.trim().toUpperCase());
     }
 
+    /**
+     * 短码 → 中文文案（列表/详情/工单展示统一口径，后台派生，前端不维护对照表）。
+     * 空值返回 null；不认识的码原样返回，避免丢信息。
+     */
+    public static String text(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        IspVariant v = of(raw);
+        return v == null ? raw.trim() : v.label();
+    }
+
     /** 短码/别名 → 归属短码；不认识原样返回（新入库统一走这里） */
     public static String canonical(String raw) {
         IspVariant v = of(raw);

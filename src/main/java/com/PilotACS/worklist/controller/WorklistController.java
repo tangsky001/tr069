@@ -80,7 +80,7 @@ public class WorklistController {
                         body.getActive(),
                         body.getBizTemplateId(),
                         body.getBizTemplateName()));
-        return Result.ok(created);
+        return Result.ok(Worklist.decorate(created));
     }
 
     /** 修改工单：房间号/备注/扩展属性随时可改，设备标识与工单类型仅未执行的单可改 */
@@ -89,7 +89,7 @@ public class WorklistController {
     @RequiresPermission("worklist:update")
     public Result<Worklist> update(@PathVariable Long id,
                                    @RequestBody WorklistDeliveryService.OrderUpdate body) {
-        return Result.ok(deliveryService.update(id, body));
+        return Result.ok(Worklist.decorate(deliveryService.update(id, body)));
     }
 
     /** 删除工单：执行中的单拒删 */

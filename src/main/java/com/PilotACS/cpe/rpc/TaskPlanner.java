@@ -94,6 +94,7 @@ public class TaskPlanner {
             }
             case TYPE_SPV -> {
                 List<RpcRequest.NameValue> values = nameValues(params);
+                validateSpv(values, data);
                 run.getSteps().add(new TaskRun.RpcStep(RpcRequest.spv(values, key), "apply"));
                 if (props.isSpvReadback() && !values.isEmpty()) {
                     // 回读校验（参考实现：下发后回读写下的参数确认设备实际生效值）：
@@ -171,10 +172,20 @@ public class TaskPlanner {
     }
 
     public void appendGpv(TaskRun run, List<String> names, String purpose) {
+        // 对象节点（路径以点结尾）不是可取值参数，设备必回 9003/9005；
+        // 在唯一批次入口统一挡掉 + 去重，避免探测/刷新/续跑各路径各漏一处，
+        // 也省掉"一个坏名二分拆 5 次"的无效 RPC（大树上能吃掉几十个往返）。
+        List<String> valid = names == null ? List.of() : names.stream()
+                .filter(n -> n != null && !n.isBlank() && !n.endsWith("."))
+                .distinct()
+                .toList();
+        if (valid.isEmpty()) {
+            return;
+        }
         int batch = Math.max(1, props.getGpvBatchSize());
-        for (int i = 0; i < names.size(); i += batch) {
+        for (int i = 0; i < valid.size(); i += batch) {
             run.getSteps().add(new TaskRun.RpcStep(
-                    RpcRequest.gpv(new ArrayList<>(names.subList(i, Math.min(i + batch, names.size()))),
+                    RpcRequest.gpv(new ArrayList<>(valid.subList(i, Math.min(i + batch, valid.size()))),
                             "task-" + run.getTaskId()), purpose));
         }
     }
@@ -213,18 +224,80 @@ public class TaskPlanner {
         return out;
     }
 
+    /**
+     * SPV 下发前置校验：对象节点/只读参数直接拒绝（任务组装失败即落 fail，原因可见）。
+     * writable 以 GPN 采集结果为准（Inform 自带参数不覆盖该标志）；树里没有的路径
+     * （新增实例参数等）交由设备裁决，不拦截。
+     */
+    private void validateSpv(List<RpcRequest.NameValue> values, DeviceData data) {
+        for (RpcRequest.NameValue nv : values) {
+            if (nv.name() == null || nv.name().isBlank()) {
+                throw new IllegalArgumentException("参数名不能为空");
+            }
+            CpeParam known = data.get(nv.name());
+            if (known == null) {
+                continue;
+            }
+            if (known.object()) {
+                throw new IllegalArgumentException("参数路径是对象节点，不可直接赋值: " + nv.name());
+            }
+            if (!known.writable()) {
+                throw new IllegalArgumentException("只读参数不可下发: " + nv.name());
+            }
+            checkValueType(nv, known.type());
+        }
+    }
+
+    /** 已知参数的基础类型校验（仅覆盖数值/布尔，dateTime/base64 等交由设备裁决） */
+    private void checkValueType(RpcRequest.NameValue nv, String type) {
+        if (type == null || nv.value() == null || nv.value().isBlank()) {
+            return;
+        }
+        String t = type.toLowerCase();
+        String v = nv.value().trim();
+        try {
+            switch (t) {
+                case "unsignedint" -> {
+                    long n = Long.parseLong(v);
+                    if (n < 0) {
+                        throw new NumberFormatException();
+                    }
+                }
+                case "int" -> Long.parseLong(v);
+                case "boolean" -> {
+                    if (!v.equalsIgnoreCase("true") && !v.equalsIgnoreCase("false")
+                            && !"0".equals(v) && !"1".equals(v)) {
+                        throw new IllegalArgumentException();
+                    }
+                }
+                default -> {
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("参数类型不匹配(" + type + "): " + nv.name() + " = " + v);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private List<RpcRequest.NameValue> nameValues(Map<String, Object> params) {
         List<RpcRequest.NameValue> out = new ArrayList<>();
         List<Map<String, Object>> items = (List<Map<String, Object>>) (List<?>) params.getOrDefault("values",
                 params.getOrDefault("items", List.of()));
+        // TR-069 A.3.2.1 Table 15：ParameterList 里同名参数 MUST NOT 出现两次，
+        // 否则 CPE 必须以 9003 拒绝整个 SPV（原子性：一个错全批不生效）。业务模板
+        // 多个片段拼装时容易重复，这里按名字去重（后者覆盖），顺序规范上无语义。
+        Map<String, RpcRequest.NameValue> dedup = new LinkedHashMap<>();
         for (Map<String, Object> it : items) {
-            out.add(new RpcRequest.NameValue(
-                    str(it.get("name")),
+            String name = str(it.get("name"));
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            dedup.put(name, new RpcRequest.NameValue(
+                    name,
                     it.get("value") == null ? "" : String.valueOf(it.get("value")),
                     str(it.get("type"))));
         }
-        return out;
+        return new ArrayList<>(dedup.values());
     }
 
     @SuppressWarnings("unchecked")

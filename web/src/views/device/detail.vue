@@ -34,7 +34,7 @@
         <el-col :span="8"><span class="k">产品型号</span><span class="v">{{ device.productClass || '-' }}</span></el-col>
         <el-col :span="8"><span class="k">软件版本</span><span class="v">{{ device.softwareVersion || '-' }}</span></el-col>
         <el-col :span="8"><span class="k">硬件版本</span><span class="v">{{ device.hardwareVersion || '-' }}</span></el-col>
-        <el-col :span="8"><span class="k">运营商</span><span class="v">{{ device.isp || '-' }} {{ device.ispVersion || '' }}</span></el-col>
+        <el-col :span="8"><span class="k">运营商</span><span class="v">{{ device.ispText || device.isp || '-' }} {{ device.ispVersion || '' }}</span></el-col>
         <el-col :span="8"><span class="k">设备类型</span><span class="v">{{ device.deviceType || '-' }}</span></el-col>
         <el-col :span="8"><span class="k">根节点</span><span class="v">{{ device.rootNode || '-' }}</span></el-col>
         <el-col :span="8"><span class="k">CWMP 版本</span><span class="v">{{ device.cwmpVersion || '-' }}</span></el-col>

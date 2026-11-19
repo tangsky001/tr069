@@ -32,6 +32,10 @@ public class Worklist {
 
     private String ispVersion;
 
+    /** 运营商中文文案（isp 短码由后端派生，页面不维护对照表） */
+    @TableField(exist = false)
+    private String ispText;
+
     /** 设备类型，如 ADSL_4+1 */
     private String domain;
 
@@ -170,6 +174,7 @@ public class Worklist {
         if (record == null) {
             return null;
         }
+        record.setIspText(com.PilotACS.cpe.model.IspVariant.text(record.getIsp()));
         record.setStatusText(statusTextOf(record.getStatus()));
         record.setStatusLevel(statusLevelOf(record.getStatus()));
         record.setTimeInitText(timeTextOf(record.getTimeInit()));

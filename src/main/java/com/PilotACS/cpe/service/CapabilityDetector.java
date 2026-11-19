@@ -119,23 +119,46 @@ public class CapabilityDetector {
             if (v == null || v.isBlank()) {
                 continue;
             }
-            switch (leaf) {
-                case "OperatingFrequencyBand" -> {
-                    String s = v.toLowerCase();
-                    if (s.contains("2.4") || (s.contains("2") && !s.contains("5"))) {
+            // 证据优先级（从最基础的判据往上）：
+            // 频段字段（FrequencyBand/RFBand）→ 802.11 代际（b/g/n=4、ac=5、ax=6、be=7）→ 信道 → SSID 命名
+            if (leaf.endsWith("FrequencyBand") || leaf.endsWith("FrequencyBands")) {
+                String s = v.toLowerCase();
+                if (s.contains("2.4") || (s.contains("2") && !s.contains("5"))) {
+                    bands(clear, radio).add("2.4G");
+                }
+                if (s.contains("5")) {
+                    bands(clear, radio).add("5G");
+                }
+            } else if (leaf.endsWith("RFBand")) {
+                // 厂商 RF 频段标记：X_HW_RFBand="2.4GHz"/"5GHz"，X_CMCC_RFBand="0"=2.4G/"1"=5G
+                String s = v.trim().toLowerCase();
+                if (s.startsWith("2.4") || "0".equals(s)) {
+                    bands(clear, radio).add("2.4G");
+                } else if (s.startsWith("5") || "1".equals(s)) {
+                    bands(clear, radio).add("5G");
+                }
+            } else if (leaf.endsWith("Standard") || leaf.endsWith("Standards")) {
+                // 有的设备整串报 802.11b/g/n、bgn 连写、802.11ax，先剥前缀再按代际拆
+                for (String raw : v.toLowerCase().split("[,;/、\\s]+")) {
+                    parseStandard(raw, radio, clear, ambiguous);
+                }
+            } else if (leaf.equals("Channel")) {
+                // 信道判据：1~14 在 2.4G，>14 必在 5G；0=自动不作判据
+                try {
+                    int ch = Integer.parseInt(v.trim());
+                    if (ch > 14) {
+                        bands(clear, radio).add("5G");
+                    } else if (ch >= 1) {
                         bands(clear, radio).add("2.4G");
                     }
-                    if (s.contains("5")) {
-                        bands(clear, radio).add("5G");
-                    }
+                } catch (NumberFormatException ignore) {
+                    // 非数字信道（如 Auto）不作判据
                 }
-                case "OperatingStandards", "Standard", "RadioStandard" -> {
-                    // 有的设备整串报 802.11b/g/n、bgn 连写、802.11ax，先剥前缀再按字符拆
-                    for (String raw : v.toLowerCase().split("[,;/、\\s]+")) {
-                        parseStandard(raw, radio, clear, ambiguous);
-                    }
-                }
-                default -> {
+            } else if (leaf.equals("SSID")) {
+                // SSID 命名线索：以 5G 结尾（如 ChinaNet-z533-5G、CMCC-xxx-5G）→ 该射频 5G；
+                // 其余命名不作判据（"z533" 里的 5 是编号不是频段）
+                if (v.trim().toLowerCase().endsWith("5g")) {
+                    bands(clear, radio).add("5G");
                 }
             }
         }
@@ -169,26 +192,36 @@ public class CapabilityDetector {
         return map.computeIfAbsent(radio, k -> new LinkedHashSet<>());
     }
 
-    /** 解析一个标准 token（如 bgn / an / 802.11ax）：b/g/d→2.4G、a/ac→5G、n/ax/be→双频模糊 */
+    /**
+     * 解析一个 802.11 标准 token（如 bgn / an / 11ax / be）。
+     * 按 WiFi 代际从基础往上判，不预设设备是高代际：
+     * WiFi4（b/g/d → 明确 2.4G；n → 双频模糊）→ WiFi5（a/ac → 明确 5G）→
+     * WiFi6（ax → 双频模糊）→ WiFi7（be → 双频模糊）。
+     * ax/be 单靠代际判不出频段，只记模糊证据；b/g/a/ac 是明确频段证据。
+     */
     private void parseStandard(String token, String radio,
                                Map<String, Set<String>> clear, Map<String, Set<String>> ambiguous) {
-        String t = token.replace("802.11", "").trim();
+        String t = token.replace("802.11", "").trim().toLowerCase();
         boolean fuzzy = false;
-        if (t.contains("ax") || t.contains("be")) {
-            fuzzy = true;
-            t = t.replace("ax", "").replace("be", "");
-        }
-        if (t.contains("ac")) {
-            bands(clear, radio).add("5G");
-            t = t.replace("ac", "");
-        }
-        for (char ch : t.toCharArray()) {
-            switch (ch) {
-                case 'b', 'g', 'd' -> bands(clear, radio).add("2.4G");
-                case 'a' -> bands(clear, radio).add("5G");
-                case 'n' -> fuzzy = true;
-                default -> {
+        for (int i = 0; i < t.length(); ) {
+            if (t.startsWith("ax", i)) {
+                fuzzy = true; // WiFi6
+                i += 2;
+            } else if (t.startsWith("be", i)) {
+                fuzzy = true; // WiFi7
+                i += 2;
+            } else if (t.startsWith("ac", i)) {
+                bands(clear, radio).add("5G"); // WiFi5
+                i += 2;
+            } else {
+                switch (t.charAt(i)) {
+                    case 'b', 'g', 'd' -> bands(clear, radio).add("2.4G"); // WiFi4 及以下
+                    case 'a' -> bands(clear, radio).add("5G");
+                    case 'n' -> fuzzy = true; // WiFi4：2.4G/5G 都可能
+                    default -> {
+                    }
                 }
+                i++;
             }
         }
         if (fuzzy) {
@@ -199,6 +232,10 @@ public class CapabilityDetector {
 
     /** 参数路径所属的射频实例标识，不属于任何射频返回 null */
     private String wifiRadioId(String path) {
+        // 邻居 AP 扫描子树是周边环境，不是本机射频能力，必须排除（否则邻居的 Channel/SSID 会污染判据）
+        if (path.contains("NeighborAP")) {
+            return null;
+        }
         Matcher m = WIFI_TR098.matcher(path);
         if (m.find()) {
             return "t98:" + m.group(1) + '.' + m.group(2);
@@ -275,7 +312,8 @@ public class CapabilityDetector {
         // 探针记录（给前端展示探测到了哪些参数）
         addProbe(probes, "lanPortCount", findProbePath(data, LAN_IF_TR098, root), String.valueOf(dLan));
         addProbe(probes, "lanSpeedMbps", findNamed(data, "MaxBitRate"), String.valueOf(dSpeed));
-        addProbe(probes, "wifiBands", findNamed(data, "OperatingFrequencyBand", "Standard"),
+        addProbe(probes, "wifiBands", findNamed(data,
+                "OperatingFrequencyBand", "RFBand", "OperatingStandards", "Standard"),
                 String.join("+", dBands));
         addProbe(probes, "sipCount", findProbePath(data, SIP_LINE, root), String.valueOf(dSip));
 

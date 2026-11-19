@@ -139,6 +139,7 @@ public class DeviceController {
             Map<String, Object> item = camel(row);
             // 在线口径与 /device/stat 一致：台账 status 列（15 分钟没上报会被 sweep 翻成 offline）
             item.put("online", "online".equals(row.get("status")));
+            item.put("ispText", IspVariant.text(str(row.get("isp"))));
             Map<String, String> bizParams = store.loadBizParams(str(row.get("sn")));
             Map<String, Object> biz = new LinkedHashMap<>();
             String oui = str(row.get("oui"));
@@ -202,6 +203,7 @@ public class DeviceController {
         device.put("connectionRequestUrl", row.get("connection_request_url"));
         device.put("cwmpVersion", row.get("cwmp_version"));
         device.put("lastContactTime", fmtMs(row.get("last_inform_ms")));
+        device.put("ispText", IspVariant.text(str(row.get("isp"))));
         return Result.ok(Map.of("device", device, "session", sessionInfo(sn, row)));
     }
 

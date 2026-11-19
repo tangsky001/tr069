@@ -237,6 +237,30 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
         return "ont modify " + port + ' ' + ontId + " desc \"" + text + "\"";
     }
 
+    /** 注册后紧接着给 ONT 绑定 TR-069 服务器模板，光猫才能拿到 ACS 地址来 Inform。
+     *  {@code ont tr069-server-config <port> <ontid> profile-id <id>}，PON 板视图内执行。 */
+    @Override
+    public boolean supportsTr069ServerConfig() {
+        return true;
+    }
+
+    @Override
+    public String tr069ServerConfigCommand(int port, int ontId, int tr069ProfileId) {
+        return "ont tr069-server-config " + port + ' ' + ontId + " profile-id " + tr069ProfileId;
+    }
+
+    /** {@code ont port native-vlan <port> <ontid> eth <n> vlan <用户侧vlan> priority 0} */
+    @Override
+    public boolean supportsOntPortNativeVlan() {
+        return true;
+    }
+
+    @Override
+    public String ontPortNativeVlanCommand(int port, int ontId, int eth, int userVlan) {
+        return "ont port native-vlan " + port + ' ' + ontId + " eth " + eth
+                + " vlan " + userVlan + " priority 0";
+    }
+
     /** SN / MAC / LOID / PASSWORD → 设备认的认证关键字 */
     private static String ontAuthKeyword(String authMode) {
         String mode = authMode == null ? "SN" : authMode.trim().toUpperCase(Locale.ROOT);
@@ -318,6 +342,16 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
         return "service-port " + index + " vlan " + vlan + " gpon "
                 + frame + "/" + slot + "/" + port + " ont " + ontId + " gemport " + gemPort
                 + " multi-service user-vlan " + vlan + " tag-transform translate";
+    }
+
+    /** {@code service-port vlan <OLT侧> gpon f/s/p ont <id> gemport <g>
+     *   multi-service user-vlan <光猫侧> tag-transform translate}（不带 index，设备自动分配） */
+    @Override
+    public String servicePortTranslateCommand(int vlan, int frame, int slot, int port,
+                                              int ontId, int gemPort, int userVlan) {
+        return "service-port vlan " + vlan + " gpon "
+                + frame + "/" + slot + "/" + port + " ont " + ontId + " gemport " + gemPort
+                + " multi-service user-vlan " + userVlan + " tag-transform translate";
     }
 
     @Override

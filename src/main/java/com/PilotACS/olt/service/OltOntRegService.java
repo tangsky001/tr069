@@ -24,7 +24,6 @@ import com.PilotACS.olt.model.OltOntAutofind;
 import com.PilotACS.olt.model.OltOntRegisterRequest;
 import com.PilotACS.olt.model.OltOntRegisterResult;
 import com.PilotACS.olt.model.OltServicePort;
-import com.PilotACS.olt.model.VlanIdExpression;
 import com.PilotACS.olt.telnet.OltInfoParser;
 import com.PilotACS.olt.telnet.OltVendor;
 import com.PilotACS.olt.vendor.OltVendorProfile;
@@ -362,12 +361,28 @@ public class OltOntRegService {
                 continue;
             }
             commands.addAll(commandsFor(profile, fsp, template, row));
-            // 业务虚口不在预览里逐条列出：ONT ID 是 confirm 时设备现分配的，注册成功才查得到
-            List<Integer> previewVlans = serviceVlansOf(device, profile, template);
-            if (!previewVlans.isEmpty() && profile.supportsServicePorts()) {
-                commands.add("# 注册成功后按模板「" + template.getName() + "」下发业务虚口（VLAN "
-                        + previewVlans + "，ONT ID 由设备分配）");
+            // ONT ID 是 confirm 时设备现分配的，注册成功先查 ID，再整批下发注册后配置
+            StringBuilder after = new StringBuilder("# 注册成功后（ONT ID 由设备分配）");
+            Integer tr069ProfileId = tr069ProfileIdOf(template);
+            if (tr069ProfileId != null) {
+                after.append("；ont tr069-server-config ").append(fsp[2]).append(" <ontId> profile-id ")
+                        .append(tr069ProfileId);
             }
+            List<VlanPair> mappings = serviceVlanMappingsOf(template);
+            if (!mappings.isEmpty()) {
+                VlanPair first = mappings.get(0);
+                if (first.translated()) {
+                    after.append("；ont port native-vlan ").append(fsp[2]).append(" <ontId> eth 1-")
+                            .append(ONT_ETH_PORT_COUNT).append(" vlan ").append(first.userVlan());
+                }
+                for (VlanPair pair : mappings) {
+                    after.append("；service-port vlan ").append(pair.serviceVlan()).append(" gpon ")
+                            .append(fsp[0]).append('/').append(fsp[1]).append('/').append(fsp[2])
+                            .append(" ont <ontId> gemport ? multi-service user-vlan ")
+                            .append(pair.userVlan()).append(" tag-transform translate");
+                }
+            }
+            commands.add(after.toString());
         }
         return commands;
     }
@@ -477,10 +492,10 @@ public class OltOntRegService {
         try {
             telnetService.sendConfig(device, commands);
             result.setSuccess(true);
-            // 注册上只是通了管理通道，用户流量还要业务虚口（service-port）才放得出去
+            // 注册上只是通了管理通道，用户流量还要业务虚口（service-port）才放得出去；
+            // TR069 服务器模板与业务 VLAN 映射也在这一批紧跟下发（ONT ID 先查再发）
             result.setMessage("已按模板「" + template.getName() + "」注册"
-                    + applyOntModelRemark(device, profile, fsp, row)
-                    + deliverServicePorts(device, profile, fsp, template, row));
+                    + deliverPostRegister(device, profile, fsp, template, row));
             return result;
         } catch (Exception first) {
             String message = rootMessage(first);
@@ -493,8 +508,7 @@ public class OltOntRegService {
                     if (deleteAndRetry(device, profile, old, commands)) {
                         result.setSuccess(true);
                         result.setMessage("已自动移机到 " + row.getFsp() + " 并注册（原 " + old.fsp + " 已删除）"
-                                + applyOntModelRemark(device, profile, fsp, row)
-                                + deliverServicePorts(device, profile, fsp, template, row));
+                                + deliverPostRegister(device, profile, fsp, template, row));
                         return result;
                     } else {
                         result.setSuccess(false);
@@ -508,8 +522,7 @@ public class OltOntRegService {
                 if (cleared > 0 && deleteAndRetry(device, profile, null, commands)) {
                     result.setSuccess(true);
                     result.setMessage("注册表已满，清掉 " + cleared + " 台离线 ONT 后注册成功"
-                            + applyOntModelRemark(device, profile, fsp, row)
-                            + deliverServicePorts(device, profile, fsp, template, row));
+                            + deliverPostRegister(device, profile, fsp, template, row));
                     return result;
                 }
                 result.setMessage(message + "（已清掉 " + cleared + " 台离线 ONT，仍然没注册上）");
@@ -539,69 +552,227 @@ public class OltOntRegService {
     /** GEM Port 兜底号：线路模板读不出来时才用它（一键开局建的是 gem add 1） */
     private static final int DEFAULT_GEM_PORT = 1;
 
-    /** 注册成功后把型号写进 ONT 描述（设备侧 desc）；写失败只记说明，不影响注册结果 */
-    private String applyOntModelRemark(OltDevice device, OltVendorProfile profile, int[] fsp,
-                                       OltOntRegisterRequest.Row row) {
+    // ============================ 注册后配置（TR069 模板 + 业务 VLAN 映射） ============================
+
+    /** ONT 以太口 native-vlan 覆盖范围：eth 1..4（HGU 常见 4 口） */
+    private static final int ONT_ETH_PORT_COUNT = 4;
+
+    /**
+     * 注册成功后的整批下发（一次 Telnet 会话，命令顺序与视图切换严格对应）：
+     * <pre>
+     * interface gpon 0/2
+     * ont modify 0 &lt;ontId&gt; desc "型号"                       （有型号时）
+     * ont tr069-server-config 0 &lt;ontId&gt; profile-id 10        （「下发 TR069 VLAN 及 ACS 地址」非空才发）
+     * ont port native-vlan 0 &lt;ontId&gt; eth 1..4 vlan 104 priority 0（首组映射才发，光猫侧 VLAN）
+     * quit
+     * service-port vlan 46 gpon 0/2/0 ont &lt;ontId&gt; gemport 1 multi-service user-vlan 104 tag-transform translate
+     * service-port vlan 46 gpon 0/2/0 ont &lt;ontId&gt; gemport 1 multi-service user-vlan 4011 tag-transform translate
+     * service-port vlan 46 gpon 0/2/0 ont &lt;ontId&gt; gemport 1 multi-service user-vlan 4015 tag-transform translate
+     * </pre>
+     * 多组映射（每行一对）每组一条 service-port；native-vlan 只按首组。
+     * 第 2 个参数是设备分配的 ONT ID（注册前未知，先查再发）；0 是 PON 端口号。
+     */
+    private String deliverPostRegister(OltDevice device, OltVendorProfile profile, int[] fsp,
+                                       OltOntRegTemplate template, OltOntRegisterRequest.Row row) {
         String model = blankToNull(row.getModel());
-        if (model == null || !profile.supportsOntDescription()) {
-            return "";
-        }
-        Integer ontId = findOntIdOnPort(device, profile, fsp, row.getSn());
-        if (ontId == null) {
-            return "；没查到设备分配的 ONT ID，备注未写型号";
-        }
-        String command = profile.ontDescriptionCommand(fsp[2], ontId, model);
-        if (command == null) {
-            return "";
-        }
+        Integer tr069ProfileId = tr069ProfileIdOf(template);
+        List<VlanPair> mappings = List.of();
+        String badMapNote = "";
         try {
-            telnetService.sendConfig(device, List.of(
-                    profile.ponViewCommand(fsp[0], fsp[1]), command, "quit"));
-            return "；备注已写型号 " + model;
-        } catch (Exception e) {
-            Logs.info(Logs.Module.OLT, "ONT 备注写型号失败 id={}: {}", device.getId(), e.getMessage());
-            return "；备注写型号失败：" + rootMessage(e);
+            if (profile.supportsServicePorts()) {
+                mappings = serviceVlanMappingsOf(template);
+            }
+        } catch (IllegalArgumentException badMap) {
+            // 模板里某一行写错只影响业务虚口，注释/TR069 模板仍要下发，不能把注册结果带崩
+            Logs.info(Logs.Module.OLT, "业务 VLAN 映射配置无效，跳过业务虚口 template={}: {}",
+                    template.getName(), badMap.getMessage());
+            badMapNote = "；业务 VLAN 映射配置无效，未下发业务虚口：" + badMap.getMessage();
         }
+        boolean needOntId = (model != null && profile.supportsOntDescription())
+                || (tr069ProfileId != null && profile.supportsTr069ServerConfig())
+                || !mappings.isEmpty();
+        if (!needOntId) {
+            return badMapNote;
+        }
+        // 刚 confirm 完设备把 ONT 加进列表有延迟，查不到就重试几轮再放弃
+        Integer ontId = null;
+        for (int attempt = 0; attempt < 3 && ontId == null; attempt++) {
+            ontId = findOntIdOnPort(device, profile, fsp, row.getSn());
+            if (ontId == null && attempt < 2) {
+                try {
+                    Thread.sleep(600L);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        if (ontId == null) {
+            Logs.info(Logs.Module.OLT, "ONT 注册后配置未下发：查不到设备分配的 ONT ID sn={} fsp={}",
+                    row.getSn(), row.getFsp());
+            return "；没查到设备分配的 ONT ID，注册后配置未下发（下轮自动补发会重试）";
+        }
+        // 每条命令单独成组下发：以前把所有命令塞进一个 sendConfig，任一条被设备拒绝
+        // （某个 eth 口不存在、TR069 模板没预建、流已存在…）就整批抛异常中断，
+        // 首组之后的 service-port 全部丢失 —— 这正是「注册上来只映射了一组」的根因。
+        // PON 板视图命令各自带 interface/quit 成对，config 视图的 service-port 单独一条。
+        String ponView = profile.ponViewCommand(fsp[0], fsp[1]);
+        List<List<String>> batches = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        if (model != null && profile.supportsOntDescription()) {
+            String desc = profile.ontDescriptionCommand(fsp[2], ontId, model);
+            if (desc != null) {
+                batches.add(List.of(ponView, desc, "quit"));
+                labels.add("备注写型号 " + model);
+            }
+        }
+        if (tr069ProfileId != null && profile.supportsTr069ServerConfig()) {
+            batches.add(List.of(ponView,
+                    profile.tr069ServerConfigCommand(fsp[2], ontId, tr069ProfileId), "quit"));
+            labels.add("绑定 TR069 服务器模板 profile-id " + tr069ProfileId);
+        }
+        // 多组映射时以太口 native-vlan 只按第一组：一个 eth 口只能有一个 native VLAN，
+        // 第一组（如 104 46 的 104）是 untagged 主业务，其余组是光猫自己打标的
+        // tag 业务（4011/4015），靠 service-port 的 user-vlan 区分，不能互相覆盖
+        VlanPair first = mappings.isEmpty() ? null : mappings.get(0);
+        if (first != null && first.translated() && profile.supportsOntPortNativeVlan()) {
+            for (int eth = 1; eth <= ONT_ETH_PORT_COUNT; eth++) {
+                batches.add(List.of(ponView,
+                        profile.ontPortNativeVlanCommand(fsp[2], ontId, eth, first.userVlan()), "quit"));
+                labels.add("eth" + eth + " native-vlan " + first.userVlan());
+            }
+        }
+        if (!mappings.isEmpty()) {
+            Map<Integer, Integer> gemByVlan = gemVlanMapOf(device, profile, template);
+            for (VlanPair pair : mappings) {
+                int oltVlan = pair.serviceVlan();
+                // GEM 承载的是光猫上行的 VLAN tag：线路模板映射表里的 VLAN 是光猫侧的，
+                // 要拿光猫侧 VLAN 查 GEM（如 4011→gem 2），拿 OLT 侧 VLAN（46）查永远查不到，
+                // 之前全被兜成同一个默认 gemport，这就是「没映射 GEM VLAN」的根因
+                int gem = gemByVlan.getOrDefault(pair.userVlan(), DEFAULT_GEM_PORT);
+                batches.add(List.of(profile.servicePortTranslateCommand(oltVlan, fsp[0], fsp[1], fsp[2],
+                        ontId, gem, pair.userVlan())));
+                labels.add("业务虚口 " + (pair.translated()
+                        ? "光猫侧 " + pair.userVlan() + " → OLT 侧 " + oltVlan
+                        : "VLAN " + oltVlan + " 透传"));
+            }
+        }
+        int ok = 0;
+        int fail = 0;
+        StringBuilder done = new StringBuilder();
+        for (int i = 0; i < batches.size(); i++) {
+            List<String> batch = batches.get(i);
+            String cmdText = String.join("；", batch);
+            try {
+                // tolerateExisting=true：流/配置已存在不算失败，也不阻断其它组
+                telnetService.sendConfig(device, batch, true);
+                ok++;
+                done.append("；").append(labels.get(i));
+                Logs.info(Logs.Module.OLT, "ONT 注册后配置下发成功", "sn", row.getSn(),
+                        "fsp", row.getFsp(), "ontId", ontId, "步骤", labels.get(i), "命令", cmdText);
+            } catch (Exception e) {
+                fail++;
+                // 每组独立日志：哪条失败、失败原因一眼可见，不用猜
+                Logs.info(Logs.Module.OLT, "ONT 注册后配置下发失败", "sn", row.getSn(),
+                        "fsp", row.getFsp(), "ontId", ontId, "步骤", labels.get(i),
+                        "命令", cmdText, "原因", rootMessage(e));
+            }
+        }
+        StringBuilder note = new StringBuilder();
+        note.append("；注册后配置 ").append(ok).append(" 组成功");
+        if (fail > 0) {
+            note.append("、").append(fail).append(" 组失败（见下发日志）");
+        }
+        note.append(done).append(badMapNote);
+        return note.toString();
     }
 
     /** 一轮最多补几台老 ONT 的业务虚口：补太多会一直占着设备的 Telnet 会话 */
     private static final int MAX_REPAIR_PER_ROUND = 10;
 
-    /** 注册成功后按模板建业务虚口（service-port），返回追加到结果里的说明 */
-    private String deliverServicePorts(OltDevice device, OltVendorProfile profile, int[] fsp,
-                                       OltOntRegTemplate template, OltOntRegisterRequest.Row row) {
-        if (!profile.supportsServicePorts()) {
-            return "";
+    /**
+     * 「OLT 侧业务 VLAN 映射」一组解析结果。
+     * userVlan = 光猫侧（native-vlan / user-vlan）；oltVlan = OLT 侧（service-port vlan），
+     * null 表示透传（只填一个数时 userVlan 与 OLT 侧相同）。
+     */
+    private record VlanPair(int userVlan, Integer oltVlan) {
+        int serviceVlan() {
+            return oltVlan == null ? userVlan : oltVlan;
         }
-        List<Integer> vlans = serviceVlansOf(device, profile, template);
-        if (vlans.isEmpty()) {
-            return "；模板没配业务 VLAN，线路模板里也没读到 GEM 映射，不下发业务虚口";
-        }
-        Integer ontId = findOntIdOnPort(device, profile, fsp, row.getSn());
-        if (ontId == null) {
-            return "；没查到设备分配的 ONT ID，业务虚口未下发";
-        }
-        int startIndex = nextServicePortIndex(device);
-        if (startIndex < 0) {
-            return "；查不到设备上已有的业务虚口（没法避开已用索引），未下发";
-        }
-        List<String> commands = new ArrayList<>();
-        int index = startIndex;
-        Map<Integer, Integer> gemByVlan = gemVlanMapOf(device, profile, template);
-        for (Integer vlan : vlans) {
-            commands.add(profile.servicePortCommand(index++, vlan,
-                    fsp[0], fsp[1], fsp[2], ontId, gemByVlan.getOrDefault(vlan, positionGem(vlans, vlan))));
-        }
-        try {
-            telnetService.sendConfig(device, commands);
-            return "；已下发 " + commands.size() + " 条业务虚口（VLAN " + vlans + "）";
-        } catch (Exception e) {
-            Logs.info(Logs.Module.OLT, "业务虚口下发失败 id={}: {}", device.getId(), e.getMessage());
-            return "；业务虚口下发失败：" + rootMessage(e);
+
+        boolean translated() {
+            return oltVlan != null;
         }
     }
 
-    /** 给「早就注册过、但一条业务虚口都没有」的 ONT 补下发 */
+    /**
+     * 解析「下发 TR069 VLAN 及 ACS 地址」（如 46 10）：返回最后的整数作为 OLT 上预建的
+     * tr069-server profile-id（命令 ont tr069-server-config &lt;port&gt; &lt;ontId&gt; profile-id N）。
+     * 字段为空 / 没有数字 → null（不下发 TR069 模板，光猫拿不到 ACS 地址就不会来 Inform）。
+     */
+    private Integer tr069ProfileIdOf(OltOntRegTemplate template) {
+        List<Integer> ints = intsOf(template.getTr069Vlan());
+        return ints.isEmpty() ? null : ints.get(ints.size() - 1);
+    }
+
+    /**
+     * 解析「OLT 侧业务 VLAN 映射」，支持多组：一行一组，也兼容分号/逗号混排。
+     * <pre>
+     * 104 46        → 光猫侧 104 → OLT 侧 46
+     * 4011 46       → 光猫侧 4011 → OLT 侧 46
+     * 4015 46       → 光猫侧 4015 → OLT 侧 46
+     * </pre>
+     * <ul>
+     *   <li>整段为空 → 空列表：不映射业务（不下发 native-vlan、不下发 service-port）</li>
+     *   <li>每行 2 个数 → 一组映射（空格/逗号/点分隔都行）；1 个数 → 该 VLAN 透传</li>
+     *   <li>每行超过 2 个数 → 明确报错，避免把「104 46 4011 46」误当成一组</li>
+     * </ul>
+     */
+    private List<VlanPair> serviceVlanMappingsOf(OltOntRegTemplate template) {
+        String text = template.getServiceVlanMap();
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        List<VlanPair> pairs = new ArrayList<>();
+        for (String line : text.split("[\\r\\n;；]+")) {
+            List<Integer> ints = intsOf(line);
+            if (ints.isEmpty()) {
+                continue;
+            }
+            if (ints.size() == 1) {
+                pairs.add(new VlanPair(ints.get(0), null));
+                continue;
+            }
+            if (ints.size() != 2) {
+                throw new IllegalArgumentException("「OLT 侧业务 VLAN 映射」每行只能填 1 个数（透传 VLAN）"
+                        + "或 2 个数（光猫侧 OLT 侧，如 104 46），这一行填了 " + ints.size()
+                        + " 个：" + line.trim());
+            }
+            pairs.add(new VlanPair(ints.get(0), ints.get(1)));
+        }
+        return pairs;
+    }
+
+    /** 提取文本里的全部整数（空格/逗号/点等任意分隔都能容忍）：46 10 → [46, 10] */
+    private static List<Integer> intsOf(String text) {
+        List<Integer> ints = new ArrayList<>();
+        if (text == null) {
+            return ints;
+        }
+        for (String token : text.trim().split("[^0-9]+")) {
+            if (token.isEmpty()) {
+                continue;
+            }
+            try {
+                ints.add(Integer.parseInt(token));
+            } catch (NumberFormatException ignored) {
+                // 超长数字串不是 VLAN/模板 ID，跳过
+            }
+        }
+        return ints;
+    }
+
+    /** 给「早就注册过、业务虚口不全」的 ONT 按组补齐（缺哪组补哪组） */
     private int repairServicePorts(OltDevice device, OltVendorProfile profile,
                                    List<OltOntRegTemplate> templates) {
         if (!profile.supportsServicePorts() || templates.isEmpty()) {
@@ -625,36 +796,50 @@ public class OltOntRegService {
                     if (ont.getOntId() == null || !Boolean.TRUE.equals(ont.getOnline())) {
                         continue;
                     }
-                    if (hasFlow.contains(portKey(0, slot, port, ont.getOntId()))) {
-                        continue;
-                    }
                     OltOntRegTemplate template = match(templates, rowOf(ont, slot, port));
                     if (template == null) {
                         continue;
                     }
-                    List<Integer> vlans = serviceVlansOf(device, profile, template);
-                    if (vlans.isEmpty()) {
+                    List<VlanPair> mappings;
+                    try {
+                        mappings = serviceVlanMappingsOf(template);
+                    } catch (IllegalArgumentException badMap) {
+                        Logs.info(Logs.Module.OLT, "补发业务虚口跳过（映射配置无效）id={} template={}: {}",
+                                device.getId(), template.getName(), badMap.getMessage());
                         continue;
                     }
-                    int startIndex = nextServicePortIndex(device);
-                    if (startIndex < 0) {
-                        return repaired;
+                    if (mappings.isEmpty()) {
+                        continue;
                     }
-                    List<String> commands = new ArrayList<>();
-                    int index = startIndex;
+                    String ontKey = portKey(0, slot, port, ont.getOntId());
                     Map<Integer, Integer> gemByVlan = gemVlanMapOf(device, profile, template);
-                    for (Integer vlan : vlans) {
-                        commands.add(profile.servicePortCommand(index++, vlan, 0, slot, port,
-                                ont.getOntId(), gemByVlan.getOrDefault(vlan, positionGem(vlans, vlan))));
+                    int added = 0;
+                    for (VlanPair pair : mappings) {
+                        // 按「口#ONT#OLT侧VLAN#光猫侧VLAN」逐组判重：以前只看这台 ONT
+                        // 有没有任意一条流，首组建了其余组就永远补不上
+                        String flowKey = flowKey(ontKey, pair.serviceVlan(), pair.userVlan());
+                        if (hasFlow.contains(flowKey)) {
+                            continue;
+                        }
+                        // GEM 按光猫侧 VLAN 查线路模板映射（映射表记的是光猫上行的 VLAN tag）
+                        int gem = gemByVlan.getOrDefault(pair.userVlan(), DEFAULT_GEM_PORT);
+                        String command = profile.servicePortTranslateCommand(pair.serviceVlan(), 0, slot, port,
+                                ont.getOntId(), gem, pair.userVlan());
+                        try {
+                            // 逐条独立下发：一条被拒不影响其余组
+                            telnetService.sendConfig(device, List.of(command), true);
+                            added++;
+                            Logs.info(Logs.Module.OLT, "补发业务虚口成功 id={} 0/{}/{} ONT {} 命令 {}",
+                                    device.getId(), slot, port, ont.getOntId(), command);
+                        } catch (Exception e) {
+                            Logs.info(Logs.Module.OLT, "补发业务虚口失败 id={} 0/{}/{} ONT {} 命令 {} 原因 {}",
+                                    device.getId(), slot, port, ont.getOntId(), command, e.getMessage());
+                        }
                     }
-                    try {
-                        telnetService.sendConfig(device, commands);
+                    if (added > 0) {
                         repaired++;
-                        Logs.info(Logs.Module.OLT, "补发业务虚口 id={} 0/{}/{} ONT {} VLAN {}",
-                                device.getId(), slot, port, ont.getOntId(), vlans);
-                    } catch (Exception e) {
-                        Logs.info(Logs.Module.OLT, "补发业务虚口失败 id={} 0/{}/{} ONT {}: {}", device.getId(),
-                                slot, port, ont.getOntId(), e.getMessage());
+                        Logs.info(Logs.Module.OLT, "ONT 自动注册：补齐业务虚口 {} 条 0/{}/{} ONT {}",
+                                added, slot, port, ont.getOntId());
                     }
                 }
             }
@@ -662,7 +847,11 @@ public class OltOntRegService {
         return repaired;
     }
 
-    /** 设备上现有业务虚口的「口#ONT」集合；查不到返回 null（避免误判成「都没有」而重复下发） */
+    /**
+     * 设备上现有业务虚口的「口#ONT#OLT侧VLAN#光猫侧VLAN」集合（逐组判重）。
+     * 「光猫侧 VLAN」解析不出来时退化成 OLT 侧 VLAN（透传流 user-vlan 可能不显示）。
+     * 查不到返回 null（避免误判成「都没有」而重复下发）。
+     */
     private Set<String> existingServicePortKeys(OltDevice device) {
         try {
             List<String> outputs = telnetService.queryCommands(device, List.of("display service-port all"));
@@ -672,9 +861,12 @@ public class OltOntRegService {
             }
             Set<String> keys = new HashSet<>();
             for (OltServicePort sp : OltInfoParser.parseServicePorts(text)) {
-                if (sp.getOntId() != null) {
-                    keys.add(sp.getFrameNo() + "/" + sp.getSlotNo() + "/" + sp.getPortNo() + "#" + sp.getOntId());
+                if (sp.getOntId() == null || sp.getVlanId() == null) {
+                    continue;
                 }
+                String ontKey = portKey(sp.getFrameNo(), sp.getSlotNo(), sp.getPortNo(), sp.getOntId());
+                int userVlan = sp.getUserVlan() == null ? sp.getVlanId() : sp.getUserVlan();
+                keys.add(flowKey(ontKey, sp.getVlanId(), userVlan));
             }
             return keys;
         } catch (Exception e) {
@@ -687,6 +879,10 @@ public class OltOntRegService {
         return frame + "/" + slot + "/" + port + "#" + ontId;
     }
 
+    private String flowKey(String ontKey, int oltVlan, int userVlan) {
+        return ontKey + "#" + oltVlan + "#" + userVlan;
+    }
+
     /** 把一台已注册的 ONT 包装成待注册行，好走同一套模板匹配（型号不报就当不限） */
     private OltOntRegisterRequest.Row rowOf(OltOnt ont, int slot, int port) {
         OltOntRegisterRequest.Row row = new OltOntRegisterRequest.Row();
@@ -695,27 +891,6 @@ public class OltOntRegService {
         // 只扫 GPON 业务板，所以按 GPON 参与匹配
         row.setPonType("GPON");
         return row;
-    }
-
-    /** 要放通的业务 VLAN：模板上填了的（TR069 VLAN + 业务 VLAN + IPTV VLAN）优先 */
-    private List<Integer> serviceVlansOf(OltDevice device, OltVendorProfile profile,
-                                         OltOntRegTemplate template) {
-        LinkedHashSet<Integer> vlans = new LinkedHashSet<>();
-        Integer tr069 = firstInt(template.getTr069Vlan());
-        if (tr069 != null) {
-            vlans.add(tr069);
-        }
-        String map = template.getServiceVlanMap();
-        if (map != null && !map.isBlank()) {
-            vlans.addAll(VlanIdExpression.expand(map.trim()));
-        } else if (template.getLineProfileId() != null) {
-            vlans.addAll(gemVlanMapOf(device, profile, template).keySet());
-        }
-        Integer iptv = firstInt(template.getIptvVlan());
-        if (iptv != null) {
-            vlans.add(iptv);
-        }
-        return new ArrayList<>(vlans);
     }
 
     /** 读线路模板详情，得到「VLAN → 承载它的 GEM Port」；读不到返回空表 */
@@ -739,30 +914,6 @@ public class OltOntRegService {
         }
     }
 
-    /** VLAN 在列表里的位置就是它的 GEM 号（一键开局按这个顺序建 GEM）；兜底 0 */
-    private int positionGem(List<Integer> vlans, Integer vlan) {
-        int position = vlans.indexOf(vlan);
-        return position < 0 ? DEFAULT_GEM_PORT : position;
-    }
-
-    /** 「46 10」这种「VLAN 模板ID」写法只取第一个整数；不是数字返回 null */
-    private Integer firstInt(String text) {
-        String trimmed = text == null ? null : text.trim();
-        if (trimmed == null || trimmed.isEmpty()) {
-            return null;
-        }
-        for (String token : trimmed.split("[^0-9]+")) {
-            if (!token.isEmpty()) {
-                try {
-                    return Integer.parseInt(token);
-                } catch (NumberFormatException e) {
-                    return null;
-                }
-            }
-        }
-        return null;
-    }
-
     /** 在指定 PON 口上按 SN 找刚注册的 ONT 拿设备分配的 ONT ID */
     private Integer findOntIdOnPort(OltDevice device, OltVendorProfile profile, int[] fsp, String sn) {
         String wanted = normalizeSn(sn);
@@ -776,26 +927,6 @@ public class OltOntRegService {
             }
         }
         return null;
-    }
-
-    /** 挑下一个没被占用的业务虚口索引：全表现有里最大的往后排 */
-    private int nextServicePortIndex(OltDevice device) {
-        try {
-            List<String> outputs = telnetService.queryCommands(device, List.of("display service-port all"));
-            String text = outputs == null || outputs.isEmpty() ? null : outputs.get(0);
-            int max = -1;
-            if (text != null) {
-                for (OltServicePort sp : OltInfoParser.parseServicePorts(text)) {
-                    if (sp.getIndex() != null && sp.getIndex() > max) {
-                        max = sp.getIndex();
-                    }
-                }
-            }
-            return max + 1;
-        } catch (Exception e) {
-            Logs.info(Logs.Module.OLT, "查业务虚口索引失败 id={}: {}", device.getId(), e.getMessage());
-            return -1;
-        }
     }
 
     /** 删 ONT 前编出逐条 undo service-port（要排在 ont delete 之前）：带引用的 ont delete 会被设备顶回 */

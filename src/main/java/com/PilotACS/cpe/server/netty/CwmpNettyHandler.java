@@ -73,8 +73,10 @@ public class CwmpNettyHandler extends SimpleChannelInboundHandler<FullHttpReques
                     r.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/xml; charset=\"utf-8\"");
                 }
                 if (settled.newSessionId() != null) {
+                    // TR-069 3.4.2：ACS SHOULD 只用标记 Discard 的会话 cookie（会话级，浏览器关闭即失效），
+                    // 且不应假设 CPE 会跨会话保留 cookie（服务端有按来源地址找回的兜底）
                     r.headers().set(HttpHeaderNames.SET_COOKIE, "session=" + settled.newSessionId()
-                            + "; Path=/; HttpOnly; Max-Age=" + props.getSessionTimeoutSeconds());
+                            + "; Path=/; HttpOnly; Max-Age=" + props.getSessionTimeoutSeconds() + "; Discard");
                 }
             });
         }

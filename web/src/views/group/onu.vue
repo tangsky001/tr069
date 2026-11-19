@@ -100,7 +100,7 @@
             </el-table-column>
 
             <el-table-column label="运营商" width="70">
-              <template slot-scope="{ row }">{{ row.isp || '—' }}</template>
+              <template slot-scope="{ row }">{{ row.ispText || row.isp || '—' }}</template>
             </el-table-column>
 
             <el-table-column label="IP" width="100">

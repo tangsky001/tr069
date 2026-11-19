@@ -7,6 +7,7 @@
 package com.PilotACS.cpe.store;
 
 import com.PilotACS.cpe.model.CpeParam;
+import com.PilotACS.cpe.redis.ParamTreeCache;
 import com.PilotACS.cpe.rpc.TaskPlanner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -33,14 +34,18 @@ public class CpeStore {
     private final JdbcTemplate cpeJdbcTemplate;
     /** SQLite 事务（整树重写用） */
     private final TransactionTemplate cpeTxTemplate;
+    /** 存量参数树缓存（Inform 热点读，落库时主动失效） */
+    private final ParamTreeCache paramTreeCache;
 
     /** 容器里有两个 JdbcTemplate/TransactionTemplate，必须显式限定，不能靠参数名推断 */
     public CpeStore(@Qualifier("jdbcTemplate") JdbcTemplate jdbcTemplate,
                     @Qualifier("cpeJdbcTemplate") JdbcTemplate cpeJdbcTemplate,
-                    @Qualifier("cpeTxTemplate") TransactionTemplate cpeTxTemplate) {
+                    @Qualifier("cpeTxTemplate") TransactionTemplate cpeTxTemplate,
+                    ParamTreeCache paramTreeCache) {
         this.jdbcTemplate = jdbcTemplate;
         this.cpeJdbcTemplate = cpeJdbcTemplate;
         this.cpeTxTemplate = cpeTxTemplate;
+        this.paramTreeCache = paramTreeCache;
     }
 
     // ==================== 设备台账（MySQL） ====================
@@ -246,7 +251,12 @@ public class CpeStore {
 
     // ==================== 设备参数树（SQLite） ====================
 
+    /** 存量参数树（走 Redis 缓存：Inform 热点读，落库时主动失效） */
     public Map<String, CpeParam> loadParams(String sn) {
+        return paramTreeCache.getOrLoad(sn, this::loadParamsFromDb);
+    }
+
+    private Map<String, CpeParam> loadParamsFromDb(String sn) {
         Map<String, CpeParam> out = new LinkedHashMap<>();
         cpeJdbcTemplate.query(
                 "SELECT path, value, value_type, object, writable, ts FROM cpe_device_param WHERE device_sn = ?",
@@ -277,6 +287,8 @@ public class CpeStore {
                 }
             }
         });
+        // 唯一写入点：落库成功后失效参数树缓存（下次 Inform 回源最新树）
+        paramTreeCache.evict(sn);
     }
 
     private void insertParams(String sn, Iterable<CpeParam> params) {

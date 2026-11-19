@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.URI;
@@ -23,6 +24,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import java.util.concurrent.ConcurrentHashMap;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -62,6 +66,9 @@ public class UpgradeController {
     private static volatile String DOWNLOAD_STATUS = "idle"; // idle/running/done/error
     private static volatile String DOWNLOAD_ERROR = "";
 
+    /** 版本检查接口带回的升级包 SHA-256（downloadUrl → 期望哈希），下载/上传完成后比对 */
+    private static final ConcurrentHashMap<String, String> EXPECTED_SHA256 = new ConcurrentHashMap<>();
+
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .version(HttpClient.Version.HTTP_1_1)
@@ -87,12 +94,19 @@ public class UpgradeController {
                 if (root.path("code").asInt() == 200 && root.has("data")) {
                     JsonNode ver = root.get("data");
                     String serverVersion = ver.path("version").asText();
+                    String downloadUrl = UPGRADE_SERVER_BASE + "/api/version/download/" + ver.path("id").asLong();
                     data.put("serverVersion", serverVersion);
                     data.put("description", ver.path("description").asText(null));
                     data.put("fileSize", ver.path("fileSize").asLong(0));
                     data.put("versionId", ver.path("id").asLong(0));
                     data.put("hasUpdate", isNewerVersion(serverVersion, currentVersion));
-                    data.put("downloadUrl", UPGRADE_SERVER_BASE + "/api/version/download/" + ver.path("id").asLong());
+                    data.put("downloadUrl", downloadUrl);
+                    // 升级服务器若发布 sha256 字段则缓存，下载完成后强校验（防中间人替换包）
+                    String sha = ver.path("sha256").asText(null);
+                    if (sha != null && !sha.isBlank()) {
+                        EXPECTED_SHA256.put(downloadUrl, sha.trim().toLowerCase());
+                        data.put("sha256", sha);
+                    }
                     return Result.ok(data);
                 }
             }
@@ -111,7 +125,8 @@ public class UpgradeController {
     @RequiresPermission("upgrade:update")
     public Result<Map<String, Object>> startDownload(
             @RequestParam("downloadUrl") String downloadUrl,
-            @RequestParam(value = "fileSize", defaultValue = "0") long fileSize) {
+            @RequestParam(value = "fileSize", defaultValue = "0") long fileSize,
+            @RequestParam(value = "sha256", required = false) String sha256) {
 
         Map<String, Object> data = new LinkedHashMap<>();
         // URL 白名单：downloadUrl 直接创建 HTTP 连接并覆写本服务运行文件，
@@ -127,6 +142,9 @@ public class UpgradeController {
             data.put("message", "下载任务正在进行中，请勿重复触发");
             return Result.ok(data);
         }
+        // 期望哈希：显式入参优先，否则用版本检查缓存（无期望值时仍做 jar 结构校验）
+        String expectedSha = sha256 != null && !sha256.isBlank()
+                ? sha256.trim().toLowerCase() : EXPECTED_SHA256.get(downloadUrl);
 
         DOWNLOAD_STATUS = "running";
         DOWNLOAD_ERROR = "";
@@ -193,8 +211,12 @@ public class UpgradeController {
                     }
                 }
 
+                // 完整性校验：jar 结构 + SHA-256（有期望值时强校验，失败回滚备份）
+                verifyUpgradePackage(new File(savePath), expectedSha);
+
                 DOWNLOAD_STATUS = "done";
-                Logs.info(Logs.Module.UPGRADE, "下载完成", "路径", savePath);
+                Logs.info(Logs.Module.UPGRADE, "下载完成", "路径", savePath,
+                        "sha256", expectedSha == null ? "未提供期望值，仅校验 jar 结构" : "校验通过");
             } catch (Exception e) {
                 DOWNLOAD_STATUS = "error";
                 DOWNLOAD_ERROR = e.getMessage();
@@ -252,7 +274,8 @@ public class UpgradeController {
     /** 手动上传 JAR 包升级 */
     @PostMapping("/upload")
     @RequiresPermission("upgrade:update")
-    public Result<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) {
+    public Result<Map<String, Object>> upload(@RequestParam("file") MultipartFile file,
+                                              @RequestParam(value = "sha256", required = false) String sha256) {
         Map<String, Object> data = new LinkedHashMap<>();
         if (file == null || file.isEmpty()) {
             return Result.fail("请选择要上传的JAR文件");
@@ -272,14 +295,19 @@ public class UpgradeController {
                 oldJar.renameTo(bakJar);
             }
             file.transferTo(new File(savePath).toPath());
+            // 完整性校验：jar 结构 + 可选 SHA-256；失败回滚备份
+            verifyUpgradePackage(new File(savePath),
+                    sha256 == null || sha256.isBlank() ? null : sha256.trim().toLowerCase());
             data.put("success", true);
             data.put("message", "上传成功，文件已保存为 " + JAR_NAME);
             data.put("path", savePath);
             data.put("size", new File(savePath).length());
+            data.put("sha256", sha256OfFile(new File(savePath)));
             // 标记为已就绪
             DOWNLOAD_STATUS = "done";
         } catch (Exception e) {
             Logs.error(Logs.Module.UPGRADE, "上传保存文件失败", e);
+            restoreBackup();
             return Result.fail("保存文件失败: " + e.getMessage());
         }
         return Result.ok(data);
@@ -331,6 +359,46 @@ public class UpgradeController {
     }
 
     // ===== 工具方法 =====
+
+    /**
+     * 升级包完整性校验：先验 jar 结构（PK 魔数，防止垃圾内容覆写运行文件），
+     * 有期望 SHA-256 时再做强校验（防中间人替换包），失败抛异常由调用方回滚备份。
+     */
+    private void verifyUpgradePackage(File jar, String expectedSha256) throws Exception {
+        if (!jar.exists() || jar.length() == 0) {
+            throw new RuntimeException("升级包为空");
+        }
+        if (!looksLikeZip(jar)) {
+            throw new RuntimeException("升级包不是有效的 JAR（缺 PK 魔数），已回滚");
+        }
+        String actual = sha256OfFile(jar);
+        Logs.info(Logs.Module.UPGRADE, "升级包校验", "大小", jar.length(), "sha256", actual);
+        if (expectedSha256 != null && !expectedSha256.isBlank() && !expectedSha256.equalsIgnoreCase(actual)) {
+            throw new RuntimeException("升级包 SHA-256 校验失败：期望 " + expectedSha256 + "，实际 " + actual);
+        }
+    }
+
+    /** JAR/ZIP 魔数检查：前两字节应为 0x50 0x4B（"PK"） */
+    private boolean looksLikeZip(File jar) throws Exception {
+        try (InputStream in = new FileInputStream(jar)) {
+            int b0 = in.read();
+            int b1 = in.read();
+            return b0 == 0x50 && b1 == 0x4B;
+        }
+    }
+
+    /** 文件 SHA-256（流式，避免整包进内存） */
+    private String sha256OfFile(File jar) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream in = new FileInputStream(jar)) {
+            byte[] buf = new byte[8192];
+            int read;
+            while ((read = in.read(buf)) != -1) {
+                digest.update(buf, 0, read);
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
 
     private String jarPath() {
         return System.getProperty("user.dir") + File.separator + JAR_NAME;

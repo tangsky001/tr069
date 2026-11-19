@@ -44,6 +44,22 @@ public class DeviceData {
         }
     }
 
+    /**
+     * Inform 自带参数合并：只更新值/类型，不覆盖 GPN 采集的 object/writable
+     * （Inform 的 ParameterValueStruct 不携带结构信息，全量 put 会把 writable 打成 false，
+     * 破坏"只读拦截"的依据）。树里没有的路径按可写叶子登记，等 GPN 修正。
+     */
+    public void putInform(CpeParam p) {
+        if (p == null || p.path() == null || p.path().isEmpty()) {
+            return;
+        }
+        if (params.containsKey(p.path())) {
+            putValue(p.path(), p.value(), p.type(), p.ts());
+        } else {
+            put(new CpeParam(p.path(), p.value(), p.type(), p.object(), true, p.ts()));
+        }
+    }
+
     /** 更新值与时间戳；路径未登记过（直接 GPV 未先 GPN）时按叶子补录。有差异才算脏，没差异跳过落库 */
     public void putValue(String path, String value, String type, long ts) {
         CpeParam old = params.get(path);

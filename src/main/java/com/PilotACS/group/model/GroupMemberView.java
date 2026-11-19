@@ -55,8 +55,11 @@ public class GroupMemberView {
     @Schema(description = "光猫软件版本（ONU 台账）")
     private String softwareVersion;
 
-    @Schema(description = "光猫运营商（ONU 台账）")
+    @Schema(description = "光猫运营商编码（ONU 台账，筛选/适配用）")
     private String isp;
+
+    @Schema(description = "光猫运营商中文文案（后端派生，页面直接渲染）")
+    private String ispText;
 
     @Schema(description = "光猫 IP（参数树派生，未采集为 null）")
     private String ip;

@@ -218,6 +218,33 @@ public interface OltVendorProfile {
         return null;
     }
 
+    /** 这台设备能不能给 ONT 下发 TR-069 服务器模板（ACS 地址） */
+    default boolean supportsTr069ServerConfig() {
+        return false;
+    }
+
+    /**
+     * 给刚注册的 ONT 绑定 TR-069 服务器模板（在 {@link #ponViewCommand} 进的 PON 板视图里执行）。
+     * port 是 PON 端口、ontId 是设备分配的 ONT 编号、tr069ProfileId 是 OLT 上预建的
+     * tr069-server profile-id（注册模板「下发 TR069 VLAN 及 ACS 地址」里的第二个数字）。
+     */
+    default String tr069ServerConfigCommand(int port, int ontId, int tr069ProfileId) {
+        return null;
+    }
+
+    /** 这台设备能不能给 ONT 以太口配 native-vlan */
+    default boolean supportsOntPortNativeVlan() {
+        return false;
+    }
+
+    /**
+     * 给 ONT 的第 eth 个以太口配 native-vlan（PON 板视图里执行）。
+     * 用户侧 VLAN（光猫侧）由注册模板「OLT 侧业务 VLAN 映射」的映射给出。
+     */
+    default String ontPortNativeVlanCommand(int port, int ontId, int eth, int userVlan) {
+        return null;
+    }
+
     /** 查一条 ONT 线路模板详情的命令（config 视图下执行），用来读它 GEM 映射了哪些 VLAN */
     default String lineProfileDetailCommand(String ponType, int profileId) {
         return null;
@@ -247,6 +274,16 @@ public interface OltVendorProfile {
     /** 给一台已注册的 ONT 建一条业务虚口的命令（config 视图下执行） */
     default String servicePortCommand(int index, int vlan, int frame, int slot, int port,
                                       int ontId, int gemPort) {
+        return null;
+    }
+
+    /**
+     * 内外 VLAN 的业务虚口（config 视图下执行）：OLT 侧 vlan、光猫侧 userVlan，
+     * tag-transform translate 做 VLAN 翻译。用于注册模板「OLT 侧业务 VLAN 映射」= 104 46
+     * 这类（光猫侧 104 → OLT 侧 46）映射；透传时 userVlan 传与 vlan 相同值。
+     */
+    default String servicePortTranslateCommand(int vlan, int frame, int slot, int port,
+                                               int ontId, int gemPort, int userVlan) {
         return null;
     }
 

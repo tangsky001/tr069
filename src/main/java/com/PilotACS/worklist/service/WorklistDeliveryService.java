@@ -345,7 +345,7 @@ public class WorklistDeliveryService {
                 "整包下发 · 业务模板", "BizTemplate", Map.of("templateId", bizTemplateId));
         try {
             Long execId = bizExecutionService.execute(bizTemplateId, w.getSn(),
-                    new HashMap<>(), w.getRoomNo(), w.getUsername());
+                    new HashMap<>(), w.getRoomNo(), w.getUsername(), w.getId());
             long deadline = System.currentTimeMillis() + BIZ_EXEC_TIMEOUT_MS;
             Map<String, Object> exec = null;
             while (System.currentTimeMillis() < deadline) {

@@ -106,9 +106,13 @@ public class ConnectionRequestService {
                 lastAuth = "error: " + e.getMessage();
             }
         }
-        Logs.warn(Logs.Module.CPE, "反向连接被拒", "url", maskUrl(url), "状态码", lastCode,
-                "认证方式", lastAuth == null ? "?" : (lastAuth.startsWith("Digest") ? "Digest" : "Basic"),
+        boolean netError = lastAuth != null && lastAuth.startsWith("error:");
+        Logs.warn(Logs.Module.CPE, netError ? "反向连接失败（未收到 HTTP 响应）" : "反向连接被拒",
+                "url", maskUrl(url), "状态码", lastCode,
+                "认证方式", netError || lastAuth == null ? "未到达认证环节"
+                        : (lastAuth.startsWith("Digest") ? "Digest" : "Basic"),
                 "尝试账号", pairs.stream().map(p -> p[0]).distinct().toList(),
+                netError ? "网络原因" : null, netError ? lastAuth : null,
                 foreignCred ? "提示" : null,
                 foreignCred ? "设备侧 CR 账密被外部平台改过，请重新下发 ConnectionRequestUsername/Password" : null);
         return false;

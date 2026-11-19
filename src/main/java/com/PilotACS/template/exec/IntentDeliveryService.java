@@ -64,6 +64,9 @@ public class IntentDeliveryService {
                         renderOther(root, data, fields, plan, detail);
                 default -> throw new BusinessException("未知模板类型: " + category);
             }
+            // 下发独立日志：渲染出的执行计划逐条可见（排查"删了没建/参数没写进去"靠它）
+            log.info("[下发] 计划生成 sn={} 类别={} 增量={} 步骤={} 条: {}", sn, category, incremental,
+                    plan.size(), plan.stream().map(Map.Entry::getKey).toList());
 
             // 逐条执行计划；AddObject 返回的新实例号回填到后续步骤的 __NEW__ 占位
             boolean allOk = true;
@@ -97,10 +100,26 @@ public class IntentDeliveryService {
                 }
                 Map<String, Object> stepResult = runTask(sn, type, realPath, taskParams, username);
                 boolean ok = stepResult != null && Boolean.TRUE.equals(stepResult.get("ok"));
+                // 每一步独立日志：结果与失败原因不进日志就没法从侧写还原下发过程
+                log.info("[下发] 步骤 sn={} 任务={} 类型={} 路径={} 结果={}", sn, desc, type, realPath,
+                        ok ? "成功" : "失败(" + (stepResult == null ? "无结果"
+                                : stepResult.getOrDefault("fault", "")) + ")");
+                if (!ok && "DeleteObject".equals(type)) {
+                    // TR-069 A.3.2.7 Table 31：DeleteObject 只定义 9001/9002/9003/9005；
+                    // 其中"ObjectName 不匹配现有多实例对象"必须用 9005，9003 是 Invalid arguments
+                    //（参数本身有问题，不能当"对象已不存在"跳过）。只有 9005 才表示存量对象不在了，
+                    // 属可继续下发的正常情形，记 skip 便于排查。
+                    String fault = String.valueOf(stepResult == null ? "" : stepResult.getOrDefault("fault", ""));
+                    if (fault.contains("9005")) {
+                        detail.add(row("跳过: " + desc, realPath, "skip", fault));
+                        continue;
+                    }
+                }
                 if ("AddObject".equals(type) && ok) {
                     String result = String.valueOf(stepResult.getOrDefault("result_content", ""));
                     Matcher m = Pattern.compile("(?i)instance[^0-9]{0,6}(\\d+)").matcher(result);
                     newInstance = m.find() ? m.group(1) : fallback;
+                    log.info("[下发] AddObject 新实例号={}（设备返回={}，兜底={}）", newInstance, result, fallback);
                 }
                 detail.add(row("执行: " + desc, realPath, ok ? "ok" : "fail",
                         ok ? "" : String.valueOf(stepResult == null ? "无结果" : stepResult.get("fault"))));
@@ -129,8 +148,11 @@ public class IntentDeliveryService {
                 verify(sn, expected, detail, out);
             }
             out.put("error", allOk ? "" : "存在失败步骤，详见 detail");
+            log.info("[下发] 结束 sn={} 类别={} 成功={} verified={} 步骤={} 条",
+                    sn, category, allOk, out.get("verified"), detail.size());
             return out;
         } catch (BusinessException e) {
+            log.warn("[下发] 计划失败 sn={} 类别={} 原因={}", sn, category, e.getMessage());
             detail.add(row("计划", "", "fail", e.getMessage()));
             out.put("success", false);
             out.put("error", e.getMessage());
@@ -214,6 +236,7 @@ public class IntentDeliveryService {
             out.put("verified", diff == 0 ? "yes" : "partial");
             out.put("verifyTotal", expected.size());
             out.put("verifyDiff", diff);
+            log.info("[下发] 回读确认 sn={} 比对={} 个 差异={} 个", sn, expected.size(), diff);
             if (diff == 0) {
                 detail.add(row("回读确认", expected.size() + " 个参数全部一致", "ok", ""));
             }
@@ -606,13 +629,33 @@ public class IntentDeliveryService {
         plan.add(step(desc, taskJson("SetParameterValues", "", params)));
     }
 
-    /** 只在设备参数树存在候选叶子之一时才写入渲染结果；都没有则记跳过 */
+    /**
+     * 只在设备参数树存在候选叶子之一时才写入渲染结果；都没有则返回 null（调用方记跳过）。
+     * base 带 __NEW__（AddObject 新实例）时树上必然查不到该路径——这正是"新 WAN 建不出来"的
+     * 根因：新实例的参数包全被置 null。改用同对象类型下任一已有实例做存在性参照
+     * （如保留的 TR069 管理连接）；连参照实例都没有（首次建该类对象）时按对象类型取首个候选。
+     */
     private static String leaf(DeviceData data, String base, String... candidates) {
+        String refBase = null;
+        if (base.contains("__NEW__")) {
+            String parent = base.substring(0, base.indexOf("__NEW__"));
+            List<Integer> refs = data.instances(parent);
+            if (!refs.isEmpty()) {
+                refBase = parent + refs.get(0) + ".";
+            }
+        }
         for (String c : candidates) {
             String path = base + c;
             if (data.has(path)) {
                 return path;
             }
+            if (refBase != null && data.has(refBase + c)) {
+                // 参照实例上有该叶子：路径仍指向新实例（__NEW__ 在执行期被替换成真实实例号）
+                return path;
+            }
+        }
+        if (refBase == null && base.contains("__NEW__") && candidates.length > 0) {
+            return base + candidates[0];
         }
         return null;
     }

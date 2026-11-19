@@ -23,7 +23,7 @@
       <el-table-column label="序列号" prop="sn" min-width="170" show-overflow-tooltip />
       <el-table-column label="运营商" width="120">
         <template slot-scope="{ row }">
-          <span>{{ row.isp }} {{ row.ispVersion }}</span>
+          <span>{{ row.ispText || row.isp }} {{ row.ispVersion }}</span>
         </template>
       </el-table-column>
       <el-table-column label="业务域" prop="domain" width="110" />

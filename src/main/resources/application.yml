@@ -7,8 +7,9 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://127.0.0.1:3306/acs?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: root
-    password: Qq123456
+    # 生产环境用环境变量覆盖（ACS_DB_USERNAME / ACS_DB_PASSWORD），冒号后为本地开发默认值
+    username: ${ACS_DB_USERNAME:root}
+    password: ${ACS_DB_PASSWORD:Qq123456}
   data:
     redis:
       host: 127.0.0.1
@@ -65,8 +66,9 @@ acs:
     # 台账/任务表是否启动时自动补建（MySQL，DDL 与 sql/mysql.sql 一致）
     auto-create-table: true
     # 反向连接（Connection Request）账号密码与超时
-    cr-username: itsm
-    cr-password: itsm
+    # 生产环境用环境变量覆盖（ACS_CR_USERNAME / ACS_CR_PASSWORD），避免弱默认凭据
+    cr-username: ${ACS_CR_USERNAME:itsm}
+    cr-password: ${ACS_CR_PASSWORD:itsm}
     cr-timeout-ms: 3000
     # 首次上报自动下发的周期 Inform 间隔（秒）
     init-periodic-inform-seconds: 300
@@ -79,11 +81,14 @@ acs:
     # CWMP 报文体积上限（字节），超出直接拒绝（Netty 聚合器硬切，防大报文 DoS）
     max-body-bytes: 1048576
     # SN 粒度令牌桶限流（cpe:limit:token:{sn}，风暴报文拦在 Redis 会话之外）
+    # 限流只作用于"无会话"的洪泛报文（建会话前的风暴保护，会话内往返不消耗令牌）
     rate-limit-enabled: true
-    rate-limit-capacity: 10
-    rate-limit-refill-per-minute: 12
+    rate-limit-capacity: 20
+    rate-limit-refill-per-minute: 30
     # 设备档案缓存 cpe:info:{sn} TTL（秒），Inform 落台账时同步覆写
     device-info-ttl-seconds: 600
+    # 参数树缓存 cpe:params:tree:{sn} TTL（秒），落库时主动失效，TTL 只作兜底
+    param-tree-ttl-seconds: 600
     # Redis 派发队列 tr069:queue:rpc 长度上限（LTRIM 封顶，防堆积膨胀）
     task-queue-max-size: 10000
 

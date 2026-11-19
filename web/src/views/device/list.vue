@@ -1684,7 +1684,7 @@ export default {
       const adapt = this.adaptOf(row.sn) || {}
       const mac = biz.mac
       // 运营商中文名与能力串都由后端给（适配状态接口），页面不再维护码表
-      const ispText = adapt.ispText || row.isp || ''
+      const ispText = adapt.ispText || row.ispText || row.isp || ''
       const rows = [
         { label: 'OUI', value: row.oui },
         { label: '设备 SN', value: row.sn },

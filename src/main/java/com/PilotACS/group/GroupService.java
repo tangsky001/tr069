@@ -549,6 +549,7 @@ public class GroupService {
                 isp = modelProfileService.detectIsp(sn);
             }
             row.setIsp(isp);
+            row.setIspText(com.PilotACS.cpe.model.IspVariant.text(isp));
             Object last = device.get("last_inform_ms");
             row.setLastInformText(last == null ? "—" : fmtMs(((Number) last).longValue()));
             row.setIp(cpeStore.loadBizParams(sn).entrySet().stream()

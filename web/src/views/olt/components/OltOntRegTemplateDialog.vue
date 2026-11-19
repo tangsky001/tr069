@@ -121,7 +121,7 @@
         <olt-help-label
           slot="label"
           text="OLT 侧业务 VLAN 映射"
-          tip="光猫业务流落到 OLT 侧用哪些 VLAN，一行一条，写法如 41 vlan 41 或直接写 VLAN 列表。留空表示沿用线路模板里的 GEM 映射。"
+          tip="一行一组：光猫侧 VLAN + 空格 + OLT 侧 VLAN（如 104 46 表示 OLT 侧 46、光猫侧 104）。可填多行做多个业务，如 104 46 / 4011 46 / 4015 46：每组各下发一条 service-port translate，首组还会下发 eth1-4 native-vlan。只填 1 个数=透传；留空=不映射业务（不下发 native-vlan 和 service-port）。"
         />
         <div class="reg-textarea-row">
           <el-input
@@ -129,7 +129,7 @@
             type="textarea"
             :rows="3"
             class="reg-input"
-            placeholder="如 41,45-46"
+            placeholder="一行一组，如：&#10;104 46&#10;4011 46&#10;4015 46"
           />
           <el-button type="text" size="mini" @click="form.serviceVlanMap = ''">清空</el-button>
         </div>
@@ -139,9 +139,9 @@
         <olt-help-label
           slot="label"
           text="下发 TR069 VLAN 及 ACS 地址"
-          tip="光猫管理通道：填 VLAN 和 ACS 模板 ID（如 46 10），自动注册时一并下发，否则光猫上线后不回连平台。"
+          tip="填 TR069 管理 VLAN 和 OLT 上预建的 tr069-server 模板 ID（如 46 10）。非空时注册成功后下发 ont tr069-server-config <端口> <ONT ID> profile-id 10，光猫才能拿到 ACS 地址回连平台；留空则不下发。"
         />
-        <el-input v-model="form.tr069Vlan" class="reg-input" placeholder="如 46 10" />
+        <el-input v-model="form.tr069Vlan" class="reg-input" placeholder="如 46 10（VLAN + profile-id）" />
       </el-form-item>
 
       <el-form-item>

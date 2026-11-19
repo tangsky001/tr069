@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
@@ -62,6 +63,11 @@ public class CwmpService {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final long OFFLINE_AFTER_MS = 15 * 60 * 1000L;
     private static final Pattern TASK_KEY = Pattern.compile("task-(\\d+)");
+    /** 会话中断后采集任务的延迟反踢间隔：刚断连立即踢大概率打空，等设备侧缓一缓 */
+    private static final long RESUME_KICK_DELAY_MS = 30_000L;
+
+    /** 待延迟反踢的设备（sn → 到期时间戳），由 sweep 到期触发 */
+    private final Map<String, Long> delayedResumeKicks = new ConcurrentHashMap<>();
 
     private final CpeProperties props;
     private final SessionRegistry registry;
@@ -84,15 +90,21 @@ public class CwmpService {
             return Reply.empty(400);
         }
 
-        // 【前置限流】有 SN 按 SN 限流，空 POST/解析不出 SN 的按来源 IP 限流；
-        String limitId = limitId(msg, remoteAddr);
-        if (!rateLimiter.tryAcquire(limitId)) {
-            Logs.warn(Logs.Module.CPE, "报文限流丢弃（回 200 空响应）", "地址", remoteAddr,
-                    "主体", limitId, "报文", msg.getName() == null ? "空POST" : msg.getName());
-            return Reply.empty(200);
-        }
-
+        // 【前置限流】只拦"无会话"的洪泛报文（风暴保护，见 SnRateLimiter）。
+        // 注：ACS 空 HTTP 响应按 TR-069 3.6 必须用 204 No Content（载荷才用 200），
+        // 已绑定会话的后续往返（GPVResponse / Fault / 空POST）是正常 CWMP 交互，不能消耗令牌：
+        // 令牌桶容量只有 10，第 10 个 RPC 后这些报文会被丢弃并回 200 空响应，
+        // 设备收到空响应即结束会话，ACS 侧 60s 空闲超时 → 任务回队 → 反踢 → 新会话 → 无限循环。
         CwmpSession known = registry.bySessionId(cookieSessionId);
+        boolean sessionBound = known != null || registry.byRemoteAddr(remoteAddr) != null;
+        if (!sessionBound) {
+            String limitId = limitId(msg, remoteAddr);
+            if (!rateLimiter.tryAcquire(limitId)) {
+                Logs.warn(Logs.Module.CPE, "报文限流丢弃（回 204 空响应）", "地址", remoteAddr,
+                        "主体", limitId, "报文", msg.getName() == null ? "空POST" : msg.getName());
+                return Reply.empty(204);
+            }
+        }
         if (known != null) {
             return locked(known.getSn(), () -> handleKnown(known, msg, remoteAddr));
         }
@@ -105,8 +117,8 @@ public class CwmpService {
                 return locked(fallback.getSn(), () -> handleKnown(fallback, msg, remoteAddr));
             }
             // 真没有会话：多为设备收尾（TR-069 A.3.2 里空响应即结束会话）。
-            Logs.debug(Logs.Module.CPE, "无会话空 POST，回 200 空响应结束会话", "地址", remoteAddr);
-            return Reply.empty(200);
+            Logs.debug(Logs.Module.CPE, "无会话空 POST，回 204 空响应结束会话", "地址", remoteAddr);
+            return Reply.empty(204);
         }
         if (!"Inform".equals(msg.getName())) {
             // 无 Cookie 的 RPC 响应/Fault/TransferComplete：同样按来源地址找回会话。
@@ -157,10 +169,10 @@ public class CwmpService {
     private Reply handleKnown(CwmpSession s, SoapMessage msg, String remoteAddr) {
         if (!registry.isCurrent(s)) {
             // 会话已被顶替/收尾/TTL 判死：TransferComplete 仍要归因（落库与会话无关）；
-            if ("TransferComplete".equals(msg.getName())) {
+            if (isTransferComplete(msg)) {
                 handleTransferComplete(s, msg);
                 // 会话已死也必须应答 TC，否则设备保留 7 TRANSFER COMPLETE 事件反复重发
-                return new Reply(200, SoapBuilder.transferCompleteResponse(
+                return new Reply(200, tcResponse(msg,
                         msg.getId() == null || msg.getId().isBlank() ? "acs-tc" : msg.getId()), null);
             }
             if ("Inform".equals(msg.getName()) && msg.getSerialNumber() != null
@@ -168,8 +180,8 @@ public class CwmpService {
                 return newInformNestedSafe(s.getSn(), msg.getSerialNumber(), msg, remoteAddr);
             }
             if (msg.getName() == null) {
-                Logs.debug(Logs.Module.CPE, "空 POST 命中已收尾会话，回空响应结束", "sn", s.getSn());
-                return Reply.empty(200);
+                Logs.debug(Logs.Module.CPE, "空 POST 命中已收尾会话，回 204 空响应结束", "sn", s.getSn());
+                return Reply.empty(204);
             }
             return new Reply(400, SoapBuilder.acsFault(8000, "Session no longer valid"), null);
         }
@@ -267,9 +279,10 @@ public class CwmpService {
         s.setEvents(msg.getEvents());
 
         // 库里的存量参数树先灌进内存，再叠加 Inform 自带参数
+        //（Inform 参数只更新值/类型，不覆盖 GPN 的 writable，后者是只读拦截的依据）
         s.getData().loadAll(store.loadParams(s.getSn()));
         for (CpeParam p : msg.getParams()) {
-            s.getData().put(p);
+            s.getData().putInform(p);
         }
         String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
         s.setConnectionRequestUrl(s.getData().value(root + "ManagementServer.ConnectionRequestURL"));
@@ -348,10 +361,21 @@ public class CwmpService {
         // 每次上报：有参数树就排一条轻量 GPV 刷 WAN/WIFI/SIP 最新值（差异落库）
         modelProfileService.refreshBizInSession(s);
 
-        Logs.info(Logs.Module.CPE, "设备上报 Inform", "sn", s.getSn(),
-                "厂商", s.getManufacturer(), "型号", s.getProductClass(),
-                "事件", msg.getEvents(), "根节点", root,
-                "机型模板", s.getModelRow() == null ? "无" : s.getModelRow().get("id"));
+        // 周期 Inform 是常态流量（万级设备 × 每 5 分钟一条）：降为 debug，异常/首次/CR 仍打 info
+        boolean routineInform = !msg.getEvents().isEmpty()
+                && msg.getEvents().stream().allMatch(ev -> ev.startsWith("2 PERIODIC"));
+        if (routineInform) {
+            Logs.debug(Logs.Module.CPE, "设备上报 Inform（周期）", "sn", s.getSn(),
+                    "事件", msg.getEvents(), "根节点", root);
+        } else {
+            Logs.info(Logs.Module.CPE, "设备上报 Inform", "sn", s.getSn(),
+                    "厂商", s.getManufacturer(), "型号", s.getProductClass(),
+                    "事件", msg.getEvents(), "根节点", root,
+                    "机型模板", s.getModelRow() == null ? "无" : s.getModelRow().get("id"));
+        }
+        if (msg.isHoldRequests()) {
+            Logs.debug(Logs.Module.CPE, "设备声明 HoldRequests（收到 ACS 应答前暂缓新请求）", "sn", s.getSn());
+        }
     }
 
     // ==================== state 1：等空 POST / TransferComplete ====================
@@ -361,21 +385,21 @@ public class CwmpService {
             // 设备已声明本会话不再收请求（TR-069 A.3.2.1）：不再派 RPC，直接收尾
             if (msg.isNoMoreRequests()) {
                 endSession(s, "设备声明无后续请求(NoMoreRequests)");
-                return Reply.empty(200);
+                return Reply.empty(204);
             }
             // 设备就绪，取下一个任务展开成 RPC；没有活干就收尾
             RpcRequest next = nextRpc(s);
             if (next == null) {
                 endSession(s, "无待执行任务");
-                return Reply.empty(200);
+                return Reply.empty(204);
             }
             s.setState(CwmpSession.STATE_RPC_RUNNING);
             return new Reply(200, SoapBuilder.request(next), s.getSessionId());
         }
-        if ("TransferComplete".equals(msg.getName())) {
+        if (isTransferComplete(msg)) {
             handleTransferComplete(s, msg);
             // 一个 HTTP 往返只能带一个 SOAP 报文：先应答 TC，设备发下一个空 POST 再继续派 RPC。
-            return new Reply(200, SoapBuilder.transferCompleteResponse(
+            return new Reply(200, tcResponse(msg,
                     msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
                     s.getSessionId());
         }
@@ -392,26 +416,26 @@ public class CwmpService {
 
     private Reply onRpcRunning(CwmpSession s, SoapMessage msg) {
         // 个别设备会把 TransferComplete 夹在会话中途发，同样归因
-        if ("TransferComplete".equals(msg.getName())) {
+        if (isTransferComplete(msg)) {
             handleTransferComplete(s, msg);
             // 先应答 TC，下一个空 POST 再继续派 RPC（一个响应只能带一个 SOAP 报文）
-            return new Reply(200, SoapBuilder.transferCompleteResponse(
+            return new Reply(200, tcResponse(msg,
                     msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
                     s.getSessionId());
         }
         applyResponse(s, msg);
         if (s.isEnded()) {
-            return Reply.empty(200);
+            return Reply.empty(204);
         }
         // 设备声明不再收请求：不派下一个 RPC（TR-069 A.3.2.1），剩余任务留在队列等下个会话
         if (msg.isNoMoreRequests()) {
             endSession(s, "设备声明无后续请求(NoMoreRequests)");
-            return Reply.empty(200);
+            return Reply.empty(204);
         }
         RpcRequest next = nextRpc(s);
         if (next == null) {
             endSession(s, "任务执行完毕");
-            return Reply.empty(200);
+            return Reply.empty(204);
         }
         return new Reply(200, SoapBuilder.request(next), s.getSessionId());
     }
@@ -529,9 +553,14 @@ public class CwmpService {
                         true, System.currentTimeMillis()));
             }
             case DELETE_OBJECT -> {
-                // 删除成功：该对象实例子树从内存树摘除并打墓碑，落库时同步清行
+                // 删除成功：该对象实例子树从内存树摘除并打墓碑，落库时同步清行。
+                // TR-069 Table 32：Status=1 表示已提交但会话结束（或重启）后才真正生效，
+                // 此时设备侧同会话内 GPN/GPV 也应表现为已删除（内存树摘除语义一致），
+                // 记录 status 供上层排查，且不应追加 Reboot（CPE 会自行重启）。
                 List<String> removed = s.getData().removeSubtree(req.getPath());
-                completeTask(s, cur, Map.of("deleted", req.getPath(), "removedParams", removed.size()));
+                int status = msg == null ? 0 : msg.getStatus();
+                completeTask(s, cur, Map.of("deleted", req.getPath(), "removedParams", removed.size(),
+                        "applied", status == 0, "pendingReboot", status == 1));
             }
             case REBOOT -> {
                 completeTask(s, cur, Map.of("reboot", true));
@@ -604,7 +633,9 @@ public class CwmpService {
             if (names != null) {
                 // 记住这颗坏名：后续采集直接过滤，不必每轮重新二分
                 modelProfileService.rememberBadParam(s.getSn(), names.get(0));
-                Logs.warn(Logs.Module.CPE, "跳过设备不认的参数", "sn", s.getSn(), "任务", cur.getTaskId(),
+                // 采集过程中的正常容错（坏名已持久化到 badParams，后续采集直接过滤），
+                // 大树探测时每颗坏名一条 WARN 会刷屏；需要排查时开 debug 即可
+                Logs.debug(Logs.Module.CPE, "跳过设备不认的参数", "sn", s.getSn(), "任务", cur.getTaskId(),
                         "参数", names, "错误码", msg.getFaultCode());
                 return;
             }
@@ -634,6 +665,19 @@ public class CwmpService {
         return leaves;
     }
 
+    /** TransferComplete / AutonomousTransferComplete（Table 44/45，后者无 CommandKey）统一定位 */
+    private static boolean isTransferComplete(SoapMessage msg) {
+        return "TransferComplete".equals(msg.getName())
+                || "AutonomousTransferComplete".equals(msg.getName());
+    }
+
+    /** 按 TC 类型回对应响应（Table 45 两个响应均无参数，Autonomous 也必须应答：Table 5 Responding REQUIRED） */
+    private static String tcResponse(SoapMessage msg, String id) {
+        return "AutonomousTransferComplete".equals(msg.getName())
+                ? SoapBuilder.autonomousTransferCompleteResponse(id)
+                : SoapBuilder.transferCompleteResponse(id);
+    }
+
     private void handleTransferComplete(CwmpSession s, SoapMessage msg) {
         String key = msg.getCommandKey() == null ? "" : msg.getCommandKey();
         long taskId = 0;
@@ -658,6 +702,11 @@ public class CwmpService {
             // 非本 ACS 产生的 CommandKey（外部平台任务等）：归因不了就明确记日志，不再静默丢弃
             Logs.debug(Logs.Module.CPE, "TransferComplete 非本 ACS 任务，忽略归因",
                     "sn", s == null ? "?" : s.getSn(), "commandKey", key, "错误码", msg.getTcFaultCode());
+        } else if ("AutonomousTransferComplete".equals(msg.getName())) {
+            // 设备自主传输（非 ACS 任务触发，无 CommandKey）：Table 5 要求 ACS 必须应答，归因留观测
+            Logs.info(Logs.Module.CPE, "设备自主传输完成（AutonomousTransferComplete）",
+                    "sn", s == null ? "?" : s.getSn(),
+                    "错误码", msg.getTcFaultCode(), "完成时间", msg.getEndValue());
         }
     }
 
@@ -690,8 +739,9 @@ public class CwmpService {
                         "会话 RPC 次数超限(" + props.getMaxRpcCount() + ")，待续跑", null);
                 lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
                 s.setCurrent(null);
-                // 立刻反踢续跑：current 已置空，endSession 的"回队反踢"分支不会再触发，
-                connectionRequestService.wakeWithRetry(s.getSn(), s.getConnectionRequestUrl(), null, null);
+                // 会话还在进行中，立即反踢必被"设备已有活会话"自检挡掉，任务只能等 5 分钟周期 Inform；
+                // 登记延迟反踢，等会话收尾后由 sweep 触发（与 endSession 回队续跑同一机制）
+                delayedResumeKicks.put(s.getSn(), System.currentTimeMillis() + RESUME_KICK_DELAY_MS);
                 return null;
             }
             TaskRun.RpcStep step = cur.poll();
@@ -801,8 +851,9 @@ public class CwmpService {
                     // 采集类任务回队续跑（与"排队等待设备上线"语义一致）。
                     store.markTaskResume(cur.getTaskId());
                     store.updateTask(cur.getTaskId(), "queued", null, "会话中断(" + reason + ")，待续跑", null);
-                    // 回队后立刻反踢续跑，不等下一轮周期上报（大树 99 次上限要多个会话接力）
-                    connectionRequestService.wakeWithRetry(s.getSn(), s.getConnectionRequestUrl(), null, null);
+                    // 延迟反踢：会话刚断（超时/异常收尾）时立即踢大概率打空，等 30s 由 sweep 触发；
+                    // 设备若先自行 Inform 上来，队列里的任务会直接续跑，届时反踢发现活会话自动停
+                    delayedResumeKicks.put(s.getSn(), System.currentTimeMillis() + RESUME_KICK_DELAY_MS);
                 }
             }
             store.saveDeviceParams(s.getSn(), s.getData().all(), s.getData().dirtyPaths(),
@@ -886,6 +937,29 @@ public class CwmpService {
         }
         // CR 唤醒标记过期清理：设备一直不上线时防条目滞留
         registry.sweepExpiredKicks();
+        // 会话中断任务的延迟反踢：到期才踢（设备先上线的场景由 wakeWithRetry 的活会话自检兜住）
+        if (!delayedResumeKicks.isEmpty()) {
+            long now = System.currentTimeMillis();
+            for (Map.Entry<String, Long> e : delayedResumeKicks.entrySet()) {
+                if (e.getValue() <= now && delayedResumeKicks.remove(e.getKey(), e.getValue())) {
+                    try {
+                        connectionRequestService.wakeWithRetry(e.getKey(), resolveCrUrl(e.getKey()), null, null);
+                    } catch (Exception ex) {
+                        Logs.warn(Logs.Module.CPE, "延迟反踢异常", "sn", e.getKey(), "原因", ex.getMessage());
+                    }
+                }
+            }
+        }
+    }
+
+    /** 会话收尾后反踢用的 CR URL：先查档案缓存，再落库兜底 */
+    private String resolveCrUrl(String sn) {
+        Map<String, Object> row = infoCache.get(sn);
+        if (row == null || row.get("connection_request_url") == null) {
+            row = store.findDevice(sn);
+        }
+        Object url = row == null ? null : row.get("connection_request_url");
+        return url == null ? null : String.valueOf(url);
     }
 
     /** Redis 会话 TTL 过期回调（SessionExpiryListener）入口：按 sn 就地收尾 */

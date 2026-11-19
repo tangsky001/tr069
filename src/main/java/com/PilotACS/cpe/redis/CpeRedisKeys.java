@@ -15,6 +15,7 @@ public final class CpeRedisKeys {
     public static final String SESSION_PREFIX = "cpe:session:";
     public static final String SID_PREFIX = "cpe:sid:";
     public static final String INFO_PREFIX = "cpe:info:";
+    public static final String PARAM_TREE_PREFIX = "cpe:params:tree:";
     public static final String TOKEN_PREFIX = "cpe:limit:token:";
     public static final String TASK_QUEUE = "tr069:queue:rpc";
 
@@ -31,6 +32,11 @@ public final class CpeRedisKeys {
     /** 设备档案缓存 key（DB1） */
     public static String info(String sn) {
         return INFO_PREFIX + sn;
+    }
+
+    /** 设备存量参数树缓存 key（DB1），落库时主动失效 */
+    public static String paramTree(String sn) {
+        return PARAM_TREE_PREFIX + sn;
     }
 
     /** 令牌桶限流 key（DB1；限流在会话之前，不与会话争 OPS） */

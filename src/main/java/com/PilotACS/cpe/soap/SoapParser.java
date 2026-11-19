@@ -56,6 +56,11 @@ public final class SoapParser {
                     // 未声明就保持 0（用 ACS 默认会话超时）
                 }
             }
+            Element hold = firstChild(header, "HoldRequests");
+            if (hold != null) {
+                String v = hold.getTextContent().trim();
+                msg.setHoldRequests("1".equals(v) || "true".equalsIgnoreCase(v));
+            }
         }
         if (body == null) {
             return msg;
@@ -83,6 +88,12 @@ public final class SoapParser {
                 Element st = firstChild(root, "Status");
                 msg.setStatus(st == null ? 0 : intOf(st.getTextContent().trim(), 0));
             }
+            case "DeleteObjectResponse" -> {
+                // TR-069 A.3.2.7 Table 32：Status 0=已删除；1=已验证提交但尚未应用
+                //（如需重启，CPE 会在会话结束后自行应用并可能重启），此前未解析恒为 0
+                Element st = firstChild(root, "Status");
+                msg.setStatus(st == null ? 0 : intOf(st.getTextContent().trim(), 0));
+            }
             case "GetRPCMethodsResponse" -> {
                 Element list = firstChild(root, "MethodList");
                 if (list != null) {
@@ -92,6 +103,11 @@ public final class SoapParser {
                 }
             }
             case "TransferComplete" -> parseTransferComplete(root, msg);
+            case "AutonomousTransferComplete" -> {
+                // Table 44/45：设备自主传输完成（非 ACS 下发任务触发，无 CommandKey），
+                // Table 5 要求 ACS Responding REQUIRED，解析复用 TransferComplete 结构
+                parseTransferComplete(root, msg);
+            }
             case "Fault" -> parseFault(root, msg);
             case "DownloadResponse" -> {
                 // 设备回执：Status 0/1（1=进行中，最终成败等 7 TRANSFER COMPLETE）+ 起止时间
