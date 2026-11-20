@@ -47,7 +47,7 @@ public class ModelProfileService {
         try {
             Map<String, Object> device = store.findDevice(sn);
             if (device == null) {
-                Logs.warn(Logs.Module.CPE, "运营商识别跳过：设备台账不存在", "sn", sn);
+                Logs.warn(Logs.Module.CPE_PUSH, "运营商识别跳过：设备台账不存在", "sn", sn);
                 return null;
             }
             String isp = str(device.get("isp"));
@@ -70,12 +70,12 @@ public class ModelProfileService {
                         break;
                     }
                 }
-                Logs.info(Logs.Module.CPE, "运营商识别未命中", "sn", sn,
+                Logs.info(Logs.Module.CPE_PUSH, "运营商识别未命中", "sn", sn,
                         "参数数", params.size(), "私有节点样本", samples);
             }
             return hit;
         } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "运营商识别异常", "sn", sn, "原因", e.toString());
+            Logs.warn(Logs.Module.CPE_PUSH, "运营商识别异常", "sn", sn, "原因", e.toString());
             return null;
         }
     }
@@ -103,12 +103,12 @@ public class ModelProfileService {
                 return null;
             }
             store.updateDeviceColumns(sn, Map.of("isp", hit.code()));
-            Logs.info(Logs.Module.CPE, "按私有节点识别运营商", "sn", sn,
+            Logs.info(Logs.Module.CPE_PUSH, "按私有节点识别运营商", "sn", sn,
                     "运营商", hit.code(), "参数数", paths.size());
             return hit.code();
         } catch (Exception e) {
             // 识别/回填失败不能拖垮会话收尾
-            Logs.warn(Logs.Module.CPE, "运营商识别回填失败", "sn", sn, "原因", e.toString());
+            Logs.warn(Logs.Module.CPE_PUSH, "运营商识别回填失败", "sn", sn, "原因", e.toString());
             return null;
         }
     }
@@ -131,7 +131,7 @@ public class ModelProfileService {
         ispProbeDone.add(sn);
         int count = s.getData().all().size();
         if (count >= FULL_TREE_MIN_PARAMS) {
-            Logs.info(Logs.Module.CPE, "参数树已采全且无私有节点，不再探测", "sn", sn, "参数数", count);
+            Logs.info(Logs.Module.CPE_PUSH, "参数树已采全且无私有节点，不再探测", "sn", sn, "参数数", count);
             return;
         }
         if (store.countActiveTasks(sn, "AdaptProbe") > 0) {
@@ -142,7 +142,7 @@ public class ModelProfileService {
         Map<String, Object> row = store.getTask(id);
         String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
         s.getQueue().add(planner.build(row, s.getData(), root, s.getModelParams()));
-        Logs.info(Logs.Module.CPE, "运营商未知且参数树不完整，本会话立即全树探测",
+        Logs.info(Logs.Module.CPE_PUSH, "运营商未知且参数树不完整，本会话立即全树探测",
                 "sn", sn, "参数数", count, "任务", id);
     }
 
@@ -165,10 +165,10 @@ public class ModelProfileService {
             Map<String, Object> row = store.getTask(id);
             String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
             s.getQueue().add(planner.build(row, s.getData(), root, s.getModelParams()));
-            Logs.debug(Logs.Module.CPE, "本会话排业务参数轻量刷新",
+            Logs.debug(Logs.Module.CPE_PUSH, "本会话排业务参数轻量刷新",
                     "sn", s.getSn(), "参数数", leaves.size(), "任务", id);
         } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "业务参数刷新排程失败", "sn", s.getSn(), "原因", e.toString());
+            Logs.warn(Logs.Module.CPE_PUSH, "业务参数刷新排程失败", "sn", s.getSn(), "原因", e.toString());
         }
     }
 
@@ -228,14 +228,14 @@ public class ModelProfileService {
         ispProbeDone.add(sn);
         if (paramCount >= FULL_TREE_MIN_PARAMS) {
             // 树已经采全还是没有私有节点：通用固件，认不出属正常
-            Logs.info(Logs.Module.CPE, "参数树已采全且无私有节点，不再探测", "sn", sn, "参数数", paramCount);
+            Logs.info(Logs.Module.CPE_PUSH, "参数树已采全且无私有节点，不再探测", "sn", sn, "参数数", paramCount);
             return;
         }
         if (store.countActiveTasks(sn, "AdaptProbe") > 0) {
             return;
         }
         store.insertTask(sn, "AdaptProbe", Map.of(), "system-isp-detect");
-        Logs.info(Logs.Module.CPE, "参数树不完整，自动排全树探测", "sn", sn,
+        Logs.info(Logs.Module.CPE_PUSH, "参数树不完整，自动排全树探测", "sn", sn,
                 "参数数", paramCount, "任务类型", "AdaptProbe");
     }
 
@@ -281,7 +281,7 @@ public class ModelProfileService {
             s.setModelParams(store.loadModelParams(((Number) row.get("id")).longValue()));
         } catch (Exception e) {
             // 设备台账尚未落库等场景不阻断会话
-            Logs.debug(Logs.Module.CPE, "机型模板匹配跳过: {}", e.getMessage());
+            Logs.debug(Logs.Module.CPE_PUSH, "机型模板匹配跳过: {}", e.getMessage());
         }
     }
 
@@ -309,7 +309,7 @@ public class ModelProfileService {
                 str(device.get("root_node")), capabilityJson, sn, params);
         store.updateDeviceColumns(sn, Map.of(
                 "model_id", id, "adapted", 1, "adapted_from", sn, "isp", isp));
-        Logs.info(Logs.Module.CPE, "机型适配入库", "sn", sn,
+        Logs.info(Logs.Module.CPE_PUSH, "机型适配入库", "sn", sn,
                 "品牌", brand, "型号", model, "版本", version, "运营商", isp,
                 "模板id", id, "参数数", params.size());
         return id;

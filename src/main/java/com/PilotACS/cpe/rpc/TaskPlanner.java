@@ -77,7 +77,7 @@ public class TaskPlanner {
                 // 续跑（会话中断回队）：跳过参数树里"已经采到值"的名字，只补缺口。
                 if (Boolean.TRUE.equals(params.get("resume")) && !names.isEmpty()) {
                     List<String> remaining = names.stream().filter(n -> data.value(n) == null).toList();
-                    Logs.info(Logs.Module.CPE, "任务断点续跑", "任务", run.getTaskId(),
+                    Logs.info(Logs.Module.CPE_PUSH, "任务断点续跑", "任务", run.getTaskId(),
                             "总数", names.size(), "已采", names.size() - remaining.size(),
                             "待采", remaining.size());
                     names = new ArrayList<>(remaining);
@@ -148,7 +148,7 @@ public class TaskPlanner {
                 if (Boolean.TRUE.equals(params.get("resume"))) {
                     // 会话中断回队：树已经在会话里（GPN 全量做过了），只补采没取到值的业务叶子。
                     List<String> missing = uncollectedBizLeaves(data, root);
-                    Logs.info(Logs.Module.CPE, "探测任务断点续跑", "任务", run.getTaskId(),
+                    Logs.info(Logs.Module.CPE_PUSH, "探测任务断点续跑", "任务", run.getTaskId(),
                             "待采", missing.size());
                     appendGpv(run, missing, "collect");
                 } else {

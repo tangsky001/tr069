@@ -84,14 +84,14 @@ public class OltTelnetService {
 
         // 「自动」编码：回显里出现替换符说明按 UTF-8 解错了，用 GBK 再连一次
         if (OltCharset.isAuto(device.getCharset()) && garbled(snapshot)) {
-            Logs.debug(Logs.Module.OLT, "OLT {} 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
             try {
                 OltSnapshot retried = doCollect(device, OltCharset.fallback(), withBoards, withOptics);
                 if (!garbled(retried)) {
                     return retried;
                 }
             } catch (IOException e) {
-                Logs.debug(Logs.Module.OLT, "OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
+                Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
             }
         }
         return snapshot;
@@ -109,7 +109,7 @@ public class OltTelnetService {
         long baseStart = System.currentTimeMillis();
         OltSnapshot base = sessionPool.execute(device, charset, strict,
                 session -> session.collect(true, EnumSet.noneOf(OltCliSession.Section.class)));
-        Logs.info(Logs.Module.OLT, "OLT 分段耗时 [{}] 板卡/版本段: {} ms", device.getHost(), System.currentTimeMillis() - baseStart);
+        Logs.info(Logs.Module.OLT_COLLECT, "OLT 分段耗时 [{}] 板卡/版本段: {} ms", device.getHost(), System.currentTimeMillis() - baseStart);
         List<OltBoard> boards = base.getBoards();
         if (boards == null || boards.isEmpty()) {
             return base;
@@ -149,13 +149,13 @@ public class OltTelnetService {
                 throw new IOException("OLT 采集被中断", e);
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
-                Logs.warn(Logs.Module.OLT, "OLT 分段耗时 [{}] {} 失败于 {} ms: {}", device.getHost(),
+                Logs.warn(Logs.Module.OLT_COLLECT, "OLT 分段耗时 [{}] {} 失败于 {} ms: {}", device.getHost(),
                         sectionNames(parts.get(i).sections()), System.currentTimeMillis() - partStarts.get(i),
                         cause.getMessage());
                 notes.add("分段采集失败：" + cause.getMessage());
                 continue;
             }
-            Logs.info(Logs.Module.OLT, "OLT 分段耗时 [{}] {}: {} ms", device.getHost(),
+            Logs.info(Logs.Module.OLT_COLLECT, "OLT 分段耗时 [{}] {}: {} ms", device.getHost(),
                     sectionNames(parts.get(i).sections()), System.currentTimeMillis() - partStarts.get(i));
             mergePart(base, part, parts.get(i).sections());
             if (part.getNotes() != null) {
@@ -167,7 +167,7 @@ public class OltTelnetService {
         }
         base.setNotes(notes);
         base.setTranscript(transcript.toString());
-        Logs.info(Logs.Module.OLT, "OLT 分段耗时 [{}] 全量合计: {} ms", device.getHost(), System.currentTimeMillis() - totalStart);
+        Logs.info(Logs.Module.OLT_COLLECT, "OLT 分段耗时 [{}] 全量合计: {} ms", device.getHost(), System.currentTimeMillis() - totalStart);
         return base;
     }
 
@@ -292,14 +292,14 @@ public class OltTelnetService {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltSnapshot snapshot = doCollectBoards(device, charset);
         if (OltCharset.isAuto(device.getCharset()) && garbled(snapshot)) {
-            Logs.debug(Logs.Module.OLT, "OLT {} 快速采集回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 快速采集回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
             try {
                 OltSnapshot retried = doCollectBoards(device, OltCharset.fallback());
                 if (!garbled(retried)) {
                     return retried;
                 }
             } catch (IOException e) {
-                Logs.debug(Logs.Module.OLT, "OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
+                Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
             }
         }
         return snapshot;
@@ -324,7 +324,7 @@ public class OltTelnetService {
         OltSnapshot snapshot = doCollectSections(device, charset, boards, sections, enrichOntDetails);
         // 「自动」编码：与全量采集同一套 GBK 重试逻辑
         if (OltCharset.isAuto(device.getCharset()) && garbled(snapshot)) {
-            Logs.debug(Logs.Module.OLT, "OLT {} 按页签采集回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 按页签采集回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
             try {
                 OltSnapshot retried = doCollectSections(device, OltCharset.fallback(), boards, sections,
                         enrichOntDetails);
@@ -332,7 +332,7 @@ public class OltTelnetService {
                     return retried;
                 }
             } catch (IOException e) {
-                Logs.debug(Logs.Module.OLT, "OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
+                Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
             }
         }
         return snapshot;
@@ -350,14 +350,14 @@ public class OltTelnetService {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltSnapshot snapshot = doCollectOntDetails(device, charset, boards);
         if (OltCharset.isAuto(device.getCharset()) && garbled(snapshot)) {
-            Logs.debug(Logs.Module.OLT, "OLT {} ONT 详情补采回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} ONT 详情补采回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
             try {
                 OltSnapshot retried = doCollectOntDetails(device, OltCharset.fallback(), boards);
                 if (!garbled(retried)) {
                     return retried;
                 }
             } catch (IOException e) {
-                Logs.debug(Logs.Module.OLT, "OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
+                Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} GBK 重试失败，保留首次结果: {}", device.getHost(), e.getMessage());
             }
         }
         return snapshot;
@@ -382,11 +382,11 @@ public class OltTelnetService {
         Charset charset = OltCharset.resolve(device.getCharset());
         List<OltOntDeleteResult> results = doDeleteBoardOnts(device, charset, slots);
         if (OltCharset.isAuto(device.getCharset()) && garbledDelete(results)) {
-            Logs.debug(Logs.Module.OLT, "OLT {} 删除 ONT 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 删除 ONT 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
             try {
                 results = doDeleteBoardOnts(device, OltCharset.fallback(), slots);
             } catch (IOException e) {
-                Logs.debug(Logs.Module.OLT, "GBK 重试删除 ONT 失败，保留首次结果: {}", e.getMessage());
+                Logs.debug(Logs.Module.OLT_COLLECT, "GBK 重试删除 ONT 失败，保留首次结果: {}", e.getMessage());
             }
         }
         return results;
@@ -411,11 +411,11 @@ public class OltTelnetService {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltVlanInfo info = doCollectVlans(device, charset, boards);
         if (OltCharset.isAuto(device.getCharset()) && garbledVlans(info)) {
-            Logs.debug(Logs.Module.OLT, "OLT {} VLAN 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} VLAN 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
             try {
                 info = doCollectVlans(device, OltCharset.fallback(), boards);
             } catch (IOException e) {
-                Logs.debug(Logs.Module.OLT, "GBK 重试采 VLAN 失败，保留首次结果: {}", e.getMessage());
+                Logs.debug(Logs.Module.OLT_COLLECT, "GBK 重试采 VLAN 失败，保留首次结果: {}", e.getMessage());
             }
         }
         return info;
@@ -448,7 +448,7 @@ public class OltTelnetService {
         Integer filled = sessionPool.execute(device, charset, charsetStrict(device, charset),
                 session -> session.fillOntProfilesFromConfig(boards, notes));
         if (!notes.isEmpty()) {
-            Logs.info(Logs.Module.OLT, "OLT {} ONT 模板号补采提示：{}", device.getHost(), String.join("；", notes));
+            Logs.info(Logs.Module.OLT_COLLECT, "OLT {} ONT 模板号补采提示：{}", device.getHost(), String.join("；", notes));
         }
         return filled == null ? 0 : filled;
     }

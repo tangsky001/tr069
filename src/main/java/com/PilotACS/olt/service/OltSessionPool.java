@@ -210,7 +210,7 @@ public class OltSessionPool {
                 // 会话登录被设备拒绝时回退到已有会话排队
                 SessionSlot fallback = channel == null ? null : channel.fallbackSlot(slot);
                 if (fallback != null) {
-                    Logs.debug(Logs.Module.OLT, "OLT 长连接：{} 的第 {} 条会话登录被拒({})，回退到会话 {} 排队",
+                    Logs.debug(Logs.Module.OLT_COLLECT, "OLT 长连接：{} 的第 {} 条会话登录被拒({})，回退到会话 {} 排队",
                             channel.key, slot.index + 1, e.getMessage(), fallback.name);
                     return executeOn(fallback, device, charset, charsetStrict, task);
                 }
@@ -254,7 +254,7 @@ public class OltSessionPool {
         try {
             session.logoutAndClose();
         } catch (RuntimeException e) {
-            Logs.debug(Logs.Module.OLT, "退出 OLT 会话失败(忽略): {}", e.getMessage());
+            Logs.debug(Logs.Module.OLT_COLLECT, "退出 OLT 会话失败(忽略): {}", e.getMessage());
         }
     }
 
@@ -331,7 +331,7 @@ public class OltSessionPool {
             if (session.isAlive() && session.ping(commandTimeoutMs)) {
                 slot.lastKeepaliveAt = System.currentTimeMillis();
             } else {
-                Logs.debug(Logs.Module.OLT, "OLT 长连接：{} 探活失败，关闭待下次重建", slot.name);
+                Logs.debug(Logs.Module.OLT_COLLECT, "OLT 长连接：{} 探活失败，关闭待下次重建", slot.name);
                 closeQuietly(session);
                 if (slot.session == session) {
                     slot.session = null;
@@ -341,7 +341,7 @@ public class OltSessionPool {
             if (now - slot.lastUsedAt < IDLE_QUIT_MS) {
                 return;
             }
-            Logs.debug(Logs.Module.OLT, "OLT 长连接（未开保活）：{} 空闲超过 1 分钟，quit 退出登录", slot.name);
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT 长连接（未开保活）：{} 空闲超过 1 分钟，quit 退出登录", slot.name);
             session.logoutAndClose();
             if (slot.session == session) {
                 slot.session = null;
@@ -389,7 +389,7 @@ public class OltSessionPool {
             this.keepaliveIntervalMs = intervalMs;
         }
         this.keepaliveEnabled = enabled;
-        Logs.info(Logs.Module.OLT, "OLT 会话保活已{}：{}分钟探活一次", enabled ? "开启" : "关闭", keepaliveIntervalMs / 60000);
+        Logs.info(Logs.Module.OLT_COLLECT, "OLT 会话保活已{}：{}分钟探活一次", enabled ? "开启" : "关闭", keepaliveIntervalMs / 60000);
         return status();
     }
 
@@ -416,7 +416,7 @@ public class OltSessionPool {
         try {
             session.close();
         } catch (RuntimeException e) {
-            Logs.debug(Logs.Module.OLT, "关闭 OLT 会话失败(忽略): {}", e.getMessage());
+            Logs.debug(Logs.Module.OLT_COLLECT, "关闭 OLT 会话失败(忽略): {}", e.getMessage());
         }
     }
 

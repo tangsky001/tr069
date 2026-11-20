@@ -29,7 +29,7 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
         // 任务可能已被删除/收口（队列里是旧消息）：不再是排队状态就直接丢弃
         Map<String, Object> task = store.getTask(taskId);
         if (task == null || !"queued".equals(String.valueOf(task.get("status")))) {
-            Logs.debug(Logs.Module.CPE, "派发消息对应任务已失效，跳过唤醒", "sn", sn, "任务", taskId);
+            Logs.debug(Logs.Module.CPE_PUSH, "派发消息对应任务已失效，跳过唤醒", "sn", sn, "任务", taskId);
             return;
         }
         wakeNow(sn, taskId);
@@ -50,14 +50,14 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
         }
         String crUrl = device == null ? null : str(device.get("connection_request_url"));
         if (crUrl == null || crUrl.isBlank()) {
-            Logs.debug(Logs.Module.CPE, "无反向连接地址，等设备下次 Inform 装载任务", "sn", sn, "任务", taskId);
+            Logs.debug(Logs.Module.CPE_PUSH, "无反向连接地址，等设备下次 Inform 装载任务", "sn", sn, "任务", taskId);
             return;
         }
         // 只用配置账密唤醒；设备上报的 CR 用户名（密码不可知）不再参与猜配。
         connectionRequestService.wakeWithRetry(sn, crUrl,
                 paramEndingWith(sn, "ManagementServer.ConnectionRequestUsername"),
                 paramEndingWith(sn, "ManagementServer.ConnectionRequestPassword"));
-        Logs.info(Logs.Module.CPE, "离线任务已派发反向唤醒", "sn", sn, "任务", taskId);
+        Logs.info(Logs.Module.CPE_PUSH, "离线任务已派发反向唤醒", "sn", sn, "任务", taskId);
     }
 
     /** 参数树里按后缀取值（如 ManagementServer.ConnectionRequestUsername） */

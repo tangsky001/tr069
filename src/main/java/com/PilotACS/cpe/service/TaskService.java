@@ -50,7 +50,7 @@ public class TaskService {
             if (IDEMPOTENT_TYPES.contains(type)) {
                 long existing = store.findActiveTaskId(sn, type);
                 if (existing > 0) {
-                    Logs.info(Logs.Module.CPE, "同类任务执行中，复用不重复建单", "sn", sn, "类型", type, "任务", existing);
+                    Logs.info(Logs.Module.CPE_PUSH, "同类任务执行中，复用不重复建单", "sn", sn, "类型", type, "任务", existing);
                     return existing;
                 }
             }
@@ -77,7 +77,7 @@ public class TaskService {
                     String root = BusinessPaths.detectRoot(session.getData(), props.getDefaultRootNode());
                     TaskRun run = planner.build(row, session.getData(), root, session.getModelParams());
                     session.getQueue().add(run);
-                    Logs.info(Logs.Module.CPE, "任务入会话队列", "sn", sn, "任务", id, "类型", type);
+                    Logs.info(Logs.Module.CPE_PUSH, "任务入会话队列", "sn", sn, "任务", id, "类型", type);
                     return;
                 }
             } finally {
@@ -90,13 +90,13 @@ public class TaskService {
             // Redis 故障降级：不经派发队列直接反踢（此前只打日志，降级路径缺失，
             taskDispatcher.wakeNow(sn, id);
         }
-        Logs.info(Logs.Module.CPE, "任务排队等待设备上线", "sn", sn, "任务", id, "类型", type);
+        Logs.info(Logs.Module.CPE_PUSH, "任务排队等待设备上线", "sn", sn, "任务", id, "类型", type);
     }
 
     /** 轮询等任务完成（同步采集类接口用）；等待名额用尽时立即返回当前状态，不占死线程池 */
     public Map<String, Object> awaitTask(long taskId, int timeoutSeconds) {
         if (!waitPermits.tryAcquire()) {
-            Logs.warn(Logs.Module.CPE, "任务同步等待名额已满，直接返回当前状态", "任务", taskId);
+            Logs.warn(Logs.Module.CPE_PUSH, "任务同步等待名额已满，直接返回当前状态", "任务", taskId);
             return store.getTask(taskId);
         }
         try {

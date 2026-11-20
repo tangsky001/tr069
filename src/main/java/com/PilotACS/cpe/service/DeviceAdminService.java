@@ -94,7 +94,7 @@ public class DeviceAdminService {
             return finish(out, "empty", List.of(),
                     "设备没有可用的本地账号节点，定制节点与通用 User 实例都读不到");
         }
-        Logs.info(Logs.Module.CPE, "查询设备本地账号完成", "sn", sn, "账号数", accounts.size());
+        Logs.info(Logs.Module.CPE_PUSH, "查询设备本地账号完成", "sn", sn, "账号数", accounts.size());
         return finish(out, "success", accounts, null);
     }
 
@@ -313,7 +313,7 @@ public class DeviceAdminService {
         out.put("taskId", taskId);
         out.put("path", enablePath);
         if ("success".equals(status)) {
-            Logs.info(Logs.Module.CPE, "Telnet 开关下发成功", "sn", sn,
+            Logs.info(Logs.Module.CPE_PUSH, "Telnet 开关下发成功", "sn", sn,
                     "目标", enabled ? "开启" : "关闭", "路径", enablePath);
             return finish(out, "success", null,
                     wanPath == null && wanAccess != null ? "已下发 Telnet 开关；设备参数树中没有 WAN 侧访问节点，该项未下发" : null);

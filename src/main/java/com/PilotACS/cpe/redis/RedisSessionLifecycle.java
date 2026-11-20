@@ -94,7 +94,7 @@ public class RedisSessionLifecycle {
             template.execute(REGISTER, java.util.List.of(key), argv.toArray());
             template.opsForValue().set(CpeRedisKeys.sid(s.getSessionId()), s.getSn(), ttl());
         } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "会话生命周期登记失败（降级内存语义）", "sn", s.getSn(), "原因", e.getMessage());
+            Logs.warn(Logs.Module.CPE_PUSH, "会话生命周期登记失败（降级内存语义）", "sn", s.getSn(), "原因", e.getMessage());
         }
     }
 
@@ -135,12 +135,12 @@ public class RedisSessionLifecycle {
                     java.util.List.of(sessionKey(sn)),
                     String.valueOf(taskId), String.valueOf(ttl().toSeconds()));
             if (ok == null || ok != 1L) {
-                Logs.debug(Logs.Module.CPE, "rpcState CAS 拒绝（已在跑其他任务）", "sn", sn, "任务", taskId);
+                Logs.debug(Logs.Module.CPE_PUSH, "rpcState CAS 拒绝（已在跑其他任务）", "sn", sn, "任务", taskId);
                 return false;
             }
             return true;
         } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "rpcState 写 RUNNING 失败（降级内存语义）", "sn", sn, "原因", e.getMessage());
+            Logs.warn(Logs.Module.CPE_PUSH, "rpcState 写 RUNNING 失败（降级内存语义）", "sn", sn, "原因", e.getMessage());
             return false;
         }
     }
@@ -152,7 +152,7 @@ public class RedisSessionLifecycle {
                     java.util.List.of(sessionKey(sn)),
                     taskId > 0 ? String.valueOf(taskId) : "", String.valueOf(ttl().toSeconds()));
         } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "rpcState 写 IDLE 失败（降级内存语义）", "sn", sn, "原因", e.getMessage());
+            Logs.warn(Logs.Module.CPE_PUSH, "rpcState 写 IDLE 失败（降级内存语义）", "sn", sn, "原因", e.getMessage());
         }
     }
 

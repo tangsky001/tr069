@@ -197,7 +197,7 @@ public class TelnetClient implements Closeable {
                                     @Override
                                     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
                                         // 收数据途中出错不能再往管道尾丢：那样数据静静丢掉，业务侧只看到「回显超时」没有线索
-                                        Logs.warn(Logs.Module.OLT, "Telnet 收数据异常，关闭连接：{}", cause.toString());
+                                        Logs.warn(Logs.Module.OLT_COLLECT, "Telnet 收数据异常，关闭连接：{}", cause.toString());
                                         client.onInactive();
                                         ctx.close();
                                     }

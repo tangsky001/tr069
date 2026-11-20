@@ -68,12 +68,12 @@ public class InitProvisionService {
             }
             long taskId = schedule(s);
             trackScheduled(sn);
-            Logs.info(Logs.Module.CPE, "首次上报，下发反向连接账密与周期上报",
+            Logs.info(Logs.Module.CPE_PUSH, "首次上报，下发反向连接账密与周期上报",
                     "sn", sn, "任务", taskId,
                     "反向连接账号", props.getCrUsername(),
                     "周期上报秒", props.getInitPeriodicInformSeconds());
         } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "首次下发初始化参数失败", "sn", sn, "原因", e.toString());
+            Logs.warn(Logs.Module.CPE_PUSH, "首次下发初始化参数失败", "sn", sn, "原因", e.toString());
         }
     }
 
@@ -94,7 +94,7 @@ public class InitProvisionService {
         int n = failures.merge(sn, 1, Integer::sum);
         if (n >= 3) {
             trackScheduled(sn);
-            Logs.warn(Logs.Module.CPE, "首次初始化参数多次下发失败，停止自动重试", "sn", sn, "失败次数", n);
+            Logs.warn(Logs.Module.CPE_PUSH, "首次初始化参数多次下发失败，停止自动重试", "sn", sn, "失败次数", n);
         } else {
             scheduled.remove(sn);
         }

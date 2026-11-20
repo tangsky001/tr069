@@ -85,7 +85,7 @@ public class ConnectionRequestService {
                 String auth = conn.getHeaderField("WWW-Authenticate");
                 conn.disconnect();
                 if (auth == null || code != 401) {
-                    Logs.warn(Logs.Module.CPE, "反向连接被拒", "url", maskUrl(url), "状态码", code);
+                    Logs.warn(Logs.Module.CPE_PUSH, "反向连接被拒", "url", maskUrl(url), "状态码", code);
                     return false;
                 }
                 // 第二次带认证：Digest 用设备挑战头现场算，Basic 直接 base64
@@ -94,7 +94,7 @@ public class ConnectionRequestService {
                 int code2 = conn2.getResponseCode();
                 conn2.disconnect();
                 if (code2 == 200 || code2 == 204) {
-                    Logs.info(Logs.Module.CPE, "反向连接认证成功", "url", maskUrl(url), "账号", cred[0],
+                    Logs.info(Logs.Module.CPE_PUSH, "反向连接认证成功", "url", maskUrl(url), "账号", cred[0],
                             "认证方式", auth.startsWith("Digest") ? "Digest" : "Basic");
                     return true;
                 }
@@ -107,7 +107,7 @@ public class ConnectionRequestService {
             }
         }
         boolean netError = lastAuth != null && lastAuth.startsWith("error:");
-        Logs.warn(Logs.Module.CPE, netError ? "反向连接失败（未收到 HTTP 响应）" : "反向连接被拒",
+        Logs.warn(Logs.Module.CPE_PUSH, netError ? "反向连接失败（未收到 HTTP 响应）" : "反向连接被拒",
                 "url", maskUrl(url), "状态码", lastCode,
                 "认证方式", netError || lastAuth == null ? "未到达认证环节"
                         : (lastAuth.startsWith("Digest") ? "Digest" : "Basic"),
@@ -143,19 +143,19 @@ public class ConnectionRequestService {
             }
             try {
                 if (registry.bySn(sn) != null) {
-                    Logs.info(Logs.Module.CPE, "设备已有活会话，停止反向连接", "sn", sn, "已踢", round + 1);
+                    Logs.info(Logs.Module.CPE_PUSH, "设备已有活会话，停止反向连接", "sn", sn, "已踢", round + 1);
                     pendingKicks.remove(sn, cur);
                     return;
                 }
                 if (wake(url, username, password)) {
-                    Logs.info(Logs.Module.CPE, "反向连接成功", "sn", sn, "第几次", round + 1);
+                    Logs.info(Logs.Module.CPE_PUSH, "反向连接成功", "sn", sn, "第几次", round + 1);
                     // 挂待 Inform 标记：窗口内设备 Inform 上来即可归因为本次唤醒触发
                     registry.markKickPending(sn, KICK_INFORM_WINDOW_MS);
                     pendingKicks.remove(sn, cur);
                     return;
                 }
                 if (round + 1 >= MAX_KICKS) {
-                    Logs.warn(Logs.Module.CPE, "反向连接重试放弃", "sn", sn, "次数", MAX_KICKS);
+                    Logs.warn(Logs.Module.CPE_PUSH, "反向连接重试放弃", "sn", sn, "次数", MAX_KICKS);
                     pendingKicks.remove(sn, cur);
                     return;
                 }
@@ -163,7 +163,7 @@ public class ConnectionRequestService {
                         round == 0 ? 5_000L : 30_000L, chain);
             } catch (Exception e) {
                 // 异常只终止本链并摘除登记，不盲目重排（避免异常风暴）；下次唤醒会建新链
-                Logs.warn(Logs.Module.CPE, "反向连接重试异常，本链终止", "sn", sn,
+                Logs.warn(Logs.Module.CPE_PUSH, "反向连接重试异常，本链终止", "sn", sn,
                         "轮次", round + 1, "原因", e.getMessage());
                 pendingKicks.remove(sn, cur);
             }

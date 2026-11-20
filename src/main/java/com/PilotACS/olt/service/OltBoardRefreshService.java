@@ -90,10 +90,10 @@ public class OltBoardRefreshService {
             roundRunner.execute(this::runRound);
         } catch (RejectedExecutionException e) {
             running.set(false);
-            Logs.warn(Logs.Module.OLT, "OLT 板卡状态刷新：线程已关闭，本轮放弃");
+            Logs.warn(Logs.Module.OLT_COLLECT, "OLT 板卡状态刷新：线程已关闭，本轮放弃");
         } catch (Exception e) {
             running.set(false);
-            Logs.warn(Logs.Module.OLT, "OLT 板卡状态刷新：提交异常: {}", e.getMessage());
+            Logs.warn(Logs.Module.OLT_COLLECT, "OLT 板卡状态刷新：提交异常: {}", e.getMessage());
         }
     }
 
@@ -139,9 +139,9 @@ public class OltBoardRefreshService {
                 }
             }
             // 2 分钟一轮，成功不打 info，免得日志被刷满；只有状态变化时才值得看
-            Logs.debug(Logs.Module.OLT, "OLT 板卡状态刷新：{} 台更新，{} 台跳过（人工操作中或采集失败）", updated, skipped);
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT 板卡状态刷新：{} 台更新，{} 台跳过（人工操作中或采集失败）", updated, skipped);
         } catch (Exception e) {
-            Logs.warn(Logs.Module.OLT, "OLT 板卡状态刷新异常: {}", e.getMessage());
+            Logs.warn(Logs.Module.OLT_COLLECT, "OLT 板卡状态刷新异常: {}", e.getMessage());
         } finally {
             running.set(false);
         }

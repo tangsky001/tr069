@@ -177,7 +177,7 @@ public class DeviceSipService {
                 tasks.add(ok);
             } catch (Exception e) {
                 failures.add(failRow(line, e.getMessage()));
-                Logs.warn(Logs.Module.CPE, "SIP 下发受理失败", "sn", sn, "线路", line, "原因", e.getMessage());
+                Logs.warn(Logs.Module.CPE_PUSH, "SIP 下发受理失败", "sn", sn, "线路", line, "原因", e.getMessage());
             }
         }
         Map<String, Object> result = new LinkedHashMap<>();

@@ -22,10 +22,10 @@ public class WorklistSchemaInitializer implements InitializingBean {
             try {
                 jdbc.execute(sql);
             } catch (Exception e) {
-                Logs.warn(Logs.Module.CPE, "工单表补建失败", "原因", e.getMessage());
+                Logs.warn(Logs.Module.CPE_WORKLIST, "工单表补建失败", "原因", e.getMessage());
             }
         }
-        Logs.info(Logs.Module.CPE, "工单表补建完成（共 " + sqlList.size() + " 张，已存在则跳过）");
+        Logs.info(Logs.Module.CPE_WORKLIST, "工单表补建完成（共 " + sqlList.size() + " 张，已存在则跳过）");
     }
 
     private static List<String> allDdl() {

@@ -56,7 +56,7 @@ public class RedisTaskQueue {
             }
             return true;
         } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "任务派发入队失败（降级直接唤醒）", "sn", sn, "任务", taskId,
+            Logs.warn(Logs.Module.CPE_PUSH, "任务派发入队失败（降级直接唤醒）", "sn", sn, "任务", taskId,
                     "原因", e.getMessage());
             return false;
         }
@@ -70,7 +70,7 @@ public class RedisTaskQueue {
             try {
                 msg = template.opsForList().leftPop(CpeRedisKeys.TASK_QUEUE);
             } catch (Exception e) {
-                Logs.warn(Logs.Module.CPE, "任务派发队列消费失败", "原因", e.getMessage());
+                Logs.warn(Logs.Module.CPE_PUSH, "任务派发队列消费失败", "原因", e.getMessage());
                 return;
             }
             if (msg == null) {
@@ -85,7 +85,7 @@ public class RedisTaskQueue {
                 }
                 handler.dispatch(sn, taskId);
             } catch (Exception e) {
-                Logs.warn(Logs.Module.CPE, "派发消息处理失败", "原因", e.getMessage());
+                Logs.warn(Logs.Module.CPE_PUSH, "派发消息处理失败", "原因", e.getMessage());
             }
         }
     }

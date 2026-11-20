@@ -843,7 +843,7 @@ public class OltCliSession implements Closeable {
             result.getOutputs().add(runCommand(undo, timeout));
         }
         if (!undoCommands.isEmpty()) {
-            Logs.info(Logs.Module.OLT, "清板 {} 前先拆掉 {} 条业务虚口", slot, undoCommands.size());
+            Logs.info(Logs.Module.OLT_COLLECT, "清板 {} 前先拆掉 {} 条业务虚口", slot, undoCommands.size());
         }
         runCommand(profile.ponViewCommand(0, slot, ponType), timeout);
         for (int port : ports) {
@@ -1265,7 +1265,7 @@ public class OltCliSession implements Closeable {
                 continue;
             }
             if (tolerateExisting && ALREADY_EXISTS.matcher(reason).find()) {
-                Logs.info(Logs.Module.OLT, "设备上已有该配置，跳过「{}」：{}", command, reason);
+                Logs.info(Logs.Module.OLT_COLLECT, "设备上已有该配置，跳过「{}」：{}", command, reason);
                 continue;
             }
             throw new IllegalStateException("OLT 拒绝命令「" + command + "」：" + reason);
@@ -1320,7 +1320,7 @@ public class OltCliSession implements Closeable {
         } catch (IOException e) {
             String partial = client.getText();
             lastError = e;
-            Logs.info(Logs.Module.OLT, "OLT 存盘执行失败: {}", e.getMessage());
+            Logs.info(Logs.Module.OLT_COLLECT, "OLT 存盘执行失败: {}", e.getMessage());
             transcript.append("\n$ save ").append(cost(start))
                     .append("\n[失败] ").append(e.getMessage()).append('\n').append(partial).append('\n');
             drain();
@@ -1382,7 +1382,7 @@ public class OltCliSession implements Closeable {
         } catch (IOException e) {
             String partial = client.getText();
             lastError = e;
-            Logs.debug(Logs.Module.OLT, "OLT 交互命令执行失败: {} - {}", command, e.getMessage());
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT 交互命令执行失败: {} - {}", command, e.getMessage());
             transcript.append("\n$ ").append(command)
                     .append("\n[失败] ").append(e.getMessage()).append('\n')
                     .append(partial).append('\n');
@@ -2034,7 +2034,7 @@ public class OltCliSession implements Closeable {
             if (round >= MAX_LOGIN_ENTER || remaining(deadline) < 2000) {
                 return client.readUntilAny(stops, remaining(deadline));
             }
-            Logs.info(Logs.Module.OLT, "登录回显未出现预期提示（设备可能停在登录信息页），补一个回车: 第{}次", round + 1);
+            Logs.info(Logs.Module.OLT_COLLECT, "登录回显未出现预期提示（设备可能停在登录信息页），补一个回车: 第{}次", round + 1);
             transcript.append("[补回车] ");
             client.sendLine("");
             out = readLoginOutput(stops, deadline);
@@ -2211,7 +2211,7 @@ public class OltCliSession implements Closeable {
             client.resetBuffer();
             client.readIdle(300, 2000);
         } catch (IOException e) {
-            Logs.debug(Logs.Module.OLT, "排空残留回显失败(忽略): {}", e.getMessage());
+            Logs.debug(Logs.Module.OLT_COLLECT, "排空残留回显失败(忽略): {}", e.getMessage());
         } finally {
             client.resetBuffer();
         }
@@ -2228,7 +2228,7 @@ public class OltCliSession implements Closeable {
                     .append('\n').append(out).append('\n');
             return out;
         } catch (IOException e) {
-            Logs.debug(Logs.Module.OLT, "OLT 辅助命令失败(忽略): {} - {}", command, e.getMessage());
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT 辅助命令失败(忽略): {} - {}", command, e.getMessage());
             transcript.append("\n$ ").append(command).append(' ').append(cost(start))
                     .append("\n[忽略] ").append(e.getMessage()).append('\n');
             return "";
@@ -2247,7 +2247,7 @@ public class OltCliSession implements Closeable {
         for (int round = 0; needsParameter(out) && round < MAX_PARAM_ROUNDS; round++) {
             // 先清掉参数提示本身再回车，避免把已到的正文一起丢掉
             transcript.append("[参数提示] ").append(out.trim()).append('\n');
-            Logs.debug(Logs.Module.OLT, "设备停在参数提示，补回车继续读");
+            Logs.debug(Logs.Module.OLT_COLLECT, "设备停在参数提示，补回车继续读");
             client.resetBuffer();
             client.sendLine("");
             out = client.readUntilAny(COMMAND_STOPS, timeoutMs, true);

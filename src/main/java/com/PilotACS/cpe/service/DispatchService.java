@@ -70,7 +70,7 @@ public class DispatchService {
                 row.put("status", "fail");
                 row.put("errorMsg", e.getMessage());
                 failed++;
-                Logs.warn(Logs.Module.CPE, "下发受理失败", "sn", sn, "原因", e.getMessage());
+                Logs.warn(Logs.Module.CPE_PUSH, "下发受理失败", "sn", sn, "原因", e.getMessage());
             }
             rows.add(row);
         }

@@ -33,7 +33,7 @@ public class SessionExpiryListener implements MessageListener {
                 cwmpService.endSessionBySn(sn, "Redis 会话 TTL 过期");
             }
         } catch (Exception e) {
-            Logs.warn(Logs.Module.CPE, "处理会话过期事件失败", "原因", e.toString());
+            Logs.warn(Logs.Module.CPE_OFFLINE, "处理会话过期事件失败", "原因", e.toString());
         }
     }
 }

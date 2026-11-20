@@ -55,11 +55,11 @@ public class OltStatusPublisher {
         data.put("reason", reason == null ? "" : reason);
         try {
             wsHandler.broadcast(DashboardWsHandler.envelope("olt-status", data));
-            Logs.info(Logs.Module.OLT, "状态变更已推送到概览页",
+            Logs.info(Logs.Module.OLT_COLLECT, "状态变更已推送到概览页",
                     "设备", device.getName(), "状态", status, "原因", reason == null ? "-" : reason);
         } catch (Exception e) {
             // 推送失败不影响业务主流程
-            Logs.warn(Logs.Module.OLT, "状态推送失败", "设备", device.getName(), "原因", e.getMessage());
+            Logs.warn(Logs.Module.OLT_COLLECT, "状态推送失败", "设备", device.getName(), "原因", e.getMessage());
         }
     }
 }
