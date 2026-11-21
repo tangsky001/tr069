@@ -25,6 +25,7 @@ import com.PilotACS.olt.model.OltOntDeleteAllRequest;
 import com.PilotACS.olt.model.OltLinkAggregation;
 import com.PilotACS.olt.model.OltLinkAggregationRequest;
 import com.PilotACS.olt.model.OltOntDeleteRequest;
+import com.PilotACS.olt.model.OltOntResetRequest;
 import com.PilotACS.olt.model.OltOntQueryRequest;
 import com.PilotACS.olt.model.OltLineProfileForm;
 import com.PilotACS.olt.model.OltLineProfilePreviewRequest;
@@ -703,6 +704,23 @@ public class OltController {
         } catch (Exception e) {
             Logs.error(Logs.Module.OLT, "删除单个 ONT 异常 id={}", id, e);
             return Result.fail("删除单个 ONT 失败：" + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "重启 ONU（复位）：单 ONU / 整条 PON 口 / 整块板卡（口数按快照，逐口 ont reset .. all）")
+    @PostMapping("/{id}/ont/reset")
+    public Result<String> resetOnt(@PathVariable Long id,
+                                   @RequestBody OltOntResetRequest request,
+                                   HttpServletRequest httpRequest) {
+        try {
+            return Result.ok(oltService.resetOnt(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.OLT, "重启 ONU 异常 id={}", id, e);
+            return Result.fail("重启 ONU 失败：" + e.getMessage());
         }
     }
 

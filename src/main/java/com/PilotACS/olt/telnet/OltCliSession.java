@@ -1302,6 +1302,84 @@ public class OltCliSession implements Closeable {
     }
 
     /**
+     * 复位单个 ONT：进 PON 板视图发 {@code ont reset <port> <ontId>}，设备追问
+     * 「interrupt all services … (y/n)[n]:」由会话层答 y。ONU 业务中断后重新注册，
+     * 注册与业务配置不动（和 ont delete 的本质区别）。
+     */
+    public String resetOnt(int slot, int port, int ontId) throws OltTelnetException {
+        prepareTerminal(vendorHint, true);
+        int timeout = commandTimeoutMs;
+        OltVendorProfile profile = profile();
+        if (profile.ontResetCommand(0, 0) == null) {
+            throw new OltTelnetException("该厂商还没接入 ONU 复位命令");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），未复位");
+        }
+        runCommand(profile.ponViewCommand(0, slot), timeout);
+        String out = runInteractive(profile.ontResetCommand(port, ontId), List.of("y"));
+        String text = out == null ? "" : out;
+        runQuietly("quit", timeout);
+        if (text.contains("Parameter error") || text.contains("参数错误")) {
+            throw new OltTelnetException("设备拒绝复位 ONU 0/" + slot + "/" + port
+                    + " ont " + ontId + "，回显详见操作记录");
+        }
+        Logs.info(Logs.Module.OLT_COLLECT, "已复位单个 ONU", "位置", "0/" + slot + "/" + port, "ontId", ontId);
+        return text;
+    }
+
+    /** 复位整条 PON 口的全部 ONU：{@code ont reset <port> all}，追问 y/n 答 y */
+    public String resetPortOnts(int slot, int port) throws OltTelnetException {
+        prepareTerminal(vendorHint, true);
+        int timeout = commandTimeoutMs;
+        OltVendorProfile profile = profile();
+        if (profile.ontResetPortCommand(0) == null) {
+            throw new OltTelnetException("该厂商还没接入 ONU 复位命令");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），未复位");
+        }
+        runCommand(profile.ponViewCommand(0, slot), timeout);
+        String out = runInteractive(profile.ontResetPortCommand(port), List.of("y"));
+        String text = out == null ? "" : out;
+        runQuietly("quit", timeout);
+        if (text.contains("Parameter error") || text.contains("参数错误")) {
+            throw new OltTelnetException("设备拒绝复位 PON 口 0/" + slot + "/" + port + "，回显详见操作记录");
+        }
+        Logs.info(Logs.Module.OLT_COLLECT, "已复位整条 PON 口的 ONU", "位置", "0/" + slot + "/" + port);
+        return text;
+    }
+
+    /**
+     * 复位整块板卡的全部 ONU：按库里板卡快照给出的 PON 口逐口发
+     * {@code ont reset <port> all}（每口都追问 y/n，逐口答 y），口数由调用方按快照算。
+     */
+    public List<String> resetBoardOnts(int slot, List<Integer> portNos) throws OltTelnetException {
+        prepareTerminal(vendorHint, true);
+        int timeout = commandTimeoutMs;
+        OltVendorProfile profile = profile();
+        if (profile.ontResetPortCommand(0) == null) {
+            throw new OltTelnetException("该厂商还没接入 ONU 复位命令");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），未复位");
+        }
+        runCommand(profile.ponViewCommand(0, slot), timeout);
+        List<String> outputs = new ArrayList<>();
+        for (Integer portNo : portNos) {
+            if (portNo == null) {
+                continue;
+            }
+            String out = runInteractive(profile.ontResetPortCommand(portNo), List.of("y"));
+            outputs.add(out == null ? "" : out);
+        }
+        runQuietly("quit", timeout);
+        Logs.info(Logs.Module.OLT_COLLECT, "已复位整块板卡的 ONU", "位置", "0/" + slot,
+                "PON 口数", portNos.size());
+        return outputs;
+    }
+
+    /**
      * 删除单个 ONT：现场怎么敲这里就怎么发——先在 config 视图按端口拆干净它的业务虚口
      *（undo service-port port f/s/p ont .. gemport .. user-vlan ..，缺 userVlan 的流退回按索引），
      * 再进 PON 板视图 ont delete <port> <ontId>（单条删除不问 y/n，只有 delete all 问）。

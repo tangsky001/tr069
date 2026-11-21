@@ -19,6 +19,7 @@ import {
   deleteOltOnt,
   fetchLinkAggregations,
   applyLinkAggregation,
+  resetOltOnt,
   fetchOltActions,
   quickSetupOlt,
   execOltAction,
@@ -540,6 +541,16 @@ export const oltDetailMixin = {
     deleteOnt(payload) {
       return deleteOltOnt(this.detailId, payload)
         .then(res => this.applyAfterConfig(res, '删除注册'))
+    },
+    /**
+     * 重启 ONU（ont reset，y/n 由后端应答）：payload 按 { slot, port, ontId } 缺省分级，
+     * 缺 ontId 复位整条 PON 口、缺 port 复位整块板卡。复位不动注册与业务配置，不触发重采。
+     */
+    resetOltOntOnDevice(payload) {
+      return resetOltOnt(this.detailId, payload).then(res => {
+        this.$message.success((res && res.data) || '重启命令已下发')
+        return res
+      })
     },
     /** 链路聚合组实时查询（display link-aggregation all），silent 时不动 loading */
     loadLinkAggregations(silent) {

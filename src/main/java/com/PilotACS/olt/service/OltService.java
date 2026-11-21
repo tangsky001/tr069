@@ -57,6 +57,7 @@ import com.PilotACS.olt.model.OltOntDeleteAllRequest;
 import com.PilotACS.olt.model.OltLinkAggregation;
 import com.PilotACS.olt.model.OltLinkAggregationRequest;
 import com.PilotACS.olt.model.OltOntDeleteRequest;
+import com.PilotACS.olt.model.OltOntResetRequest;
 import com.PilotACS.olt.model.OltOntDeleteResult;
 import com.PilotACS.olt.model.OltTerminalUserRequest;
 import com.PilotACS.olt.model.OltBoardProfile;
@@ -2641,6 +2642,68 @@ public class OltService {
         }
         clearOnt(id, request.getSlot(), request.getPort(), request.getOntId());
         return detail(id);
+    }
+
+    /**
+     * 重启 ONU（复位）：按请求字段缺省分级——单 ONU（ont reset 槽口 ontId）、
+     * 整条 PON 口（ont reset 口 all）、整块板卡（口数按库里板卡快照，逐口 ont reset 口 all）。
+     * 复位只让 ONU 中断业务重新注册，注册与业务配置不动；y/n 由会话层统一答 y。
+     */
+    public String resetOnt(Long id, OltOntResetRequest req, String operator) {
+        OltDevice device = requireDevice(id);
+        if (req == null || req.getSlot() == null) {
+            throw new IllegalArgumentException("槽位不能为空");
+        }
+        int slot = req.getSlot();
+        long start = System.currentTimeMillis();
+        try {
+            String message;
+            if (req.getPort() != null && req.getOntId() != null) {
+                String output = telnetService.resetOnt(device, slot, req.getPort(), req.getOntId());
+                String where = "0/" + slot + "/" + req.getPort() + " ont " + req.getOntId();
+                saveRecord(id, OltSyncRecord.ACTION_CONFIG, true, "重启 ONU（复位）：" + where,
+                        output, System.currentTimeMillis() - start, operator);
+                message = "重启命令已下发：" + where + "，ONU 正在重新注册，通常几十秒内恢复";
+            } else if (req.getPort() != null) {
+                String output = telnetService.resetPortOnts(device, slot, req.getPort());
+                String where = "0/" + slot + "/" + req.getPort();
+                saveRecord(id, OltSyncRecord.ACTION_CONFIG, true, "重启 ONU（复位整条 PON 口）：" + where,
+                        output, System.currentTimeMillis() - start, operator);
+                message = "已复位 " + where + " 口的全部 ONU，正在重新注册";
+            } else {
+                // 整板复位：口数按库里板卡快照判断，逐口 ont reset {i} all
+                OltBoard board = boardMapper.selectOne(new LambdaQueryWrapper<OltBoard>()
+                        .eq(OltBoard::getOltId, id)
+                        .eq(OltBoard::getSlotNo, slot));
+                if (board == null) {
+                    throw new IllegalArgumentException("库里没有 0/" + slot + " 板的快照，请先「同步ONT状态」");
+                }
+                fillPorts(board);
+                List<Integer> portNos = board.getPorts() == null ? List.of() : board.getPorts().stream()
+                        .map(OltPort::getPortNo)
+                        .filter(java.util.Objects::nonNull)
+                        .sorted()
+                        .toList();
+                if (portNos.isEmpty()) {
+                    throw new IllegalArgumentException("0/" + slot + " 板快照里没有 PON 口，请先「同步ONT状态」");
+                }
+                List<String> outputs = telnetService.resetBoardOnts(device, slot, portNos);
+                saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+                        "重启 ONU（复位整板）：0/" + slot + " 板 " + portNos.size() + " 个 PON 口逐口复位",
+                        String.join("\n", outputs), System.currentTimeMillis() - start, operator);
+                message = "已依次复位 0/" + slot + " 板 " + portNos.size() + " 个 PON 口（"
+                        + portNos.stream().map(String::valueOf).collect(Collectors.joining(", "))
+                        + "）的全部 ONU";
+            }
+            return message;
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            String m = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false, "重启 ONU（复位）失败：" + m,
+                    null, System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException(m, e);
+        }
     }
 
     /** 从板卡快照里摘掉一条 ONT，端口的 ONT 计数同步减一 */

@@ -415,6 +415,28 @@ public class OltTelnetService {
                 session -> session.reboot());
     }
 
+    /** 复位单个 ONU：登录一次进 PON 板视图发 ont reset（追问 y/n 由会话层答 y） */
+    public String resetOnt(OltDevice device, int slot, int port, int ontId) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.resetOnt(slot, port, ontId));
+    }
+
+    /** 复位整条 PON 口的全部 ONU：ont reset <port> all（追问 y/n 由会话层答 y） */
+    public String resetPortOnts(OltDevice device, int slot, int port) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.resetPortOnts(slot, port));
+    }
+
+    /** 复位整块板卡的全部 ONU：按快照端口逐口 ont reset <port> all，登录一次发完 */
+    public List<String> resetBoardOnts(OltDevice device, int slot, List<Integer> portNos)
+            throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.resetBoardOnts(slot, portNos));
+    }
+
     private OltOntDeleteResult doDeleteOnt(OltDevice device, Charset charset, int slot, int port, int ontId)
             throws IOException {
         return sessionPool.execute(device, charset, charsetStrict(device, charset),

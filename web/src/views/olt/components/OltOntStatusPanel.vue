@@ -119,7 +119,13 @@
         {{ selected.length ? '已选 ' + selected.length + ' 条' : '勾选 ONT 后可批量操作' }}
       </span>
       <div>
-        <el-button size="small" type="warning" :disabled="!selected.length" @click="batchReboot">
+        <el-button
+          size="small"
+          type="warning"
+          :disabled="!selected.length"
+          :loading="resetting"
+          @click="batchReboot"
+        >
           重启ONU
         </el-button>
         <el-button
@@ -142,6 +148,18 @@
           @click="confirmDeleteAllOnts"
         >
           删除业务板 ONU
+        </el-button>
+        <el-button
+          size="small"
+          type="warning"
+          plain
+          icon="el-icon-refresh-right"
+          title="复位这块业务板全部 PON 口上的 ONU（不需要勾选），口数按板卡快照逐口下发"
+          :loading="resetting"
+          :disabled="!deletableOntTotal"
+          @click="confirmResetBoardOnts"
+        >
+          重启业务板 ONU
         </el-button>
       </div>
     </div>
@@ -402,6 +420,14 @@ export default {
     deleteOntHandler: {
       type: Function,
       default: null
+    },
+    /**
+     * 重启 ONU（ont reset）：父页面传进来，y/n 由后端应答。
+     * 入参 { slot, port, ontId } 复位单个；{ slot, port } 复位整口；{ slot } 复位整板（口数后端按快照算）
+     */
+    resetOntHandler: {
+      type: Function,
+      default: null
     }
   },
   data() {
@@ -411,6 +437,8 @@ export default {
       selected: [],
       /** 删除业务板 ONT 下发中：按钮转圈，防止连点重复下发 */
       deleting: false,
+      /** 重启 ONU（ont reset）下发中：按钮转圈，防止连点重复下发 */
+      resetting: false,
       queryVisible: false,
       queryLoading: false,
       queryAction: '',
@@ -621,9 +649,93 @@ export default {
     notReady(name) {
       this.$message.info(name + '：暂未开放，后续版本接入')
     },
-    /** 批量操作：写通道还没接，先提示 */
+    /**
+     * 重启 ONU（ont reset）：复位勾选的 ONU，设备会中断该 ONU 业务并重新注册
+     *（注册与业务配置不动）。勾选多条时串行逐条发（同一台 OLT 的 telnet 会话按序用），
+     * y/n 追问由后端统一答 y。复位不改快照，完成后稍后「同步ONT状态」确认在线。
+     */
     batchReboot() {
-      this.$message.info('写操作暂未开放：重启ONU（ont reboot）后续接入')
+      const rows = (this.selected || []).filter(
+        row => row.slotNo != null && row.portNo != null && row.ontId != null
+      )
+      if (!rows.length) {
+        this.$message.warning('勾选的 ONU 缺少槽位/端口/ONT ID，请先「同步ONT状态」刷新数据')
+        return
+      }
+      if (typeof this.resetOntHandler !== 'function') {
+        this.$message.warning('当前页面没有接上重启 ONU 的接口')
+        return
+      }
+      const label = rows
+        .map(row => '0/' + row.slotNo + '/' + row.portNo + ' ont ' + row.ontId)
+        .join('、')
+      this.$confirm(
+        '将复位 ' + label + '，共 ' + rows.length + ' 个；ONU 业务会中断并重新注册，' +
+          '通常几十秒内恢复，确定继续？',
+        '重启ONU',
+        { type: 'warning', confirmButtonText: '确定重启', cancelButtonText: '取消' }
+      )
+        .then(() => {
+          this.resetting = true
+          let failed = 0
+          let chain = Promise.resolve()
+          rows.forEach(row => {
+            chain = chain
+              .then(() =>
+                this.resetOntHandler({
+                  slot: row.slotNo,
+                  port: row.portNo,
+                  ontId: row.ontId
+                })
+              )
+              .catch(() => {
+                failed++
+              })
+          })
+          return chain.finally(() => {
+            this.resetting = false
+            this.selected = []
+            if (failed) {
+              this.$message.warning(failed + ' 个复位失败，设备回显见 OLT 操作记录')
+            }
+          })
+        })
+        .catch(() => {})
+    },
+    /**
+     * 重启业务板 ONU：按采到的业务板逐块复位，后端按板卡快照的口数
+     * 逐口发 {@code ont reset <port> all}（每口都追问 y/n，由会话层答 y）。
+     */
+    confirmResetBoardOnts() {
+      const boards = this.deletableBoards
+      if (!boards.length) {
+        this.$message.warning('当前没有采到 ONT，先「同步ONT状态」再试')
+        return
+      }
+      if (typeof this.resetOntHandler !== 'function') {
+        this.$message.warning('当前页面没有接上重启 ONU 的接口')
+        return
+      }
+      const detail = boards
+        .map(board => board.text || ('0/' + board.slotNo + '（' + board.total + ' 个）'))
+        .join('、')
+      this.$confirm(
+        '将复位 ' + detail + ' 上全部 ONU 的 PON 口（逐口 ont reset .. all），' +
+          '这些 ONU 业务会中断并重新注册，确定继续？',
+        '重启业务板 ONU',
+        { type: 'warning', confirmButtonText: '确定重启', cancelButtonText: '取消' }
+      )
+        .then(() => {
+          this.resetting = true
+          let chain = Promise.resolve()
+          boards.forEach(board => {
+            chain = chain.then(() => this.resetOntHandler({ slot: board.slotNo })).catch(() => {})
+          })
+          return chain.finally(() => {
+            this.resetting = false
+          })
+        })
+        .catch(() => {})
     },
     /**
      * 删除注册（ont delete）：删勾选的 ONU，后端先拆它的业务虚口再删注册。

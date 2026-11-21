@@ -434,6 +434,21 @@ export function fetchLinkAggregations(id) {
 }
 
 /**
+ * 重启 ONU（ont reset，追问 y/n 由后端统一答 y）：
+ * data: { slot, port, ontId }  → 复位单个 ONU
+ * data: { slot, port }         → 复位整条 PON 口（ont reset <port> all）
+ * data: { slot }               → 复位整块板卡（口数按快照，逐口 ont reset <port> all）
+ */
+export function resetOltOnt(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont/reset',
+    method: 'post',
+    data,
+    timeout: 300000
+  })
+}
+
+/**
  * 创建/删除链路聚合组：下发后回查聚合表返回最新列表。
  * data: { op: 'create'|'delete', masterFs: '0/17', ports: '0-1', direction: 'ingress', workmode: 'lacp-static' }
  */

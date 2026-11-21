@@ -292,6 +292,19 @@ public interface OltVendorProfile {
         return null;
     }
 
+    /**
+     * 复位单个 ONT 的命令（PON 板视图里执行），华为口径 {@code ont reset 0 4}：
+     * 设备追问「interrupt all services … (y/n)[n]:」由会话层答 y；不支持返回 null。
+     */
+    default String ontResetCommand(int port, int ontId) {
+        return null;
+    }
+
+    /** 复位整条 PON 口上全部 ONT 的命令，华为口径 {@code ont reset 0 all}，同样追问 y/n；不支持返回 null */
+    default String ontResetPortCommand(int port) {
+        return null;
+    }
+
     /** 查一个 ONT（ontId 传 null 查整个端口）名下业务虚口的命令；删 ONT 前必须先拆干净业务虚口 */
     default String servicePortListCommand(int frame, int slot, int port, Integer ontId) {
         return null;

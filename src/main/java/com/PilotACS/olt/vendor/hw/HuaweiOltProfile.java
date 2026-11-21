@@ -359,6 +359,18 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
         return "ont delete " + port + " " + ontId;
     }
 
+    /** {@code ont reset <port> <ontId>}（PON 板视图，追问 y/n 由会话层答 y） */
+    @Override
+    public String ontResetCommand(int port, int ontId) {
+        return "ont reset " + port + " " + ontId;
+    }
+
+    /** {@code ont reset <port> all}（整条 PON 口的 ONU 一起复位） */
+    @Override
+    public String ontResetPortCommand(int port) {
+        return "ont reset " + port + " all";
+    }
+
     /** {@code display service-port port 0/<槽>/<口> ont <id>}；ontId 传 null 查整个端口 */
     @Override
     public String servicePortListCommand(int frame, int slot, int port, Integer ontId) {
