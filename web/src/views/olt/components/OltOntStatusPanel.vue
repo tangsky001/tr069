@@ -122,7 +122,13 @@
         <el-button size="small" type="warning" :disabled="!selected.length" @click="batchReboot">
           重启ONU
         </el-button>
-        <el-button size="small" type="danger" :disabled="!selected.length" @click="batchDelete">
+        <el-button
+          size="small"
+          type="danger"
+          :disabled="!selected.length"
+          :loading="deleting"
+          @click="batchDelete"
+        >
           删除注册
         </el-button>
         <el-button
@@ -391,6 +397,11 @@ export default {
     deleteAllHandler: {
       type: Function,
       default: null
+    },
+    /** 删除单个 ONT：父页面传进来（先拆业务虚口再 ont delete），入参 { slot, port, ontId } */
+    deleteOntHandler: {
+      type: Function,
+      default: null
     }
   },
   data() {
@@ -614,8 +625,58 @@ export default {
     batchReboot() {
       this.$message.info('写操作暂未开放：重启ONU（ont reboot）后续接入')
     },
+    /**
+     * 删除注册（ont delete）：删勾选的 ONU，后端先拆它的业务虚口再删注册。
+     * 勾选多条时串行逐条删（同一台 OLT 的 telnet 会话按序用，不并发抢）；
+     * 每删一条接口就重采一次，最后一条返回的即是最新快照。
+     */
     batchDelete() {
-      this.$message.info('写操作暂未开放：删除注册（ont delete）后续接入')
+      const rows = (this.selected || []).filter(
+        row => row.slotNo != null && row.portNo != null && row.ontId != null
+      )
+      if (!rows.length) {
+        this.$message.warning('勾选的 ONU 缺少槽位/端口/ONT ID，请先「同步ONT状态」刷新数据')
+        return
+      }
+      if (typeof this.deleteOntHandler !== 'function') {
+        this.$message.warning('当前页面没有接上删除注册的接口')
+        return
+      }
+      const label = rows
+        .map(row => '0/' + row.slotNo + '/' + row.portNo + ' ont ' + row.ontId)
+        .join('、')
+      this.$confirm(
+        '将删除 ' + label + '，共 ' + rows.length + ' 个；先拆业务虚口再删注册，' +
+          '设备上的注册与业务配置随之消失，确定继续？',
+        '删除注册',
+        { type: 'warning', confirmButtonText: '确定删除', cancelButtonText: '取消' }
+      )
+        .then(() => {
+          this.deleting = true
+          let failed = 0
+          let chain = Promise.resolve()
+          rows.forEach(row => {
+            chain = chain
+              .then(() =>
+                this.deleteOntHandler({
+                  slot: row.slotNo,
+                  port: row.portNo,
+                  ontId: row.ontId
+                })
+              )
+              .catch(() => {
+                failed++
+              })
+          })
+          return chain.finally(() => {
+            this.deleting = false
+            this.selected = []
+            if (failed) {
+              this.$message.warning(failed + ' 个删除失败，设备回显见 OLT 操作记录')
+            }
+          })
+        })
+        .catch(() => {})
     },
     /**
      * 删除业务板上的全部 ONU：按采到的业务板逐块清（这台是 2 号槽位就发

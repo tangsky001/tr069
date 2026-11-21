@@ -174,8 +174,15 @@
           />
         </el-tab-pane>
 
-        <el-tab-pane label="链路聚合" name="ola">
-          <div class="olt-placeholder">链路聚合（OLA，占位）：待接入真实 OLT 采集数据后展示聚合组与成员口。</div>
+        <el-tab-pane label="链路聚合" name="ola" lazy>
+          <olt-link-aggregation-panel
+            :groups="linkAggregations"
+            :loading="linkAggLoading"
+            :applying="linkAggApplying"
+            @refresh="loadLinkAggregations()"
+            @create="createLinkAggregation"
+            @remove="deleteLinkAggregation"
+          />
         </el-tab-pane>
 
         <el-tab-pane label="ONT 配置/状态" name="ont">
@@ -188,6 +195,7 @@
             :deletable-ont-total="deletableOntTotal"
             :olt-id="detailId"
             :delete-all-handler="deleteAllOnts"
+            :delete-ont-handler="deleteOnt"
             :empty-text="'尚未采集到端口/ONT 数据。点右上角「同步ONT状态」立即采集。'"
             @sync="syncSection('ont', true)"
           />
@@ -282,6 +290,7 @@ import OltRecords from './components/OltRecords'
 import OltFormDialog from './components/OltFormDialog'
 import OltHuaweiQuickSetupDialog from './components/OltHuaweiQuickSetupDialog'
 import OltOntRegPanel from './components/OltOntRegPanel'
+import OltLinkAggregationPanel from './components/OltLinkAggregationPanel'
 import { oltDetailMixin } from './mixins/oltDetail'
 import { detailRoute } from './vendors'
 import { deleteOlt, fetchOntAutoFind, enableOntAutoFind, createOltTerminalUser } from '@/api/olt'
@@ -307,7 +316,8 @@ export default {
     OltRecords,
     OltFormDialog,
     OltHuaweiQuickSetupDialog,
-    OltOntRegPanel
+    OltOntRegPanel,
+    OltLinkAggregationPanel
   },
   mixins: [oltDetailMixin],
   props: {

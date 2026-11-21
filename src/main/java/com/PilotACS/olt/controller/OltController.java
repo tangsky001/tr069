@@ -22,6 +22,9 @@ import com.PilotACS.olt.model.OltDbaProfileRequest;
 import com.PilotACS.olt.model.OltExecRequest;
 import com.PilotACS.olt.model.OltExecResult;
 import com.PilotACS.olt.model.OltOntDeleteAllRequest;
+import com.PilotACS.olt.model.OltLinkAggregation;
+import com.PilotACS.olt.model.OltLinkAggregationRequest;
+import com.PilotACS.olt.model.OltOntDeleteRequest;
 import com.PilotACS.olt.model.OltOntQueryRequest;
 import com.PilotACS.olt.model.OltLineProfileForm;
 import com.PilotACS.olt.model.OltLineProfilePreviewRequest;
@@ -283,6 +286,57 @@ public class OltController {
         } catch (Exception e) {
             Logs.error(Logs.Module.OLT, "保存配置异常 id={}", id, e);
             return Result.fail("保存配置失败：" + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "整机重启：web 超管密码核验通过后下发 reboot，所有 ONT 业务会中断")
+    @PostMapping("/{id}/reboot")
+    public Result<String> reboot(@PathVariable Long id,
+                                 @RequestBody(required = false) Map<String, String> body,
+                                 HttpServletRequest httpRequest) {
+        String password = body == null ? null : body.get("password");
+        try {
+            return Result.ok(oltService.reboot(id, password, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.OLT, "整机重启异常 id={}", id, e);
+            return Result.fail("整机重启失败：" + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "链路聚合组查询：display link-aggregation all 实时采集")
+    @GetMapping("/{id}/link-aggregation")
+    public Result<List<OltLinkAggregation>> linkAggregations(@PathVariable Long id,
+                                                             HttpServletRequest httpRequest) {
+        try {
+            return Result.ok(oltService.linkAggregations(id, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.OLT, "链路聚合查询异常 id={}", id, e);
+            return Result.fail("链路聚合查询失败：" + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "创建/删除链路聚合组：下发后回查聚合表返回最新列表")
+    @PostMapping("/{id}/link-aggregation")
+    public Result<List<OltLinkAggregation>> applyLinkAggregation(@PathVariable Long id,
+                                                                 @RequestBody OltLinkAggregationRequest request,
+                                                                 HttpServletRequest httpRequest) {
+        try {
+            return Result.ok(oltService.applyLinkAggregation(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.OLT, "链路聚合下发异常 id={}", id, e);
+            return Result.fail("链路聚合下发失败：" + e.getMessage());
         }
     }
 
@@ -632,6 +686,23 @@ public class OltController {
         } catch (Exception e) {
             Logs.error(Logs.Module.OLT, "开启 PON 口自动发现异常 id={}", id, e);
             return Result.fail("开启自动发现失败：" + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "删除单个 ONT：先拆它的业务虚口再 ont delete")
+    @PostMapping("/{id}/ont/delete")
+    public Result<OltDetail> deleteOnt(@PathVariable Long id,
+                                       @RequestBody OltOntDeleteRequest request,
+                                       HttpServletRequest httpRequest) {
+        try {
+            return Result.ok(oltService.deleteOnt(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException e) {
+            return Result.fail(e.getMessage());
+        } catch (IllegalStateException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.OLT, "删除单个 ONT 异常 id={}", id, e);
+            return Result.fail("删除单个 ONT 失败：" + e.getMessage());
         }
     }
 

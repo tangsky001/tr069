@@ -372,6 +372,42 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
         return "undo service-port " + index;
     }
 
+    /** 华为整机重启：{@code reboot system}，回车后追问 y/n（会话层统一答 y） */
+    @Override
+    public String rebootCommand() {
+        return "reboot system";
+    }
+
+    // ------------------------------------------------------------ 链路聚合
+
+    /** {@code display link-aggregation {all|框/槽/口}} */
+    @Override
+    public String linkAggregationQueryCommand(String target) {
+        return "display link-aggregation " + (target == null || target.isBlank() ? "all" : target.trim());
+    }
+
+    /** {@code link-aggregation 0/17 0-1 ingress workmode lacp-static}（现场口径） */
+    @Override
+    public String linkAggregationCreateCommand(String masterFs, String ports,
+                                               String direction, String workmode) {
+        return "link-aggregation " + masterFs + " " + ports + " " + direction
+                + " workmode " + workmode;
+    }
+
+    /** {@code undo link-aggregation 0/17} */
+    @Override
+    public String linkAggregationDeleteCommand(String masterFs) {
+        return "undo link-aggregation " + masterFs;
+    }
+
+    /** {@code undo service-port port 0/槽/口 ont <id> gemport <g> user-vlan <uv>}（config 视图，现场手工删 ONU 的写法） */
+    @Override
+    public String servicePortDeleteByPortCommand(int frame, int slot, int port,
+                                                 int ontId, int gemport, int userVlan) {
+        return "undo service-port port " + frame + "/" + slot + "/" + port
+                + " ont " + ontId + " gemport " + gemport + " user-vlan " + userVlan;
+    }
+
     /** 单块板详情：{@code display board 0/2}，回显里就有每口挂了几个 ONT */
     @Override
     public String boardDetailCommand(int frame, int slot) {

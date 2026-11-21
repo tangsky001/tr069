@@ -13,7 +13,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.PilotACS.acl.DeviceAclService;
+import com.PilotACS.common.constant.AuthConstant;
 import com.PilotACS.common.security.LoginUser;
+import com.PilotACS.common.security.PasswordUtil;
 import com.PilotACS.common.security.UserContext;
 import com.PilotACS.group.GroupService;
 import com.PilotACS.entity.SysUser;
@@ -52,6 +54,9 @@ import com.PilotACS.olt.model.HuaweiQuickSetupRequest;
 import com.PilotACS.olt.model.OltOntAutofind;
 import com.PilotACS.olt.model.OltOntAutoFindStatus;
 import com.PilotACS.olt.model.OltOntDeleteAllRequest;
+import com.PilotACS.olt.model.OltLinkAggregation;
+import com.PilotACS.olt.model.OltLinkAggregationRequest;
+import com.PilotACS.olt.model.OltOntDeleteRequest;
 import com.PilotACS.olt.model.OltOntDeleteResult;
 import com.PilotACS.olt.model.OltTerminalUserRequest;
 import com.PilotACS.olt.model.OltBoardProfile;
@@ -611,6 +616,165 @@ public class OltService {
             throw new IllegalStateException("保存配置失败：" + message, e);
         }
         return detail(id);
+    }
+
+    /**
+     * 整机重启：先核操作者身份（必须是超级管理员，且是初始 admin 账号——admin 可能被改名，
+     * 用"系统第一个用户"判定），再核 web 超级管理员密码（与登录同口径校验），核验通过才发 reboot。
+     * 重启期间所有 ONT 业务中断，设备会自主回来。
+     */
+    public String reboot(Long id, String password, String operator) {
+        OltDevice device = requireDevice(id);
+        SysUser opUser = operator == null ? null : sysUserMapper.selectOne(
+                new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, operator));
+        // 身份前置门禁：非超级管理员 / 非初始 admin 账号一律拒发（先于密码核验，避免无权者试密码）
+        String denied = rebootDeniedReason(opUser);
+        if (denied != null) {
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    "整机重启被拒绝：" + denied + "（操作者 " + operator + "）", null, 0L, operator);
+            throw new IllegalArgumentException(denied);
+        }
+        if (password == null || password.isBlank()
+                || !PasswordUtil.verify(password, opUser.getSalt(), opUser.getPassword())) {
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    "整机重启被拒绝：web 超级管理员密码核验未通过", null, 0L, operator);
+            throw new IllegalArgumentException("web 超级管理员密码错误，未下发重启命令");
+        }
+        String command = profileOf(id).rebootCommand();
+        if (command == null) {
+            throw new IllegalArgumentException("该厂商还没有接入重启命令");
+        }
+        long start = System.currentTimeMillis();
+        try {
+            String output = telnetService.reboot(device);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+                    "整机重启：" + command + "（web 超管密码核验通过，重启期间所有 ONT 业务中断）",
+                    output, System.currentTimeMillis() - start, operator);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    "整机重启失败：" + message, null, System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException("整机重启失败：" + message, e);
+        }
+        return "重启命令已下发：" + command + "，设备正在重启";
+    }
+
+    /**
+     * 链路聚合组列表：{@code display link-aggregation all} 实时查询并解析。
+     */
+    public List<OltLinkAggregation> linkAggregations(Long id, String operator) {
+        OltDevice device = requireDevice(id);
+        long start = System.currentTimeMillis();
+        try {
+            String table = telnetService.queryLinkAggregations(device);
+            List<OltLinkAggregation> groups = OltInfoParser.parseLinkAggregations(table);
+            saveRecord(id, OltSyncRecord.ACTION_QUERY, true,
+                    "链路聚合查询：display link-aggregation all（" + groups.size() + " 组）",
+                    table, System.currentTimeMillis() - start, operator);
+            return groups;
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_QUERY, false,
+                    "链路聚合查询失败：" + message, null,
+                    System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException("链路聚合查询失败：" + message, e);
+        }
+    }
+
+    /**
+     * 创建/删除链路聚合组：按厂商口径拼命令（华为 {@code link-aggregation 0/17 0-1 ingress
+     * workmode lacp-static} / {@code undo link-aggregation 0/17}）下发，成功后回查聚合表返回。
+     */
+    public List<OltLinkAggregation> applyLinkAggregation(Long id, OltLinkAggregationRequest req,
+                                                         String operator) {
+        if (req == null || req.getOp() == null || req.getOp().isBlank()) {
+            throw new IllegalArgumentException("op 不能为空（create / delete）");
+        }
+        OltVendorProfile profile = profileOf(id);
+        String op = req.getOp().trim().toLowerCase(Locale.ROOT);
+        String command;
+        String label;
+        if ("delete".equals(op)) {
+            String masterFs = trimOrBlank(req.getMasterFs());
+            if (!masterFs.matches("\\d+/\\d+(/\\d+)?")) {
+                throw new IllegalArgumentException("主控端口格式应为 框/槽/口，如 0/17 或 0/17/0");
+            }
+            command = profile.linkAggregationDeleteCommand(masterFs);
+            label = "删除链路聚合组";
+        } else if ("create".equals(op)) {
+            String masterFs = trimOrBlank(req.getMasterFs());
+            String ports = trimOrBlank(req.getPorts());
+            String direction = trimOrBlank(req.getDirection()).toLowerCase(Locale.ROOT);
+            String workmode = trimOrBlank(req.getWorkmode());
+            if (!masterFs.matches("\\d+/\\d+(/\\d+)?")) {
+                throw new IllegalArgumentException("主控端口格式应为 框/槽，如 0/17");
+            }
+            if (!ports.matches("[\\d,\\-]+")) {
+                throw new IllegalArgumentException("成员端口列表格式如 0-1 或 0,1");
+            }
+            if (!direction.matches("ingress|egress")) {
+                throw new IllegalArgumentException("聚合方向只能是 ingress 或 egress");
+            }
+            if (workmode.isEmpty()) {
+                workmode = "lacp-static";
+            }
+            command = profile.linkAggregationCreateCommand(masterFs, ports, direction, workmode);
+            label = "创建链路聚合组";
+        } else {
+            throw new IllegalArgumentException("op 只支持 create / delete");
+        }
+        if (command == null) {
+            throw new IllegalArgumentException("该厂商还没有接入链路聚合配置命令");
+        }
+        if ("delete".equals(op)) {
+            // undo link-aggregation 会追问 y/n（[n] 默认不删），走交互式通道答 y；
+            // 拒绝/参数错直接失败，不进重采
+            OltDevice device = requireDevice(id);
+            long start = System.currentTimeMillis();
+            try {
+                String output = telnetService.deleteLinkAggregation(device,
+                        trimOrBlank(req.getMasterFs()));
+                saveRecord(id, OltSyncRecord.ACTION_DELETE, true,
+                        "删除链路聚合组：" + command, output,
+                        System.currentTimeMillis() - start, operator);
+            } catch (Exception e) {
+                String message = rootMessage(e);
+                saveRecord(id, OltSyncRecord.ACTION_DELETE, false,
+                        "删除链路聚合组失败：" + message, null,
+                        System.currentTimeMillis() - start, operator);
+                throw new IllegalStateException("删除链路聚合组失败：" + message, e);
+            }
+        } else {
+            dispatchConfig(id, List.of(command), operator, label);
+        }
+        return linkAggregations(id, operator);
+    }
+
+    private static String trimOrBlank(String v) {
+        return v == null ? "" : v.trim();
+    }
+
+    /**
+     * 重启权限门禁：必须是超级管理员（SUPER_ADMIN 角色），且必须是系统第一个添加的用户
+     *（即初始 admin 账号——admin 改名后账号 id 不变，按 id 判定而不是按用户名）。
+     * 返回 null 表示放行，否则返回给前端的提示文案。
+     */
+    private String rebootDeniedReason(SysUser opUser) {
+        if (opUser == null) {
+            return "请使用超级管理员重启该设备";
+        }
+        boolean superAdmin = opUser.getId() == AuthConstant.SUPER_ADMIN_ID
+                || AuthConstant.SUPER_ADMIN_CODE.equals(opUser.getRoleCode());
+        if (!superAdmin) {
+            return "请使用超级管理员重启该设备";
+        }
+        SysUser first = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
+                .orderByAsc(SysUser::getId)
+                .last("LIMIT 1"));
+        if (first == null || !Objects.equals(opUser.getId(), first.getId())) {
+            return "仅初始管理员账号（admin）可重启该设备";
+        }
+        return null;
     }
 
     /** 快速同步：一次短连接把板卡（型号 / 板卡类型 / 槽位 / 机框槽位数）拿回来写库 */
@@ -2442,6 +2606,76 @@ public class OltService {
                     ? "这块业务板上没有 ONT 可删" : "设备拒绝删除：" + String.join("、", failures));
         }
         return detail(id);
+    }
+
+    /**
+     * 删除单个 ONT：现场怎么敲就怎么发——先拆它的业务虚口（undo service-port port .. gemport ..
+     * user-vlan ..），再进 PON 板视图 ont delete；成功后把库里的这条 ONT 从板卡快照摘掉
+     */
+    public OltDetail deleteOnt(Long id, OltOntDeleteRequest request, String operator) {
+        OltDevice device = requireDevice(id);
+        if (request == null || request.getSlot() == null
+                || request.getPort() == null || request.getOntId() == null) {
+            throw new IllegalArgumentException("槽位、PON 端口、ONT ID 都不能为空");
+        }
+        String where = "0/" + request.getSlot() + "/" + request.getPort()
+                + " ont " + request.getOntId();
+        long start = System.currentTimeMillis();
+        OltOntDeleteResult result;
+        try {
+            result = telnetService.deleteOnt(device, request.getSlot(), request.getPort(), request.getOntId());
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_DELETE, false,
+                    "删除 ONT " + where + " 失败：" + message, null,
+                    System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException(message, e);
+        }
+        boolean ok = result.getFailedPorts().isEmpty();
+        saveRecord(id, OltSyncRecord.ACTION_DELETE, ok,
+                "删除 ONT " + where + (ok ? "：成功" : "：设备拒绝"),
+                String.join("\n", result.getOutputs()),
+                System.currentTimeMillis() - start, operator);
+        if (!ok) {
+            throw new IllegalStateException("设备拒绝删除 ONT " + where + "，回显详见操作记录");
+        }
+        clearOnt(id, request.getSlot(), request.getPort(), request.getOntId());
+        return detail(id);
+    }
+
+    /** 从板卡快照里摘掉一条 ONT，端口的 ONT 计数同步减一 */
+    private void clearOnt(Long id, int slot, int port, int ontId) {
+        OltBoard board = boardMapper.selectOne(new LambdaQueryWrapper<OltBoard>()
+                .eq(OltBoard::getOltId, id)
+                .eq(OltBoard::getSlotNo, slot));
+        if (board == null) {
+            return;
+        }
+        fillPorts(board);
+        boolean changed = false;
+        if (board.getPorts() != null) {
+            for (OltPort p : board.getPorts()) {
+                if (p.getPortNo() == null || p.getPortNo() != port || p.getOnts() == null) {
+                    continue;
+                }
+                int before = p.getOnts().size();
+                p.setOnts(p.getOnts().stream()
+                        .filter(ont -> !Objects.equals(ont.getOntId(), ontId))
+                        .collect(Collectors.toList()));
+                if (p.getOnts().size() != before) {
+                    changed = true;
+                    p.setOnuTotal(p.getOnts().size());
+                    p.setOnuOnline((int) p.getOnts().stream()
+                            .filter(ont -> Boolean.TRUE.equals(ont.getOnline()))
+                            .count());
+                }
+            }
+        }
+        if (changed) {
+            boardMapper.update(null, new LambdaUpdateWrapper<OltBoard>()
+                    .eq(OltBoard::getId, board.getId())
+                    .set(OltBoard::getPortsJson, writePorts(board.getPorts())));
+        }
     }
 
     /** 把删成功的口上的 ONT 从库里清掉（不再为这个多问设备一次命令） */

@@ -382,6 +382,19 @@ export function saveOltConfig(id) {
 }
 
 /**
+ * 整机重启：后端核验 web 超级管理员密码（与登录同口径）通过后才下发 reboot。
+ * 重启期间所有 ONT 业务中断，设备会自主回来，前端稍后重新同步即可。
+ */
+export function rebootOlt(id, password) {
+  return request({
+    url: '/olt/' + id + '/reboot',
+    method: 'post',
+    data: { password },
+    timeout: 300000
+  })
+}
+
+/**
  * 删除业务板上的全部 ONT：后端按库里的板卡定位槽位（如 0/2）和采到 ONT 的端口，
  * 逐口下发 ont delete <端口> all（设备逐条问 y/n），成功后整机重采。
  *
@@ -392,6 +405,43 @@ export function deleteAllOnts(id, slots) {
     url: '/olt/' + id + '/ont/delete-all',
     method: 'post',
     data: { slots: slots || [] },
+    timeout: 300000
+  })
+}
+
+/**
+ * 删除单个 ONT：后端先拆它的业务虚口（undo service-port port .. ont .. gemport ..
+ * user-vlan ..），再进 PON 板视图 ont delete，成功后整机重采，返回最新详情。
+ *
+ * data: { slot, port, ontId }
+ */
+export function deleteOltOnt(id, data) {
+  return request({
+    url: '/olt/' + id + '/ont/delete',
+    method: 'post',
+    data,
+    timeout: 300000
+  })
+}
+
+/** 链路聚合组查询：display link-aggregation all 实时采集 */
+export function fetchLinkAggregations(id) {
+  return request({
+    url: '/olt/' + id + '/link-aggregation',
+    method: 'get',
+    timeout: 120000
+  })
+}
+
+/**
+ * 创建/删除链路聚合组：下发后回查聚合表返回最新列表。
+ * data: { op: 'create'|'delete', masterFs: '0/17', ports: '0-1', direction: 'ingress', workmode: 'lacp-static' }
+ */
+export function applyLinkAggregation(id, data) {
+  return request({
+    url: '/olt/' + id + '/link-aggregation',
+    method: 'post',
+    data,
     timeout: 300000
   })
 }

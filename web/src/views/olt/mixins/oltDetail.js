@@ -16,6 +16,9 @@ import {
   addOltPortVlan,
   removeOltPortVlan,
   deleteAllOnts,
+  deleteOltOnt,
+  fetchLinkAggregations,
+  applyLinkAggregation,
   fetchOltActions,
   quickSetupOlt,
   execOltAction,
@@ -63,6 +66,10 @@ export const oltDetailMixin = {
       hoverPort: '',
       // 「设备配置」页签的命令动作目录（按厂商 profile 给，页面只负责渲染）
       commandActions: [],
+      // 链路聚合组：链路聚合页签打开时实时查询（display link-aggregation all）
+      linkAggregations: [],
+      linkAggLoading: false,
+      linkAggApplying: false,
       // 码表与阈值：厂商、板卡档案、视图名、ONU 动作、VLAN 类型、板卡类别、槽位兜底、温度阈值
       options: null
     }
@@ -376,6 +383,10 @@ export const oltDetailMixin = {
       if (scope) {
         this.syncSection(scope)
       }
+      // 链路聚合页签：首次打开实时查一次聚合表，之后用面板上的「查询聚合组」手动刷
+      if (tab && tab.name === 'ola' && !this.linkAggregations.length) {
+        this.loadLinkAggregations()
+      }
     },
     /**
      * 按页签同步：后端只采对应数据段并返回最新详情，页面直接换上。
@@ -521,6 +532,51 @@ export const oltDetailMixin = {
     deleteAllOnts(slots) {
       return deleteAllOnts(this.detailId, slots)
         .then(res => this.applyAfterConfig(res, '删除业务板 ONU'))
+    },
+    /**
+     * 删除单个 ONT（先拆业务虚口 undo service-port port .. gemport .. user-vlan ..，
+     * 再 ont delete）：接口返回的就是重采后的最新详情。
+     */
+    deleteOnt(payload) {
+      return deleteOltOnt(this.detailId, payload)
+        .then(res => this.applyAfterConfig(res, '删除注册'))
+    },
+    /** 链路聚合组实时查询（display link-aggregation all），silent 时不动 loading */
+    loadLinkAggregations(silent) {
+      if (!this.detailId) return Promise.resolve()
+      if (!silent) this.linkAggLoading = true
+      return fetchLinkAggregations(this.detailId)
+        .then(res => {
+          this.linkAggregations = (res && res.data) || []
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.linkAggLoading = false
+        })
+    },
+    /** 创建链路聚合组：下发后回查聚合表，成功提示在页面给 */
+    createLinkAggregation(form) {
+      this.linkAggApplying = true
+      return applyLinkAggregation(this.detailId, { op: 'create', ...form })
+        .then(res => {
+          this.linkAggregations = (res && res.data) || []
+          this.$message.success('聚合组已创建，成员口业务已按聚合口转发')
+        })
+        .finally(() => {
+          this.linkAggApplying = false
+        })
+    },
+    /** 删除链路聚合组：下发后回查聚合表 */
+    deleteLinkAggregation(masterFs) {
+      this.linkAggApplying = true
+      return applyLinkAggregation(this.detailId, { op: 'delete', masterFs })
+        .then(res => {
+          this.linkAggregations = (res && res.data) || []
+          this.$message.success('聚合组已删除，成员口恢复独立口转发')
+        })
+        .finally(() => {
+          this.linkAggApplying = false
+        })
     },
     /** 拉「设备配置」页签的命令动作目录（按厂商 profile 给，没接入动作目录的厂商是空表） */
     loadActions() {

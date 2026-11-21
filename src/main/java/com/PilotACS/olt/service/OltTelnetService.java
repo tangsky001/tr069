@@ -392,6 +392,39 @@ public class OltTelnetService {
         return results;
     }
 
+    /** 删除单个 ONT：登录一次，先拆它的业务虚口再 ont delete；回显乱码时 GBK 重试 */
+    public OltOntDeleteResult deleteOnt(OltDevice device, int slot, int port, int ontId) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        OltOntDeleteResult result = doDeleteOnt(device, charset, slot, port, ontId);
+        if (OltCharset.isAuto(device.getCharset()) && garbled(result.getOutputs())) {
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 删除单个 ONT 回显疑似非 UTF-8，改用 GBK 重试",
+                    device.getHost());
+            try {
+                result = doDeleteOnt(device, OltCharset.fallback(), slot, port, ontId);
+            } catch (IOException e) {
+                Logs.debug(Logs.Module.OLT_COLLECT, "GBK 重试删除单个 ONT 失败，保留首次结果: {}", e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    /** 整机重启：登录一次进 config 视图发 reboot（设备追问 y/n 由会话层应答） */
+    public String reboot(OltDevice device) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.reboot());
+    }
+
+    private OltOntDeleteResult doDeleteOnt(OltDevice device, Charset charset, int slot, int port, int ontId)
+            throws IOException {
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.deleteOnt(slot, port, ontId));
+    }
+
+    private static boolean garbled(List<String> outputs) {
+        return outputs != null && outputs.stream().anyMatch(out -> out != null && out.indexOf('\uFFFD') >= 0);
+    }
+
     private List<OltOntDeleteResult> doDeleteBoardOnts(OltDevice device, Charset charset, List<Integer> slots)
             throws IOException {
         return sessionPool.execute(device, charset, charsetStrict(device, charset),
@@ -462,6 +495,44 @@ public class OltTelnetService {
             out = doQueryPortState(device, OltCharset.fallback(), slot, portNo);
         }
         return OltInfoParser.parsePortStateOptics(out);
+    }
+
+    /** 链路聚合组查询：{@code display link-aggregation all}；回显乱码时 GBK 重试 */
+    public String queryLinkAggregations(OltDevice device) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        String table = doQueryLinkAggregations(device, charset);
+        if (OltCharset.isAuto(device.getCharset()) && table != null && table.indexOf('\uFFFD') >= 0) {
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 链路聚合回显疑似非 UTF-8，改用 GBK 重试",
+                    device.getHost());
+            table = doQueryLinkAggregations(device, OltCharset.fallback());
+        }
+        return table;
+    }
+
+    private String doQueryLinkAggregations(OltDevice device, Charset charset) throws IOException {
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                OltCliSession::queryLinkAggregations);
+    }
+
+    /**
+     * 删除链路聚合组：undo link-aggregation 会追问 y/n（[n] 默认不删），会话层答 y；
+     * masterFs 为完整主端口（0/17/0，display 出来的口径）；回显乱码时 GBK 重试。
+     */
+    public String deleteLinkAggregation(OltDevice device, String masterFs) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        String out = doDeleteLinkAggregation(device, charset, masterFs);
+        if (OltCharset.isAuto(device.getCharset()) && out != null && out.indexOf('\uFFFD') >= 0) {
+            Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 删除聚合组回显疑似非 UTF-8，改用 GBK 重试",
+                    device.getHost());
+            out = doDeleteLinkAggregation(device, OltCharset.fallback(), masterFs);
+        }
+        return out;
+    }
+
+    private String doDeleteLinkAggregation(OltDevice device, Charset charset, String masterFs)
+            throws IOException {
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.deleteLinkAggregation(masterFs));
     }
 
     private String doQueryPortState(OltDevice device, Charset charset, int slot, int portNo) throws IOException {

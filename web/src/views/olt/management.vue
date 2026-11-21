@@ -64,6 +64,16 @@
             >诊断测试</el-button>
             <el-button
               v-if="$has('olt:update')"
+              type="danger"
+              plain
+              size="small"
+              icon="el-icon-switch-button"
+              :loading="rebooting"
+              :disabled="!selectedId"
+              @click="handleReboot"
+            >设备重启</el-button>
+            <el-button
+              v-if="$has('olt:update')"
               type="success"
               size="small"
               icon="el-icon-download"
@@ -144,7 +154,7 @@
 <script>
 import OltGroupTree from './components/OltGroupTree'
 import ChinaMap from '@/components/ChinaMap'
-import { fetchOltList, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive, saveOltConfig } from '@/api/olt'
+import { fetchOltList, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive, saveOltConfig, rebootOlt } from '@/api/olt'
 import { fetchGroupMembers } from '@/api/group'
 import { componentOfVendor } from './vendors'
 
@@ -160,6 +170,10 @@ export default {
       syncing: false,
       testing: false,
       savingConfig: false,
+      /** 设备重启下发中：按钮转圈防连点 */
+      rebooting: false,
+      /** 第一次确认后核对过的 web 超管密码：再次点击「设备重启」且确认后才真正下发 */
+      rebootPassword: '',
       mapVisible: false,
       resources: [],
       selectedId: null,
@@ -384,6 +398,60 @@ export default {
         .finally(() => {
           this.savingConfig = false
         })
+    },
+    /**
+     * 设备重启：三段防误触——
+     * 1) 确认「会导致所有 ONT 业务中断」；
+     * 2) 输入 web 超级管理员密码（后端与登录同口径核验，错了直接拒）；
+     * 3) 再次点击「设备重启」→ 再确认一次 → 点「是」才真正下发 reboot。
+     * 业务失败提示由 request 拦截器统一弹，这里只兜确认框的取消。
+     */
+    handleReboot() {
+      if (!this.selectedId) return
+      if (this.rebootPassword) {
+        // 第二次点击：密码已核对过，这里是最终确认
+        this.$confirm(
+          '超级管理员密码已核对。最后确认：重启将导致所有 ONT 业务中断，确定立即下发重启命令？',
+          '设备重启',
+          { type: 'warning', confirmButtonText: '是', cancelButtonText: '否' }
+        )
+          .then(() => {
+            const password = this.rebootPassword
+            this.rebootPassword = ''
+            this.rebooting = true
+            return rebootOlt(this.selectedId, password)
+          })
+          .then(() => {
+            this.$message.success('重启命令已下发，设备正在重启；业务恢复需几分钟，稍后点「同步」确认')
+            this.loadList()
+          })
+          .catch(e => {
+            if (e === 'cancel' || e === 'close') return
+            // 业务错误 request 拦截器已弹过（密码错/下发失败），这里不再重复提示
+          })
+          .finally(() => {
+            this.rebooting = false
+          })
+        return
+      }
+      this.$confirm(
+        '确定需要重启 OLT 设备吗？这样会导致所有 ONT 业务中断。',
+        '设备重启',
+        { type: 'warning', confirmButtonText: '是', cancelButtonText: '否' }
+      )
+        .then(() => this.$prompt('请输入 web 超级管理员密码，授权本次重启', '设备重启', {
+          inputType: 'password',
+          inputPlaceholder: '当前登录账号的密码',
+          inputPattern: /\S+/,
+          inputErrorMessage: '密码不能为空',
+          confirmButtonText: '确定',
+          cancelButtonText: '取消'
+        }))
+        .then(({ value }) => {
+          this.rebootPassword = value
+          this.$message.info('密码已核对，请再次点击「设备重启」做最终确认')
+        })
+        .catch(() => {})
     }
   }
 }

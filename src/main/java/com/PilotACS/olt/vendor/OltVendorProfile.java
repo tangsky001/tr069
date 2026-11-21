@@ -302,6 +302,17 @@ public interface OltVendorProfile {
         return null;
     }
 
+    /**
+     * 按端口定位删一条业务虚口的命令（config 视图执行），华为例
+     * {@code undo service-port port 0/2/0 ont 0 gemport 0 user-vlan 46}：
+     * 现场手工删 ONU 就这么敲，不用先查业务流索引。厂商不支持或缺 gemport/userVlan
+     * 时返回 null，调用方退回 {@link #servicePortDeleteCommand(int)}。
+     */
+    default String servicePortDeleteByPortCommand(int frame, int slot, int port,
+                                                  int ontId, int gemport, int userVlan) {
+        return null;
+    }
+
     /** 单块板的详情命令（华为例：{@code display board 0/2}）：板卡型号、每个 PON 口 */
     default String boardDetailCommand(int frame, int slot) {
         return null;
@@ -325,6 +336,35 @@ public interface OltVendorProfile {
     /** 存盘命令：华为只写运行配置，不 save 掉电就回到注册前 */
     default String saveCommand() {
         return "save";
+    }
+
+    /**
+     * 整机重启命令（config 视图执行，设备会追问 y/n，会话层统一答 y）。
+     * 重启期间所有 ONT 业务中断，调用方必须先核 web 超管密码。
+     */
+    default String rebootCommand() {
+        return "reboot";
+    }
+
+    // ------------------------------------------------------------ 链路聚合
+
+    /** 链路聚合查询命令（config 视图执行）：target 为 all 或 框/槽/口；不支持返回 null */
+    default String linkAggregationQueryCommand(String target) {
+        return null;
+    }
+
+    /**
+     * 创建链路聚合组命令（config 视图执行），华为口径
+     * {@code link-aggregation 0/17 0-1 ingress workmode lacp-static}；不支持返回 null。
+     */
+    default String linkAggregationCreateCommand(String masterFs, String ports,
+                                                String direction, String workmode) {
+        return null;
+    }
+
+    /** 删除链路聚合组命令（config 视图执行），华为口径 {@code undo link-aggregation 0/17}；不支持返回 null */
+    default String linkAggregationDeleteCommand(String masterFs) {
+        return null;
     }
 
     // ------------------------------------------------------------ OLT 本地用户

@@ -990,7 +990,19 @@ public class OltOntRegService {
         List<String> commands = new ArrayList<>();
         for (OltServicePort sp : OltInfoParser.parseServicePorts(table)) {
             // 查询兜底会退回整口表格：只删这条 ONT 自己的流，别误伤同口其它光猫
-            if (sp.getIndex() != null && Objects.equals(sp.getOntId(), ontId)) {
+            if (!Objects.equals(sp.getOntId(), ontId)) {
+                continue;
+            }
+            // 优先按端口定位删（undo service-port port f/s/p ont .. gemport .. user-vlan ..，
+            // 现场手工就这么敲）；缺 gemport/userVlan 或厂商不支持时退回按索引删
+            String byPort = null;
+            if (sp.getGemport() != null && sp.getUserVlan() != null) {
+                byPort = profile.servicePortDeleteByPortCommand(
+                        fsp[0], fsp[1], fsp[2], ontId, sp.getGemport(), sp.getUserVlan());
+            }
+            if (byPort != null) {
+                commands.add(byPort);
+            } else if (sp.getIndex() != null) {
                 commands.add(profile.servicePortDeleteCommand(sp.getIndex()));
             }
         }

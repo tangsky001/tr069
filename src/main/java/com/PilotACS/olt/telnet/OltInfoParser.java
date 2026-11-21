@@ -11,6 +11,7 @@ import com.PilotACS.olt.model.OltDbaProfile;
 import com.PilotACS.olt.model.OltGemMapping;
 import com.PilotACS.olt.model.OltGemport;
 import com.PilotACS.olt.model.OltLineProfile;
+import com.PilotACS.olt.model.OltLinkAggregation;
 import com.PilotACS.olt.model.VlanIdExpression;
 import com.PilotACS.olt.model.OltServicePort;
 import com.PilotACS.olt.model.OltSrvProfile;
@@ -1000,6 +1001,35 @@ public final class OltInfoParser {
             }
         }
         return vlans;
+    }
+
+    // ------------------------------------------------------------ 链路聚合
+
+    /**
+     * 解析 {@code display link-aggregation} 表格。华为回显的 Master port 列里可能
+     * 夹空格（{@code 0 /17/0}），归一成 {@code 0/17/0}；最大/最少链路数设备回 {@code -}
+     * 时存 null。表头与分隔线不含 ingress/egress，天然被正则滤掉。
+     */
+    public static List<OltLinkAggregation> parseLinkAggregations(String text) {
+        List<OltLinkAggregation> result = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return result;
+        }
+        Pattern row = Pattern.compile(
+                "(\\d+\\s*/\\s*\\d+(?:\\s*/\\s*\\d+)?)\\s+(ingress|egress)\\s+(\\d+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)",
+                Pattern.CASE_INSENSITIVE);
+        Matcher m = row.matcher(text);
+        while (m.find()) {
+            OltLinkAggregation group = new OltLinkAggregation();
+            group.setMasterPort(m.group(1).replaceAll("\\s+", ""));
+            group.setMode(m.group(2).toLowerCase(Locale.ROOT));
+            group.setPortNum(Integer.parseInt(m.group(3)));
+            group.setWorkmode(m.group(4));
+            group.setMaxLinkNumber("-".equals(m.group(5)) ? null : m.group(5));
+            group.setLeastLinkNumber("-".equals(m.group(6)) ? null : m.group(6));
+            result.add(group);
+        }
+        return result;
     }
 
     /** 从配置脚本 {@code [vlan-config]} 段的 {@code port vlan N 0/slot/port} 行解析端口 VLAN 放通，按 (slot, port) 聚合，每端口一条 */

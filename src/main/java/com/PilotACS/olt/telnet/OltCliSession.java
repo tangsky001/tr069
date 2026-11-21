@@ -37,6 +37,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -1230,6 +1231,130 @@ public class OltCliSession implements Closeable {
             throw new IllegalStateException("进不了 config 视图，查不到业务流");
         }
         return runServicePortQuery(slot, port, ontId, timeout);
+    }
+
+    /** 链路聚合组表格：{@code display link-aggregation all}（厂商不支持时抛错） */
+    public String queryLinkAggregations() throws OltTelnetException {
+        prepareTerminal(vendorHint);
+        int timeout = commandTimeoutMs;
+        OltVendorProfile profile = profile();
+        String command = profile.linkAggregationQueryCommand("all");
+        if (command == null) {
+            throw new OltTelnetException("该厂商还没接入链路聚合查询");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了 config 视图，查不到链路聚合");
+        }
+        return runCommand(command, timeout);
+    }
+
+    /**
+     * 删除链路聚合组：{@code undo link-aggregation 0/17/0} 会追问
+     * 「clear the configuration of slave port … (y/n)[n]:」，默认 [n] 不删，会话层答 y。
+     * masterFs 用设备 display 出来的完整主端口（0/17/0），现场口径。
+     */
+    public String deleteLinkAggregation(String masterFs) throws OltTelnetException {
+        prepareTerminal(vendorHint, true);
+        int timeout = commandTimeoutMs;
+        OltVendorProfile profile = profile();
+        String command = profile.linkAggregationDeleteCommand(masterFs);
+        if (command == null) {
+            throw new OltTelnetException("该厂商还没接入链路聚合删除命令");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了 config 视图，聚合组未删除");
+        }
+        String out = runInteractive(command, List.of("y"));
+        String text = out == null ? "" : out;
+        if (text.contains("Parameter error") || text.contains("参数错误")
+                || text.contains("Failure:")) {
+            throw new OltTelnetException("设备拒绝删除聚合组 " + masterFs + "，回显详见操作记录");
+        }
+        return text;
+    }
+
+    /**
+     * 整机重启：config 视图发厂商重启命令（华为 {@code reboot system}），设备追问 y/n 时
+     * 会话层统一答 y。重启期间所有 ONT 业务中断，调用方（服务层）必须先核 web 超管密码；
+     * 设备接受后连接会断（IOException 属正常收尾），回显尽量收集供留档。
+     */
+    public String reboot() throws OltTelnetException {
+        ensureRootView(Math.min(commandTimeoutMs, 5000));
+        prepareTerminal(vendorHint, true);
+        int timeout = commandTimeoutMs;
+        OltVendorProfile profile = profile();
+        if (profile.rebootCommand() == null) {
+            throw new OltTelnetException("该厂商还没接入重启命令");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），未下发重启");
+        }
+        String out = runInteractive(profile.rebootCommand(), List.of("y"));
+        String text = out == null ? "" : out;
+        // 设备没认这条命令（如裸 reboot 停在选项提示被 y 撞成参数错）：明确失败，
+        // 别让"看似发成功了"实际没重启
+        if (text.contains("Parameter error") || text.contains("参数错误")) {
+            throw new OltTelnetException("设备拒绝重启命令 " + profile.rebootCommand()
+                    + "，回显详见操作记录");
+        }
+        Logs.info(Logs.Module.OLT_COLLECT, "已下发整机重启命令", "命令", profile.rebootCommand());
+        return text;
+    }
+
+    /**
+     * 删除单个 ONT：现场怎么敲这里就怎么发——先在 config 视图按端口拆干净它的业务虚口
+     *（undo service-port port f/s/p ont .. gemport .. user-vlan ..，缺 userVlan 的流退回按索引），
+     * 再进 PON 板视图 ont delete <port> <ontId>（单条删除不问 y/n，只有 delete all 问）。
+     */
+    public OltOntDeleteResult deleteOnt(int slot, int port, int ontId) throws OltTelnetException {
+        ensureRootView(Math.min(commandTimeoutMs, 5000));
+        prepareTerminal(vendorHint, true);
+        int timeout = commandTimeoutMs;
+        OltVendorProfile profile = profile();
+        if (profile.ontDeleteCommand(0, 0) == null) {
+            throw new OltTelnetException("这台设备的厂商还没接入单条 ONT 删除命令");
+        }
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），ONT 未删除");
+        }
+        OltOntDeleteResult result = new OltOntDeleteResult();
+        result.setSlot(slot);
+        // 1) 拆业务虚口：带着 service-port 引用的 ont delete 会被设备顶回来，删掉也留死流
+        if (profile.servicePortListCommand(0, slot, port, ontId) != null) {
+            String table = runCommand(profile.servicePortListCommand(0, slot, port, ontId), timeout);
+            result.getOutputs().add(table == null ? "" : table);
+            for (OltServicePort sp : OltInfoParser.parseServicePorts(table)) {
+                // 表格兜底会退回整口表格：只删这条 ONT 自己的流，别误伤同口其它光猫
+                if (!Objects.equals(sp.getOntId(), ontId)) {
+                    continue;
+                }
+                String command = null;
+                if (sp.getGemport() != null && sp.getUserVlan() != null) {
+                    command = profile.servicePortDeleteByPortCommand(
+                            0, slot, port, ontId, sp.getGemport(), sp.getUserVlan());
+                }
+                if (command == null && sp.getIndex() != null) {
+                    command = profile.servicePortDeleteCommand(sp.getIndex());
+                }
+                if (command != null) {
+                    String out = runCommand(command, timeout);
+                    result.getOutputs().add(out == null ? "" : out);
+                }
+            }
+        }
+        // 2) 进 PON 板视图删 ONT，删完退回 config：留在接口视图里下条命令就发错地方了
+        runCommand(profile.ponViewCommand(0, slot), timeout);
+        String out = runCommand(profile.ontDeleteCommand(port, ontId), timeout);
+        result.getOutputs().add(out == null ? "" : out);
+        if (commandRejected(out) != null) {
+            result.getFailedPorts().add(port);
+        } else {
+            result.getDeletedPorts().add(port);
+        }
+        runQuietly("quit", timeout);
+        Logs.info(Logs.Module.OLT_REG, "删除单个 ONT", "位置", "0/" + slot + "/" + port,
+                "ontId", ontId, "结果", result.getFailedPorts().isEmpty() ? "成功" : "被设备拒绝");
+        return result;
     }
 
     private String runServicePortQuery(int slot, int port, int ontId, int timeout) {
