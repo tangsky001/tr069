@@ -615,9 +615,12 @@ public class CwmpService {
             s.setCurrent(null);
             return;
         }
-        // GPV 采集步骤遇到 9005/9003（某个参数名不被设备接受）：拆分批次定位坏名，单个坏名直接丢弃，
+        // GPV 采集步骤遇到坏名类 Fault（9005/9003 参数名不被接受；9002/"Internal error" 是
+        // 部分机型对不认名字的回法，如瑞斯康达盲探 WirelessMode）：拆分批次定位坏名，单个坏名直接丢弃，
         if ("collect".equals(purpose) && req != null && req.getKind() == RpcRequest.Kind.GPV
-                && (msg.getFaultCode() == 9005 || msg.getFaultCode() == 9003)) {
+                && (msg.getFaultCode() == 9005 || msg.getFaultCode() == 9003 || msg.getFaultCode() == 9002
+                    || (msg.getFaultString() != null
+                        && msg.getFaultString().toLowerCase().contains("internal error")))) {
             List<String> names = req.getNames();
             if (names != null && names.size() > 1) {
                 int mid = names.size() / 2;
@@ -658,6 +661,11 @@ public class CwmpService {
         for (String br : BusinessPaths.businessRoots(root)) {
             leaves.addAll(s.getData().leaves(br));
         }
+        // 厂商私有 WiFi 子树兜底：不在标准业务域里的 WiFi 叶子也要取值，
+        // 否则机型适配的 WIFI 频段实测永远为"无"
+        leaves.addAll(BusinessPaths.vendorWifiLeaves(s.getData()));
+        // 标准 WLAN 判据叶盲探：GPN 精简实现不吐 SSID/Channel/Standard 时也按实例取一遍值
+        leaves.addAll(BusinessPaths.blindWifiLeaves(s.getData()));
         Set<String> bad = modelProfileService.badParamsOf(s.getSn());
         if (!bad.isEmpty()) {
             leaves.removeIf(bad::contains);

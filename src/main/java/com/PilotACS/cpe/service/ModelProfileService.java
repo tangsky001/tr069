@@ -122,17 +122,28 @@ public class ModelProfileService {
         return isp;
     }
 
-    /** Inform 时调用：运营商未知且树不完整 → 直接把探测任务插进**当前会话队列**， */
+    /**
+     * Inform 时调用：树不完整（或业务域有空壳叶子）→ 直接把全树探测任务插进**当前会话队列**。
+     * 与运营商识别、机型适配无关——不管适配与否，首次上报就要把 WAN/WIFI/SIP 采齐；
+     * ispProbeDone 保证每次进程启动每台设备至多排一次，不会周期刷。
+     */
     private void probeInSession(CwmpSession s) {
         String sn = s.getSn();
         if (ispProbeDone.contains(sn)) {
             return;
         }
         ispProbeDone.add(sn);
-        int count = s.getData().all().size();
+        // 树完整性以"落库树 ∪ 会话内存"为准（Inform 时会话内存只有上报自带的少量参数）
+        Map<String, CpeParam> stored = store.loadParams(sn);
+        int count = Math.max(stored.size(), s.getData().all().size());
         if (count >= FULL_TREE_MIN_PARAMS) {
-            Logs.info(Logs.Module.CPE_PUSH, "参数树已采全且无私有节点，不再探测", "sn", sn, "参数数", count);
-            return;
+            boolean shell = hasBizShell(stored);
+            if (!shell) {
+                Logs.info(Logs.Module.CPE_PUSH, "参数树已采全且业务域无空壳，不再探测", "sn", sn, "参数数", count);
+                return;
+            }
+            Logs.info(Logs.Module.CPE_PUSH, "参数树已采全但业务域有空壳叶子，本会话补一次全树探测",
+                    "sn", sn, "参数数", count);
         }
         if (store.countActiveTasks(sn, "AdaptProbe") > 0) {
             // 库里已有探测任务：会话装载时会跑，不重复排
@@ -142,8 +153,28 @@ public class ModelProfileService {
         Map<String, Object> row = store.getTask(id);
         String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
         s.getQueue().add(planner.build(row, s.getData(), root, s.getModelParams()));
-        Logs.info(Logs.Module.CPE_PUSH, "运营商未知且参数树不完整，本会话立即全树探测",
+        Logs.info(Logs.Module.CPE_PUSH, "参数树不完整/业务域有空壳，本会话立即全树探测",
                 "sn", sn, "参数数", count, "任务", id);
+    }
+
+    /** 业务域里是否有空壳叶子（GPN 登记过路径但从没采到值，如 WiFi 批次没跑到）：有空壳就要补探 */
+    private boolean hasBizShell(Map<String, CpeParam> stored) {
+        if (stored.isEmpty()) {
+            return true;
+        }
+        com.PilotACS.cpe.model.DeviceData data = new com.PilotACS.cpe.model.DeviceData();
+        data.loadAll(stored);
+        String root = BusinessPaths.detectRoot(data, props.getDefaultRootNode());
+        for (String br : BusinessPaths.businessRoots(root)) {
+            for (String p : data.leaves(br)) {
+                CpeParam v = stored.get(p);
+                if (v == null || v.value() == null || v.value().isBlank()) {
+                    return true;
+                }
+            }
+        }
+        // 厂商私有 WiFi 子树（不在标准业务域里）的空壳同样算数
+        return !BusinessPaths.vendorWifiLeaves(data).isEmpty();
     }
 
     /** 系统业务刷新任务的创建人标识（防重复排队用） */
@@ -275,10 +306,14 @@ public class ModelProfileService {
                 }
             }
             if (row == null) {
+                // 没模板也一样要采齐业务数据：探测内部按树完整性与空壳叶子自查，不会重复排
+                probeInSession(s);
                 return;
             }
             s.setModelRow(row);
             s.setModelParams(store.loadModelParams(((Number) row.get("id")).longValue()));
+            // 适配与否不改变基线：树不完整/业务域有空壳叶子，首次上报就要把 WAN/WIFI/SIP 采齐
+            probeInSession(s);
         } catch (Exception e) {
             // 设备台账尚未落库等场景不阻断会话
             Logs.debug(Logs.Module.CPE_PUSH, "机型模板匹配跳过: {}", e.getMessage());

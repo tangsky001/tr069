@@ -121,7 +121,8 @@ public class CapabilityDetector {
             }
             // 证据优先级（从最基础的判据往上）：
             // 频段字段（FrequencyBand/RFBand）→ 802.11 代际（b/g/n=4、ac=5、ax=6、be=7）→ 信道 → SSID 命名
-            if (leaf.endsWith("FrequencyBand") || leaf.endsWith("FrequencyBands")) {
+            if (leaf.endsWith("FrequencyBand") || leaf.endsWith("FrequencyBands")
+                    || leaf.toLowerCase().endsWith("wifiband")) {
                 String s = v.toLowerCase();
                 if (s.contains("2.4") || (s.contains("2") && !s.contains("5"))) {
                     bands(clear, radio).add("2.4G");
@@ -137,8 +138,10 @@ public class CapabilityDetector {
                 } else if (s.startsWith("5") || "1".equals(s)) {
                     bands(clear, radio).add("5G");
                 }
-            } else if (leaf.endsWith("Standard") || leaf.endsWith("Standards")) {
-                // 有的设备整串报 802.11b/g/n、bgn 连写、802.11ax，先剥前缀再按代际拆
+            } else if (leaf.endsWith("Standard") || leaf.endsWith("Standards")
+                    || leaf.equals("WirelessMode") || leaf.equals("WiFiMode")) {
+                // 有的设备整串报 802.11b/g/n、bgn 连写、802.11ax，先剥前缀再按代际拆；
+                // WirelessMode/WiFiMode 也常报 11bgn 这类代际串，一并当证据
                 for (String raw : v.toLowerCase().split("[,;/、\\s]+")) {
                     parseStandard(raw, radio, clear, ambiguous);
                 }
@@ -244,6 +247,12 @@ public class CapabilityDetector {
         if (m.find()) {
             return "t181:" + m.group(1);
         }
+        // 厂商私有 WiFi 子树兜底（如 X_RAISECOM_WiFi.1.）：带 wlan/wifi/radio 词汇的路径
+        // 也当射频看，频段证据叶（FrequencyBand/RFBand/Standard/Channel/SSID）一并读取
+        if (BusinessPaths.wifiHintPath(path)) {
+            int cut = path.lastIndexOf('.');
+            return "x:" + (cut > 0 ? path.substring(0, cut) : path);
+        }
         return null;
     }
 
@@ -294,6 +303,15 @@ public class CapabilityDetector {
                 List<String> missing = declaredBands.stream().filter(b -> !dBands.contains(b)).toList();
                 addCheck(checks, reasons, "WIFI 频段", actual, missing.isEmpty(),
                         String.join("+", declaredBands));
+                // 实测为空但树里有 WiFi 相关节点：多半是厂商私有命名的频段字段没被认识，
+                // 把采样到的路径写进原因，便于定位补判据
+                if (!missing.isEmpty() && dBands.isEmpty()) {
+                    List<String> hints = findWifiHintPaths(data, 5);
+                    if (!hints.isEmpty()) {
+                        reasons.add("WIFI 频段：设备参数树里有 WiFi 相关节点但读不出频段（"
+                                + String.join("；", hints) + "），请重新测试；仍为空请把参数名反馈给开发补判据");
+                    }
+                }
             }
         }
         // SIP 路数（申报「无」= 用户确认没有，跳过比对）
@@ -313,7 +331,8 @@ public class CapabilityDetector {
         addProbe(probes, "lanPortCount", findProbePath(data, LAN_IF_TR098, root), String.valueOf(dLan));
         addProbe(probes, "lanSpeedMbps", findNamed(data, "MaxBitRate"), String.valueOf(dSpeed));
         addProbe(probes, "wifiBands", findNamed(data,
-                "OperatingFrequencyBand", "RFBand", "OperatingStandards", "Standard"),
+                "OperatingFrequencyBand", "RFBand", "OperatingStandards", "Standard",
+                "FrequencyBand", "WiFiBand"),
                 String.join("+", dBands));
         addProbe(probes, "sipCount", findProbePath(data, SIP_LINE, root), String.valueOf(dSip));
 
@@ -381,6 +400,48 @@ public class CapabilityDetector {
             }
         }
         return null;
+    }
+
+    /**
+     * 树里 WiFi 相关节点采样（诊断用）：只取有值的叶子、滤掉 WMM/统计/关联设备等噪声子树，
+     * 输出 {@code 路径 = 值}（值截 40 字符），一眼能看出频段字段叫什么、值长什么样。
+     * 一个有值的都没有时退回展示原始路径（标无值）——说明 WiFi 批次没采到值。
+     */
+    private List<String> findWifiHintPaths(DeviceData data, int limit) {
+        List<String> out = new ArrayList<>();
+        List<String> raw = new ArrayList<>();
+        for (String p : data.allPaths("")) {
+            if (p.endsWith(".") || !BusinessPaths.wifiHintPath(p)) {
+                continue;
+            }
+            String lower = p.toLowerCase();
+            boolean noise = lower.contains("wmmparameter") || lower.contains("associateddevice")
+                    || lower.contains("stats.") || lower.contains("blocked");
+            String v = data.value(p);
+            if (!noise && v != null && !v.isBlank()) {
+                v = v.trim();
+                out.add(p + " = " + (v.length() > 40 ? v.substring(0, 40) + "…" : v));
+                if (out.size() >= limit) {
+                    return out;
+                }
+            } else if (!noise) {
+                raw.add(p + " = (无值)");
+            }
+        }
+        if (out.isEmpty()) {
+            return raw.subList(0, Math.min(raw.size(), limit));
+        }
+        return out;
+    }
+
+    /** 树里是否有 WiFi 相关节点（叶子，无论有没有值）——存量树 WiFi 值缺失时判断要不要在线补采 */
+    public boolean hasWifiNodes(DeviceData data) {
+        for (String p : data.allPaths("")) {
+            if (!p.endsWith(".") && BusinessPaths.wifiHintPath(p)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** "2.4G" / "2.4G+5G" / "双频" → 频段集合；「无」返回空集表示要求实测也没有 */

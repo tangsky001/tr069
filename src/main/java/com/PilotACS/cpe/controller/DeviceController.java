@@ -21,6 +21,7 @@ import com.PilotACS.cpe.server.CwmpService;
 import com.PilotACS.cpe.session.CwmpSession;
 import com.PilotACS.cpe.store.CpeStore;
 import com.PilotACS.common.exception.BusinessException;
+import com.PilotACS.common.log.Logs;
 import com.PilotACS.common.result.Result;
 import com.PilotACS.common.security.UserContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -529,12 +530,23 @@ public class DeviceController {
             String root = rootObj == null || String.valueOf(rootObj).isBlank()
                     ? "InternetGatewayDevice." : String.valueOf(rootObj);
             Map<String, Object> detected = capabilityDetector.detect(data, root);
-            Map<String, Object> out = new LinkedHashMap<>(
-                    capabilityDetector.check(declared, detected, data, root));
-            out.put("collectStatus", "success");
-            out.put("collectInterrupted", false);
-            out.put("rootNode", root);
-            return Result.ok(out);
+            // 申报了 WiFi 频段但树里 WiFi 叶子全无值：存量树多半是半截采集攒出来的
+            //（WiFi 批次排在最后没采到），落回在线探测把 WiFi 叶子补采一遍再判
+            String wifiSpec = str(declared.get("wifiSpec"));
+            boolean wifiWanted = wifiSpec != null && !wifiSpec.isBlank()
+                    && !wifiSpec.toLowerCase().contains("无") && !wifiSpec.toLowerCase().contains("none");
+            List<String> dBands = detected.get("wifiBands") instanceof List<?> l
+                    ? (List<String>) l : List.of();
+            if (wifiWanted && dBands.isEmpty() && capabilityDetector.hasWifiNodes(data)) {
+                Logs.info(Logs.Module.CPE_PUSH, "存量树 WiFi 参数无值，转在线探测补采", "sn", sn);
+            } else {
+                Map<String, Object> out = new LinkedHashMap<>(
+                        capabilityDetector.check(declared, detected, data, root));
+                out.put("collectStatus", "success");
+                out.put("collectInterrupted", false);
+                out.put("rootNode", root);
+                return Result.ok(out);
+            }
         }
         // 树没采全才走设备探测：复用排队任务防重复建单，等待窗口放宽到 280s（前端超时 300s）
         long taskId = store.findActiveTaskId(sn, "AdaptProbe");

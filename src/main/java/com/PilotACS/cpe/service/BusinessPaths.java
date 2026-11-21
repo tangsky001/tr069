@@ -9,7 +9,9 @@ package com.PilotACS.cpe.service;
 import com.PilotACS.cpe.model.DeviceData;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -65,6 +67,53 @@ public final class BusinessPaths {
         }
         out.add(root + "Services.VoiceService.");
         return out;
+    }
+
+    /** 路径是否带 WiFi/射频词汇（厂商私有子树识别用，不区分大小写；邻居 AP 扫描子树除外） */
+    public static boolean wifiHintPath(String path) {
+        if (path == null) {
+            return false;
+        }
+        String lower = path.toLowerCase();
+        return (lower.contains("wlan") || lower.contains("wifi") || lower.contains("radio"))
+                && !lower.contains("neighborap");
+    }
+
+    /**
+     * 厂商私有 WiFi 子树的叶子兜底：标准业务域（LANDevice./WiFi.）之外还有自己的 WiFi 树
+     *（如 X_RAISECOM_WiFi.）的机型，GPN 扫得到路径但固定业务域补采不会取值，
+     * 机型适配的 WIFI 频段实测就会一直是"无"。适配探测/业务采集要把这些叶子一并补 GPV。
+     */
+    public static List<String> vendorWifiLeaves(DeviceData data) {
+        List<String> out = new ArrayList<>();
+        for (String p : data.allPaths("")) {
+            if (!p.endsWith(".") && wifiHintPath(p) && data.value(p) == null) {
+                out.add(p);
+            }
+        }
+        return out;
+    }
+
+    /** 标准 WLAN 判据叶：GPN 没吐这些叶子（WiFi 关闭/精简实现）时按实例盲探 GPV */
+    private static final String[] WIFI_BLIND_LEAVES = {"SSID", "Channel", "Standard", "WirelessMode"};
+
+    /**
+     * 按树里已发现的 WLANConfiguration 实例，盲探标准判据叶（SSID/Channel/Standard/WirelessMode）。
+     * 有的机型 GPN 精简实现不吐这些叶子，但 GPV 能取到值；设备不认的名字由 9005 拆分机制自然丢弃。
+     */
+    public static List<String> blindWifiLeaves(DeviceData data) {
+        Set<String> out = new LinkedHashSet<>();
+        Pattern obj = Pattern.compile("\\.WLANConfiguration\\.\\d+\\.");
+        for (String p : data.allPaths("")) {
+            Matcher m = obj.matcher(p);
+            if (m.find()) {
+                String base = p.substring(0, m.end());
+                for (String leaf : WIFI_BLIND_LEAVES) {
+                    out.add(base + leaf);
+                }
+            }
+        }
+        return new ArrayList<>(out);
     }
 
     public static String infoRoot(String root) {

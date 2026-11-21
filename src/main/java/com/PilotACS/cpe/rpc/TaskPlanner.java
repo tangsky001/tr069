@@ -168,6 +168,10 @@ public class TaskPlanner {
         for (String br : BusinessPaths.businessRoots(root)) {
             leaves.addAll(data.leaves(br));
         }
+        // 厂商私有 WiFi 子树兜底（如 X_RAISECOM_WiFi.），机型适配频段判定要用
+        leaves.addAll(BusinessPaths.vendorWifiLeaves(data));
+        // 标准 WLAN 判据叶盲探（GPN 精简实现不吐 SSID/Channel/Standard 时按实例取值）
+        leaves.addAll(BusinessPaths.blindWifiLeaves(data));
         appendGpv(run, leaves, "collect");
     }
 
@@ -219,6 +223,13 @@ public class TaskPlanner {
                 if (data.value(p) == null) {
                     out.add(p);
                 }
+            }
+        }
+        // 厂商私有 WiFi 子树兜底同口径：没值的也要补采；标准判据叶盲探（只补没值的）
+        out.addAll(BusinessPaths.vendorWifiLeaves(data));
+        for (String p : BusinessPaths.blindWifiLeaves(data)) {
+            if (data.value(p) == null) {
+                out.add(p);
             }
         }
         return out;
