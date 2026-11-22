@@ -69,7 +69,6 @@ public class SnRateLimiter {
                     String.valueOf(ttlSec));
             return allow != null && allow == 1L;
         } catch (Exception e) {
-            // 限流组件故障不能阻断正常设备：放行并告警
             Logs.warn(Logs.Module.CPE, "限流检查异常，放行", "主体", id, "原因", e.getMessage());
             return true;
         }

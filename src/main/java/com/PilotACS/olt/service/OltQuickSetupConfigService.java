@@ -26,7 +26,7 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class OltQuickSetupConfigService {
 
-    // 现场默认值：网段、VLAN、上联口都是这套部署下的实测值，改现场就改这里
+    /** 现场默认值 */
     private static final int DEFAULT_MANAGE_VLAN = 46;
 
     private static final String DEFAULT_MANAGE_VLAN_IP = "10.172.10.254/255.255.255.0";
@@ -73,13 +73,12 @@ public class OltQuickSetupConfigService {
                     objectMapper.readValue(row.getConfigJson(), HuaweiQuickSetupRequest.class);
             return request == null ? defaults() : request;
         } catch (Exception e) {
-            // 存过的东西读不出来（字段改过名之类）就退回默认值，别让页面打不开
             Logs.warn(Logs.Module.OLT, "开局参数解析失败，退回默认值 id={}: {}", oltId, e.getMessage());
             return defaults();
         }
     }
 
-    /** 存一份开局参数，一台 OLT 一条（事务保证 upsert 原子性） */
+    /** 存一份开局参数，一台 OLT 一条 */
     @Transactional(rollbackFor = Exception.class)
     public HuaweiQuickSetupRequest save(Long oltId, HuaweiQuickSetupRequest form) {
         if (form == null) {
@@ -120,7 +119,6 @@ public class OltQuickSetupConfigService {
         request.setAcsUsername(defaultAcsUsername);
         request.setAcsPassword(defaultAcsPassword);
         request.setDbaBandwidthMbps(DEFAULT_DBA_BANDWIDTH_MBPS);
-        // 模板 ID 默认统一用一个号：现场对着设备看配置时一眼能认出是同一套。
         request.setDbaProfileId(HuaweiQuickSetupPlanner.DEFAULT_PROFILE_ID);
         request.setLineProfileId(HuaweiQuickSetupPlanner.DEFAULT_PROFILE_ID);
         request.setSrvProfileId(HuaweiQuickSetupPlanner.DEFAULT_PROFILE_ID);

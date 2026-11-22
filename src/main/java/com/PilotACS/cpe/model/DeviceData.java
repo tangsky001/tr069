@@ -22,9 +22,9 @@ public class DeviceData {
     private final Map<String, CpeParam> params = new ConcurrentHashMap<>();
     /** 本次会话有变更的路径 */
     private final Set<String> dirty = new CopyOnWriteArraySet<>();
-    /** 墓碑：本会话被删除的路径（DeleteObject），落库 diff 时同步清行，防幽灵实例残留 */
+    /** 本会话被删除的路径 */
     private final Set<String> tombstones = new CopyOnWriteArraySet<>();
-    /** 是否做过全树刷新（GPN 全量）→ 落库时整树重写，删掉库里多余的行 */
+    /** 是否做过全树刷新 */
     private volatile boolean fullSync = false;
 
     public void put(CpeParam p) {
@@ -33,22 +33,17 @@ public class DeviceData {
         }
         params.put(p.path(), p);
         dirty.add(p.path());
-        // 路径重新出现（DeleteObject 后同会话 AddObject 重建）：撤掉墓碑，否则落库时先插后删会把新行抹掉
         tombstones.remove(p.path());
     }
 
-    /** 会话开始时从库里灌入存量参数树：不算脏，不参与落库 diff */
+    /** 会话开始时灌入存量参数树 */
     public void loadAll(Map<String, CpeParam> loaded) {
         if (loaded != null) {
             params.putAll(loaded);
         }
     }
 
-    /**
-     * Inform 自带参数合并：只更新值/类型，不覆盖 GPN 采集的 object/writable
-     * （Inform 的 ParameterValueStruct 不携带结构信息，全量 put 会把 writable 打成 false，
-     * 破坏"只读拦截"的依据）。树里没有的路径按可写叶子登记，等 GPN 修正。
-     */
+    /** Inform 参数合并（不覆盖结构信息） */
     public void putInform(CpeParam p) {
         if (p == null || p.path() == null || p.path().isEmpty()) {
             return;
@@ -60,7 +55,7 @@ public class DeviceData {
         }
     }
 
-    /** 更新值与时间戳；路径未登记过（直接 GPV 未先 GPN）时按叶子补录。有差异才算脏，没差异跳过落库 */
+    /** 更新值与时间戳 */
     public void putValue(String path, String value, String type, long ts) {
         CpeParam old = params.get(path);
         if (old != null) {
@@ -73,7 +68,6 @@ public class DeviceData {
             params.put(path, new CpeParam(path, value, type, false, true, ts));
             dirty.add(path);
         }
-        // 同 put()：重建路径撤墓碑，防落库先插后删
         tombstones.remove(path);
     }
 
@@ -81,7 +75,7 @@ public class DeviceData {
         return params.get(path);
     }
 
-    /** 删除某对象实例子树（DeleteObject 成功后调用）：返回被删路径列表并记录墓碑， */
+    /** 删除对象子树并记录墓碑 */
     public List<String> removeSubtree(String objectPath) {
         if (objectPath == null || objectPath.isBlank()) {
             return List.of();
@@ -132,7 +126,7 @@ public class DeviceData {
         this.fullSync = true;
     }
 
-    /** 某个对象前缀下的直接子对象实例数，pattern 如 InternetGatewayDevice.LANDevice.{i}.LANEthernetInterface. */
+    /** 对象前缀下的实例数 */
     public int countObjects(String objectPrefix) {
         Pattern pat = Pattern.compile(Pattern.quote(objectPrefix) + "\\d+\\.");
         return (int) params.keySet().stream().filter(p -> pat.matcher(p).lookingAt()).count();
@@ -151,14 +145,13 @@ public class DeviceData {
         return params.keySet().stream().filter(p -> p.startsWith(prefix)).sorted().collect(Collectors.toList());
     }
 
-    /** 找到 objectPrefix 下的实例号列表，如 ...LANWLANConfiguration. → [1, 5] */
+    /** 前缀下实例号列表 */
     public List<Integer> instances(String objectPrefix) {
         String pre = objectPrefix.endsWith(".") ? objectPrefix : objectPrefix + ".";
         return params.keySet().stream()
                 .filter(p -> p.startsWith(pre))
                 .map(p -> p.substring(pre.length()))
                 .map(rest -> {
-                    // 只取前导数字：畸形路径（无 '.'、"1a"）不能抛越界/NFE
                     int end = 0;
                     while (end < rest.length() && Character.isDigit(rest.charAt(end))) {
                         end++;

@@ -14,13 +14,13 @@ import java.util.Set;
 /** 页面上填的 VLAN ID 表达式：{@code 100}、{@code 100-200}、{@code 100,102,200-210} */
 public final class VlanIdExpression {
 
-    /** VLAN ID 上限（手册：取值 1-4094） */
+    /** VLAN ID 上限 */
     public static final int MAX_VLAN_ID = 4094;
 
     private VlanIdExpression() {
     }
 
-    /** 切成连续段，按填写顺序保留、自动去重排序：{@code 200-210,100} → [[100,100],[200,210]] */
+    /** 切成连续段并去重排序 */
     public static List<int[]> segments(String text) {
         List<Integer> ids = expand(text);
         List<int[]> segments = new ArrayList<>();

@@ -38,43 +38,40 @@ import java.util.regex.Pattern;
 /** 鸿升光 HSGQ-E04 等 EPON 一体化 OLT */
 public class HsgqOltProfile extends AbstractOltVendorProfile {
 
-    /** 没有采集到型号时的兜底（现场最常见的一台） */
     private static final String DEFAULT_MODEL = "HSGQ-E04";
 
-    /** 型号 → PON 口数。加新型号在这里加一行 */
+    /** 型号 → PON 口数 */
     private static final Map<String, Integer> PON_PORT_COUNT = Map.of(
             "HSGQ-E04", 4,
             "HSGQ-E04P", 4,
             "HSGQ-E08", 8,
             "HSGQ-E16", 16);
 
-    /** 从型号后半段抠口数：HSGQ-E08A → 8 */
+    /** 从型号抠口数 */
     private static final Pattern MODEL_PORT_COUNT = Pattern.compile("(?i)^HSGQ-[A-Z]*(\\d{1,2})");
 
-    /** HSGQ-E04（show version 的 Software Version 和 Product 行里都有） */
+    /** 型号 */
     private static final Pattern MODEL = Pattern.compile("(?i)\\b(HSGQ-[A-Za-z0-9]{2,10})\\b");
 
-    /** {@code show pon-info} 的端口行：{@code PON01   Up        5/5}（端口名 / 状态 / 在线数/总数） */
+    /** show pon-info 端口行 */
     private static final Pattern PON_PORT = Pattern.compile(
             "(?im)^\\s*PON(\\d{1,2})\\s+(Up|Down)\\s+(\\d{1,3})\\s*/\\s*(\\d{1,3})\\s*$");
 
-    /** {@code show onu-info all} 的数据行 */
+    /** show onu-info all 数据行 */
     private static final Pattern ONU_ROW = Pattern.compile(
             "(?im)^\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})\\s+"
                     + "([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\\s+"
                     + "(Online|Offline|Initial|Init)\\b(.*)$");
 
-    /** ONU 行剩下的列里，前两个 TRUE/FALSE 是 Auth 与 Cfg */
     private static final Pattern ONU_FLAG = Pattern.compile("(?i)\\b(TRUE|FALSE)\\b");
 
-    /** 注册时间列：{@code 2026/10/25 00:46:10} */
     private static final Pattern ONU_REG_TIME = Pattern.compile(
             "\\d{4}/\\d{1,2}/\\d{1,2}\\s+\\d{1,2}:\\d{2}:\\d{2}");
 
-    /** ONU 名称列：{@code ONU01/01}（各固件前缀不同，认「字母 + 数字 / 数字」这个形状） */
+    /** ONU 名称列 */
     private static final Pattern ONU_NAME = Pattern.compile("\\b[A-Za-z]{2,8}\\d{1,2}/\\d{1,3}\\b");
 
-    /** {@code show onu-version all} 的行（手册 6.4） */
+    /** show onu-version all 数据行 */
     private static final Pattern ONU_VERSION_ROW = Pattern.compile(
             "(?im)^\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})\\s+"
                     + "(\\S+)\\s+"
@@ -84,19 +81,17 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
                     + "(\\S+)\\s+"
                     + "(\\S+)\\s*(.*)$");
 
-    /** {@code show optical-info} 的行（手册 6.5） */
+    /** show optical-info 数据行 */
     private static final Pattern ONU_OPTICAL_ROW = Pattern.compile(
             "(?im)^\\s*(\\d{1,2})\\s*/\\s*(\\d{1,3})\\s+(\\S+)\\s+"
                     + "([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\\s+(.*)$");
 
-    /** 光功率数值：{@code -7.3119 dBm} */
     private static final Pattern OPTICAL_DBM = Pattern.compile("(-?\\d+(?:\\.\\d+)?)\\s*dBm");
 
-    /** {@code show port state all} 里的端口名：{@code epon1} / {@code ge1} / {@code xge1} */
+    /** show port state all 端口名 */
     private static final Pattern PORT_STATE_PORT = Pattern.compile(
             "(?i)(?<![a-z0-9])(epon|gpon|ge|xge)\\s?(\\d{1,3})(?![0-9])");
 
-    /** 页面传上来的端口写法：{@code epon1} / {@code ge3} */
     private static final Pattern MEMBER_PORT_REF = Pattern.compile(
             "(?i)^(epon|gpon|ge|xge)\\s*(\\d{1,3})$");
 
@@ -117,13 +112,11 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
 
     @Override
     public List<String> boardCommands() {
-        // 整机设备没有板卡命令：这条只是按 show 风格试一下，真正数据在配置视图的 pon-info / onu-info 里
         return List.of("show pon-info");
     }
 
     @Override
     public List<String> pagingCommands() {
-        // 这家设备的回显都很短，且这条命令在部分固件上不认，发了只是白等一个来回
         return List.of();
     }
 
@@ -137,7 +130,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return true;
     }
 
-    /** 这台机器有几个 PON 口：先查型号表，型号表里没有就从型号的字母数字里抠 */
+    /** 计算 PON 口数 */
     public int ponPortCount(String model) {
         if (model != null && !model.isBlank()) {
             Integer known = PON_PORT_COUNT.get(model.trim().toUpperCase(Locale.ROOT));
@@ -155,11 +148,10 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return 4;
     }
 
-    /** 整机卡片：按型号生成一张卡片，端口只给名字（PON01…） */
+    /** 按型号生成整机卡片 */
     @Override
     public OltBoard buildWholeDevice(String model) {
         String resolved = model == null || model.isBlank() ? DEFAULT_MODEL : model.trim();
-        // 型号决定整机前面板：几个 PON 口、几个上联 GE / XGE、有没有 NMS / CONSOLE
         HsgqModelCatalog.Spec spec = HsgqModelCatalog.match(resolved);
         if (spec == null) {
             spec = HsgqModelCatalog.fallback(ponTypeName(), ponPortCount(resolved));
@@ -172,7 +164,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         board.setPortCount(count);
         board.setPortMode(spec.ponType());
         board.setBoardKind("SERVICE");
-        // 整机不是「板卡」，描述就写整机规格
         board.setDescription(spec.label() + " 整机（" + spec.summary() + "）");
         board.setFrontPanel(new OltFrontPanel(resolved, spec.ponType(), count,
                 spec.geCount(), spec.xgeCount(), spec.hasNms(), spec.hasConsole(), spec.hasUsb(),
@@ -190,14 +181,13 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return board;
     }
 
-    /** 这条产品线的 PON 口类型，GPON 那台覆写成 GPON */
+    /** PON 口类型名 */
     protected String ponTypeName() {
         return "EPON";
     }
 
     @Override
     public Integer slotCount(String boardText, List<OltBoard> boards) {
-        // 整机设备没有槽位表，也没必要画成一圈空槽位围着一台机器
         return boards == null ? null : boards.size();
     }
 
@@ -215,7 +205,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return out != null && out.contains("(config)#");
     }
 
-    /** 配置视图下补采三样东西：每口 ONU 数（{@code show pon-info}）、每条 ONU 明细 */
+    /** 配置视图下补采 PON 口与 ONU 数据 */
     @Override
     public void collectDetails(OltCli cli, OltSnapshot snapshot, List<OltBoard> boards,
                                List<String> notes, int timeoutMs) {
@@ -230,12 +220,11 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
             fillPortOnts(cli, boards, notes, timeoutMs);
             collectVlans(cli, snapshot, notes, timeoutMs);
         } finally {
-            // 只退到特权视图：再 quit 一次就是 logout，设备会停下来问 y/n
             cli.run("quit", timeoutMs);
         }
     }
 
-    /** {@code show pon-info} 给每口 ONU 在线数，{@code show onu-info all} 给每条 ONU 的 MAC 与状态 */
+    /** 补采每口 ONU 数量与明细 */
     private void fillPortOnts(OltCli cli, List<OltBoard> boards, List<String> notes, int timeoutMs) {
         String ponText = cli.run("show pon-info", timeoutMs);
         String onuText = cli.run("show onu-info all", timeoutMs);
@@ -262,11 +251,9 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
                     port.setOnuOnline(stat[0]);
                     port.setOnuTotal(stat[1]);
                 }
-                // 明细优先用 onu-info 的列表；只有 pon-info 时留空，免得列表和计数对不上
                 List<OltOnt> list = onts.get(ponNo);
                 if (list != null) {
                     port.setOnts(list);
-                    // onu-info 只有名字/MAC/状态，设备类型、ONU 类型、光功率要进 PON 口视图另采
                     if (!list.isEmpty()) {
                         detailParsed += fillOnuDetail(cli, ponNo, list, timeoutMs);
                     }
@@ -279,7 +266,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         }
     }
 
-    /** 进 PON 口视图补两样东西（手册 6.4 / 6.5） */
+    /** 进 PON 口视图补采 ONU 版本与光功率 */
     private int fillOnuDetail(OltCli cli, int ponNo, List<OltOnt> onts, int timeoutMs) {
         cli.run("interface epon " + ponNo, timeoutMs);
         String versionText = cli.run("show onu-version all", timeoutMs);
@@ -290,7 +277,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return parsed;
     }
 
-    /** {@code show onu-version all}：{@code 1/1 ONU01/01  HSGQ 0000 HGU 1ge V1.9.0-xxxxxx DESC} */
+    /** 解析 ONU 版本 */
     private static int applyOnuVersion(int ponNo, List<OltOnt> onts, String text) {
         if (text == null || text.isBlank()) {
             return 0;
@@ -298,7 +285,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         int parsed = 0;
         Matcher matcher = ONU_VERSION_ROW.matcher(text);
         while (matcher.find()) {
-            // 回显里可能带着别的 PON 口（同一屏刷出来的），按 PON/ONU 两段一起认，别串口
             if (Integer.parseInt(matcher.group(1)) != ponNo) {
                 continue;
             }
@@ -313,7 +299,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return parsed;
     }
 
-    /** {@code show optical-info}：{@code 1/1 ONU01/01  47 C 3.30 V 14 mA 2.0194 dBm -7.3119 dBm} */
+    /** 解析 ONU 光功率 */
     private static int applyOpticalInfo(int ponNo, List<OltOnt> onts, String text) {
         if (text == null || text.isBlank()) {
             return 0;
@@ -328,7 +314,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
             if (ont == null) {
                 continue;
             }
-            // 一行里两个 dBm：先发光（Tx）后收光（Rx），页面要的是最后一个
             Matcher dbm = OPTICAL_DBM.matcher(matcher.group(5));
             String last = null;
             while (dbm.find()) {
@@ -367,7 +352,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         if (vlans.isEmpty()) {
             notes.add("VLAN 未采到：show running-config / show vlan 无有效回显");
         }
-        // 端口清单是「创建 VLAN」弹窗的勾选项：show port state all 只列上联电口，PON 口得按型号/板卡补上，否则弹窗里只有 GE 没有 PON
         String portStateText = cli.run("show port state all", timeoutMs);
         List<OltVlanPort> memberPorts = vlanMemberPorts(snapshot, portStateText);
         if (memberPorts.stream().noneMatch(HsgqOltProfile::isUplinkPort)) {
@@ -383,15 +367,13 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         snapshot.setVlanInfo(info);
     }
 
-    /** 能做 VLAN 成员的端口类型：EPON 的 PON 口是二层口，可以进 VLAN */
+    /** 可做 VLAN 成员的端口类型 */
     @Override
     public Set<String> vlanMemberPortTypes() {
         return Set.of("epon", "ge", "xge");
     }
 
-    // ------------------------------------------------------------ TR-069 模板
-
-    /** TR-069（ACS）模板：不落库，页面刷新时实时 {@code show onu-tr069-profile all} */
+    /** 是否支持 TR-069 模板 */
     @Override
     public boolean supportsTr069Profile() {
         return true;
@@ -402,7 +384,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return List.of("show onu-tr069-profile all");
     }
 
-    /** 拼 {@code onu-tr069-profile add}：参数按关键字走，所以空值直接不写 */
+    /** 拼接 TR-069 模板新增命令 */
     @Override
     public List<String> createTr069ProfileCommands(OltTr069ProfileRequest request) {
         if (request == null || request.getProfileId() == null) {
@@ -419,7 +401,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         }
         appendTr069Arg(command, "password", request.getPassword());
         appendTr069Arg(command, "username", request.getUsername());
-        // 去使能定期通知时不下发这条：设备没有单独的开关，带上间隔就等于使能了
         if (Boolean.TRUE.equals(request.getInformEnable()) && request.getInformInterval() != null) {
             command.append(" inform-interval ").append(request.getInformInterval());
         }
@@ -432,9 +413,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         }
     }
 
-    // ---------------------------------------------------------------- 一键开局
-
-    /** 一键开局：按「建 VLAN → 配端口 VLAN → 建 TR-069 模板 → 存盘」的顺序编命令 */
+    /** 是否支持一键开局 */
     @Override
     public boolean supportsQuickSetup() {
         return true;
@@ -451,14 +430,13 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         if (tr069 != null && tr069.getProfileId() != null) {
             commands.addAll(createTr069ProfileCommands(tr069));
         }
-        // 开局配完必须存盘：这台设备只写运行配置，不 save 重启/掉电全回到开局前
         if (!commands.isEmpty()) {
             commands.add(cmdSave());
         }
         return commands;
     }
 
-    /** 开局的业务 VLAN：只建 VLAN，不在这里绑端口 */
+    /** 开局业务 VLAN 命令 */
     private List<String> quickVlanCommands(OltQuickSetupRequest request) {
         String ids = request.getCreateVlanIds();
         if (ids == null || ids.isBlank()) {
@@ -471,7 +449,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return commands;
     }
 
-    /** 逐端口：进端口视图 → 改模式 → 按模式配 VLAN → 退出 */
+    /** 逐端口下发 VLAN 模式命令 */
     private List<String> quickPortModeCommands(OltQuickSetupRequest request) {
         List<OltQuickSetupRequest.PortRef> ports = request.getPorts();
         if (ports == null || ports.isEmpty()) {
@@ -488,7 +466,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
             commands.add("vlan mode " + mode);
             if (!vlanList.isEmpty()) {
                 if ("access".equals(mode)) {
-                    // access 端口只属于一个 VLAN，列表填多了取第一个
                     commands.add(cmdVlanAccess(accessVlan));
                 } else if ("hybrid".equals(mode)) {
                     commands.add(cmdVlanHybrid(vlanList, "tagged"));
@@ -501,7 +478,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return commands;
     }
 
-    /** {@code 41,45-46} → {@code 41}：access 端口只要一个 VLAN */
+    /** 取列表第一个 VLAN ID */
     private static String firstVlanId(String vlanList) {
         if (vlanList == null || vlanList.isBlank()) {
             return "";
@@ -511,7 +488,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return dash > 0 ? head.substring(0, dash) : head;
     }
 
-    /** 端口要放通的 VLAN：页面上填的放通清单 + 这次要在设备上新建的 */
+    /** 计算端口放通的 VLAN 列表 */
     private String quickTrunkVlanList(OltQuickSetupRequest request) {
         Set<Integer> vlanIds = new TreeSet<>();
         if (request.getVlanList() != null && !request.getVlanList().isBlank()) {
@@ -526,7 +503,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
 
 
 
-    /** {@code show onu-tr069-profile all} 的表格 */
+    /** TR-069 模板表格行 */
     private static final Pattern TR069_PROFILE_ROW = Pattern.compile(
             "(?im)^\\s*(\\d{1,3})\\s+(\\S+)(?:\\s+(\\d{1,6}))?\\s*$");
 
@@ -549,7 +526,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return profiles;
     }
 
-    /** 可加进 VLAN 的端口清单：PON 口 + 上联口 */
+    /** 汇总可加进 VLAN 的端口清单 */
     protected List<OltVlanPort> vlanMemberPorts(OltSnapshot snapshot, String portStateText) {
         Map<String, OltVlanPort> merged = new LinkedHashMap<>();
         int ponCount = ponPortCount(snapshot == null ? null : snapshot.getModel());
@@ -559,7 +536,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
                 boardPonCount += board.getPorts() == null ? 0 : board.getPorts().size();
             }
         }
-        // 板卡里真实采到的口数优先，型号解析不出来时也准
         ponCount = Math.max(ponCount, boardPonCount);
         for (int no = 1; no <= ponCount; no++) {
             OltVlanPort port = new OltVlanPort(ponType(), no);
@@ -574,12 +550,12 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return ports;
     }
 
-    /** PON 口在命令里的关键字：EPON 是 {@code epon}；GPON 返回 {@code gpon}，随后被类型白名单筛掉 */
+    /** PON 口端口类型关键字 */
     protected String ponType() {
         return "epon";
     }
 
-    /** 上联口一个都没采到时兜底给 4 个 GE，让弹窗至少有东西可勾 */
+    /** 兜底上联口清单 */
     protected List<OltVlanPort> fallbackUplinkPorts() {
         List<OltVlanPort> ports = new ArrayList<>();
         for (int no = 1; no <= 4; no++) {
@@ -588,7 +564,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return ports;
     }
 
-    /** 端口顺序：PON 在前、上联在后，同类型按编号——跟设备面板上看到的一致 */
+    /** 端口排序 */
     private static void sortMemberPorts(List<OltVlanPort> ports) {
         List<String> order = List.of("epon", "gpon", "ge", "xge");
         ports.sort(Comparator
@@ -600,7 +576,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return "ge".equals(port.getType()) || "xge".equals(port.getType());
     }
 
-    /** {@code show port state all} 里的端口名 → 端口清单 */
+    /** 解析端口清单 */
     public static List<OltVlanPort> parsePortStatePorts(String text) {
         List<OltVlanPort> ports = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -613,7 +589,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
             byType.computeIfAbsent(type, key -> new java.util.TreeSet<>())
                     .add(Integer.parseInt(matcher.group(2)));
         }
-        // 固定顺序输出：PON 在前、上联在后，跟面板上看到的顺序一致
         for (String type : List.of("epon", "gpon", "ge", "xge")) {
             Set<Integer> numbers = byType.get(type);
             if (numbers == null) {
@@ -624,7 +599,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return ports;
     }
 
-    /** 建 VLAN 并把勾选的端口加进去：每建一个 VLAN 进一次 vlan 视图下 {@code port ...}，再 exit */
+    /** 建 VLAN 并加入成员端口 */
     @Override
     public List<String> createVlanCommands(int startVlanId, int endVlanId,
                                            List<String> tagged, List<String> untagged) {
@@ -633,7 +608,6 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         if (taggedCommands.isEmpty() && untaggedCommands.isEmpty()) {
             return createVlanCommands(startVlanId, endVlanId);
         }
-        // 一段多个 VLAN 时先批量建一条省得逐个建；单个 VLAN 就别重复进视图了（页面预览按最小命令数画，这里要对得上）
         List<String> commands = new ArrayList<>();
         if (endVlanId > startVlanId) {
             commands.addAll(createVlanCommands(startVlanId, endVlanId));
@@ -647,7 +621,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return commands;
     }
 
-    /** {@code epon1, epon2, ge3} → {@code port epon 1-2 tagged} + {@code port ge 3 tagged} */
+    /** 生成成员端口命令 */
     private static List<String> memberPortCommands(List<String> ports, String mode) {
         Map<String, List<Integer>> byType = new LinkedHashMap<>();
         if (ports != null) {
@@ -666,7 +640,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return commands;
     }
 
-    /** 端口号列表 → 设备认的写法：连续 3 个以上合并成 {@code 1-4}，否则逗号隔开 */
+    /** 端口号列表格式化 */
     private static String formatPortNoList(List<Integer> numbers) {
         List<Integer> sorted = new ArrayList<>(new java.util.TreeSet<>(numbers));
         if (sorted.isEmpty()) {
@@ -693,7 +667,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return text.toString();
     }
 
-    /** {@code show pon-info}：PON 口号 → {在线数, 总数} */
+    /** 解析 show pon-info */
     public static Map<Integer, int[]> parsePonInfo(String text) {
         Map<Integer, int[]> result = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -709,7 +683,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return result;
     }
 
-    /** {@code show onu-info all}：PON 口号 → 这条 PON 口下的 ONU 列表 */
+    /** 解析 show onu-info all */
     public static Map<Integer, List<OltOnt>> parseOnuInfo(String text) {
         Map<Integer, List<OltOnt>> result = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -729,7 +703,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return result;
     }
 
-    /** 拆 ONU 行剩下的列：Auth、Cfg、Reg-time、ONU-Name、ONU-Desc */
+    /** 拆 ONU 行其余列 */
     private static void fillOnuRow(OltOnt ont, String rest) {
         if (rest == null || rest.isBlank()) {
             return;
@@ -756,27 +730,24 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         }
     }
 
-    // ------------------------------------------------------------ VLAN
-
-    /** VLAN ID 上限（文档：取值 1-4094） */
     public static final int MAX_VLAN_ID = 4094;
 
-    /** running-config 里的 VLAN 定义（文档 4.1） */
+    /** running-config 的 VLAN 定义行 */
     private static final Pattern CFG_VLAN = Pattern.compile(
             "(?im)^\\s*vlan\\s+standard\\s+(\\d{1,4})(?:\\s+(\\d{1,4}))?\\s*$");
 
-    /** vlan 视图里的成员端口：{@code port epon 2 untagged} / {@code port ge 1,3 tagged} */
+    /** vlan 视图成员端口行 */
     private static final Pattern CFG_VLAN_PORT = Pattern.compile(
             "(?im)^\\s*port\\s+(epon|ge|xge)\\s+([0-9][0-9,\\-]*)\\s*(tagged|untagged|default-vlan)?");
 
-    /** {@code show vlan} 的 VLAN ID 行：{@code VLAN ID         :100} */
+    /** show vlan 的 VLAN ID 行 */
     private static final Pattern SHOW_VLAN_ID = Pattern.compile("(?im)^\\s*VLAN\\s*ID\\s*[:：]\\s*(\\d{1,4})\\s*$");
 
-    /** {@code show vlan} 的成员端口行：Tagged Ports / Untagged Ports / Default Vlan Ports */
+    /** show vlan 成员端口行 */
     private static final Pattern SHOW_VLAN_FIELD = Pattern.compile(
             "(?im)^\\s*(tagged\\s*ports|untagged\\s*ports|default\\s*vlan\\s*ports)\\s*[:：]\\s*(.*?)\\s*$");
 
-    /** 从 {@code show running-config} 里取 VLAN 列表与成员端口 */
+    /** 从 running-config 解析 VLAN */
     public static List<OltVlan> parseRunningConfigVlans(String text) {
         Map<Integer, OltVlan> byId = new LinkedHashMap<>();
         if (text == null || text.isBlank()) {
@@ -820,7 +791,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return new ArrayList<>(byId.values());
     }
 
-    /** {@code show vlan} 的 Attribute/Value 表（文档 4.1 / 4.1 例1、例2） */
+    /** 从 show vlan 解析 VLAN */
     public static List<OltVlan> parseShowVlan(String text) {
         List<OltVlan> vlans = new ArrayList<>();
         if (text == null || text.isBlank()) {
@@ -852,7 +823,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return vlans;
     }
 
-    /** {@code epon 2} → {@code EPON02}；{@code ge 1,3-5} → {@code GE01,GE03,GE04,GE05} */
+    /** 成员端口格式化 */
     private static String formatMemberPorts(String type, String portSpec) {
         String prefix = type.toUpperCase(Locale.ROOT);
         StringBuilder text = new StringBuilder();
@@ -873,7 +844,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
                     to = from;
                 }
             } catch (NumberFormatException e) {
-                continue; // 端口写法不认识就跳过，不因为一行怪写法丢掉整份 VLAN
+                continue;
             }
             for (int no = from; no <= to; no++) {
                 if (text.length() > 0) {
@@ -895,77 +866,72 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return existing + "," + ports;
     }
 
-    // ------------------------------------------------ 配置命令（《EPON OLT 配置命令》V3）：文档里的写法，页面 VLAN / 端口下发直接用，别在别处拼字符串
-
-    /** 创建单个 VLAN：{@code vlan standard 100}（进入 vlan 视图，退出来用 exit） */
+    /** 创建单个 VLAN 命令 */
     public static String cmdCreateVlan(int vlanId) {
         return "vlan standard " + vlanId;
     }
 
-    /** 批量创建连续 VLAN：{@code vlan standard 101 110} */
+    /** 批量创建 VLAN 命令 */
     public static String cmdCreateVlanBatch(int startVlanId, int endVlanId) {
         return "vlan standard " + startVlanId + " " + endVlanId;
     }
 
-    /** 删除单个 VLAN：{@code no vlan 100} */
+    /** 删除单个 VLAN 命令 */
     public static String cmdDeleteVlan(int vlanId) {
         return "no vlan " + vlanId;
     }
 
-    /** 批量删除连续 VLAN：{@code no vlan 101 110} */
+    /** 批量删除 VLAN 命令 */
     public static String cmdDeleteVlanBatch(int startVlanId, int endVlanId) {
         return "no vlan " + startVlanId + " " + endVlanId;
     }
 
-    /** 删除所有 VLAN：{@code no vlan all} */
+    /** 删除所有 VLAN 命令 */
     public static String cmdDeleteAllVlan() {
         return "no vlan all";
     }
 
-    /** 端口放通 VLAN（trunk）：{@code vlan trunk 41,45-46} */
+    /** 端口放通 VLAN（trunk）命令 */
     public static String cmdVlanTrunk(String vlanList) {
         return "vlan trunk " + vlanList;
     }
 
-    /** 端口 VLAN（hybrid），带标签方式：{@code vlan hybrid 41,45-46 tagged} */
+    /** 端口 VLAN（hybrid）命令 */
     public static String cmdVlanHybrid(String vlanList, String tagMode) {
         return "vlan hybrid " + vlanList + " " + tagMode;
     }
 
-    /** 端口 VLAN（access），只允许一个 VLAN：{@code vlan access 41} */
+    /** 端口 VLAN（access）命令 */
     public static String cmdVlanAccess(String vlanId) {
         return "vlan access " + vlanId;
     }
 
-    /** 往 VLAN 里加成员端口：{@code port ge 3 untagged} */
+    /** VLAN 加成员端口命令 */
     public static String cmdAddVlanPort(String portType, String ports, String mode) {
         return "port " + portType + " " + ports + " " + mode;
     }
 
-    /** 从 VLAN 里删成员端口：{@code no port ge 3} */
+    /** VLAN 删成员端口命令 */
     public static String cmdRemoveVlanPort(String portType, String ports) {
         return "no port " + portType + " " + ports;
     }
 
-    /** 保存配置：{@code save} */
+    /** 保存配置命令 */
     public static String cmdSave() {
         return "save";
     }
-
-    // ------------------------------------------------ VLAN 下发（页面上的新增 / 删除）
 
     @Override
     public boolean supportsVlanConfig() {
         return true;
     }
 
-    /** 手册里的命令动作全集（页面「设备配置」页签按章节渲染） */
     @Override
     public List<OltAction> actions() {
         return HsgqActionCatalog.actions();
     }
 
-    /** 建 VLAN：{@code vlan standard 100}（单个）或 {@code vlan standard 101 110}（一段） */
+    /** 建 VLAN 命令 */
     @Override
     public List<String> createVlanCommands(int startVlanId, int endVlanId) {
         String create = endVlanId > startVlanId
@@ -974,7 +940,7 @@ public class HsgqOltProfile extends AbstractOltVendorProfile {
         return List.of(create, "exit");
     }
 
-    /** 删 VLAN：{@code no vlan 100}；勾选的 ID 连续时合成一条 {@code no vlan 101 110} */
+    /** 删 VLAN 命令 */
     @Override
     public List<String> deleteVlanCommands(List<Integer> vlanIds) {
         if (vlanIds == null || vlanIds.isEmpty()) {

@@ -25,7 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 登录认证接口
+/** 登录认证接口 */
 @Tag(name = "认证管理")
 @RestController
 @RequestMapping("/user")

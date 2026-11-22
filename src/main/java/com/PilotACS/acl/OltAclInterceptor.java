@@ -24,7 +24,7 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class OltAclInterceptor implements HandlerInterceptor {
 
-    /** 设备 id 在请求体/由 service 内部处理的端点前缀，拦截器直接放行 */
+    /** 拦截器直接放行的端点前缀 */
     private static final Set<String> OPEN_SEGMENTS = Set.of(
             "list", "save", "delete", "options", "test", "web-accounts");
 

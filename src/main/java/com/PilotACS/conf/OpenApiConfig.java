@@ -12,7 +12,7 @@ import io.swagger.v3.oas.models.info.Info;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-// 在线接口文档：不做分组（无切换器），全部接口按 Controller 的 @Tag 在侧边栏平铺展示
+/** 在线接口文档配置 */
 @Configuration
 public class OpenApiConfig {
 

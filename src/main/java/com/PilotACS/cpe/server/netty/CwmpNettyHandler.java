@@ -28,8 +28,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
-/** CWMP 报文处理器：Netty HTTP → {@link CwmpService#processRequest}。 */
-// 注册为 Bean（CwmpNettyServer 构造器注入）；本类无连接态、同一实例被加进每个连接的
+/** CWMP 报文处理器 */
 @Component
 @ChannelHandler.Sharable
 public class CwmpNettyHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
@@ -48,7 +47,6 @@ public class CwmpNettyHandler extends SimpleChannelInboundHandler<FullHttpReques
         String remoteAddr = remoteAddr(ctx);
         FullHttpResponse response;
         if (!"POST".equalsIgnoreCase(request.method().name())) {
-            // CWMP 只收 POST
             response = build(HttpResponseStatus.METHOD_NOT_ALLOWED, null, null);
         } else if (!basicAuthOk(request, remoteAddr)) {
             response = build(HttpResponseStatus.UNAUTHORIZED, null,
@@ -60,7 +58,6 @@ public class CwmpNettyHandler extends SimpleChannelInboundHandler<FullHttpReques
             try {
                 reply = cwmpService.processRequest(body, sessionId, remoteAddr);
             } catch (Exception e) {
-                // 业务层未捕获的异常必须回 HTTP 响应：静默断连（Netty exceptionCaught 关连接）
                 Logs.error(Logs.Module.CPE, "CWMP 报文处理异常", e,
                         "地址", remoteAddr, "报文", request.uri());
                 reply = CwmpService.Reply.empty(500);
@@ -73,8 +70,6 @@ public class CwmpNettyHandler extends SimpleChannelInboundHandler<FullHttpReques
                     r.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/xml; charset=\"utf-8\"");
                 }
                 if (settled.newSessionId() != null) {
-                    // TR-069 3.4.2：ACS SHOULD 只用标记 Discard 的会话 cookie（会话级，浏览器关闭即失效），
-                    // 且不应假设 CPE 会跨会话保留 cookie（服务端有按来源地址找回的兜底）
                     r.headers().set(HttpHeaderNames.SET_COOKIE, "session=" + settled.newSessionId()
                             + "; Path=/; HttpOnly; Max-Age=" + props.getSessionTimeoutSeconds() + "; Discard");
                 }
@@ -92,7 +87,6 @@ public class CwmpNettyHandler extends SimpleChannelInboundHandler<FullHttpReques
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        // 连接级异常（设备断开/协议错乱）只记 debug，不刷屏
         Logs.debug(Logs.Module.CPE, "CWMP 连接异常", "地址", remoteAddr(ctx), "原因", cause.toString());
         ctx.close();
     }

@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/** ONT 注册请求 */
 @Data
 public class OltOntRegisterRequest {
 
@@ -25,6 +26,7 @@ public class OltOntRegisterRequest {
     @Schema(description = "true 时只编命令不下发，给页面预览用")
     private boolean preview;
 
+    /** 待注册的 ONT 行 */
     @Data
     public static class Row {
 

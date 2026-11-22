@@ -33,7 +33,7 @@ public class RpcTaskController {
     private final CwmpService cwmpService;
     private final DeviceAclService aclService;
 
-    /** 任务归属校验：任务挂在设备名下，按设备的 view/operate 权限把关（与 DeviceController 同口径） */
+    /** 任务归属权限校验 */
     private void requireOnu(String sn, String action) {
         if (!aclService.allowedOnu(UserContext.get(), sn, action)) {
             throw new BusinessException(403, "无该光猫的操作权限");
@@ -72,7 +72,7 @@ public class RpcTaskController {
         return Result.ok(out);
     }
 
-    /** 人工取消任务：仅排队中（queued）可取消。per-SN 锁内取行+复查终态（防 queued→running 竞态覆盖）： */
+    /** 取消任务（仅排队中可取消） */
     @PostMapping("/{taskId}/cancel")
     public Result<Void> cancel(@PathVariable long taskId) {
         Map<String, Object> row = store.getTask(taskId);
@@ -84,7 +84,6 @@ public class RpcTaskController {
         var lock = cwmpService.lockFor(sn);
         lock.lock();
         try {
-            // 锁内复查：取行到加锁之间任务可能已被设备领取开跑或已终态
             row = store.getTask(taskId);
             if (row == null) {
                 throw new BusinessException(404, "任务不存在");
@@ -98,7 +97,6 @@ public class RpcTaskController {
                 if (s.getCurrent() != null && s.getCurrent().getTaskId() == taskId) {
                     throw new BusinessException("任务正在执行中，无法取消");
                 }
-                // 摘掉已装载进会话内存队列、还没执行的副本，否则库里取消了会话里还在跑
                 s.getQueue().removeIf(r -> r.getTaskId() == taskId);
             }
             store.updateTask(taskId, "fail", "cancel", "人工取消", null);

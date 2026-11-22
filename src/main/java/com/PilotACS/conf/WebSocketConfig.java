@@ -32,7 +32,6 @@ public class WebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(dashboardWsHandler, "/ws/dashboard")
                 .addInterceptors(authInterceptor)
                 .setAllowedOriginPatterns("*");
-        // 实时日志：独立 Handler + 独立握手鉴权，与概览不共用逻辑
         registry.addHandler(realtimeLogWsHandler, "/ws/realtime-log")
                 .addInterceptors(realtimeLogAuthInterceptor)
                 .setAllowedOriginPatterns("*");

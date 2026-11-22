@@ -8,7 +8,7 @@ package com.PilotACS.common.enums;
 
 import lombok.Getter;
 
-// 登录端标识
+/** 登录端标识 */
 @Getter
 public enum ClientType {
     WEB("网页端"),

@@ -24,7 +24,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 
-/** CPE 上报接入层（Netty）：在 acs.cpe.ports 配置的每个端口上起 Netty HTTP 服务， */
+/** CPE 上报接入层（Netty） */
 @Component
 public class CwmpNettyServer implements SmartLifecycle {
 
@@ -62,7 +62,6 @@ public class CwmpNettyServer implements SmartLifecycle {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline()
                                 .addLast("codec", new HttpServerCodec())
-                                // 报文体积硬上限：超出聚合器直接回 413，读不全的大报文不进业务层
                                 .addLast("aggregator", new HttpObjectAggregator(props.getMaxBodyBytes() + 8192))
                                 .addLast("cwmp", handler);
                     }

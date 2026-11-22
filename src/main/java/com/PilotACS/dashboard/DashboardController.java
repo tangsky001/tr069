@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 首页概览：左 OLT / 右光猫，配合 /ws/dashboard 实时推送 */
+/** 首页概览 */
 @RestController
 @RequestMapping("/dashboard")
 @Tag(name = "首页大屏", description = "概览数据：OLT 统计、设备列表、分组统计与设备分布")

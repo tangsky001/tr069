@@ -13,7 +13,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-// 登录日志
+/** 登录日志 */
 @Data
 @TableName("sys_login_log")
 public class SysLoginLog {
@@ -21,9 +21,8 @@ public class SysLoginLog {
     private Long id;
     private String username;
     private String ip;
-    // WEB/CLIENT/MOBILE
     private String source;
-    // 1成功 0失败
+    /** 1成功 0失败 */
     private Integer success;
     private String userAgent;
     private LocalDateTime createdAt;

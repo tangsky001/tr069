@@ -24,7 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 权限组 / 密码策略 / 登录日志
+/** 系统杂项接口 */
 @Tag(name = "系统杂项")
 @RestController
 @RequestMapping("/system")

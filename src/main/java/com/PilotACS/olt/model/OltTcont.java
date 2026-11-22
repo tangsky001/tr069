@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** T-CONT 信息 */
 @Data
 public class OltTcont {
 

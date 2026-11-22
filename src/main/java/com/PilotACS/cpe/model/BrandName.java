@@ -13,7 +13,7 @@ public final class BrandName {
     private BrandName() {
     }
 
-    /** 英文品牌名/缩写 → 中文名（如 SKYW→创维）；不认识原样返回 */
+    /** 英文品牌名/缩写 → 中文品牌名 */
     public static String text(String raw) {
         if (raw == null || raw.isBlank()) {
             return raw;
@@ -22,7 +22,7 @@ public final class BrandName {
         return NAMES.getOrDefault(key, raw.trim());
     }
 
-    /** 厂商全称 → 中文标签（台账/详情展示用）： */
+    /** 厂商全称 → 中文标签 */
     public static String label(String manufacturer) {
         if (manufacturer == null || manufacturer.isBlank()) {
             return null;
@@ -40,7 +40,7 @@ public final class BrandName {
         return null;
     }
 
-    /** 缩写（HW/ZX/FH/TW/RSC）按词边界匹配，避免 NETWORK 里撞出 TW 这类误配 */
+    /** 缩写按词边界匹配 */
     private static boolean wordContains(String text, String key) {
         if (key.length() <= 2) {
             return Pattern.compile("\\b" + Pattern.quote(key) + "\\b").matcher(text).find();

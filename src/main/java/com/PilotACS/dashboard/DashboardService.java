@@ -23,7 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 首页概览数据：左 OLT（设备台账 + 在线离线状态），右光猫（板卡端口快照聚合） */
+/** 首页概览数据（OLT 统计 + 光猫聚合） */
 @Service
 @RequiredArgsConstructor
 public class DashboardService {
@@ -46,7 +46,7 @@ public class DashboardService {
         return result;
     }
 
-    /** 左侧 OLT：状态统计 + 设备列表（含最近离线原因/时间） */
+    /** 左侧 OLT 统计与设备列表 */
     private Map<String, Object> oltSection(List<OltDevice> devices) {
         int online = 0;
         int offline = 0;
@@ -63,7 +63,6 @@ public class DashboardService {
             row.put("id", device.getId());
             row.put("name", device.getName());
             row.put("host", device.getHost());
-            // 登录方式与展示文案（TELNET→Telnet / SSH→SSH）
             row.put("protocol", device.getProtocol());
             row.put("protocolText", protocolText(device.getProtocol()));
             row.put("vendor", device.getVendor());
@@ -75,7 +74,6 @@ public class DashboardService {
             row.put("uptime", device.getUptime());
             row.put("lastConnectAt", device.getLastConnectAt());
             row.put("lastSyncAt", device.getLastSyncAt());
-            // 离线原因与离线时间：lastError + updatedAt
             row.put("lastError", device.getLastError());
             row.put("offlineAt", "OFFLINE".equals(status) ? device.getUpdatedAt() : null);
             rows.add(row);
@@ -90,7 +88,7 @@ public class DashboardService {
         return olt;
     }
 
-    /** 右侧光猫：从板卡端口快照聚合 ONT 总数/在线数，按 OLT 分组 */
+    /** 右侧光猫按 OLT 聚合 */
     private Map<String, Object> ontSection(List<OltDevice> devices) {
         Map<Long, int[]> byOlt = new LinkedHashMap<>();
         int total = 0;
@@ -142,7 +140,7 @@ public class DashboardService {
         return "SSH".equalsIgnoreCase(protocol) ? "SSH" : "Telnet";
     }
 
-    /** 厂商展示文案：前端不再维护映射表 */
+    /** 厂商展示文案 */
     private String vendorText(String vendor) {
         if (vendor == null || vendor.isBlank()) {
             return "—";
@@ -169,12 +167,11 @@ public class DashboardService {
         };
     }
 
-    /** 在线率：分母为 0 时返回 0 */
+    /** 在线率 */
     private int rate(int part, int total) {
         return total <= 0 ? 0 : Math.round(part * 100f / total);
     }
 
-    /** 分页兜底：设备很多时列表只取前 N 台，概览页面用小表 */
     @SuppressWarnings("unused")
     private void noop(Page<OltDevice> page) {
     }

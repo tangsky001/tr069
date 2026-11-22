@@ -15,13 +15,14 @@ import org.springframework.core.Ordered;
 
 import java.util.List;
 
-/** CPE 接入路由（Netty 时代）： */
+/** CPE 接入配置与主端口 CWMP 路径守卫 */
 @Configuration
 @RequiredArgsConstructor
 public class CpeServerConfig {
 
     private final CpeProperties props;
 
+    /** 注册 CPE 路径守卫过滤器 */
     @Bean
     public FilterRegistrationBean<CwmpPathGuard> cwmpPathGuard() {
         List<String> paths = props.getPaths().stream().map(CpeServerConfig::normalize).toList();
@@ -33,7 +34,7 @@ public class CpeServerConfig {
         return reg;
     }
 
-    /** 路径规范化：保证以 / 开头、不以 / 结尾，空值回落 /acs */
+    /** 路径规范化 */
     public static String normalize(String p) {
         String path = (p == null || p.isBlank()) ? "/acs" : p.trim();
         if (!path.startsWith("/")) {
@@ -45,7 +46,7 @@ public class CpeServerConfig {
         return path;
     }
 
-    /** 主端口 CWMP 路径守卫：命中 acs.cpe.paths 的请求一律 404 */
+    /** 主端口 CWMP 路径守卫 */
     @RequiredArgsConstructor
     public static class CwmpPathGuard implements jakarta.servlet.Filter {
 

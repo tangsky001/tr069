@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/** OLT 连接测试结果 */
 @Data
 public class OltTestResult {
 

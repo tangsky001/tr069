@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** 线路模板配置预览请求 */
 @Data
 public class OltLineProfilePreviewRequest {
 

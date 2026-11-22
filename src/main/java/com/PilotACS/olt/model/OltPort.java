@@ -12,6 +12,7 @@ import lombok.Data;
 
 import java.util.List;
 
+/** OLT 端口状态 */
 @Data
 public class OltPort {
 
@@ -71,9 +72,6 @@ public class OltPort {
 
     @Schema(description = "端口指示灯三态（alarm / online / offline），detail 组装时按采集值现算")
     private String lampState;
-
-    // ---------------- 以下字段 detail 组装时算好下发，页面只渲染 ----------------
-
     @Schema(description = "接口标识，命令行口径：框/槽/口，如 0/1/0")
     private String iface;
 

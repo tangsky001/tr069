@@ -20,14 +20,14 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
-/** 实时日志采集器：挂在 Logback 根 Logger 上，把控制台输出的每条日志格式化后 */
+/** 实时日志采集器 */
 @Component
 public class RealtimeLogAppender extends AppenderBase<ILoggingEvent> {
 
     private static final DateTimeFormatter TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(ZoneId.systemDefault());
 
-    /** 重入闸：本类自身触发的日志不再采集，避免 推送→日志→再推送 死循环 */
+    /** 防止自身日志死循环 */
     private static final ThreadLocal<Boolean> EMITTING = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     private final RealtimeLogWsHandler handler;
@@ -36,7 +36,7 @@ public class RealtimeLogAppender extends AppenderBase<ILoggingEvent> {
         this.handler = handler;
     }
 
-    /** Bean 装配完成后挂到根 Logger，与控制台输出并行生效 */
+    /** 挂到根 Logger */
     @PostConstruct
     public void attach() {
         Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
@@ -74,7 +74,7 @@ public class RealtimeLogAppender extends AppenderBase<ILoggingEvent> {
         return sb.toString();
     }
 
-    /** 级别定宽对齐，控制台观感 */
+    /** 级别定宽对齐 */
     private String pad(Level level) {
         String name = level.toString();
         return switch (name) {
@@ -84,7 +84,7 @@ public class RealtimeLogAppender extends AppenderBase<ILoggingEvent> {
         };
     }
 
-    /** logger 全限定名只留最后一段类名，避免前端一行太长 */
+    /** 只留最后一段类名 */
     private String shortName(String loggerName) {
         if (loggerName == null) {
             return "";

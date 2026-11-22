@@ -18,10 +18,8 @@ import static com.PilotACS.olt.model.OltAction.query;
 import static com.PilotACS.olt.model.OltAction.queryIn;
 import static com.PilotACS.olt.model.OltAction.queryWith;
 
-/** 鸿升光 GPON 一体化 OLT（4/8/16 口）的命令动作目录，对应《GPON 光纤接入局端设备 */
+/** 鸿升光 GPON 一体化 OLT 的命令动作目录 */
 public final class HsgqGponActionCatalog {
-
-    // 章节
 
     private static final String CH_MGMT_OUT = "2.2 带外管理接口（NMS）";
 
@@ -143,15 +141,13 @@ public final class HsgqGponActionCatalog {
 
     private static final String CH_LAG = "14 链路聚合";
 
-    // 参数
-
-    /** GPON 的端口类型：gpon / ge / xge */
+    /** GPON 的端口类型 */
     private static OltActionParam portType() {
         return OltActionParam.choice("portType", "端口类型", List.of("gpon", "ge", "xge"), "gpon",
                 "PON 口选 gpon，上联电口 ge，万兆口 xge");
     }
 
-    /** 只给上联口的参数（VLAN 成员、镜像目的口、MSTP 端口这些不认 gpon） */
+    /** 上联口的端口类型参数 */
     private static OltActionParam uplinkType() {
         return OltActionParam.choice("portType", "端口类型", List.of("ge", "xge"), "ge",
                 "上联电口 ge，万兆口 xge");
@@ -192,7 +188,7 @@ public final class HsgqGponActionCatalog {
         return actions;
     }
 
-    /** —— 第 2/3 章：管理与系统（手册 p3-33） —— */
+    /** 第 2/3 章 管理与系统 */
     private static List<OltAction> system() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam ip = OltActionParam.text("ip", "IP/掩码", "CIDR 写法，如 192.168.103.1/24");
@@ -440,7 +436,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 4 章 VLAN（手册 p34-37） —— */
+    /** 第 4 章 VLAN */
     private static List<OltAction> vlan() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam vlanId = OltActionParam.number("vlanId", "VLAN ID", 1, 4094, "取值 1-4094");
@@ -512,7 +508,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 5 章 模板管理（手册 p38-53）：DBA / 线路模板 / 业务模板 —— */
+    /** 第 5 章 模板管理 */
     private static List<OltAction> templates() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam profileId = OltActionParam.number("profileId", "DBA 模板 ID", 10, 255,
@@ -712,7 +708,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 6 章 虚端口（手册 p54-60） —— */
+    /** 第 6 章 虚端口 */
     private static List<OltAction> servicePort() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam index = OltActionParam.number("index", "虚端口索引", 0, 8190, "0-8190");
@@ -799,7 +795,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 7 章 端口管理（手册 p61-72） —— */
+    /** 第 7 章 端口管理 */
     private static List<OltAction> port() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam pType = portType();
@@ -913,7 +909,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 8 章 PON 管理（手册 p73-84）：发光 / 自动发现 / 注册 / 查询 / 光模块 / 黑名单 —— */
+    /** 第 8 章 PON 管理 */
     private static List<OltAction> pon() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam pon = ponId();
@@ -1001,7 +997,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 9 章 ONT 管理（手册 p85-94）：命令全在 GPON 口视图 OLT(config-gpon-1)# —— */
+    /** 第 9 章 ONT 管理 */
     private static List<OltAction> ont() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam pon = ponId();
@@ -1111,7 +1107,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 10 章 MAC 地址管理（手册 p95-100） —— */
+    /** 第 10 章 MAC 地址管理 */
     private static List<OltAction> mac() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam mac = OltActionParam.text("mac", "MAC 地址", "格式 AA:BB:CC:DD:EE:FF");
@@ -1177,7 +1173,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 11 章 协议管理（手册 p101-129） —— */
+    /** 第 11 章 协议管理 */
     private static List<OltAction> protocol() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam pType = portType();
@@ -1418,7 +1414,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 12 章 ACL/QOS（手册 p130-139） —— */
+    /** 第 12 章 ACL/QOS */
     private static List<OltAction> aclQos() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam aclId = OltActionParam.number("aclId", "ACL ID", 2000, 5999,
@@ -1556,7 +1552,7 @@ public final class HsgqGponActionCatalog {
         return list;
     }
 
-    /** —— 第 13/14 章 路由与链路聚合（手册 p140-144） —— */
+    /** 第 13/14 章 路由与链路聚合 */
     private static List<OltAction> routeAgg() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam upType = uplinkType();

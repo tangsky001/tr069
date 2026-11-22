@@ -22,7 +22,7 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 import java.net.URI;
 import java.util.Map;
 
-/** WebSocket 握手鉴权：token 走 X-Token 头或 ?token= 查询参数（与 AuthInterceptor 同一套口径）， */
+/** WebSocket 握手鉴权 */
 @Component
 @RequiredArgsConstructor
 public class DashboardWsAuthInterceptor implements HandshakeInterceptor {

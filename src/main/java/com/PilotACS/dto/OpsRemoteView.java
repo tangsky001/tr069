@@ -11,7 +11,7 @@ import lombok.Data;
 import java.util.List;
 import java.util.Map;
 
-// 远程运维配置视图：前端直接渲染
+/** 远程运维配置视图 */
 @Data
 public class OpsRemoteView {
     private String token;

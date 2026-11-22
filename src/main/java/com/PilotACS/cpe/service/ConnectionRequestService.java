@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** ACS → CPE 反向连接： */
+/** ACS → CPE 反向连接 */
 @Service
 @RequiredArgsConstructor
 public class ConnectionRequestService {
@@ -38,7 +38,7 @@ public class ConnectionRequestService {
     private final SessionRegistry registry;
 
     private static final int MAX_KICKS = 10;
-    /** 踢成功后等待设备 Inform 的归因窗口：窗口内 Inform 视为 CR 唤醒触发 */
+    /** 踢成功后等待设备 Inform 的归因窗口 */
     private static final long KICK_INFORM_WINDOW_MS = 60_000L;
 
     private final ScheduledExecutorService retryPool =
@@ -48,7 +48,7 @@ public class ConnectionRequestService {
                 return t;
             });
 
-    /** 一条重试链：chain 是代际令牌，wakeWithRetry 换链后旧链任务体自检退出 */
+    /** 一条重试链 */
     private record Kick(long chain, ScheduledFuture<?> head) {
     }
 
@@ -59,7 +59,7 @@ public class ConnectionRequestService {
         return wake(url, null, null);
     }
 
-    /** 唤醒设备。只允许两类凭据： */
+    /** 唤醒设备（支持指定凭据） */
     public boolean wake(String url, String username, String password) {
         if (url == null || url.isBlank()) {
             return false;
@@ -88,7 +88,6 @@ public class ConnectionRequestService {
                     Logs.warn(Logs.Module.CPE_PUSH, "反向连接被拒", "url", maskUrl(url), "状态码", code);
                     return false;
                 }
-                // 第二次带认证：Digest 用设备挑战头现场算，Basic 直接 base64
                 HttpURLConnection conn2 = open(url);
                 conn2.setRequestProperty("Authorization", authorization(auth, url, cred[0], cred[1]));
                 int code2 = conn2.getResponseCode();
@@ -101,7 +100,6 @@ public class ConnectionRequestService {
                 lastCode = code2;
                 lastAuth = auth;
             } catch (Exception e) {
-                // 网络级异常不终止多凭据尝试：继续试下一组凭据，全失败后才判负
                 lastCode = 0;
                 lastAuth = "error: " + e.getMessage();
             }
@@ -118,12 +116,11 @@ public class ConnectionRequestService {
         return false;
     }
 
-    /** 唤醒并带重试：立即一次，失败 5s 后再踢、之后每 30s，最多 10 次；出现活会话即停 */
+    /** 唤醒并带重试（出现活会话即停） */
     public void wakeWithRetry(String sn, String url, String username, String password) {
         if (sn == null || sn.isBlank() || url == null || url.isBlank()) {
             return;
         }
-        // compute 原子完成"取消旧重试链 + 换新链"：并发调用（sweep 回队反踢 + REST 建任务反踢）
         pendingKicks.compute(sn, (k, old) -> {
             if (old != null) {
                 old.head().cancel(false);
@@ -136,7 +133,6 @@ public class ConnectionRequestService {
     private ScheduledFuture<?> scheduleKick(String sn, String url, String username, String password,
                                             int round, long delayMs, long chain) {
         return retryPool.schedule(() -> {
-            // 代际自检：链已被新调用替换（cancel 只能取消队头，续跑轮次靠这里退出），直接放弃
             Kick cur = pendingKicks.get(sn);
             if (cur == null || cur.chain() != chain) {
                 return;
@@ -149,7 +145,6 @@ public class ConnectionRequestService {
                 }
                 if (wake(url, username, password)) {
                     Logs.info(Logs.Module.CPE_PUSH, "反向连接成功", "sn", sn, "第几次", round + 1);
-                    // 挂待 Inform 标记：窗口内设备 Inform 上来即可归因为本次唤醒触发
                     registry.markKickPending(sn, KICK_INFORM_WINDOW_MS);
                     pendingKicks.remove(sn, cur);
                     return;
@@ -162,7 +157,6 @@ public class ConnectionRequestService {
                 scheduleKick(sn, url, username, password, round + 1,
                         round == 0 ? 5_000L : 30_000L, chain);
             } catch (Exception e) {
-                // 异常只终止本链并摘除登记，不盲目重排（避免异常风暴）；下次唤醒会建新链
                 Logs.warn(Logs.Module.CPE_PUSH, "反向连接重试异常，本链终止", "sn", sn,
                         "轮次", round + 1, "原因", e.getMessage());
                 pendingKicks.remove(sn, cur);
@@ -182,7 +176,6 @@ public class ConnectionRequestService {
         if (challenge.startsWith("Digest")) {
             return digest(challenge, url, username, password);
         }
-        // Basic 回退
         String up = username + ":" + password;
         return "Basic " + Base64.getEncoder().encodeToString(up.getBytes(StandardCharsets.UTF_8));
     }
@@ -198,14 +191,12 @@ public class ConnectionRequestService {
         String qop = p.getOrDefault("qop", "");
         String cnonce = HexFormat.of().formatHex(randBytes());
         String nc = "00000001";
-        // Digest 的 uri 必须与请求行一致：带 query 的 CR URL 要连 ?sn=xxx 一起算，否则响应值对不上
         URI u = URI.create(url);
         String uri = u.getRawPath() == null || u.getRawPath().isEmpty() ? "/" : u.getRawPath();
         if (u.getRawQuery() != null && !u.getRawQuery().isEmpty()) {
             uri += "?" + u.getRawQuery();
         }
 
-        // 算法支持：MD5 / MD5-sess / SHA-256 / SHA-256-sess（RFC 7616）。
         String algo = p.getOrDefault("algorithm", "MD5").toUpperCase();
         boolean sha256 = algo.startsWith("SHA-256");
         boolean sess = algo.endsWith("-SESS");
@@ -228,7 +219,6 @@ public class ConnectionRequestService {
             response = hash(hashAlg, ha1 + ":" + nonce + ":" + ha2);
             sbAuth += response + "\"";
             if (sess) {
-                // -sess 派生即使无 qop 也依赖 cnonce，必须回传
                 sbAuth += ", cnonce=\"" + cnonce + "\", nc=" + nc;
             }
         }

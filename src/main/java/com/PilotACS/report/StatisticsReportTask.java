@@ -36,13 +36,13 @@ public class StatisticsReportTask {
     /** 统计上报接口 */
     private static final String REPORT_URL = "http://total.i-ddns.com:11236/api/statistics/ping";
 
-    /** 服务端依据这个字段把本实例归入 TR069 体系展示 */
+    /** 服务端归组标识 */
     private static final String SERVER_ID = "acs";
 
     private static final DateTimeFormatter TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    /** 连接与读取超时 */
+    /** 请求超时 */
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
     private final ObjectMapper objectMapper;
@@ -71,7 +71,6 @@ public class StatisticsReportTask {
         try {
             sendPost(collect());
         } catch (Exception e) {
-            // 上报失败降级 debug：不中断下个周期，但排障时可见（连长期连不上也无从知晓）
             Logs.debug(Logs.Module.SYSTEM, "统计上报失败（下个周期重试）", "原因", e.getMessage());
         }
     }
@@ -107,7 +106,6 @@ public class StatisticsReportTask {
         if (redis == null || redis.getConnectionFactory() == null) {
             return null;
         }
-        // 池化连接必须还回去，交给 try-with-resources
         try (RedisConnection connection = redis.getConnectionFactory().getConnection()) {
             Properties info = connection.info();
             return info == null ? null : info.getProperty("redis_version");
@@ -116,7 +114,7 @@ public class StatisticsReportTask {
         }
     }
 
-    /** 版本号优先用构建时写入的 pom 版本，其次 jar 清单，最后兜底 */
+    /** 解析版本号 */
     private String resolveVersion() {
         String buildVersion = gitInfo.getBuildVersion();
         if (buildVersion != null && !buildVersion.isBlank()) {

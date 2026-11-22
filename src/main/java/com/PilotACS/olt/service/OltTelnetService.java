@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Service
 public class OltTelnetService {
 
-    /** 分段采集并行线程池：有界，避免大量设备并发时线程爆炸 */
+    /** 分段采集并行线程数上限 */
     private static final int SECTION_POOL_MAX = 60;
 
     private static final ExecutorService SECTION_POOL = createSectionPool();
@@ -82,7 +82,6 @@ public class OltTelnetService {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltSnapshot snapshot = doCollect(device, charset, withBoards, withOptics);
 
-        // 「自动」编码：回显里出现替换符说明按 UTF-8 解错了，用 GBK 再连一次
         if (OltCharset.isAuto(device.getCharset()) && garbled(snapshot)) {
             Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
             try {
@@ -97,14 +96,14 @@ public class OltTelnetService {
         return snapshot;
     }
 
-    /** 全量采集拆成多段并行截取回显，慢段之间互不阻塞 */
+    /** 全量分段并行采集 */
     private OltSnapshot doCollect(OltDevice device, Charset charset, boolean withBoards,
                                   boolean withOptics) throws IOException {
         boolean strict = charsetStrict(device, charset);
         if (!withBoards) {
             return sessionPool.execute(device, charset, strict, session -> session.collect(false));
         }
-        // 第一段：版本 + 板卡，拿到槽位表才能拆后面的段
+        // 第一段：版本 + 板卡
         long totalStart = System.currentTimeMillis();
         long baseStart = System.currentTimeMillis();
         OltSnapshot base = sessionPool.execute(device, charset, strict,
@@ -115,19 +114,15 @@ public class OltTelnetService {
             return base;
         }
         if (base.getVendor() != OltVendor.HUAWEI) {
-            // 分段采集只编排了华为那套命令，其它厂商仍走单会话全量
             return sessionPool.execute(device, charset, strict, session -> session.collect(true));
         }
-        // 端口光模块数值（display port state，每口一条、单台设备 8~20 秒）只在手动同步时采；
         Set<OltCliSession.Section> portPart = withOptics
                 ? EnumSet.of(OltCliSession.Section.TEMPERATURES,
                         OltCliSession.Section.PORT_STATES, OltCliSession.Section.OPTICS)
                 : EnumSet.of(OltCliSession.Section.TEMPERATURES, OltCliSession.Section.PORT_STATES);
         List<Part> parts = List.of(
                 new Part(portPart, false),
-                // 全量采集不逐台补 ONT 详情（每台一两条命令、设备侧秒级）：库里已有的详情由
                 new Part(EnumSet.of(OltCliSession.Section.ONTS), false),
-                // 线路模板 / 业务模板的逐条详情不在全量里采：那是「点开才看」的数据，
                 new Part(EnumSet.of(OltCliSession.Section.VLANS), false));
         List<Future<OltSnapshot>> futures = new ArrayList<>(parts.size());
         List<Long> partStarts = new ArrayList<>(parts.size());
@@ -194,7 +189,7 @@ public class OltTelnetService {
     private record Part(Set<OltCliSession.Section> sections, boolean enrichOnt) {
     }
 
-    /** 板卡骨架拷贝：只带槽位/板型/端口数，各段任务在拷贝上各自建端口 */
+    /** 生成板卡骨架拷贝 */
     private static List<OltBoard> skeleton(List<OltBoard> boards) {
         List<OltBoard> copies = new ArrayList<>(boards.size());
         for (OltBoard board : boards) {
@@ -287,7 +282,7 @@ public class OltTelnetService {
         return null;
     }
 
-    /** 快速采集：只要板卡（型号 / 板卡类型 / 槽位 / 机框槽位数），秒级返回 */
+    /** 快速采集板卡信息 */
     public OltSnapshot collectBoards(OltDevice device) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltSnapshot snapshot = doCollectBoards(device, charset);
@@ -310,19 +305,17 @@ public class OltTelnetService {
                 session -> session.collectBoardsOnly());
     }
 
-    /** 按页签同步：只采指定段（温度 / 端口+ONT+光模块 / VLAN / 模板） */
+    /** 按页签同步指定段 */
     public OltSnapshot collectSections(OltDevice device, List<OltBoard> boards,
                                        Set<OltCliSession.Section> sections) throws IOException {
         return collectSections(device, boards, sections, true);
     }
 
-    /** （那部分一台一条命令，几十台要几分钟，页签同步等不起） */
     public OltSnapshot collectSections(OltDevice device, List<OltBoard> boards,
                                        Set<OltCliSession.Section> sections,
                                        boolean enrichOntDetails) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltSnapshot snapshot = doCollectSections(device, charset, boards, sections, enrichOntDetails);
-        // 「自动」编码：与全量采集同一套 GBK 重试逻辑
         if (OltCharset.isAuto(device.getCharset()) && garbled(snapshot)) {
             Logs.debug(Logs.Module.OLT_COLLECT, "OLT {} 按页签采集回显疑似非 UTF-8，改用 GBK 重试", device.getHost());
             try {
@@ -345,7 +338,7 @@ public class OltTelnetService {
                 session -> session.collectSections(boards, sections, enrichOntDetails));
     }
 
-    /** 只补 ONT 单台详情（管理 IP / MAC / 模板号）：后台补采任务用 */
+    /** 补采 ONT 单台详情 */
     public OltSnapshot collectOntDetails(OltDevice device, List<OltBoard> boards) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltSnapshot snapshot = doCollectOntDetails(device, charset, boards);
@@ -369,7 +362,7 @@ public class OltTelnetService {
                 session -> session.collectOntDetails(boards));
     }
 
-    /** 只重读一条线路模板（加完 T-CONT / GEM Port / 映射后刷新用）：一条 */
+    /** 重新读取一条线路模板 */
     public OltLineProfile collectLineProfile(OltDevice device, int profileId, String ponType)
             throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
@@ -377,7 +370,7 @@ public class OltTelnetService {
                 session -> session.collectLineProfile(profileId, ponType));
     }
 
-    /** 清空业务板上的全部 ONT：登录一次，只发那几条命令（板卡位置 → 进板视图 → 逐口删除） */
+    /** 清空业务板上的全部 ONT */
     public List<OltOntDeleteResult> deleteBoardOnts(OltDevice device, List<Integer> slots) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         List<OltOntDeleteResult> results = doDeleteBoardOnts(device, charset, slots);
@@ -392,7 +385,7 @@ public class OltTelnetService {
         return results;
     }
 
-    /** 删除单个 ONT：登录一次，先拆它的业务虚口再 ont delete；回显乱码时 GBK 重试 */
+    /** 删除单个 ONT */
     public OltOntDeleteResult deleteOnt(OltDevice device, int slot, int port, int ontId) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltOntDeleteResult result = doDeleteOnt(device, charset, slot, port, ontId);
@@ -408,28 +401,28 @@ public class OltTelnetService {
         return result;
     }
 
-    /** 整机重启：登录一次进 config 视图发 reboot（设备追问 y/n 由会话层应答） */
+    /** 整机重启 */
     public String reboot(OltDevice device) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         return sessionPool.execute(device, charset, charsetStrict(device, charset),
                 session -> session.reboot());
     }
 
-    /** 复位单个 ONU：登录一次进 PON 板视图发 ont reset（追问 y/n 由会话层答 y） */
+    /** 复位单个 ONU */
     public String resetOnt(OltDevice device, int slot, int port, int ontId) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         return sessionPool.execute(device, charset, charsetStrict(device, charset),
                 session -> session.resetOnt(slot, port, ontId));
     }
 
-    /** 复位整条 PON 口的全部 ONU：ont reset <port> all（追问 y/n 由会话层答 y） */
+    /** 复位整条 PON 口的全部 ONU */
     public String resetPortOnts(OltDevice device, int slot, int port) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         return sessionPool.execute(device, charset, charsetStrict(device, charset),
                 session -> session.resetPortOnts(slot, port));
     }
 
-    /** 复位整块板卡的全部 ONU：按快照端口逐口 ont reset <port> all，登录一次发完 */
+    /** 复位整块板卡的全部 ONU */
     public List<String> resetBoardOnts(OltDevice device, int slot, List<Integer> portNos)
             throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
@@ -461,7 +454,7 @@ public class OltTelnetService {
                 .anyMatch(out -> out != null && out.indexOf('\uFFFD') >= 0);
     }
 
-    /** 只重采 VLAN（上行口 VLAN 下发后立刻刷新用）：一条 {@code display vlan all} */
+    /** 重新采集 VLAN 信息 */
     public OltVlanInfo collectVlans(OltDevice device, List<OltBoard> boards) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         OltVlanInfo info = doCollectVlans(device, charset, boards);
@@ -482,7 +475,7 @@ public class OltTelnetService {
                 session -> session.collectVlansOnly(boards));
     }
 
-    /** VLAN 快照里有没有解错的替换符（端口清单这类文本最可能先暴露出来） */
+    /** 判断 VLAN 回显是否乱码 */
     private static boolean garbledVlans(OltVlanInfo info) {
         if (info == null || info.getVlans() == null) {
             return false;
@@ -493,7 +486,7 @@ public class OltTelnetService {
                         || (vlan.getUntaggedPorts() != null && vlan.getUntaggedPorts().indexOf('\uFFFD') >= 0));
     }
 
-    /** 批量补 ONT 模板号：一条配置命令解析全部 ont add 行，返回补上台数 */
+    /** 批量补采 ONT 模板号，返回补上台数 */
     public int fillOntProfiles(OltDevice device, List<OltBoard> boards) throws IOException {
         if (boards == null || boards.isEmpty()) {
             return 0;
@@ -508,18 +501,17 @@ public class OltTelnetService {
         return filled == null ? 0 : filled;
     }
 
-    /** 单端口光模块按需查询：点开某个 PON 口时才发这一条 {@code display port state} */
+    /** 查询单端口光模块信息 */
     public OltPort queryPortOptics(OltDevice device, int slot, int portNo) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         String out = doQueryPortState(device, charset, slot, portNo);
-        // 「自动」编码：回显里出现替换符说明按 UTF-8 解错了，用 GBK 再连一次
         if (OltCharset.isAuto(device.getCharset()) && out != null && out.indexOf('\uFFFD') >= 0) {
             out = doQueryPortState(device, OltCharset.fallback(), slot, portNo);
         }
         return OltInfoParser.parsePortStateOptics(out);
     }
 
-    /** 链路聚合组查询：{@code display link-aggregation all}；回显乱码时 GBK 重试 */
+    /** 查询链路聚合组 */
     public String queryLinkAggregations(OltDevice device) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         String table = doQueryLinkAggregations(device, charset);
@@ -536,10 +528,7 @@ public class OltTelnetService {
                 OltCliSession::queryLinkAggregations);
     }
 
-    /**
-     * 删除链路聚合组：undo link-aggregation 会追问 y/n（[n] 默认不删），会话层答 y；
-     * masterFs 为完整主端口（0/17/0，display 出来的口径）；回显乱码时 GBK 重试。
-     */
+    /** 删除链路聚合组 */
     public String deleteLinkAggregation(OltDevice device, String masterFs) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         String out = doDeleteLinkAggregation(device, charset, masterFs);
@@ -562,11 +551,10 @@ public class OltTelnetService {
                 session -> session.queryPortState(slot, portNo));
     }
 
-    /** 单条 ONT 详情查询（光信息 / 版本 / 注册历史）：登录一次、进 GPON 端口视图发命令 */
+    /** 查询单条 ONT 详情 */
     public String queryOnt(OltDevice device, int slot, int port, int ontId, String subcommand) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         String out = doQueryOnt(device, charset, slot, port, ontId, subcommand);
-        // 「自动」编码：回显里出现替换符说明按 UTF-8 解错了，用 GBK 再连一次
         if (OltCharset.isAuto(device.getCharset()) && out != null && out.indexOf('\uFFFD') >= 0) {
             return doQueryOnt(device, OltCharset.fallback(), slot, port, ontId, subcommand);
         }
@@ -579,7 +567,7 @@ public class OltTelnetService {
                 session -> session.queryOntDetail(slot, port, ontId, subcommand));
     }
 
-    /** 单条 ONT 的配置摘录 + 业务流表格 + 详情，返回 {配置摘录, 业务流回显, 详情回显}，点序列号时触发 */
+    /** 查询单条 ONT 的配置摘录、业务流表格与详情 */
     public String[] queryOntConfigAndServicePorts(OltDevice device, int slot, int port, int ontId) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         String[] outs = doQueryOntConfig(device, charset, slot, port, ontId);
@@ -597,7 +585,7 @@ public class OltTelnetService {
                 session -> session.queryOntConfigAndServicePorts(slot, port, ontId));
     }
 
-    /** 单条 ONT 的业务流表格（display service-port port 0/x/x ont n），点业务流列「查看」时触发 */
+    /** 查询单条 ONT 的业务流表格 */
     public String queryOntServicePorts(OltDevice device, int slot, int port, int ontId) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         String out = doQueryOntServicePorts(device, charset, slot, port, ontId);
@@ -613,7 +601,7 @@ public class OltTelnetService {
                 session -> session.queryServicePorts(slot, port, ontId));
     }
 
-    /** 只读查询（TR-069 模板列表这类不进库的实时数据）：登录 → config 视图逐条 show */
+    /** 只读执行查询命令并返回回显 */
     public List<String> queryCommands(OltDevice device, List<String> commands) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
         List<String> outputs = doQueryCommands(device, charset, commands);
@@ -630,12 +618,12 @@ public class OltTelnetService {
                 session -> session.queryCommands(commands));
     }
 
-    /** 下发配置命令（DBA 模板增删这类写操作）：登录 → config 视图逐条执行 */
+    /** 下发配置命令 */
     public List<String> sendConfig(OltDevice device, List<String> commands) throws IOException {
         return sendConfig(device, commands, false);
     }
 
-    /** 一键开局要打开：整套配置声明一遍时，已存在的 VLAN / 模板 */
+    /** 下发配置命令（容忍已存在的配置项） */
     public List<String> sendConfig(OltDevice device, List<String> commands, boolean tolerateExisting)
             throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
@@ -653,7 +641,7 @@ public class OltTelnetService {
                 session -> session.sendConfigCommands(commands, tolerateExisting));
     }
 
-    /** 池中会话的字符集要不要严格匹配：台账指定了编码、或者这次是 GBK 重试 */
+    /** 判断会话字符集是否需严格匹配 */
     private boolean charsetStrict(OltDevice device, Charset charset) {
         return !OltCharset.isAuto(device.getCharset())
                 || !charset.equals(OltCharset.resolve(device.getCharset()));
@@ -669,7 +657,7 @@ public class OltTelnetService {
         return text != null && text.indexOf('\uFFFD') >= 0;
     }
 
-    /** 回显落库前截断，避免一条异常输出撑爆记录表 */
+    /** 回显落库前截断 */
     public String truncateRaw(String raw) {
         if (raw == null) {
             return null;

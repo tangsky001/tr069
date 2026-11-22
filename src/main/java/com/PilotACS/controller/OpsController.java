@@ -27,7 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-// 运维管理接口
+/** 运维管理接口 */
 @Tag(name = "运维管理")
 @RestController
 @RequestMapping("/ops")
@@ -76,7 +76,6 @@ public class OpsController {
         return Result.ok(remoteService.regenerateToken());
     }
 
-    // 二维码图片：img 标签带不了 X-Token 头，token 走查询参数
     @Operation(summary = "二维码图片 PNG")
     @GetMapping(value = "/remote/qrcode", produces = MediaType.IMAGE_PNG_VALUE)
     public byte[] qrcode(@Parameter(description = "二维码编码内容，通常是视图里的 *QrContent 字段") @RequestParam String content,

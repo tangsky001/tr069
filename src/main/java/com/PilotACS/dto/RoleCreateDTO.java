@@ -10,7 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
-// 角色新增请求
+/** 角色新增请求 */
 @Data
 @Schema(description = "角色新增请求")
 public class RoleCreateDTO {

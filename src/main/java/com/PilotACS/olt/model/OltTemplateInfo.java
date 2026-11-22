@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
+/** OLT 模板快照 */
 @Data
 public class OltTemplateInfo {
 

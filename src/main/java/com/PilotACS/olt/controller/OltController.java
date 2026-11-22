@@ -79,6 +79,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
+/** OLT 管理接口。 */
 @Tag(name = "OLT 管理", description = "OLT 设备台账、Telnet 采集、板卡/ONT 查询、模板下发、快速开通、自动注册")
 @RestController
 @RequestMapping("/olt")

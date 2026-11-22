@@ -24,22 +24,22 @@ public class OltSyncRecord {
     /** 动作：同步 */
     public static final String ACTION_SYNC = "SYNC";
 
-    /** 配置下发（DBA 模板增删这类写操作，带回显留档） */
+    /** 动作：配置下发 */
     public static final String ACTION_CONFIG = "CONFIG";
 
-    /** 只读查询（display / show 类命令，不改设备） */
+    /** 动作：只读查询 */
     public static final String ACTION_QUERY = "QUERY";
 
-    /** 删除类操作（删 ONT、清业务虚口这类会把设备上的数据去掉的动作） */
+    /** 动作：删除 */
     public static final String ACTION_DELETE = "DELETE";
 
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    /** olt_device.id，未保存的设备为 null */
+    /** 设备 id */
     private Long oltId;
 
-    /** 动作类型：TEST 诊断 / SYNC 同步 / CONFIG 配置 / QUERY 查询 / DELETE 删除 */
+    /** 动作类型 */
     private String action;
 
     private Boolean success;

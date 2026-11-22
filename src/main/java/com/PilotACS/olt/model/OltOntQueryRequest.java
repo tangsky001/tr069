@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** ONT 查询请求 */
 @Data
 public class OltOntQueryRequest {
 

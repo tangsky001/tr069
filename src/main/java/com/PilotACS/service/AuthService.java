@@ -36,12 +36,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-// 登录认证服务
+/** 登录认证服务 */
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
-    /** 登录爆破防护参数：同一用户名窗口期内失败达上限后锁定 */
+    /** 同一用户名失败锁定阈值 */
     private static final int MAX_LOGIN_FAILS = 5;
     private static final Duration LOGIN_FAIL_WINDOW = Duration.ofMinutes(15);
     private static final String LOGIN_FAIL_KEY = "acs:auth:fail:";
@@ -57,7 +57,6 @@ public class AuthService {
         String ip = IpUtil.getClientIp(request);
         String userAgent = request.getHeader("User-Agent");
         ClientType source = ClientType.of(request.getHeader(AuthConstant.CLIENT_HEADER));
-        // 爆破防护：锁定期内直接拒绝（放最前面，用户名枚举的爆破节奏也被拦住）
         String failKey = LOGIN_FAIL_KEY + dto.getUsername();
         String fails = null;
         try {
@@ -86,7 +85,6 @@ public class AuthService {
             throw new BusinessException("用户名或密码错误");
         }
         if (legacyHash) {
-            // 存量单轮 SHA-256 在登录成功时透明升级为 PBKDF2 慢哈希。
             try {
                 SysUser rehash = new SysUser();
                 rehash.setId(user.getId());
@@ -118,11 +116,9 @@ public class AuthService {
         upd.setLastLoginSource(source.name());
         userService.updateById(upd);
         log(user.getUsername(), ip, source, true, userAgent);
-        // 登录成功清空失败计数
         try {
             redisTemplate.delete(failKey);
         } catch (Exception ignore) {
-            // 计数清理失败不影响登录
         }
 
         Map<String, Object> result = new HashMap<>();
@@ -143,11 +139,10 @@ public class AuthService {
                     "IP", IpUtil.getClientIp(request),
                     "标识", ClientType.of(request.getHeader(AuthConstant.CLIENT_HEADER)).getLabel());
         } catch (Exception ignored) {
-            // token 已失效的退出不记日志
         }
     }
 
-    // 当前登录用户信息，供 /user/info
+    /** 获取当前登录用户 */
     public LoginUser currentUser(HttpServletRequest request) {
         String token = resolveToken(request);
         if (token == null || token.isBlank()) {
@@ -167,6 +162,7 @@ public class AuthService {
         }
     }
 
+    /** 记录失败次数 */
     private void countFail(String failKey) {
         try {
             redisTemplate.opsForValue().increment(failKey);
@@ -176,6 +172,7 @@ public class AuthService {
         }
     }
 
+    /** 解析失败次数 */
     private int parseFails(String s) {
         try {
             return Integer.parseInt(s);
@@ -184,8 +181,8 @@ public class AuthService {
         }
     }
 
+    /** 从请求中解析令牌 */
     private String resolveToken(HttpServletRequest request) {
-        // 优先 X-Token 头，兼容 query 参数 token
         String token = request.getHeader(AuthConstant.TOKEN_HEADER);
         if (token == null || token.isBlank()) {
             token = request.getParameter("token");
@@ -205,7 +202,6 @@ public class AuthService {
         lu.setSuperAdmin(AuthConstant.SUPER_ADMIN_CODE.equals(user.getRoleCode()) || user.getId() == AuthConstant.SUPER_ADMIN_ID);
         lu.setSource(source.name());
         if (lu.isSuperAdmin()) {
-            // 超级管理员拥有全部权限
             lu.setPermissions(com.PilotACS.common.constant.PermissionGroups.allCodes().stream().collect(Collectors.toSet()));
         } else {
             List<SysRolePermission> list = rolePermissionMapper.selectList(
@@ -224,7 +220,6 @@ public class AuthService {
         entry.setUserAgent(userAgent);
         entry.setCreatedAt(LocalDateTime.now());
         loginLogMapper.insert(entry);
-        // 控制台同步输出登录日志
         Logs.info(Logs.Module.AUTH, "登录" + (success ? "成功" : "失败"),
                 "用户", username, "IP", ip, "标识", source.getLabel());
     }

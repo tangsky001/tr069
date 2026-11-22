@@ -28,7 +28,6 @@ public final class MachineFingerprint {
     /** deviceId 前缀 */
     public static final String DEVICE_ID_PREFIX = "ACS-";
 
-    /** Linux 的机器号文件 */
     private static final List<String> LINUX_MACHINE_ID_FILES =
             List.of("/var/lib/dbus/machine-id", "/etc/machine-id");
 
@@ -49,7 +48,7 @@ public final class MachineFingerprint {
         return cached;
     }
 
-    /** 每项因子各自 MD5，拼接后再做一次 MD5 转大写 */
+    /** 生成指纹 */
     private static String fingerprint() {
         String combined = md5(systemId()) + md5(macAddress()) + md5(osFingerprint());
         String value = md5(combined).toUpperCase();
@@ -57,7 +56,7 @@ public final class MachineFingerprint {
         return value;
     }
 
-    /** 系统机器号：Linux 读 machine-id 文件，Windows 读注册表 MachineGuid */
+    /** 读取系统机器号 */
     private static String systemId() {
         for (String path : LINUX_MACHINE_ID_FILES) {
             File file = new File(path);
@@ -109,7 +108,7 @@ public final class MachineFingerprint {
         return null;
     }
 
-    /** 第一块 MAC 非全零的网卡地址 */
+    /** 取第一块有效网卡的 MAC */
     private static String macAddress() {
         try {
             Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();

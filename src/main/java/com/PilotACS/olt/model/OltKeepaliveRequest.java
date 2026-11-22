@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** OLT 保活配置请求 */
 @Data
 public class OltKeepaliveRequest {
 

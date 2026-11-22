@@ -24,7 +24,7 @@ public final class HuaweiQuickSetupPlanner {
     /** 带宽下限（Mbps） */
     public static final int MIN_BANDWIDTH_MBPS = 1;
 
-    /** 带宽上限（Mbps）：GPON 上行 1.25G，1024M 已经贴到边。页面上的输入框上限也取它，别再抄一份 */
+    /** 带宽上限（Mbps） */
     public static final int MAX_BANDWIDTH_MBPS = 1024;
 
     /** 三套模板（DBA / 线路 / 业务）的默认 ID */
@@ -33,11 +33,11 @@ public final class HuaweiQuickSetupPlanner {
     /** TR-069 模板固定叫这个名字，不跟带宽变 */
     private static final String TR069_PROFILE_NAME = "TR069_ACS";
 
-    /** TR-069 模板 ID 区间是 1~32（问 {@code ont tr069-server-profile add profile-id 512 ?} */
+    /** TR-069 模板 ID 区间 */
     public static final int MIN_TR069_PROFILE_ID = 1;
     public static final int MAX_TR069_PROFILE_ID = 32;
 
-    /** TR-069 模板的默认 ID：内容只有 ACS 地址一项，跟带宽没关系，默认就占 1 号 */
+    /** TR-069 模板默认 ID */
     public static final int DEFAULT_TR069_PROFILE_ID = 1;
 
     /** DBA 带宽单位是 kbit/s，1 Mbps 按 1024 kbit/s 折算 */
@@ -53,7 +53,6 @@ public final class HuaweiQuickSetupPlanner {
         }
 
         int bandwidth = requireBandwidth(request);
-        // ID 就是 ID，不再从带宽推：带宽只决定名字和 DBA 的限速值
         int dbaId = profileIdOf(request.getDbaProfileId(), "DBA 模板 ID");
         int lineId = profileIdOf(request.getLineProfileId(), "ONT 线路模板 ID");
         int srvId = profileIdOf(request.getSrvProfileId(), "ONT 业务模板 ID");
@@ -63,29 +62,23 @@ public final class HuaweiQuickSetupPlanner {
         List<Integer> gemVlans = gemVlanOrder(request);
 
         List<String> commands = new ArrayList<>();
-        // 顺序就是依赖顺序：先有 VLAN 与 DBA，线路模板才引用得到
         addSwitchingCommands(commands, request, gemVlans);
         addDbaProfile(commands, dbaId, bandwidth);
-        // 线路模板里 tcont 引用的是 DBA 的 ID，不是自己的
         addLineProfile(commands, ponView, lineId, dbaId, lineName, gemVlans);
         addServiceProfile(commands, ponView, srvId, lineName);
         addTr069Profile(commands, request, tr069Id);
-        // 华为只写运行配置，不存盘掉电就回到开局前
         commands.add("save");
         return commands;
     }
 
-    // ------------------------------------------------------------------ 一、二层与三层
     /** VLAN、上联口放通、管理 VLAN 三层地址与缺省路由 */
     private static void addSwitchingCommands(List<String> commands, HuaweiQuickSetupRequest request,
                                              List<Integer> vlans) {
-        // 管理 VLAN 要有值才建得了三层接口
         requireInt(request.getManageVlan(), "管理 VLAN");
         for (Integer vlan : vlans) {
             commands.add("vlan " + vlan + " smart");
         }
 
-        // 上联口把这些 VLAN 放通：多个端口 × 多个 VLAN 逐条下发
         List<String[]> uplinks = parseUplinkPorts(request.getUplinkPorts());
         for (String[] uplink : uplinks) {
             for (Integer vlan : vlans) {
@@ -93,7 +86,6 @@ public final class HuaweiQuickSetupPlanner {
             }
         }
 
-        // 管理 VLAN 的三层接口：这条 ONT 管理通道和 ACS 互通都靠它
         String[] ipMask = parseManageIp(request.getManageVlanIp());
         commands.add("interface vlanif " + request.getManageVlan());
         commands.add("ip address " + ipMask[0] + " " + ipMask[1]);
@@ -105,21 +97,17 @@ public final class HuaweiQuickSetupPlanner {
         }
     }
 
-    // ------------------------------------------------------------------ 二、DBA 模板
-    /** DBA 模板：Type4（best-effort）只给 max，上行限速就是页面上那个带宽 */
+    /** DBA 模板命令 */
     private static void addDbaProfile(List<String> commands, int profileId, int bandwidth) {
-        // ID 走 profileId（10~512），名字和带宽值仍按实际 Mbps 写
         commands.add("dba-profile add profile-id " + profileId
                 + " profile-name \"" + bandwidth + "M\" type4 max " + bandwidth * KBPS_PER_MBPS);
     }
 
-    // ------------------------------------------------------------------ 三、线路模板
-    /** ONT 线路模板：T-CONT → DBA，GEM → T-CONT，GEM 映射 → VLAN，全部在这个视图里配完 */
+    /** ONT 线路模板命令 */
     private static void addLineProfile(List<String> commands, String ponView, int profileId,
                                        int dbaProfileId, String lineName, List<Integer> gemVlans) {
         commands.add("ont-lineprofile " + ponView + " profile-id " + profileId
                 + " profile-name \"" + lineName + "\"");
-        // T-CONT 挂到刚才那条 DBA 模板上（按 DBA 的 ID 引用，两个 ID 可以不同）
         commands.add("tcont 1 dba-profile-id " + dbaProfileId);
         int gem = 0;
         for (Integer vlan : gemVlans) {
@@ -127,15 +115,13 @@ public final class HuaweiQuickSetupPlanner {
             commands.add("gem mapping " + gem + " 0 vlan " + vlan);
             gem++;
         }
-        // OMCI 侧打开 TR-069 管理，ONT 才会按三层接口去连 ACS
         commands.add("tr069-management enable");
         commands.add("tr069-management ip-index 0");
         commands.add("commit");
         commands.add("quit");
     }
 
-    // ------------------------------------------------------------------ 四、业务模板
-    /** ONT 业务模板：端口数自适应，ETH1 透传，用户 VLAN 由上层 BRAS 认 */
+    /** ONT 业务模板命令 */
     private static void addServiceProfile(List<String> commands, String ponView, int profileId,
                                           String lineName) {
         commands.add("ont-srvprofile " + ponView + " profile-id " + profileId
@@ -146,25 +132,21 @@ public final class HuaweiQuickSetupPlanner {
         commands.add("quit");
     }
 
-    // ------------------------------------------------------------------ 五、TR-069 模板
-    /** TR-069 管理模板：只有 ACS 地址 */
+    /** TR-069 模板命令 */
     private static void addTr069Profile(List<String> commands, HuaweiQuickSetupRequest request, int profileId) {
         String url = trimToNull(request.getAcsUrl());
         if (url == null) {
             throw new IllegalArgumentException("请填写 TR069 ACS 地址");
         }
-        // 只有这三个参数。多给 username / password 会被回 % Too many parameters，
         commands.add("ont tr069-server-profile add profile-id " + profileId
                 + " profile-name \"" + TR069_PROFILE_NAME + "\""
                 + " url \"" + url + "\"");
     }
 
-    // ------------------------------------------------------------------ 取值辅助
-    /** GEM 映射要收哪些 VLAN：管理/TR-069 VLAN 排第一（这是 ONT 的管理通道） */
+    /** 计算 GEM 映射的 VLAN 列表 */
     private static List<Integer> gemVlanOrder(HuaweiQuickSetupRequest request) {
         LinkedHashSet<Integer> vlans = new LinkedHashSet<>();
         vlans.add(requireInt(request.getTr069Vlan(), "TR069 VLAN"));
-        // 业务 VLAN 是表达式写法，这里展开成一个个 ID
         vlans.addAll(VlanIdExpression.expand(trimToNull(request.getServiceVlan()) == null
                 ? "" : request.getServiceVlan()));
         if (request.getIptvMulticastVlan() != null) {
@@ -185,7 +167,7 @@ public final class HuaweiQuickSetupPlanner {
         return bandwidth;
     }
 
-    /** 三套模板的 ID：没填就用默认值，填了必须在设备认的区间里 */
+    /** 模板 ID 校验 */
     private static int profileIdOf(Integer value, String label) {
         if (value == null) {
             return DEFAULT_PROFILE_ID;
@@ -197,7 +179,7 @@ public final class HuaweiQuickSetupPlanner {
         return value;
     }
 
-    /** TR-069 模板的 ID：区间比三套模板窄（1~32），没填就用默认 */
+    /** TR-069 模板 ID 校验 */
     private static int tr069ProfileIdOf(Integer value) {
         if (value == null) {
             return DEFAULT_TR069_PROFILE_ID;
@@ -219,12 +201,12 @@ public final class HuaweiQuickSetupPlanner {
         return value;
     }
 
-    /** {@code GPON → gpon}、{@code EPON → epon}，命令里用的是小写，识别不了就按 GPON 走 */
+    /** PON 类型命令关键字 */
     private static String ponView(String ponType) {
         return ponType != null && ponType.trim().equalsIgnoreCase("EPON") ? "epon" : "gpon";
     }
 
-    /** 上联端口拆成「框/槽（+子槽）」和「端口号」：最后一段是端口，前面是槽位路径 */
+    /** 解析上联端口 */
     private static List<String[]> parseUplinkPorts(String text) {
         if (trimToNull(text) == null) {
             return List.of();
@@ -250,7 +232,7 @@ public final class HuaweiQuickSetupPlanner {
         return uplinkPorts;
     }
 
-    /** 管理 VLAN IP 支持 {@code 10.172.10.254/255.255.255.0} 和 {@code 10.172.10.254/24} 两种写法 */
+    /** 解析管理 VLAN IP */
     private static String[] parseManageIp(String text) {
         String value = trimToNull(text);
         if (value == null) {
@@ -268,7 +250,7 @@ public final class HuaweiQuickSetupPlanner {
         return new String[]{ip, toMask(mask)};
     }
 
-    /** 掩码位数转点分十进制；本来就是掩码的直接用 */
+    /** 掩码位数转点分十进制 */
     private static String toMask(String mask) {
         if (mask.indexOf('.') >= 0) {
             return mask;

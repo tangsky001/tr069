@@ -27,13 +27,13 @@ public class CivilCodeService {
 
     private static final String CSV_PATH = "civilCode.csv";
 
-    /** 编号 → 节点，全表索引 */
+    /** 编号 → 节点索引 */
     private volatile Map<String, CivilCodeNode> index = Collections.emptyMap();
 
-    /** 根节点（省级行政区）列表 */
+    /** 省级根节点列表 */
     private volatile List<CivilCodeNode> roots = Collections.emptyList();
 
-    /** 启动加载一次；文件缺失只告警不拦启动，分组页按「表未就绪」提示 */
+    /** 启动时加载区划表。 */
     @PostConstruct
     public void load() {
         Map<String, CivilCodeNode> newIndex = new LinkedHashMap<>();
@@ -48,7 +48,6 @@ public class CivilCodeService {
                 if (line.isEmpty()) {
                     continue;
                 }
-                // 跳过表头行：编号,名称,上级
                 if (first) {
                     first = false;
                     if (line.contains("编号")) {
@@ -76,7 +75,6 @@ public class CivilCodeService {
             Logs.warn(Logs.Module.SYSTEM, "行政区划代码表加载失败，分组树不可用", "原因", e.getMessage());
             return;
         }
-        // 第二遍把子节点挂到父节点，孤儿行（上级不存在）当根处理避免丢条目
         for (CivilCodeNode node : newIndex.values()) {
             CivilCodeNode parent = node.getParentCode() == null ? null : newIndex.get(node.getParentCode());
             if (parent == null) {

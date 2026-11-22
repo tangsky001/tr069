@@ -12,6 +12,7 @@ import lombok.Data;
 
 import java.util.List;
 
+/** 一键开局请求 */
 @Data
 public class OltQuickSetupRequest {
 
@@ -39,6 +40,7 @@ public class OltQuickSetupRequest {
     @Schema(description = "华为开局参数；不为 null 时整态都按华为那套模板流程走")
     private HuaweiQuickSetupRequest huawei;
 
+    /** 端口引用 */
     @Data
     public static class PortRef {
 

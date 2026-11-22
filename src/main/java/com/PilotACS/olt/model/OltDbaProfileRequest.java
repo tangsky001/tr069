@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** 新增 DBA 模板请求。 */
 @Data
 public class OltDbaProfileRequest {
 

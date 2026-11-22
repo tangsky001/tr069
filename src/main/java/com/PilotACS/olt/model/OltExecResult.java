@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/** 命令动作执行结果。 */
 @Data
 public class OltExecResult {
 

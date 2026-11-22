@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** 端口 VLAN 配置请求 */
 @Data
 public class OltPortVlanRequest {
 

@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** OLT 静态路由 */
 @Data
 public class OltStaticRoute {
 

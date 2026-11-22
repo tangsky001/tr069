@@ -12,6 +12,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+/** 一体化 OLT 前面板信息。 */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

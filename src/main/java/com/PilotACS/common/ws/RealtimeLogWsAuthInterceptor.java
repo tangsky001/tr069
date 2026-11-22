@@ -20,7 +20,7 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 import java.net.URI;
 import java.util.Map;
 
-/** 实时日志 WebSocket 握手鉴权（独立类，不复用概览 WebSocket 的拦截器）： */
+/** 实时日志 WebSocket 握手鉴权 */
 @Component
 public class RealtimeLogWsAuthInterceptor implements HandshakeInterceptor {
 

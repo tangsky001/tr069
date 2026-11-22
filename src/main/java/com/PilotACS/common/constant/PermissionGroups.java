@@ -10,7 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 权限码分组定义：模块:动作，供角色勾选与前端权限组展示
+/** 权限码分组定义 */
 public final class PermissionGroups {
 
     private PermissionGroups() {
@@ -47,7 +47,7 @@ public final class PermissionGroups {
         return codes;
     }
 
-    // 权限组：{name, view, update, delete}
+    /** 权限组：{name, view, update, delete} */
     public static List<Map<String, Object>> groups() {
         List<Map<String, Object>> groups = new java.util.ArrayList<>();
         MODULES.forEach((m, n) -> {

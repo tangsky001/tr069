@@ -18,7 +18,7 @@
       <span class="la-hint">成员口属性必须一致；加入聚合前先把口上的业务迁走，聚合按主控槽位（如 0/17）成组</span>
     </div>
 
-    <el-table :data="groups" v-loading="loading" size="small" border stripe>
+    <el-table v-loading="loading" :data="groups" size="small" border stripe>
       <el-table-column label="主端口" prop="masterPort" width="110" align="center" />
       <el-table-column label="方向" prop="mode" width="90" align="center">
         <template slot-scope="{ row }">

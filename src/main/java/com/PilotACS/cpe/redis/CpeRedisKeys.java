@@ -6,7 +6,7 @@
 
 package com.PilotACS.cpe.redis;
 
-/** CPE 模块 Redis key 规划（故障域隔离）： */
+/** CPE 模块 Redis key 定义 */
 public final class CpeRedisKeys {
 
     private CpeRedisKeys() {
@@ -34,12 +34,12 @@ public final class CpeRedisKeys {
         return INFO_PREFIX + sn;
     }
 
-    /** 设备存量参数树缓存 key（DB1），落库时主动失效 */
+    /** 参数树缓存 key */
     public static String paramTree(String sn) {
         return PARAM_TREE_PREFIX + sn;
     }
 
-    /** 令牌桶限流 key（DB1；限流在会话之前，不与会话争 OPS） */
+    /** 令牌桶限流 key */
     public static String token(String id) {
         return TOKEN_PREFIX + id;
     }

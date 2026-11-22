@@ -23,7 +23,7 @@ import javax.sql.DataSource;
 @Configuration
 public class DataSourceConfig {
 
-    /** MySQL 主库连接池（Hikari），标注 @Primary：MyBatis-Plus/JdbcTemplate/事务都用它。 */
+    /** MySQL 主库连接池 */
     @Bean
     @Primary
     @ConfigurationProperties("spring.datasource.hikari")
@@ -31,7 +31,7 @@ public class DataSourceConfig {
         return properties.initializeDataSourceBuilder().type(HikariDataSource.class).build();
     }
 
-    /** 主库 JdbcTemplate（bean 名 jdbcTemplate，与原 auto-config 一致） */
+    /** 主库 JdbcTemplate */
     @Bean
     @Primary
     public JdbcTemplate jdbcTemplate(DataSource dataSource) {

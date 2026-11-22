@@ -26,7 +26,6 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
 
     @Override
     public void dispatch(String sn, long taskId) {
-        // 任务可能已被删除/收口（队列里是旧消息）：不再是排队状态就直接丢弃
         Map<String, Object> task = store.getTask(taskId);
         if (task == null || !"queued".equals(String.valueOf(task.get("status")))) {
             Logs.debug(Logs.Module.CPE_PUSH, "派发消息对应任务已失效，跳过唤醒", "sn", sn, "任务", taskId);
@@ -35,9 +34,8 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
         wakeNow(sn, taskId);
     }
 
-    /** 查档案→反向唤醒（带重试退避，异步）；Redis 派发队列故障时 TaskService 也走这条降级路径 */
+    /** 查档案并反向唤醒 */
     public void wakeNow(String sn, long taskId) {
-        // 设备档案：优先 Redis 缓存（cpe:info:{sn}），未命中再查 MySQL 并回填
         Map<String, Object> device = null;
         try {
             device = infoCache.get(sn);
@@ -46,14 +44,12 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
                 infoCache.put(sn, device);
             }
         } catch (Exception ignore) {
-            // 设备还没上报过
         }
         String crUrl = device == null ? null : str(device.get("connection_request_url"));
         if (crUrl == null || crUrl.isBlank()) {
             Logs.debug(Logs.Module.CPE_PUSH, "无反向连接地址，等设备下次 Inform 装载任务", "sn", sn, "任务", taskId);
             return;
         }
-        // 只用配置账密唤醒；设备上报的 CR 用户名（密码不可知）不再参与猜配。
         connectionRequestService.wakeWithRetry(sn, crUrl,
                 paramEndingWith(sn, "ManagementServer.ConnectionRequestUsername"),
                 paramEndingWith(sn, "ManagementServer.ConnectionRequestPassword"));
@@ -73,7 +69,6 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
                 }
             }
         } catch (Exception ignore) {
-            // 设备还没采集参数树：退回配置里的默认账号
         }
         return null;
     }

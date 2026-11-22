@@ -11,7 +11,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
-// 用户新增请求
+/** 用户新增请求 */
 @Data
 @Schema(description = "用户新增请求")
 public class UserCreateDTO {

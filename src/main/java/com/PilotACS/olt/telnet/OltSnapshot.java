@@ -20,34 +20,25 @@ public class OltSnapshot {
 
     private OltVendor vendor = OltVendor.GENERIC;
 
-    /** 命令风格：华为 display，第三方 show；没探测出来为 null */
     private OltVendor.CliStyle cliStyle;
 
-    /** 型号，解析不出时为 null */
     private String model;
 
-    /** 软件版本，解析不出时为 null */
     private String softwareVersion;
 
-    /** 补丁版本，如 SPC107 */
     private String patchVersion;
 
-    /** 背板/主板型号，如 H802MABO */
     private String backplane;
 
-    /** 主控 MAC，回显里有才有 */
     private String macAddress;
 
-    /** 运行时长（中文），如 59天18小时21分11秒 */
     private String uptime;
 
-    /** 登录后看到的提示符，排查登录权限用 */
     private String prompt;
 
-    /** 板卡列表，未采集时为空 */
     private List<OltBoard> boards = new ArrayList<>();
 
-    /** 机框槽位数：display board 0 槽位表里最大的 SlotID + 1，机框视图按它画槽位 */
+    /** 机框槽位数 */
     private Integer slotCount;
 
     /** 版本命令回显 */
@@ -56,15 +47,15 @@ public class OltSnapshot {
     /** 板卡命令回显 */
     private String boardText;
 
-    /** VLAN 快照（VLAN 列表 + 上行口放通情况），没采到为 null */
+    /** VLAN 快照 */
     private OltVlanInfo vlanInfo;
 
-    /** DBA 模板与线路模板快照，没采到为 null */
+    /** 模板快照 */
     private OltTemplateInfo templateInfo;
 
-    /** 本次交互的完整回显，落库留档 */
+    /** 本次交互完整回显 */
     private String transcript;
 
-    /** 采集过程中的问题说明（命令无回显、回显无法解析等），直接拼进同步摘要给页面看 */
+    /** 采集过程中的问题说明 */
     private List<String> notes = new ArrayList<>();
 }

@@ -13,19 +13,19 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-// 操作审计日志（谁在什么时候做了什么关键操作）
+/** 操作审计日志 */
 @Data
 @TableName("sys_oper_log")
 public class SysOperLog {
     @TableId(type = IdType.AUTO)
     private Long id;
-    // 操作人登录名；系统内部动作为 system
+    /** 操作人登录名 */
     private String username;
-    // 模块：用户 / 分组 / 设备权限 / OLT ...
+    /** 操作模块 */
     private String module;
-    // 动作：修改密码 / 新建分组 / 删除分组 / 移动设备 ...
+    /** 操作动作 */
     private String action;
-    // 详情：对象名、目标分组、授权动作等
+    /** 操作详情 */
     private String detail;
     private String ip;
     private LocalDateTime createdAt;

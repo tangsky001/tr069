@@ -37,12 +37,12 @@ public class TaskPlanner {
     public static final String TYPE_DOWNLOAD = "Download";
     public static final String TYPE_METHODS = "GetRPCMethods";
     public static final String TYPE_CUSTOM = "Custom";
-    /** 业务参数刷新：有模板直接按模板 GPV，无模板先 GPN 扫描再 GPV */
+    /** 业务参数刷新 */
     public static final String TYPE_REFRESH_BIZ = "RefreshBusiness";
-    /** 机型适配探测：GPN 全树 + 关键参数 GPV */
+    /** 机型适配探测 */
     public static final String TYPE_ADAPT_PROBE = "AdaptProbe";
 
-    /** 写操作类任务：重发等于真实二次执行（再下发一遍/再重启一次/再下载一次）， */
+    /** 写操作类任务 */
     public static final java.util.Set<String> WRITE_TYPES = java.util.Set.of(
             TYPE_SPV, TYPE_REBOOT, TYPE_FACTORY_RESET, TYPE_DOWNLOAD, TYPE_ADD, TYPE_DEL, TYPE_CUSTOM);
 
@@ -74,7 +74,6 @@ public class TaskPlanner {
                 if (names.isEmpty()) {
                     names = strList(params.get("paths"));
                 }
-                // 续跑（会话中断回队）：跳过参数树里"已经采到值"的名字，只补缺口。
                 if (Boolean.TRUE.equals(params.get("resume")) && !names.isEmpty()) {
                     List<String> remaining = names.stream().filter(n -> data.value(n) == null).toList();
                     Logs.info(Logs.Module.CPE_PUSH, "任务断点续跑", "任务", run.getTaskId(),
@@ -97,7 +96,6 @@ public class TaskPlanner {
                 validateSpv(values, data);
                 run.getSteps().add(new TaskRun.RpcStep(RpcRequest.spv(values, key), "apply"));
                 if (props.isSpvReadback() && !values.isEmpty()) {
-                    // 回读校验（参考实现：下发后回读写下的参数确认设备实际生效值）：
                     appendGpv(run, values.stream().map(RpcRequest.NameValue::name).toList(), "verify");
                 }
             }
@@ -118,7 +116,6 @@ public class TaskPlanner {
             case TYPE_DOWNLOAD -> {
                 RpcRequest r = RpcRequest.download(key, str(params.get("fileType")), str(params.get("url")),
                         str(params.get("fileName")), num(params.get("fileSize")));
-                // 下载服务器账密透传：此前写死空串，设备下载 401 时无线索
                 r.setUsername(str(params.get("username")));
                 r.setPassword(str(params.get("password")));
                 run.getSteps().add(new TaskRun.RpcStep(r, "apply"));
@@ -129,15 +126,12 @@ public class TaskPlanner {
                     RpcRequest.custom(str(params.get("method")), castMap(params.get("args")), key), "apply"));
             case TYPE_REFRESH_BIZ -> {
                 if (Boolean.TRUE.equals(params.get("resume"))) {
-                    // 会话中断回队：不再 GPN 重扫，直接补采业务域里还没取到值的叶子
                     appendGpv(run, uncollectedBizLeaves(data, root), "collect");
                 } else {
                     List<String> leaves = modelLeaves(modelParams, root);
                     if (!leaves.isEmpty()) {
-                        // 模板快速路径：机型模板里登记过业务叶子，直接 GPV
                         appendGpv(run, leaves, "collect");
                     } else {
-                        // 无模板：先 GPN 扫业务子树（响应回来后由会话引擎补 GPV）
                         for (String br : BusinessPaths.businessRoots(root)) {
                             run.getSteps().add(new TaskRun.RpcStep(RpcRequest.gpn(br, false, key), "scan"));
                         }
@@ -146,7 +140,6 @@ public class TaskPlanner {
             }
             case TYPE_ADAPT_PROBE -> {
                 if (Boolean.TRUE.equals(params.get("resume"))) {
-                    // 会话中断回队：树已经在会话里（GPN 全量做过了），只补采没取到值的业务叶子。
                     List<String> missing = uncollectedBizLeaves(data, root);
                     Logs.info(Logs.Module.CPE_PUSH, "探测任务断点续跑", "任务", run.getTaskId(),
                             "待采", missing.size());
@@ -162,23 +155,18 @@ public class TaskPlanner {
         return run;
     }
 
-    /** GPN 扫描完成后：把业务子树里探到的叶子补成 GPV 步骤 */
+    /** GPN 扫描完成后补 GPV 业务叶子 */
     public void appendBizGpv(TaskRun run, DeviceData data, String root) {
         List<String> leaves = new ArrayList<>();
         for (String br : BusinessPaths.businessRoots(root)) {
             leaves.addAll(data.leaves(br));
         }
-        // 厂商私有 WiFi 子树兜底（如 X_RAISECOM_WiFi.），机型适配频段判定要用
         leaves.addAll(BusinessPaths.vendorWifiLeaves(data));
-        // 标准 WLAN 判据叶盲探（GPN 精简实现不吐 SSID/Channel/Standard 时按实例取值）
         leaves.addAll(BusinessPaths.blindWifiLeaves(data));
         appendGpv(run, leaves, "collect");
     }
 
     public void appendGpv(TaskRun run, List<String> names, String purpose) {
-        // 对象节点（路径以点结尾）不是可取值参数，设备必回 9003/9005；
-        // 在唯一批次入口统一挡掉 + 去重，避免探测/刷新/续跑各路径各漏一处，
-        // 也省掉"一个坏名二分拆 5 次"的无效 RPC（大树上能吃掉几十个往返）。
         List<String> valid = names == null ? List.of() : names.stream()
                 .filter(n -> n != null && !n.isBlank() && !n.endsWith("."))
                 .distinct()
@@ -215,7 +203,7 @@ public class TaskPlanner {
         return out;
     }
 
-    /** 业务域里还没取到值的叶子（GPN 只登记路径 value=null，GPV 采完才有值）。 */
+    /** 业务域里还没取到值的叶子 */
     private List<String> uncollectedBizLeaves(DeviceData data, String root) {
         List<String> out = new ArrayList<>();
         for (String br : BusinessPaths.businessRoots(root)) {
@@ -225,7 +213,6 @@ public class TaskPlanner {
                 }
             }
         }
-        // 厂商私有 WiFi 子树兜底同口径：没值的也要补采；标准判据叶盲探（只补没值的）
         out.addAll(BusinessPaths.vendorWifiLeaves(data));
         for (String p : BusinessPaths.blindWifiLeaves(data)) {
             if (data.value(p) == null) {
@@ -235,11 +222,7 @@ public class TaskPlanner {
         return out;
     }
 
-    /**
-     * SPV 下发前置校验：对象节点/只读参数直接拒绝（任务组装失败即落 fail，原因可见）。
-     * writable 以 GPN 采集结果为准（Inform 自带参数不覆盖该标志）；树里没有的路径
-     * （新增实例参数等）交由设备裁决，不拦截。
-     */
+    /** SPV 下发前置校验 */
     private void validateSpv(List<RpcRequest.NameValue> values, DeviceData data) {
         for (RpcRequest.NameValue nv : values) {
             if (nv.name() == null || nv.name().isBlank()) {
@@ -259,7 +242,7 @@ public class TaskPlanner {
         }
     }
 
-    /** 已知参数的基础类型校验（仅覆盖数值/布尔，dateTime/base64 等交由设备裁决） */
+    /** 已知参数的基础类型校验 */
     private void checkValueType(RpcRequest.NameValue nv, String type) {
         if (type == null || nv.value() == null || nv.value().isBlank()) {
             return;
@@ -294,9 +277,6 @@ public class TaskPlanner {
         List<RpcRequest.NameValue> out = new ArrayList<>();
         List<Map<String, Object>> items = (List<Map<String, Object>>) (List<?>) params.getOrDefault("values",
                 params.getOrDefault("items", List.of()));
-        // TR-069 A.3.2.1 Table 15：ParameterList 里同名参数 MUST NOT 出现两次，
-        // 否则 CPE 必须以 9003 拒绝整个 SPV（原子性：一个错全批不生效）。业务模板
-        // 多个片段拼装时容易重复，这里按名字去重（后者覆盖），顺序规范上无语义。
         Map<String, RpcRequest.NameValue> dedup = new LinkedHashMap<>();
         for (Map<String, Object> it : items) {
             String name = str(it.get("name"));
@@ -314,7 +294,6 @@ public class TaskPlanner {
     @SuppressWarnings("unchecked")
     private List<String> strList(Object o) {
         if (o instanceof List<?> l) {
-            // JSON 里的数字/布尔元素不能强转 String（CCE）：统一 String.valueOf
             return l.stream().map(x -> x == null ? "" : String.valueOf(x)).toList();
         }
         return List.of();
@@ -333,12 +312,10 @@ public class TaskPlanner {
         if (o instanceof Number n) {
             return n.longValue();
         }
-        // 前端表单经常把 fileSize 传成字符串（"209715200"）：解析成数值，
         if (o instanceof String s && !s.isBlank()) {
             try {
                 return (long) Double.parseDouble(s.trim());
             } catch (NumberFormatException ignore) {
-                // 非数值字符串
             }
         }
         return 0;

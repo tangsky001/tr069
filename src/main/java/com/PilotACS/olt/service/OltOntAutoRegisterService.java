@@ -30,18 +30,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** ONT 自动注册：后台按每台 OLT 自己的扫描间隔去设备上扫待注册光猫，命中模板就注册掉 */
+/** ONT 自动注册定时任务 */
 @Service
 @RequiredArgsConstructor
 public class OltOntAutoRegisterService {
 
-    /** 检查间隔(毫秒)：只判断「这台设备到点了吗」，不登设备 */
+    /** 调度检查间隔(毫秒) */
     private static final long TICK_MILLIS = 10 * 1000L;
 
-    /** 启动后先让建表、连接池初始化跑完 */
+    /** 启动延迟(毫秒) */
     private static final long INITIAL_DELAY_MILLIS = 20 * 1000L;
 
-    /** 一轮里最多花多久，超了剩下的留到下一轮 */
+    /** 单轮耗时上限(毫秒) */
     private static final long MAX_ROUND_MILLIS = 5 * 60 * 1000L;
 
     /** 并行处理多台 OLT 的上限 */
@@ -53,7 +53,7 @@ public class OltOntAutoRegisterService {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    /** 已经提示过「没开自动注册」的设备：只在状态变化时打一条日志，不刷屏 */
+    /** 已提示过未开启自动注册的设备 */
     private final Set<Long> reportedOff = ConcurrentHashMap.newKeySet();
 
     /** 并行处理池 */
@@ -88,7 +88,6 @@ public class OltOntAutoRegisterService {
                     new LambdaQueryWrapper<OltDevice>().orderByAsc(OltDevice::getId));
             cleanupReportedOff(devices);
             long deadline = System.currentTimeMillis() + MAX_ROUND_MILLIS;
-            // 先筛出到点的设备，减少线程池提交量
             List<OltDevice> queue = new ArrayList<>();
             for (OltDevice device : devices) {
                 if (System.currentTimeMillis() > deadline) {
@@ -112,7 +111,6 @@ public class OltOntAutoRegisterService {
             }
             int scanned = queue.size();
             int registered = 0;
-            // 并行处理多台 OLT
             for (int from = 0; from < queue.size(); from += MAX_CONCURRENCY) {
                 if (System.currentTimeMillis() > deadline) {
                     Logs.warn(Logs.Module.SYSTEM, "ONT 自动注册超出单轮上限，剩余设备下一轮处理",
@@ -141,7 +139,6 @@ public class OltOntAutoRegisterService {
                         "扫描", scanned, "注册成功", registered);
             }
         } catch (Exception e) {
-            // @Scheduled 的 fixedDelay 任务抛未捕获异常会被调度器取消后续执行，
             Logs.error(Logs.Module.SYSTEM, "ONT 自动注册本轮异常（下一轮继续）", e);
         } finally {
             running.set(false);

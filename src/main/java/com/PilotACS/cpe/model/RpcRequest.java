@@ -21,34 +21,27 @@ public class RpcRequest {
     }
 
     private Kind kind;
-    /** CUSTOM 时的方法名，如 GetRPCMethods */
+    /** CUSTOM 时的方法名 */
     private String method;
-    /** 报文头 ID */
     private String id;
-    /** 任务号，回填到 cpe_task 用（commandKey/parameterKey 形如 task-<id>） */
+    /** 任务号 */
     private String key;
 
-    // ---- GPN ----
     private String path;
     private boolean nextLevel;
 
-    // ---- GPV ----
     private List<String> names;
 
-    // ---- SPV ----
     private List<NameValue> values;
 
-    // ---- AddObject / DeleteObject / Download ----
     private long instanceNumber;
     private String fileType;
     private String url;
     private String fileName;
     private long fileSize;
-    /** Download 请求的下载服务器账密（可选，任务参数透传） */
     private String username;
     private String password;
 
-    // ---- CUSTOM ----
     private Map<String, Object> args;
 
     public static RpcRequest gpn(String path, boolean nextLevel, String key) {
@@ -103,7 +96,7 @@ public class RpcRequest {
         return r;
     }
 
-    /** 任务 key（task-<id>），放进 parameterKey/commandKey 用于 TransferComplete 归因 */
+    /** 任务 key（task-<id>） */
     public String taskKey() {
         return key == null ? "" : key;
     }

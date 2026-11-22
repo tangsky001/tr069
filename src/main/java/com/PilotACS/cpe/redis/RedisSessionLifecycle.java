@@ -19,14 +19,14 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** 会话生命周期 Redis 权威记录（DB1，Hash 结构）： */
+/** 会话生命周期 Redis 记录（DB1 Hash） */
 @Component
 public class RedisSessionLifecycle {
 
     private static final String RPC_IDLE = "IDLE";
     private static final String RPC_RUNNING = "RUNNING";
 
-    /** CAS 下发 RUNNING：设备已在跑别的任务时丢弃本次更新（返回 0） */
+    /** CAS 下发 RUNNING */
     private static final RedisScript<Long> CAS_RUNNING = new DefaultRedisScript<>("""
             local st = redis.call('HGET', KEYS[1], 'rpcState')
             local tid = redis.call('HGET', KEYS[1], 'currentTaskId')
@@ -40,7 +40,7 @@ public class RedisSessionLifecycle {
             return 1
             """, Long.class);
 
-    /** CAS 回到 IDLE：currentTaskId 不匹配（已在跑别的任务）时丢弃，防止并发清错状态 */
+    /** CAS 回到 IDLE */
     private static final RedisScript<Long> CAS_IDLE = new DefaultRedisScript<>("""
             local tid = redis.call('HGET', KEYS[1], 'currentTaskId')
             if ARGV[1] ~= '' and tid ~= nil and tid ~= '' and tid ~= ARGV[1] then
@@ -70,7 +70,7 @@ public class RedisSessionLifecycle {
         return CpeRedisKeys.session(sn);
     }
 
-    /** 会话登记 Lua 原子脚本：DEL + 全量字段 + TTL 一次完成。 */
+    /** 会话登记 Lua 原子脚本 */
     private static final RedisScript<Long> REGISTER = new DefaultRedisScript<>("""
             redis.call('DEL', KEYS[1])
             for i = 1, #ARGV - 1, 2 do
@@ -80,7 +80,7 @@ public class RedisSessionLifecycle {
             return 1
             """, Long.class);
 
-    /** 新会话登记：Hash 写全量字段 + 初始 TTL（Lua 原子，SETEX 语义） */
+    /** 新会话登记 */
     public void register(CwmpSession s) {
         try {
             String key = sessionKey(s.getSn());
@@ -98,18 +98,17 @@ public class RedisSessionLifecycle {
         }
     }
 
-    /** 合法报文续期（EXPIRE 两个 key 同步）；只刷新 TTL，不改写业务字段 */
+    /** 会话续期 */
     public void renew(CwmpSession s) {
         try {
             Duration d = ttl();
             template.expire(sessionKey(s.getSn()), d);
             template.expire(CpeRedisKeys.sid(s.getSessionId()), d);
         } catch (Exception e) {
-            // 续期失败不打断会话：下次合法报文再续
         }
     }
 
-    /** 会话收尾后移除（正常结束/被顶替时主动删，不等 TTL）。 */
+    /** 会话收尾后移除 */
     public void remove(String sn, String sessionId) {
         try {
             if (sessionId == null) {
@@ -124,11 +123,10 @@ public class RedisSessionLifecycle {
                 template.delete(CpeRedisKeys.sid(sessionId));
             }
         } catch (Exception e) {
-            // 删除失败由 TTL 兜底
         }
     }
 
-    /** RPC 下发：rpcState → RUNNING，记 currentTaskId（CAS：已在跑别的任务时丢弃） */
+    /** RPC 下发置 RUNNING */
     public boolean rpcRunning(String sn, long taskId) {
         try {
             Long ok = template.execute(CAS_RUNNING,
@@ -145,7 +143,7 @@ public class RedisSessionLifecycle {
         }
     }
 
-    /** RPC 收口：rpcState → IDLE，清 currentTaskId（CAS：taskId 不匹配时丢弃） */
+    /** RPC 收口置 IDLE */
     public void rpcIdle(String sn, long taskId) {
         try {
             template.execute(CAS_IDLE,
@@ -156,7 +154,7 @@ public class RedisSessionLifecycle {
         }
     }
 
-    /** 会话 key 是否仍存活（Redis 侧权威判定） */
+    /** 会话 key 是否仍存活 */
     public boolean exists(String sn) {
         try {
             Boolean ok = template.hasKey(sessionKey(sn));

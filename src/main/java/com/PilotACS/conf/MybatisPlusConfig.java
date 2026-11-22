@@ -14,14 +14,13 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/** MyBatis-Plus 插件：动态表名（OLT/ONU 分组表域）+ 分页。 */
+/** MyBatis-Plus 插件：动态表名 + 分页 */
 @Configuration
 public class MybatisPlusConfig {
 
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
-        // OLT/光猫分组各一套物理表：res_group / res_group_member / res_acl 按 ThreadLocal 域映射
         DynamicTableNameInnerInterceptor dynamic = new DynamicTableNameInnerInterceptor();
         dynamic.setTableNameHandler((sql, tableName) -> GroupScopeContext.mapTable(tableName));
         interceptor.addInnerInterceptor(dynamic);

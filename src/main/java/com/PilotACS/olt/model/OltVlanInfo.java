@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/** VLAN 快照汇总 */
 @Data
 public class OltVlanInfo {
 

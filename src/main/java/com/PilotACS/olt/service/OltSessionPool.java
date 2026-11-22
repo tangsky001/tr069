@@ -104,7 +104,6 @@ public class OltSessionPool {
         }
         for (DeviceChannel channel : devices.values()) {
             for (SessionSlot slot : channel.slots) {
-                // 先优雅关闭，给正在执行的命令 5 秒收尾，避免写 flash 被中断
                 slot.executor.shutdown();
                 try {
                     if (!slot.executor.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -122,7 +121,6 @@ public class OltSessionPool {
             }
         }
         devices.clear();
-        // 关闭 Netty 共享事件循环组，避免热部署时线程/文件描述符泄漏
         TelnetClient.shutdownGroup();
     }
 
@@ -163,7 +161,7 @@ public class OltSessionPool {
         }
     }
 
-    /** 等自己的任务跑完：不再无限等，最多等 SESSION_WAIT_MS × 5 */
+    /** 等待自己的任务执行完成 */
     private <T> T awaitOwn(Future<T> future, OltDevice device) throws IOException {
         try {
             return future.get(SESSION_WAIT_MS * 5, TimeUnit.MILLISECONDS);
@@ -191,7 +189,7 @@ public class OltSessionPool {
         return new OltTelnetException("OLT 会话任务执行失败：" + cause.getMessage(), cause);
     }
 
-    /** 在会话线程上跑任务：一条会话同一时刻只有一段收发 */
+    /** 在会话线程上执行任务 */
     private <T> T runOn(DeviceChannel channel, SessionSlot slot, OltDevice device, Charset charset,
                         boolean charsetStrict, SessionTask<T> task) throws IOException {
         OltCliSession session = slot.session;
@@ -207,7 +205,6 @@ public class OltSessionPool {
                 session = OltCliSession.open(device, charset, connectTimeoutMs, loginTimeoutMs,
                         commandTimeoutMs, logEcho);
             } catch (IOException e) {
-                // 会话登录被设备拒绝时回退到已有会话排队
                 SessionSlot fallback = channel == null ? null : channel.fallbackSlot(slot);
                 if (fallback != null) {
                     Logs.debug(Logs.Module.OLT_COLLECT, "OLT 长连接：{} 的第 {} 条会话登录被拒({})，回退到会话 {} 排队",
@@ -240,7 +237,6 @@ public class OltSessionPool {
                     slot.session = null;
                 }
             } else if (slot.index != 0 && channel != null && channel.quiet(slot)) {
-                // 辅助会话用完即退，只留 0 号会话按保活开关常驻
                 logoutQuietly(current);
                 if (slot.session == current) {
                     slot.session = null;
@@ -300,7 +296,6 @@ public class OltSessionPool {
                 if (slot.session == null) {
                     continue;
                 }
-                // 只有 0 号会话按保活开关常驻，辅助会话一律空闲即退
                 boolean primary = keepalive && slot.index == 0;
                 boolean due = primary
                         ? now - slot.lastKeepaliveAt >= keepaliveIntervalMs
@@ -311,7 +306,6 @@ public class OltSessionPool {
                 try {
                     slot.executor.execute(() -> maintain(slot, primary));
                 } catch (RejectedExecutionException ignored) {
-                    // 通道已关闭
                 }
             }
         }
@@ -435,14 +429,13 @@ public class OltSessionPool {
             this.slots = list;
         }
 
-        /** 挑一条会话：没在跑任务的优先，其次活会话，队列最短的优先 */
+        /** 挑一条可用的会话槽位 */
         SessionSlot pick() {
             SessionSlot best = null;
             int bestScore = Integer.MAX_VALUE;
             for (SessionSlot slot : slots) {
                 OltCliSession session = slot.session;
                 boolean alive = session != null && session.isAlive();
-                // 正在跑任务的槽位必须排最后：并发分段采集时几个任务要落到不同槽位，
                 int score = (slot.executor.getActiveCount() > 0 ? 1_000_000 : 0)
                         + (alive ? 0 : 1_000)
                         + slot.executor.getQueue().size();

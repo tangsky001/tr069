@@ -22,18 +22,16 @@ public class SessionRegistry {
 
     private final Map<String, CwmpSession> bySn = new ConcurrentHashMap<>();
     private final Map<String, CwmpSession> bySessionId = new ConcurrentHashMap<>();
-    /** per-SN 处理锁（条纹锁，1024 桶）：CWMP 报文线程、sweep、REST 建任务共用， */
     private static final int LOCK_STRIPES = 1024;
     private static final int LOCK_STRIPE_MASK = LOCK_STRIPES - 1;
     private final ReentrantLock[] lockStripes = java.util.stream.IntStream.range(0, LOCK_STRIPES)
             .mapToObj(i -> new ReentrantLock()).toArray(ReentrantLock[]::new);
 
-    /** create() 的结果：新会话 + 被顶替的旧会话（调用方做完整收尾），替代原先共享的 lastSuperseded 单字段 */
+    /** 新会话 + 被顶替的旧会话 */
     public record Created(CwmpSession session, CwmpSession superseded) {
     }
 
     public synchronized Created create(String sn) {
-        // 同设备旧会话先摘除（设备重新 Inform 场景）。
         CwmpSession old = bySn.get(sn);
         CwmpSession superseded = null;
         if (old != null && !old.isEnded()) {
@@ -54,12 +52,12 @@ public class SessionRegistry {
         return sn == null ? null : bySn.get(sn);
     }
 
-    /** 该会话是否仍是 sn 的现役会话（未被顶替/未收尾） */
+    /** 该会话是否仍是现役会话 */
     public boolean isCurrent(CwmpSession s) {
         return s != null && !s.isEnded() && bySn.get(s.getSn()) == s;
     }
 
-    /** 无 Cookie 回退：按设备来源地址找最近的未结束会话。 */
+    /** 无 Cookie 时按来源地址找最近会话 */
     public CwmpSession byRemoteAddr(String addr) {
         if (addr == null || addr.isBlank()) {
             return null;
@@ -87,7 +85,7 @@ public class SessionRegistry {
         return bySn;
     }
 
-    /** per-SN 处理锁（ReentrantLock，同线程可重入；同一 SN 恒映射同一把条纹锁） */
+    /** per-SN 处理锁 */
     public ReentrantLock lockFor(String sn) {
         String key = sn == null ? "?" : sn;
         int h = key.hashCode();
@@ -95,7 +93,7 @@ public class SessionRegistry {
         return lockStripes[h & LOCK_STRIPE_MASK];
     }
 
-    /** 当前正被活会话持有执行中的任务 id 集合（sweep 回队兜底时排除，防接力任务被误判重复回队） */
+    /** 活会话执行中的任务 id 集合 */
     public Set<Long> runningTaskIds() {
         Set<Long> out = new HashSet<>();
         for (CwmpSession s : bySn.values()) {
@@ -107,19 +105,17 @@ public class SessionRegistry {
         return out;
     }
 
-    // ==================== CR 唤醒待 Inform 标记 ====================
-
-    /** sn → 唤醒标记过期时刻（毫秒）：踢成功后挂着，等设备 Inform 上来对账 */
+    /** sn → 唤醒标记过期时刻（毫秒） */
     private final Map<String, Long> pendingKicks = new ConcurrentHashMap<>();
 
-    /** CR 踢成功后挂标记：窗口内设备 Inform 上来即视为唤醒触发 */
+    /** CR 踢成功后挂标记 */
     public void markKickPending(String sn, long ttlMs) {
         if (sn != null && !sn.isBlank()) {
             pendingKicks.put(sn, System.currentTimeMillis() + ttlMs);
         }
     }
 
-    /** Inform 到达时取走标记（原子消费）：true=本次 Inform 在 CR 唤醒窗口内 */
+    /** Inform 到达时取走标记 */
     public boolean consumeKick(String sn) {
         if (sn == null) {
             return false;
@@ -128,7 +124,7 @@ public class SessionRegistry {
         return deadline != null && deadline >= System.currentTimeMillis();
     }
 
-    /** 清理过期唤醒标记（设备一直不上线时防缓慢泄漏），sweep 周期调用 */
+    /** 清理过期唤醒标记 */
     public void sweepExpiredKicks() {
         long now = System.currentTimeMillis();
         pendingKicks.entrySet().removeIf(e -> e.getValue() < now);

@@ -42,7 +42,6 @@ public final class SoapParser {
             if (idEl != null) {
                 msg.setId(idEl.getTextContent().trim());
             }
-            // TR-069 A.3.2 扩展头：设备声明不再发后续请求 / 会话超时（按局部名匹配，不挑前缀）
             Element nmr = firstChild(header, "NoMoreRequests");
             if (nmr != null) {
                 String v = nmr.getTextContent().trim();
@@ -53,7 +52,6 @@ public final class SoapParser {
                 try {
                     msg.setSessionTimeoutSeconds(Long.parseLong(sto.getTextContent().trim()));
                 } catch (NumberFormatException ignore) {
-                    // 未声明就保持 0（用 ACS 默认会话超时）
                 }
             }
             Element hold = firstChild(header, "HoldRequests");
@@ -77,7 +75,6 @@ public final class SoapParser {
             case "GetParameterValuesResponse" -> parseGpv(root, msg);
             case "SetParameterValuesResponse" -> {
                 Element st = firstChild(root, "Status");
-                // 畸形数值不能抛裸 NFE：异常穿透会掐断连接不给响应，设备重传 → 死循环
                 msg.setStatus(st == null ? 0 : intOf(st.getTextContent().trim(), 0));
             }
             case "AddObjectResponse" -> {
@@ -89,8 +86,6 @@ public final class SoapParser {
                 msg.setStatus(st == null ? 0 : intOf(st.getTextContent().trim(), 0));
             }
             case "DeleteObjectResponse" -> {
-                // TR-069 A.3.2.7 Table 32：Status 0=已删除；1=已验证提交但尚未应用
-                //（如需重启，CPE 会在会话结束后自行应用并可能重启），此前未解析恒为 0
                 Element st = firstChild(root, "Status");
                 msg.setStatus(st == null ? 0 : intOf(st.getTextContent().trim(), 0));
             }
@@ -104,26 +99,20 @@ public final class SoapParser {
             }
             case "TransferComplete" -> parseTransferComplete(root, msg);
             case "AutonomousTransferComplete" -> {
-                // Table 44/45：设备自主传输完成（非 ACS 下发任务触发，无 CommandKey），
-                // Table 5 要求 ACS Responding REQUIRED，解析复用 TransferComplete 结构
                 parseTransferComplete(root, msg);
             }
             case "Fault" -> parseFault(root, msg);
             case "DownloadResponse" -> {
-                // 设备回执：Status 0/1（1=进行中，最终成败等 7 TRANSFER COMPLETE）+ 起止时间
                 Element st = firstChild(root, "Status");
                 msg.setStatus(st == null ? 0 : intOf(st.getTextContent().trim(), 0));
                 msg.setStartTime(text(root, "StartTime"));
                 msg.setCompleteTime(text(root, "CompleteTime"));
             }
             default -> {
-                // Reboot/FactoryReset 等空体响应
             }
         }
         return msg;
     }
-
-    // ---------------- 各报文解析 ----------------
 
     private static void parseInform(Element root, SoapMessage msg) {
         Element deviceId = firstChild(root, "DeviceId");
@@ -149,7 +138,6 @@ public final class SoapParser {
             try {
                 msg.setMaxEnvelopes(Long.parseLong(me.trim()));
             } catch (NumberFormatException ignore) {
-                // 保持默认 1
             }
         }
         String rc = text(root, "RetryCount");
@@ -157,7 +145,6 @@ public final class SoapParser {
             try {
                 msg.setRetryCount(Long.parseLong(rc.trim()));
             } catch (NumberFormatException ignore) {
-                // 保持默认 0
             }
         }
         parseParameterList(root, msg.getParams());
@@ -202,13 +189,11 @@ public final class SoapParser {
             Element spvFaults = firstChild(cwmpFault, "SetParameterValuesFault");
             if (spvFaults != null) {
                 if (firstChild(spvFaults, "ParameterName") != null) {
-                    // TR-069 标准形态：SetParameterValuesFault 本身就是单结构体（抓包样例口径）
                     msg.getSetFaults().add(new SoapMessage.SetFault(
                             text(spvFaults, "ParameterName"),
                             intOf(text(spvFaults, "FaultCode"), 0),
                             text(spvFaults, "FaultString")));
                 } else {
-                    // 兼容个别设备的容器形态：SetParameterValuesFault 下挂多个 ParameterErrorResponse
                     for (Element st : elementChildren(spvFaults)) {
                         if ("ParameterErrorResponse".equals(localName(st))) {
                             msg.getSetFaults().add(new SoapMessage.SetFault(
@@ -222,9 +207,7 @@ public final class SoapParser {
         }
     }
 
-    // ---------------- 公共解析 ----------------
-
-    /** ParameterValueStruct：Name + Value(xsi:type) */
+    /** 解析 ParameterValueStruct */
     private static void parseParameterList(Element parent, List<CpeParam> out) {
         Element list = firstChild(parent, "ParameterList");
         if (list == null) {
@@ -258,7 +241,7 @@ public final class SoapParser {
         }
     }
 
-    /** ParameterInfoStruct：GPN 响应，Name + Writable；对象节点以 . 结尾 */
+    /** 解析 GPN 响应 ParameterInfoStruct */
     private static void parseParameterInfoList(Element parent, List<CpeParam> out) {
         Element list = firstChild(parent, "ParameterList");
         if (list == null) {
@@ -279,8 +262,6 @@ public final class SoapParser {
             out.add(new CpeParam(path, null, null, object, writable, now));
         }
     }
-
-    // ---------------- DOM 工具 ----------------
 
     private static Document readDoc(String xml) {
         try {

@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** 自动发现的待注册 ONT */
 @Data
 public class OltOntAutofind {
 

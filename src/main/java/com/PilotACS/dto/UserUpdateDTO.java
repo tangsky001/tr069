@@ -9,7 +9,7 @@ package com.PilotACS.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
-// 用户编辑请求：role / status / password+currentPassword 任选
+/** 用户编辑请求 */
 @Data
 @Schema(description = "用户编辑请求：role、status、password 可单项或组合提交")
 public class UserUpdateDTO {

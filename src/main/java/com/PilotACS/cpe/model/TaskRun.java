@@ -19,17 +19,13 @@ public class TaskRun {
 
     private long taskId;
     private String taskNo;
-    /** 任务类型，与 cpe_task.type 一致 */
     private String type;
-    /** 任务原始参数（JSON 反序列化） */
     private Map<String, Object> params = new LinkedHashMap<>();
     /** 待执行的 RPC 步骤 */
     private final Deque<RpcStep> steps = new ArrayDeque<>();
-    /** 步骤执行中收集的数据（探测结果等） */
+    /** 步骤执行中收集的数据 */
     private Map<String, Object> collected = new LinkedHashMap<>();
-    /** 已发送的步骤数 */
     private int sentSteps;
-    /** 结果已落库（防重复收口） */
     private volatile boolean completed;
 
     public void markCompleted() {

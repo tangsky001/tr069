@@ -48,7 +48,7 @@ public class DeviceAclService {
         return user != null && (user.isSuperAdmin() || "OPS_ADMIN".equals(user.getRole()));
     }
 
-    /** 单台设备 + 动作是否允许。user 为 null（内部调用）视为放行。 */
+    /** 单台设备 + 动作是否允许 */
     public boolean allowed(LoginUser user, Long oltId, String action) {
         if (user == null || isAdmin(user) || !ACTIONS.contains(action)) {
             return true;
@@ -56,7 +56,7 @@ public class DeviceAclService {
         return !denied(aclMapper.selectList(null), user, "OLT", String.valueOf(oltId), action);
     }
 
-    /** 光猫（ONU，按 SN）+ 动作是否允许。user 为 null（内部调用）视为放行。 */
+    /** 光猫（按 SN）+ 动作是否允许 */
     public boolean allowedOnu(LoginUser user, String sn, String action) {
         if (user == null || isAdmin(user) || !ACTIONS.contains(action)) {
             return true;
@@ -65,7 +65,7 @@ public class DeviceAclService {
                 !denied(aclMapper.selectList(null), user, GroupService.MEMBER_TYPE_ONU, sn, action));
     }
 
-    /** 返回该用户看不到（无 view 授权）的光猫 SN 集合； */
+    /** 返回该用户看不到的光猫 SN 集合 */
     public Set<String> hiddenOnuRefs(LoginUser user) {
         if (user == null || isAdmin(user)) {
             return null;
@@ -73,7 +73,7 @@ public class DeviceAclService {
         return GroupScopeContext.with(GroupScopeContext.ONU, () -> doHiddenRefs(user, GroupService.MEMBER_TYPE_ONU));
     }
 
-    /** 通用可见性集合（须在对应表域上下文内调用）：设备级 + 分组归属链逐台判定 */
+    /** 通用可见性集合（须在对应表域上下文内调用） */
     private Set<String> doHiddenRefs(LoginUser user, String memberType) {
         List<ResAcl> all = aclMapper.selectList(null);
         if (all.isEmpty()) {
@@ -82,13 +82,11 @@ public class DeviceAclService {
         Set<String> hidden = new HashSet<>();
         for (ResAcl acl : all) {
             if (SCOPE_DEVICE.equals(acl.getScopeType())) {
-                // 设备级 ACL 覆盖的设备，若用户无 view 授权则隐藏（不依赖设备表，被授权的 ref 也可能是已删除的）
                 if (denied(all, user, memberType, acl.getScopeId(), "view")) {
                     hidden.add(acl.getScopeId());
                 }
             }
         }
-        // 分组/祖先链覆盖的设备也要逐台判定
         for (GroupMember member : groupMemberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, memberType))) {
             String ref = GroupService.MEMBER_TYPE_ONU.equals(memberType)
@@ -100,7 +98,7 @@ public class DeviceAclService {
         return hidden;
     }
 
-    /** 返回该用户看不到（无 view 授权）的设备 id 集合； */
+    /** 返回该用户看不到的设备 id 集合 */
     public Set<Long> hiddenOltIds(LoginUser user) {
         if (user == null || isAdmin(user)) {
             return null;
@@ -113,17 +111,14 @@ public class DeviceAclService {
         for (ResAcl acl : all) {
             if (SCOPE_DEVICE.equals(acl.getScopeType())) {
                 try {
-                    // 设备级 ACL 覆盖的设备，若用户无 view 授权则隐藏（不依赖设备表，被授权的 id 也可能是即将删除的）
                     long oltId = Long.parseLong(acl.getScopeId());
                     if (denied(all, user, "OLT", acl.getScopeId(), "view")) {
                         hidden.add(oltId);
                     }
                 } catch (NumberFormatException ignored) {
-                    // 脏数据忽略
                 }
             }
         }
-        // 分组/祖先链覆盖的设备也要逐台判定
         for (GroupMember member : groupMemberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, "OLT"))) {
             if (denied(all, user, "OLT", String.valueOf(member.getMemberId()), "view")) {
@@ -133,7 +128,7 @@ public class DeviceAclService {
         return hidden;
     }
 
-    /** ACL 判定核心：设备级 → 分组链自下而上，命中第一个覆盖层级即决定（ref：OLT 为 id 串，ONU 为 SN） */
+    /** ACL 判定核心：设备级 → 分组链自下而上 */
     private boolean denied(List<ResAcl> all, LoginUser user, String memberType, String ref, String action) {
         Long uid = user.getUserId();
         boolean covered = false;
@@ -169,7 +164,7 @@ public class DeviceAclService {
         return false;
     }
 
-    /** 设备当前归属的分组节点引用；根节点/null = ROOT */
+    /** 设备当前归属的分组节点引用 */
     public String groupRefOf(Long oltId) {
         GroupMember member = groupMemberMapper.selectOne(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, "OLT")
@@ -178,7 +173,7 @@ public class DeviceAclService {
         return member == null ? ROOT_REF : member.getGroupRef();
     }
 
-    /** 通用归属查询：OLT 按 member_id（ref 为 id 串），ONU 按 member_ref（SN） */
+    /** 通用归属查询 */
     private String groupRefOfRef(String memberType, String ref) {
         LambdaQueryWrapper<GroupMember> wrapper = new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, memberType);
@@ -197,7 +192,7 @@ public class DeviceAclService {
         return member == null ? ROOT_REF : member.getGroupRef();
     }
 
-    /** 分组节点的父引用：G:id → 父 G:id 或 ROOT；ROOT / 区划锚点节点再往上为 null */
+    /** 分组节点的父引用 */
     private String parentRefOf(String nodeRef) {
         if (nodeRef == null || !nodeRef.startsWith(GROUP_PREFIX)) {
             return null;
@@ -227,9 +222,7 @@ public class DeviceAclService {
         return false;
     }
 
-    // ---------------------------------------------------------------- 授权维护
-
-    /** 某范围（分组/设备）的授权清单；memberType 决定查 olt_res_acl 还是 onu_res_acl（默认 OLT） */
+    /** 某范围的授权清单 */
     public List<ResAcl> listByScope(String scopeType, String scopeId, String memberType) {
         String scope = GroupScopeContext.normalize(memberType);
         return GroupScopeContext.with(scope, () -> aclMapper.selectList(new LambdaQueryWrapper<ResAcl>()
@@ -238,12 +231,12 @@ public class DeviceAclService {
                 .orderByAsc(ResAcl::getId)));
     }
 
-    /** 授权：同一主体+范围覆盖更新 */
+    /** 授权 */
     public String grant(Long principalId, String scopeType, String scopeId, List<String> perms, String operator) {
         return grant(principalId, scopeType, scopeId, perms, operator, GroupScopeContext.OLT);
     }
 
-    /** 授权（指定表域）：OLT 与光猫权限各存各表 */
+    /** 授权（指定表域） */
     public String grant(Long principalId, String scopeType, String scopeId, List<String> perms,
                         String operator, String memberType) {
         String scope = GroupScopeContext.normalize(memberType);
@@ -294,7 +287,7 @@ public class DeviceAclService {
         return null;
     }
 
-    /** 撤销授权（按 ACL 记录主键）；memberType 决定操作哪套 ACL 表（默认 OLT） */
+    /** 撤销授权 */
     public String revoke(Long id, String memberType) {
         String scope = GroupScopeContext.normalize(memberType);
         return GroupScopeContext.with(scope, () -> doRevoke(id));

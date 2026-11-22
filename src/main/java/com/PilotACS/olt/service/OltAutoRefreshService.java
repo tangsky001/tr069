@@ -44,7 +44,7 @@ public class OltAutoRefreshService {
     /** 连续失败后间隔的最大倍数 */
     private static final int MAX_BACKOFF = 6;
 
-    /** 退避最长分钟数上限：不管连续失败多少次，退避都不超过这个值 */
+    /** 退避最长分钟数 */
     private static final long MAX_BACKOFF_MINUTES = 120;
 
     /** 全量采集间隔（可配置，默认 30 分钟） */
@@ -54,7 +54,7 @@ public class OltAutoRefreshService {
     /** 启动后多久跑第一轮(毫秒) */
     private static final long INITIAL_DELAY_MILLIS = 5 * 1000L;
 
-    /** 并行采集上限，实际并行度 = min(设备数, 该值) */
+    /** 并行采集上限 */
     private static final int MAX_CONCURRENCY = 20;
 
     /** 单轮总耗时上限(毫秒) */
@@ -75,7 +75,7 @@ public class OltAutoRefreshService {
     /** 整轮调度，单线程 */
     private ExecutorService roundRunner;
 
-    /** 设备采集并发池，线程按需创建、空闲 60 秒回收 */
+    /** 设备采集并发池 */
     private ThreadPoolExecutor devicePool;
 
     @PostConstruct
@@ -96,7 +96,7 @@ public class OltAutoRefreshService {
         }
     }
 
-    /** 触发一轮自动采集，本轮在独立线程上跑 */
+    /** 触发一轮自动采集 */
     @Scheduled(fixedDelayString = "${acs.olt.auto-refresh.interval-millis:1800000}", initialDelay = INITIAL_DELAY_MILLIS)
     public void refreshAll() {
         if (!running.compareAndSet(false, true)) {
@@ -114,7 +114,7 @@ public class OltAutoRefreshService {
         }
     }
 
-    /** 一轮采集：筛出到点的设备，按并行度分批采 */
+    /** 执行一轮采集 */
     private void runRound() {
         try {
             List<OltDevice> devices = deviceMapper.selectList(
@@ -163,7 +163,7 @@ public class OltAutoRefreshService {
         }
     }
 
-    /** 采一台，失败退避，成功清退避记录；定时采集不针对端口光模块发命令 */
+    /** 采集一台设备，失败按倍数退避 */
     private boolean syncOne(OltDevice device) {
         long start = System.currentTimeMillis();
         try {

@@ -12,6 +12,7 @@ import lombok.Data;
 
 import java.util.List;
 
+/** VLAN 创建/修改请求 */
 @Data
 public class OltVlanRequest {
 

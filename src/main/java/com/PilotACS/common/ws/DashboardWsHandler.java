@@ -20,7 +20,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** 首页概览 WebSocket：维护所有已连接会话，业务方调 broadcast() 推 JSON 消息 */
+/** 首页概览 WebSocket */
 @Component
 @RequiredArgsConstructor
 public class DashboardWsHandler extends TextWebSocketHandler {
@@ -39,7 +39,7 @@ public class DashboardWsHandler extends TextWebSocketHandler {
         sessions.remove(session);
     }
 
-    /** 广播一条消息给所有在线概览页面，序列化失败或会话异常都静默，不影响业务主流程 */
+    /** 广播消息给所有在线会话 */
     public void broadcast(Object payload) {
         if (sessions.isEmpty()) {
             return;

@@ -31,7 +31,7 @@ public enum OltVendor {
     /** 识别不出来的设备，只做通用探测 */
     GENERIC("通用", null);
 
-    /** 命令风格：华为一套 {@code display}，第三方（中兴/烽火等）一套 {@code show} */
+    /** 命令风格 */
     public enum CliStyle {
 
         /** 华为：display version / display board 0 */
@@ -50,7 +50,7 @@ public enum OltVendor {
             return keyword;
         }
 
-        /** 从命令文本判断风格；{@code display ...} 是华为，{@code show ...} 是第三方 */
+        /** 从命令文本判断风格 */
         public static CliStyle ofCommand(String command) {
             if (command == null) {
                 return null;
@@ -79,12 +79,11 @@ public enum OltVendor {
         return label;
     }
 
-    /** 命令风格；认不出的厂商为 null，由会话按探测到的那条版本命令定 */
     public CliStyle getCliStyle() {
         return cliStyle;
     }
 
-    /** 按回显关键字识别厂商，识别不出返回 {@link #GENERIC} */
+    /** 按回显关键字识别厂商 */
     public static OltVendor detect(String output) {
         if (output == null || output.isBlank()) {
             return GENERIC;
@@ -92,12 +91,11 @@ public enum OltVendor {
         return OltVendorProfiles.detect(output).vendor();
     }
 
-    /** 认不出厂商就是第三方，不拿命令风格猜华为 */
     public static OltVendor detect(CliStyle style, String output) {
         return detect(output);
     }
 
-    /** 按名称反查，用于页面回显 */
+    /** 按名称反查 */
     public static OltVendor of(String code) {
         if (code == null || code.isBlank()) {
             return GENERIC;

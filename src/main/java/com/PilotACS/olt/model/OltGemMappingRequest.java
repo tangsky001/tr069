@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** GEM 映射新增请求 */
 @Data
 public class OltGemMappingRequest {
 

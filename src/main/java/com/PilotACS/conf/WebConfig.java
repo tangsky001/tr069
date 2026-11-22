@@ -21,7 +21,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import java.util.ArrayList;
 import java.util.List;
 
-// Web 配置：/api 前缀、拦截器、跨域、文档路径
+/** Web 配置 */
 @Configuration
 @RequiredArgsConstructor
 public class WebConfig implements WebMvcConfigurer {
@@ -30,7 +30,6 @@ public class WebConfig implements WebMvcConfigurer {
     private final OltAclInterceptor oltAclInterceptor;
     private final CpeProperties cpeProperties;
 
-    // 所有 RestController 统一加 /api 前缀（springdoc 文档控制器除外）
     @Override
     public void configurePathMatch(PathMatchConfigurer configurer) {
         configurer.addPathPrefix("/api", HandlerTypePredicate.forAnnotation(
@@ -40,9 +39,7 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
-        // 前端代理 /doc → 8888，重定向到 Knife4j 文档页
         registry.addViewController("/doc/index.html").setViewName("redirect:/doc.html");
-        // 二维码里的 /app/login 是装维 APP 扫码用的；用浏览器误开时跳到管理端首页
         registry.addRedirectViewController("/app/login", "/");
     }
 
@@ -58,7 +55,6 @@ public class WebConfig implements WebMvcConfigurer {
                 "/doc/index.html",
                 "/webjars/**",
                 "/knife4j/**"));
-        // CPE 上报端点：设备直连，走设备侧 Basic 账号，不走登录态（acs.cpe.paths 多地址）
         cpeProperties.getPaths().forEach(p -> {
             String path = p.startsWith("/") ? p : "/" + p;
             excludes.add(path);
@@ -67,7 +63,6 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(excludes);
-        // 设备级 ACL：认证之后按用户拦截 /olt/{id}** 的查看与操作（在 AuthInterceptor 之后执行）
         registry.addInterceptor(oltAclInterceptor)
                 .addPathPatterns("/api/olt/**");
     }

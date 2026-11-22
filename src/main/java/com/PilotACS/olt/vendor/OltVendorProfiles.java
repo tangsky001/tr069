@@ -18,13 +18,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 厂商 profile 注册表：会话要「这家设备该怎么问」就来这里取 */
+/** 厂商 profile 注册表 */
 public final class OltVendorProfiles {
 
-    /** 识别优先级：排前面的先认，跟 {@code OltVendor.detect} 原先的顺序一致 */
+    /** 按识别优先级排列的品牌 */
     private static final List<OltVendorProfile> BRANDS =
             List.of(new HuaweiOltProfile(), new ZteOltProfile(), new FiberhomeOltProfile(),
-                    // GPON 要排在 EPON 前面：同一家的回显里若同时出现 gpon 与 hsgq，先认 GPON
                     new HsgqGponOltProfile(), new HsgqOltProfile());
 
     private static final OltVendorProfile GENERIC = new GenericOltProfile();
@@ -43,7 +42,7 @@ public final class OltVendorProfiles {
         return profiles;
     }
 
-    /** 按厂商取 profile，认不出/null 一律给兜底那份 */
+    /** 按厂商取 profile，认不出给兜底 */
     public static OltVendorProfile of(OltVendor vendor) {
         if (vendor == null) {
             return GENERIC;
@@ -52,7 +51,7 @@ public final class OltVendorProfiles {
         return profile == null ? GENERIC : profile;
     }
 
-    /** 按回显认厂商：依次给到每份 profile 的 {@link OltVendorProfile#matches} */
+    /** 按回显识别厂商 profile */
     public static OltVendorProfile detect(String... texts) {
         if (texts != null) {
             for (String text : texts) {
@@ -69,7 +68,7 @@ public final class OltVendorProfiles {
         return GENERIC;
     }
 
-    /** 已注册的具体品牌（不含兜底那份），按识别优先级排 */
+    /** 已注册的品牌列表 */
     public static List<OltVendorProfile> brands() {
         return new ArrayList<>(BRANDS);
     }

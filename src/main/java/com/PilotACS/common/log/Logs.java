@@ -12,13 +12,10 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** 打印专用模块：全项目日志统一从这里输出，业务类 */
+/** 统一日志输出工具 */
 public final class Logs {
 
-    /**
-     * 业务模块，中文名即日志前缀；日志统一输出为「[系统]→[模块]→[子模块] : 内容」。
-     * label 是一级模块，child 是可选二级子模块（只有 OLT 这类大模块需要细分）。
-     */
+    /** 日志业务模块 */
     public enum Module {
         /** 登录认证 */
         AUTH("认证", null),
@@ -78,7 +75,6 @@ public final class Logs {
     }
 
     public static void info(Module module, String action, Object... args) {
-        // 消息里带 {} 占位符时按 SLF4J 占位符风格输出
         if (isPlaceholderStyle(action, args)) {
             logger().info(prefix(module) + action, args);
         } else {
@@ -125,12 +121,10 @@ public final class Logs {
         }
     }
 
-    // 消息含 {} 且有参数 → SLF4J 占位符风格
     private static boolean isPlaceholderStyle(String action, Object... args) {
         return action != null && action.contains("{}") && args != null && args.length > 0;
     }
 
-    // 统一前缀：[系统]→[模块]（有子模块时）[系统]→[模块]→[子模块]，后接 ": " 分隔内容
     private static String prefix(Module module) {
         StringBuilder sb = new StringBuilder("[系统]→[").append(module.label).append(']');
         if (module.child != null) {
@@ -139,7 +133,6 @@ public final class Logs {
         return sb.append(" : ").toString();
     }
 
-    // kv 两两成对：key1, value1, key2, value2 ...；key 为 null 的对（调用方按条件拼参的占位）跳过不输出
     private static String format(Module module, String action, Object... kv) {
         StringBuilder sb = new StringBuilder(prefix(module)).append(action);
         if (kv != null) {
@@ -153,7 +146,6 @@ public final class Logs {
         return sb.toString();
     }
 
-    // logger 名取真实调用类，日志里能看到来源类
     private static Logger logger() {
         Class<?> caller = WALKER.getCallerClass();
         return LOGGERS.computeIfAbsent(caller, LoggerFactory::getLogger);

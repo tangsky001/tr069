@@ -26,7 +26,7 @@ import java.util.concurrent.Semaphore;
 @RequiredArgsConstructor
 public class TaskService {
 
-    /** 同步等待类接口的并发等待名额上限：等待的 REST 线程超过此数立即返回当前状态， */
+    /** 同步等待名额上限 */
     private static final int MAX_WAITERS = 16;
 
     private final CpeStore store;
@@ -37,13 +37,12 @@ public class TaskService {
     private final CpeProperties props;
     private final Semaphore waitPermits = new Semaphore(MAX_WAITERS);
 
-    /** 重发等于真实二次执行的类型：同类活跃任务存在时不重复建单。 */
+    /** 重发等于二次执行的类型 */
     private static final java.util.Set<String> IDEMPOTENT_TYPES =
             java.util.Set.of(TaskPlanner.TYPE_REBOOT, TaskPlanner.TYPE_FACTORY_RESET);
 
-    /** 建任务。设备在会话中直接插队执行；离线经 Redis 派发队列触发反向唤醒（故障域与会话域隔离） */
+    /** 建任务 */
     public long createTask(String sn, String type, Map<String, Object> params, String createdBy) {
-        // 幂等去重必须在 per-SN 锁内做：锁外检查与插入之间并发请求可各插一单
         var lock = cwmpService.lockFor(sn);
         lock.lock();
         try {
@@ -62,17 +61,15 @@ public class TaskService {
         }
     }
 
-    /** 会话活着则锁内入队插队执行；否则走 Redis 派发队列反踢唤醒（Redis 故障降级为直接唤醒） */
+    /** 会话活着则入队执行，否则入 Redis 派发队列反踢唤醒 */
     private void enqueueOrWake(String sn, long id, String type) {
         CwmpSession session = cwmpService.findSessionBySn(sn);
         if (session != null && !session.isEnded()) {
-            // 与 CWMP 报文线程同一把 per-SN 锁：入队瞬间会话可能正在收尾/被顶替，
             var lock = cwmpService.lockFor(sn);
             lock.lock();
             try {
                 session = cwmpService.findSessionBySn(sn);
                 if (session != null && !session.isEnded()) {
-                    // 会话活着：组装成步骤直接入队（state 1 空 POST / state 2 收尾时被取走）
                     Map<String, Object> row = store.getTask(id);
                     String root = BusinessPaths.detectRoot(session.getData(), props.getDefaultRootNode());
                     TaskRun run = planner.build(row, session.getData(), root, session.getModelParams());
@@ -87,13 +84,12 @@ public class TaskService {
         // 离线/无会话：等设备下次 Inform 时装载；入 Redis 派发队列触发反向连接唤醒
         boolean queued = redisTaskQueue.enqueue(sn, id);
         if (!queued) {
-            // Redis 故障降级：不经派发队列直接反踢（此前只打日志，降级路径缺失，
             taskDispatcher.wakeNow(sn, id);
         }
         Logs.info(Logs.Module.CPE_PUSH, "任务排队等待设备上线", "sn", sn, "任务", id, "类型", type);
     }
 
-    /** 轮询等任务完成（同步采集类接口用）；等待名额用尽时立即返回当前状态，不占死线程池 */
+    /** 轮询等任务完成 */
     public Map<String, Object> awaitTask(long taskId, int timeoutSeconds) {
         if (!waitPermits.tryAcquire()) {
             Logs.warn(Logs.Module.CPE_PUSH, "任务同步等待名额已满，直接返回当前状态", "任务", taskId);
@@ -130,7 +126,6 @@ public class TaskService {
             try {
                 return new com.fasterxml.jackson.databind.ObjectMapper().readValue(s, Map.class);
             } catch (Exception ignore) {
-                // 结果不是 JSON
             }
         }
         return new LinkedHashMap<>();

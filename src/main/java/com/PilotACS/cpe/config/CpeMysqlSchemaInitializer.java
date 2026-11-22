@@ -107,7 +107,7 @@ public class CpeMysqlSchemaInitializer implements InitializingBean {
         }
     }
 
-    /** 老库升级：首次下发标记列靠 ALTER 补齐（幂等） */
+    /** 老库幂等补列 */
     private void ensureColumns() {
         addColumnIfMissing("init_provisioned",
                 "ALTER TABLE `cpe_device` ADD COLUMN `init_provisioned` TINYINT DEFAULT 0 "
@@ -129,7 +129,7 @@ public class CpeMysqlSchemaInitializer implements InitializingBean {
                         + "COMMENT '最近 8 DIAGNOSTICS COMPLETE 毫秒时间戳'");
     }
 
-    /** 老库升级：cpe_task.params_json TEXT(64KB) 装不下业务刷新的叶子清单 → MEDIUMTEXT（幂等） */
+    /** 老库升级：params_json 扩容为 MEDIUMTEXT */
     private void upgradeTaskParamJson() {
         String type = jdbcTemplate.queryForObject("""
                 SELECT DATA_TYPE FROM information_schema.COLUMNS

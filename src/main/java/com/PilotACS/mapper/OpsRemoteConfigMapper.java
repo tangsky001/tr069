@@ -9,5 +9,6 @@ package com.PilotACS.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.PilotACS.entity.OpsRemoteConfig;
 
+/** 远程配置 Mapper。 */
 public interface OpsRemoteConfigMapper extends BaseMapper<OpsRemoteConfig> {
 }

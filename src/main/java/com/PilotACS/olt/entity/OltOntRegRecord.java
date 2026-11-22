@@ -25,7 +25,7 @@ public class OltOntRegRecord {
 
     private Long templateId;
 
-    /** 模板名称快照：模板后来改了名，记录里还是当时那条 */
+    /** 模板名称快照 */
     private String templateName;
 
     /** 框/槽/端口，如 0/2/0 */

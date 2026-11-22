@@ -28,6 +28,7 @@ import java.nio.file.StandardCopyOption;
 @Configuration
 public class CpeDatabaseConfig {
 
+    /** CPE SQLite 数据源 Bean */
     @Bean(destroyMethod = "close")
     public DataSource cpeDataSource(CpeProperties props) {
         File file = resolveDatabaseFile(props);
@@ -37,7 +38,6 @@ public class CpeDatabaseConfig {
         SQLiteDataSource ds = new SQLiteDataSource(config);
         ds.setUrl("jdbc:sqlite:" + file.getAbsolutePath());
 
-        // Hikari 包一层，控制连接数：SQLite 单写多读，4 个连接足够
         HikariDataSource hikari = new HikariDataSource();
         hikari.setDataSource(ds);
         hikari.setMaximumPoolSize(4);
@@ -57,14 +57,14 @@ public class CpeDatabaseConfig {
         return new DataSourceTransactionManager(cpeDataSource);
     }
 
-    /** SQLite 事务模板（整树重写用），供 CpeStore 显式注入 */
+    /** CPE 事务模板 Bean */
     @Bean
     public org.springframework.transaction.support.TransactionTemplate cpeTxTemplate(
             @Qualifier("cpeTxManager") PlatformTransactionManager cpeTxManager) {
         return new org.springframework.transaction.support.TransactionTemplate(cpeTxManager);
     }
 
-    /** 运行目录没有库文件时，从包内 resources/data/template.pack 释放一份 */
+    /** 库文件不存在时从 classpath 释放一份 */
     private File resolveDatabaseFile(CpeProperties props) {
         File file = new File(props.getSqlitePath());
         if (file.exists()) {

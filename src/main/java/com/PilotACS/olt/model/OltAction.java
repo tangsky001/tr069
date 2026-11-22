@@ -8,36 +8,36 @@ package com.PilotACS.olt.model;
 
 import java.util.List;
 
-/** 一条可下发的配置/查询动作，对应《EPON 光纤接入局端设备 命令行操作手册》里的一个功能格 */
+/** 可下发动作定义。 */
 public record OltAction(String code, String chapter, String label, View view, List<String> commands,
                         List<String> previewCommands, List<OltActionParam> params, boolean query,
                         boolean danger, String note) {
 
     /** 命令要在哪个视图里执行 */
     public enum View {
-        /** 全局配置视图 OLT(config)# */
+        /** 全局配置视图 */
         CONFIG,
-        /** VLAN 视图 OLT(config-vlan-100)#：进视图用 {@code vlan standard } */
+        /** VLAN 视图 */
         VLAN,
-        /** 端口视图 OLT(config-ge-1)#：进视图用 {@code interface  } */
+        /** 端口视图 */
         PORT,
-        /** PON 口视图 OLT(config-epon-1)#：进视图用 {@code interface epon } */
+        /** PON 口视图 */
         PON,
-        /** GPON 口视图 OLT(config-gpon-1)#：进视图用 {@code interface gpon }（鸿升光 GPON） */
+        /** GPON 口视图 */
         GPON,
-        /** 线路模板视图 OLT(config-gpon-lineprofile-1)#：进视图用 {@code ont-lineprofile gpon profile-id } */
+        /** 线路模板视图 */
         LINE_PROFILE,
-        /** 业务模板视图 OLT(config-gpon-srvprofile-1)#：进视图用 {@code ont-srvprofile gpon profile-id } */
+        /** 业务模板视图 */
         SRV_PROFILE,
-        /** ONU 管理视图 OLT(config-onu-1/1)#：进视图用 {@code interface onu /} */
+        /** ONU 管理视图 */
         ONU,
-        /** 系统管理视图 OLT(config-manage)#：进视图用 {@code interface manage}（配置文件导入导出、升级） */
+        /** 系统管理视图 */
         MANAGE,
-        /** ACL 视图 OLT(acl-basic-2000)# / OLT(acl-adv-3000)# / OLT(acl-link-5000)#：进视图用 {@code acl } */
+        /** ACL 视图 */
         ACL,
-        /** 组播 VLAN 视图 OLT(multicast-vlan-100)#：进视图用 {@code multicast-vlan } */
+        /** 组播 VLAN 视图 */
         MCAST,
-        /** 三层接口视图 OLT(config-vlanif-1)#：进视图用 {@code interface vlanif } */
+        /** 三层接口视图 */
         VLANIF
     }
 
@@ -75,13 +75,13 @@ public record OltAction(String code, String chapter, String label, View view, Li
                 params, true, false, note);
     }
 
-    /** 标记为破坏性操作（页面二次确认，后端照常执行） */
+    /** 标记为破坏性操作。 */
     public OltAction dangerous() {
         return new OltAction(code, chapter, label, view, commands, previewCommands,
                 params, query, true, note);
     }
 
-    /** 带上给页面展示的命令序列（进视图 + 命令 + exit，占位符保留） */
+    /** 设置预演命令序列。 */
     public OltAction withPreviewCommands(List<String> preview) {
         return new OltAction(code, chapter, label, view, commands, preview, params, query, danger, note);
     }

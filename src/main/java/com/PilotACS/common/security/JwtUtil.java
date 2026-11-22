@@ -21,14 +21,13 @@ import java.util.Date;
 import java.util.Map;
 import java.util.UUID;
 
-// JWT 生成与解析；密钥优先环境变量，否则用运行目录下 jwtsecret.xml 密钥文件（缺失则自动生成），不落配置文件
+/** JWT 生成与解析 */
 @Component
 public class JwtUtil {
 
     private static final String SECRET_ENV = "ACS_JWT_SECRET";
     private static final String EXPIRE_ENV = "ACS_JWT_EXPIRE_HOURS";
     private static final int MIN_SECRET_LEN = 32;
-    // 密钥文件：直接放运行目录（target）下
     private static final Path SECRET_FILE = Path.of("jwtsecret.xml");
 
     private SecretKey secretKey;
@@ -48,7 +47,7 @@ public class JwtUtil {
         this.expireHours = (expire == null || expire.isBlank()) ? 12 : Long.parseLong(expire);
     }
 
-    // 读取密钥文件（XML 格式，取 <secret> 内容），不存在则生成 96 位随机密钥并保存
+    /** 读取或生成密钥文件 */
     private String loadOrCreateSecretFile() {
         try {
             if (Files.exists(SECRET_FILE)) {
@@ -72,7 +71,7 @@ public class JwtUtil {
         }
     }
 
-    // 从 XML 内容中提取 <secret> 标签的值
+    /** 从 XML 提取密钥 */
     private static String extractSecret(String xml) {
         int start = xml.indexOf("<secret>");
         int end = xml.indexOf("</secret>");
@@ -86,7 +85,7 @@ public class JwtUtil {
         return create(userId, username, claims, expireHours);
     }
 
-    // 自定义有效期的签发（用于装维 APP 二维码等长有效期令牌）
+    /** 自定义有效期的签发 */
     public String create(Long userId, String username, Map<String, Object> claims, long hours) {
         Date now = new Date();
         return Jwts.builder()

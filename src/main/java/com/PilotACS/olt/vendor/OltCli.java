@@ -6,10 +6,9 @@
 
 package com.PilotACS.olt.vendor;
 
-/** 厂商适配层能用的那点会话能力：发一条命令，把回显拿回来 */
+/** 厂商适配层的会话能力：执行命令并返回回显 */
 @FunctionalInterface
 public interface OltCli {
 
-    
     String run(String command, int timeoutMs);
 }

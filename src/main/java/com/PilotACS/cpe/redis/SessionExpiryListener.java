@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 
-/** 会话 TTL 过期事件监听：cpe:session:{sn} 在 DB1 过期时由 Redis 推送事件， */
+/** 会话 TTL 过期事件监听 */
 @Component
 public class SessionExpiryListener implements MessageListener {
 

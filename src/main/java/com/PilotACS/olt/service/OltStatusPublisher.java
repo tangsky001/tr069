@@ -22,7 +22,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class OltStatusPublisher {
 
-    /** 推送字段全部在后端算好，前端只渲染 */
     private static final DateTimeFormatter TIME_TEXT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -33,7 +32,7 @@ public class OltStatusPublisher {
         publish(device, "online", null);
     }
 
-    /** 离线事件：reason 即设备 lastError（连接失败原因） */
+    /** 发布离线事件 */
     public void publishOffline(OltDevice device, String reason) {
         publish(device, "offline", reason);
     }
@@ -48,7 +47,6 @@ public class OltStatusPublisher {
         data.put("model", device.getModel());
         data.put("status", status);
         data.put("statusText", online ? "上线" : "离线");
-        // 设备台账口径的状态值，前端直接回写行数据
         data.put("deviceStatus", online ? "ONLINE" : "OFFLINE");
         data.put("time", LocalDateTime.now().toString());
         data.put("timeText", TIME_TEXT.format(LocalDateTime.now()));
@@ -58,7 +56,6 @@ public class OltStatusPublisher {
             Logs.info(Logs.Module.OLT_COLLECT, "状态变更已推送到概览页",
                     "设备", device.getName(), "状态", status, "原因", reason == null ? "-" : reason);
         } catch (Exception e) {
-            // 推送失败不影响业务主流程
             Logs.warn(Logs.Module.OLT_COLLECT, "状态推送失败", "设备", device.getName(), "原因", e.getMessage());
         }
     }

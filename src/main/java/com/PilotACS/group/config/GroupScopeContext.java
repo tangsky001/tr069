@@ -29,17 +29,17 @@ public final class GroupScopeContext {
         return normalize(SCOPE.get());
     }
 
-    /** 设置当前域；用完必须恢复（with 已处理） */
+    /** 设置当前域。 */
     public static void set(String scope) {
         SCOPE.set(normalize(scope));
     }
 
-    /** 清除（线程池复用防串域） */
+    /** 清除当前域。 */
     public static void clear() {
         SCOPE.remove();
     }
 
-    /** 在指定域内执行，结束后恢复外层域（支持重入） */
+    /** 在指定域内执行（支持重入）。 */
     public static <T> T with(String scope, Supplier<T> action) {
         String prev = SCOPE.get();
         set(scope);
@@ -62,7 +62,7 @@ public final class GroupScopeContext {
         });
     }
 
-    /** 物理表名映射：只动分组三件套（树 / 成员归属 / ACL）， */
+    /** 分组表物理表名映射。 */
     public static String mapTable(String tableName) {
         String prefix = ONU.equals(get()) ? "onu_" : "olt_";
         return switch (tableName) {

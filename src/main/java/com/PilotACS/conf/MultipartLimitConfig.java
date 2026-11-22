@@ -13,7 +13,7 @@ import org.springframework.util.unit.DataSize;
 
 import jakarta.servlet.MultipartConfigElement;
 
-// 上传大小限制：代码写死 1GB，不落配置文件
+/** 上传大小限制 */
 @Configuration
 public class MultipartLimitConfig {
 

@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** 鸿升光整机型号规格：一体化 OLT 没有板卡，型号直接决定前面板长什么样 */
+/** 鸿升光整机型号规格 */
 public final class HsgqModelCatalog {
 
     private HsgqModelCatalog() {
@@ -22,7 +22,7 @@ public final class HsgqModelCatalog {
     public record Spec(String code, String label, String ponType, int ponCount,
                        int geCount, int xgeCount, boolean hasNms, boolean hasConsole, boolean hasUsb) {
 
-        /** 面板上的规格说明：{@code 8 × GPON + 4 × GE + 4 × XGE} */
+        /** 面板规格说明 */
         public String summary() {
             List<String> parts = new ArrayList<>();
             parts.add(ponCount + " × " + ponType);
@@ -56,7 +56,6 @@ public final class HsgqModelCatalog {
             new Spec("Neutral-G16", "Neutral-G16", "GPON", 16, 4, 2, false, true, false),
             new Spec("Neutral-G08", "Neutral-G08", "GPON", 8, 4, 2, false, true, false),
             new Spec("Neutral-G04", "Neutral-G04", "GPON", 4, 4, 2, false, true, false),
-            // EPON 那条产品线：4 个 GE 上联，没有 10GE 光口
             new Spec("HSGQ-E16", "HSGQ-E16", "EPON", 16, 4, 0, false, true, false),
             new Spec("HSGQ-E08", "HSGQ-E08", "EPON", 8, 4, 0, false, true, false),
             new Spec("HSGQ-E04", "HSGQ-E04", "EPON", 4, 4, 0, false, true, false));
@@ -75,7 +74,7 @@ public final class HsgqModelCatalog {
         return null;
     }
 
-    /** 按型号给出整机前面板规格；不是鸿升光整机（型号不认识）返回 null */
+    /** 按型号给出整机前面板规格，不认识返回 null */
     public static OltFrontPanel frontPanelOf(String model) {
         if (model == null || model.isBlank()) {
             return null;
@@ -93,7 +92,7 @@ public final class HsgqModelCatalog {
                 spec.summary());
     }
 
-    /** 型号认不出来时按 PON 口数和类型兜底：面板上至少 PON 口是对的 */
+    /** 型号不认识时按 PON 口数和类型兜底 */
     public static Spec fallback(String ponType, int ponCount) {
         String type = ponType == null || ponType.isBlank() ? "GPON" : ponType.toUpperCase(Locale.ROOT);
         int count = Math.max(ponCount, 1);

@@ -11,7 +11,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 采集记录视图：只带结果摘要，不再携带设备回显（raw_output 已退出台账） */
+/** 采集记录视图 */
 @Data
 public class OltSyncRecordView {
 
@@ -29,6 +29,7 @@ public class OltSyncRecordView {
 
     private LocalDateTime createdAt;
 
+    /** 由采集记录实体转视图 */
     public static OltSyncRecordView from(OltSyncRecord record, int previewChars) {
         if (record == null) {
             return null;

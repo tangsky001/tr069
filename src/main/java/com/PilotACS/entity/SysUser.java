@@ -14,7 +14,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-// 系统用户
+/** 系统用户 */
 @Data
 @TableName("sys_user")
 public class SysUser {
@@ -26,12 +26,10 @@ public class SysUser {
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String salt;
     private String nickname;
-    // 角色编码
     private String roleCode;
     private Integer status;
     private String lastLoginIp;
     private LocalDateTime lastLoginTime;
-    // 最近登录来源 WEB/CLIENT/MOBILE
     private String lastLoginSource;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

@@ -33,7 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 用户管理服务
+/** 用户管理服务 */
 @Service
 @RequiredArgsConstructor
 public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
@@ -43,7 +43,7 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
     private final SysRoleMapper roleMapper;
     private final SysOperLogService operLogService;
 
-    // 用户列表，字段与前端约定对齐
+    /** 用户列表 */
     public List<Map<String, Object>> listUsers() {
         LoginUser operator = UserContext.get();
         boolean opSuper = operator != null && operator.isSuperAdmin();
@@ -51,7 +51,6 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
         for (SysUser u : this.lambdaQuery().orderByAsc(SysUser::getId).list()) {
             boolean superAdmin = isSuperAdmin(u);
             boolean itms = AuthConstant.ITMS_USERNAME.equals(u.getUsername());
-            // ITMS 账号仅超级管理员可编辑
             boolean editable = !superAdmin && (!itms || opSuper);
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("id", u.getId());
@@ -84,7 +83,6 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
             throw new BusinessException("登录名须为 3-32 位字母、数字或下划线");
         }
         if (AuthConstant.ITMS_USERNAME.equalsIgnoreCase(dto.getUsername())) {
-            // 系统保留账号
             throw new BusinessException("该用户名为系统保留");
         }
         if (this.lambdaQuery().eq(SysUser::getUsername, dto.getUsername()).count() > 0) {
@@ -106,7 +104,7 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
         Logs.info(Logs.Module.USER, "新建用户", "用户", dto.getUsername(), "角色", dto.getRole());
     }
 
-    // 编辑：role / status / password 任选其一组合
+    /** 编辑用户 */
     @Transactional
     public void updateUser(Long id, UserUpdateDTO dto) {
         SysUser target = getById(id);
@@ -116,12 +114,10 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
         LoginUser operator = UserContext.get();
         boolean targetSuper = isSuperAdmin(target);
         if (targetSuper && (operator == null || operator.getUserId() != id)) {
-            // 超级管理员仅允许本人改密码
             throw new BusinessException("超级管理员禁止编辑");
         }
         if (AuthConstant.ITMS_USERNAME.equals(target.getUsername())
                 && (operator == null || !operator.isSuperAdmin())) {
-            // ITMS 对接账号仅超级管理员可编辑
             throw new BusinessException("仅超级管理员可以编辑 ITMS 账号");
         }
         if (dto.getRole() != null) {
@@ -153,7 +149,6 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
             if (dto.getPassword().length() < 6) {
                 throw new BusinessException("密码至少 6 位");
             }
-            // 需验证操作者本人密码
             if (dto.getCurrentPassword() == null || dto.getCurrentPassword().isBlank()) {
                 throw new BusinessException("请输入当前密码");
             }
@@ -174,6 +169,7 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
         }
     }
 
+    /** 删除用户 */
     @Transactional
     public void deleteUser(Long id) {
         SysUser target = getById(id);
@@ -181,11 +177,9 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
             throw new BusinessException("用户不存在");
         }
         if (isSuperAdmin(target)) {
-            // 超级管理员禁止删除
             throw new BusinessException("超级管理员禁止删除");
         }
         if (AuthConstant.ITMS_USERNAME.equals(target.getUsername())) {
-            // ITMS 对接账号禁止删除
             throw new BusinessException("ITMS 对接账号禁止删除");
         }
         this.removeById(id);
@@ -193,12 +187,13 @@ public class SysUserService extends ServiceImpl<SysUserMapper, SysUser> {
         Logs.info(Logs.Module.USER, "删除用户", "用户", target.getUsername());
     }
 
+    /** 判断是否超级管理员 */
     public boolean isSuperAdmin(SysUser user) {
         return user.getId() == AuthConstant.SUPER_ADMIN_ID
                 || AuthConstant.SUPER_ADMIN_CODE.equals(user.getRoleCode());
     }
 
-    // 只允许非内置角色
+    /** 校验角色可分配 */
     private void checkRoleAssignable(String code) {
         SysRole role = roleMapper.selectById(code);
         if (role == null) {

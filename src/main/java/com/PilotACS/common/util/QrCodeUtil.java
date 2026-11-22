@@ -20,12 +20,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.EnumMap;
 import java.util.Map;
 
-// 二维码生成：把一段文本渲染成 PNG
+/** 二维码生成工具 */
 public final class QrCodeUtil {
 
     public static final int DEFAULT_SIZE = 240;
 
-    // 纠错等级 M：容错约 15%
+    /** 纠错等级 M */
     private static final ErrorCorrectionLevel ECC = ErrorCorrectionLevel.M;
 
     private QrCodeUtil() {

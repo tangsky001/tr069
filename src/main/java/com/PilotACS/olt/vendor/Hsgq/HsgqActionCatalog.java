@@ -18,7 +18,7 @@ import static com.PilotACS.olt.model.OltAction.query;
 import static com.PilotACS.olt.model.OltAction.queryIn;
 import static com.PilotACS.olt.model.OltAction.queryWith;
 
-/** 鸿升光 EPON OLT 的命令动作全集，逐条对照《EPON 光纤接入局端设备 4 口&amp;8 口系列命令行操作手册 V3.0.2》 */
+/** 鸿升光 EPON OLT 的命令动作全集 */
 public final class HsgqActionCatalog {
 
     private static final String CH_VLAN = "4.1 全局 VLAN 配置";
@@ -146,7 +146,7 @@ public final class HsgqActionCatalog {
     private HsgqActionCatalog() {
     }
 
-    /** 这台设备支持的全部动作（页面按 chapter 分组渲染） */
+    /** 全部命令动作 */
     public static List<OltAction> actions() {
         List<OltAction> actions = new ArrayList<>();
         actions.addAll(vlan());
@@ -162,7 +162,7 @@ public final class HsgqActionCatalog {
         return actions;
     }
 
-    /** —— 第 4 章 VLAN 管理（手册 p34-39） —— */
+    /** 第 4 章 VLAN 管理 */
     private static List<OltAction> vlan() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam vlanId = OltActionParam.number("vlanId", "VLAN ID", 1, 4094, "取值 1-4094");
@@ -251,7 +251,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 5 章 端口管理（手册 p40-53） —— */
+    /** 第 5 章 端口管理 */
     private static List<OltAction> port() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam portType = OltActionParam.portType();
@@ -381,7 +381,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 6 章 PON 管理（手册 p54 起） —— */
+    /** 第 6 章 PON 管理 */
     private static List<OltAction> pon() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam ponId = OltActionParam.number("ponId", "PON 口号", 1, 16, "如 1");
@@ -405,7 +405,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 6 章剩余：发光开关 / DBA / 光功率 / 升级 / ONU 环路 —— */
+    /** 第 6 章剩余：发光开关 / DBA / 光功率 / 升级 / ONU 环路 */
     private static List<OltAction> ponExt() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam ponId = OltActionParam.number("ponId", "PON 口号", 1, 16, "如 1");
@@ -511,7 +511,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 7 章 ONU 管理（手册 p69-76）：命令都在 ONU 管理视图，进视图用 interface onu 1/1 —— */
+    /** 第 7 章 ONU 管理 */
     private static List<OltAction> onu() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam ponId = OltActionParam.number("ponId", "PON 口号", 1, 16, "如 1");
@@ -588,7 +588,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 8 章 MAC 地址管理（手册 p77-84）：全在全局配置视图 —— */
+    /** 第 8 章 MAC 地址管理 */
     private static List<OltAction> mac() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam mac = OltActionParam.text("mac", "MAC 地址", "格式 AA:BB:CC:DD:EE:FF");
@@ -666,7 +666,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 9 章 协议管理（手册 p85-116）：RSTP / MSTP / IGMP / DHCP —— */
+    /** 第 9 章 协议管理 */
     private static List<OltAction> protocol() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam portType = OltActionParam.portType();
@@ -962,7 +962,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 10 章 ACL/QOS（手册 p117-125） —— */
+    /** 第 10 章 ACL/QOS */
     private static List<OltAction> aclQos() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam portType = OltActionParam.portType();
@@ -1093,7 +1093,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 11 章路由 / 第 12 章链路聚合（手册 p126-130） —— */
+    /** 第 11 章路由 / 第 12 章链路聚合 */
     private static List<OltAction> routeAgg() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam portType = OltActionParam.portType();
@@ -1134,7 +1134,7 @@ public final class HsgqActionCatalog {
         return list;
     }
 
-    /** —— 第 2/3 章：系统管理与带内管理口（手册 p11-33） —— */
+    /** 第 2/3 章 系统管理与带内管理口 */
     private static List<OltAction> system() {
         List<OltAction> list = new ArrayList<>();
         OltActionParam vlanId = OltActionParam.number("vlanId", "VLAN ID", 1, 4094, "管理 VLAN，如 1");

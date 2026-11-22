@@ -17,10 +17,10 @@ public class StatisticsInfo {
     /** 版本号取不到时的兜底值 */
     public static final String FALLBACK_VERSION = "0.0.0";
 
-    /** 服务端据此识别为 TR069 ACS 实例 */
+    /** 服务端归组标识 */
     private String serverId;
 
-    /** 实例唯一标识，形如 ACS-<32位> */
+    /** 实例唯一标识 */
     private String deviceId;
 
     private String branch;
@@ -29,7 +29,7 @@ public class StatisticsInfo {
 
     private String gitUrl;
 
-    /** ACS 版本号，服务端据此比对并推送更新 */
+    /** ACS 版本号 */
     private String version;
 
     private String osName;

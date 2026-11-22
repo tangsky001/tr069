@@ -57,7 +57,7 @@ public class SysOperLogService extends ServiceImpl<SysOperLogMapper, SysOperLog>
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    /** 启动时自动补建表（幂等；失败不阻断启动，只报错提示手工执行） */
+    /** 启动时自动补建表 */
     @Override
     public void afterPropertiesSet() {
         try {
@@ -68,7 +68,7 @@ public class SysOperLogService extends ServiceImpl<SysOperLogMapper, SysOperLog>
         }
     }
 
-    /** 记一条操作日志：操作人与 IP 从当前请求上下文取， */
+    /** 记录一条操作日志 */
     public void log(String module, String action, String detail) {
         try {
             SysOperLog entry = new SysOperLog();
@@ -81,12 +81,11 @@ public class SysOperLogService extends ServiceImpl<SysOperLogMapper, SysOperLog>
             entry.setCreatedAt(LocalDateTime.now());
             this.save(entry);
         } catch (Exception e) {
-            // 审计失败不能影响业务主流程
             Logs.warn(Logs.Module.SYSTEM, "操作日志写入失败", e, "模块", module, "动作", action);
         }
     }
 
-    /** 查询参数：limit/module/username/keyword/from/to，返回前端约定字段 */
+    /** 按条件查询操作日志 */
     public List<Map<String, Object>> search(Long limit, String module, String username,
                                             String keyword, String from, String to) {
         LambdaQueryWrapper<SysOperLog> qw = new LambdaQueryWrapper<>();

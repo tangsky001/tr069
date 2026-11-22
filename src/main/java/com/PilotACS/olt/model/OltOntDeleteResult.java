@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.ArrayList;
 import java.util.List;
 
+/** 批量删除 ONT 结果 */
 public class OltOntDeleteResult {
 
     @Schema(description = "板卡槽位号")

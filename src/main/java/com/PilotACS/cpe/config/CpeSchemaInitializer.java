@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/** template.pack（SQLite）自动建表兜底： */
+/** template.pack（SQLite）自动建表 */
 @Component
 public class CpeSchemaInitializer implements InitializingBean {
 
@@ -61,7 +61,6 @@ public class CpeSchemaInitializer implements InitializingBean {
 
     private final JdbcTemplate cpeJdbcTemplate;
 
-    /** 显式限定 SQLite 的 JdbcTemplate（容器里有两个 JdbcTemplate，不能靠参数名推断） */
     public CpeSchemaInitializer(@Qualifier("cpeJdbcTemplate") JdbcTemplate cpeJdbcTemplate) {
         this.cpeJdbcTemplate = cpeJdbcTemplate;
     }

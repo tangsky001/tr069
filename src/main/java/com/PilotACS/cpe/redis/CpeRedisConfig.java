@@ -26,8 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Redis 双库接管（排除 RedisAutoConfiguration，两个连接工厂全量自建）： */
-// 排除 RedisAutoConfiguration 后，RedisProperties 不再由自动装配注册（它的 Bean
+/** Redis 双库连接配置 */
 @Configuration
 @EnableConfigurationProperties(RedisProperties.class)
 public class CpeRedisConfig {
@@ -48,7 +47,7 @@ public class CpeRedisConfig {
         return conf;
     }
 
-    /** DB0 主连接工厂（管理端既有 key + 任务派发队列），与自动装配同名，替代其角色 */
+    /** DB0 主连接工厂 */
     @Bean
     @Primary
     public RedisConnectionFactory redisConnectionFactory() {
@@ -61,7 +60,7 @@ public class CpeRedisConfig {
         return new LettuceConnectionFactory(standalone(1));
     }
 
-    /** DB0 StringRedisTemplate（@Primary：管理端既有注入点全部走 DB0，无需改动） */
+    /** DB0 StringRedisTemplate */
     @Bean
     @Primary
     public StringRedisTemplate stringRedisTemplate(
@@ -76,7 +75,7 @@ public class CpeRedisConfig {
         return new StringRedisTemplate(factory);
     }
 
-    /** 会话 TTL 过期事件监听容器（DB1 __keyevent@1__:expired → 就地收尾会话，免定时遍历） */
+    /** 会话过期事件监听容器 */
     @Bean
     public RedisMessageListenerContainer sessionExpiryListenerContainer(
             @Qualifier("sessionRedisConnectionFactory") RedisConnectionFactory factory,
@@ -87,7 +86,7 @@ public class CpeRedisConfig {
         return container;
     }
 
-    /** 启动时尽力开启 keyspace 过期事件通知（合并已有标记，不覆盖他人配置） */
+    /** 启动时开启 keyspace 过期事件通知 */
     @Bean(initMethod = "ensureKeyspaceEvents")
     public KeyspaceEventsEnsurer keyspaceEventsEnsurer(
             @Qualifier("sessionStringRedisTemplate") StringRedisTemplate sessionTemplate) {

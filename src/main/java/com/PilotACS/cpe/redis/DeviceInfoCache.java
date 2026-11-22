@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.Map;
 
-/** 设备基础档案缓存 cpe:info:{sn}（DB1）：台账行 JSON，低频更新、长 TTL， */
+/** 设备基础档案缓存 cpe:info:{sn} */
 @Component
 public class DeviceInfoCache {
 
@@ -66,7 +66,6 @@ public class DeviceInfoCache {
         try {
             template.delete(CpeRedisKeys.info(sn));
         } catch (Exception ignore) {
-            // TTL 兜底
         }
     }
 }

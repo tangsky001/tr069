@@ -8,6 +8,7 @@ package com.PilotACS.olt.model;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
+/** 设备终端用户创建/修改请求 */
 public class OltTerminalUserRequest {
 
     @Schema(description = "用户名：设备要求 6~15 位")

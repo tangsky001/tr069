@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
 
-// 启动时探测 Redis，未运行则禁止启动
+/** 启动时探测 Redis */
 @Component
 @RequiredArgsConstructor
 public class RedisStartupChecker {

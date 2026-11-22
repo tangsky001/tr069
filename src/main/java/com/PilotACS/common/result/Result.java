@@ -9,7 +9,7 @@ package com.PilotACS.common.result;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
-// 统一响应体
+/** 统一响应体 */
 @Data
 @Schema(description = "统一响应体")
 public class Result<T> {

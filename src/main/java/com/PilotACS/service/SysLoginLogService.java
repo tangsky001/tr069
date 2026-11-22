@@ -21,14 +21,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 登录日志服务
+/** 登录日志服务 */
 @Service
 public class SysLoginLogService extends ServiceImpl<SysLoginLogMapper, SysLoginLog> {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter INPUT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
-    // 查询参数：limit/ip/source/from/to，返回前端约定字段
+    /** 按条件查询登录日志 */
     public List<Map<String, Object>> search(Long limit, String ip, String source, String from, String to) {
         LambdaQueryWrapper<SysLoginLog> qw = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(ip)) {

@@ -19,7 +19,7 @@ import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** 机型能力探测：从参数树里实测 网口数/网口速率/WIFI 频段/SIP 路数， */
+/** 机型能力探测：实测网口数/网口速率/WIFI 频段/SIP 路数 */
 @Component
 public class CapabilityDetector {
 
@@ -27,7 +27,6 @@ public class CapabilityDetector {
             Pattern.compile("\\.LANDevice\\.(\\d+)\\.LANEthernetInterface(?:Config)?\\.(\\d+)\\.");
     private static final Pattern LAN_IF_TR181 = Pattern.compile("\\.Ethernet\\.Interface\\.(\\d+)\\.");
     private static final Pattern WIFI_TR098 =
-            // 兼容标准名 LANWLANConfiguration 与私有名 WLANConfiguration（如 CIOT）
             Pattern.compile("\\.LANDevice\\.(\\d+)\\.(?:LAN)?WLANConfiguration\\.(\\d+)\\.");
     private static final Pattern WIFI_RADIO_TR181 = Pattern.compile("\\.WiFi\\.Radio\\.(\\d+)\\.");
     private static final Pattern SIP_LINE =
@@ -53,7 +52,6 @@ public class CapabilityDetector {
             }
             m = LAN_IF_TR181.matcher(p);
             if (m.find()) {
-                // TR-181：排除上行口（Upstream）
                 String up = data.value(p.substring(0, m.end()) + "Upstream");
                 if (up == null || !up.matches("(?i)1|true")) {
                     keys.add(m.group(1));
@@ -79,11 +77,10 @@ public class CapabilityDetector {
         return max;
     }
 
-    /** 口径换算："1000000"/"1000Mbps"/"1Gbps"/"2.5G" → Mbps；解析不了返回 0 */
+    /** 口径换算为 Mbps */
     private int parseMbps(String v) {
         String up = v.trim().toUpperCase();
         try {
-            // G 级单位必须先于纯数字匹配：否则 "1Gbps" 会被 (\d+) 抓成 1Mbps
             Matcher g = Pattern.compile("([0-9.]+)\\s*G(BPS|BIT)?").matcher(up);
             if (g.find()) {
                 return (int) Math.round(Double.parseDouble(g.group(1)) * 1000);
@@ -98,12 +95,11 @@ public class CapabilityDetector {
                 return (int) Math.round(n);
             }
         } catch (NumberFormatException ignore) {
-            // 语义不明的字符串按 0 处理
         }
         return 0;
     }
 
-    /** 实测 WIFI 频段。 */
+    /** 实测 WIFI 频段 */
     private List<String> detectWifiBands(DeviceData data, String root) {
         Map<String, Set<String>> clear = new LinkedHashMap<>();
         Map<String, Set<String>> ambiguous = new LinkedHashMap<>();
@@ -119,8 +115,6 @@ public class CapabilityDetector {
             if (v == null || v.isBlank()) {
                 continue;
             }
-            // 证据优先级（从最基础的判据往上）：
-            // 频段字段（FrequencyBand/RFBand）→ 802.11 代际（b/g/n=4、ac=5、ax=6、be=7）→ 信道 → SSID 命名
             if (leaf.endsWith("FrequencyBand") || leaf.endsWith("FrequencyBands")
                     || leaf.toLowerCase().endsWith("wifiband")) {
                 String s = v.toLowerCase();
@@ -131,7 +125,6 @@ public class CapabilityDetector {
                     bands(clear, radio).add("5G");
                 }
             } else if (leaf.endsWith("RFBand")) {
-                // 厂商 RF 频段标记：X_HW_RFBand="2.4GHz"/"5GHz"，X_CMCC_RFBand="0"=2.4G/"1"=5G
                 String s = v.trim().toLowerCase();
                 if (s.startsWith("2.4") || "0".equals(s)) {
                     bands(clear, radio).add("2.4G");
@@ -140,13 +133,10 @@ public class CapabilityDetector {
                 }
             } else if (leaf.endsWith("Standard") || leaf.endsWith("Standards")
                     || leaf.equals("WirelessMode") || leaf.equals("WiFiMode")) {
-                // 有的设备整串报 802.11b/g/n、bgn 连写、802.11ax，先剥前缀再按代际拆；
-                // WirelessMode/WiFiMode 也常报 11bgn 这类代际串，一并当证据
                 for (String raw : v.toLowerCase().split("[,;/、\\s]+")) {
                     parseStandard(raw, radio, clear, ambiguous);
                 }
             } else if (leaf.equals("Channel")) {
-                // 信道判据：1~14 在 2.4G，>14 必在 5G；0=自动不作判据
                 try {
                     int ch = Integer.parseInt(v.trim());
                     if (ch > 14) {
@@ -155,11 +145,8 @@ public class CapabilityDetector {
                         bands(clear, radio).add("2.4G");
                     }
                 } catch (NumberFormatException ignore) {
-                    // 非数字信道（如 Auto）不作判据
                 }
             } else if (leaf.equals("SSID")) {
-                // SSID 命名线索：以 5G 结尾（如 ChinaNet-z533-5G、CMCC-xxx-5G）→ 该射频 5G；
-                // 其余命名不作判据（"z533" 里的 5 是编号不是频段）
                 if (v.trim().toLowerCase().endsWith("5g")) {
                     bands(clear, radio).add("5G");
                 }
@@ -176,15 +163,12 @@ public class CapabilityDetector {
             } else if (has5 && !has2) {
                 bands.add("2.4G");
             } else if (!has2 && !has5 && radios.size() >= 2) {
-                // 两颗射频都只有模糊证据：双射频机按双频算
                 bands.addAll(amb);
             }
         }
         if (!has2 && !has5 && radios.size() == 1 && !ambiguous.isEmpty()) {
-            // 单射频只有模糊证据（如仅报 AX/n）：家用机型默认按 2.4G
             bands.add("2.4G");
         }
-        // 兜底：能跑 5G 的家用光猫必然也有 2.4G 频段
         if (bands.contains("5G")) {
             bands.add("2.4G");
         }
@@ -195,32 +179,26 @@ public class CapabilityDetector {
         return map.computeIfAbsent(radio, k -> new LinkedHashSet<>());
     }
 
-    /**
-     * 解析一个 802.11 标准 token（如 bgn / an / 11ax / be）。
-     * 按 WiFi 代际从基础往上判，不预设设备是高代际：
-     * WiFi4（b/g/d → 明确 2.4G；n → 双频模糊）→ WiFi5（a/ac → 明确 5G）→
-     * WiFi6（ax → 双频模糊）→ WiFi7（be → 双频模糊）。
-     * ax/be 单靠代际判不出频段，只记模糊证据；b/g/a/ac 是明确频段证据。
-     */
+    /** 解析 802.11 标准 token，收集频段证据 */
     private void parseStandard(String token, String radio,
                                Map<String, Set<String>> clear, Map<String, Set<String>> ambiguous) {
         String t = token.replace("802.11", "").trim().toLowerCase();
         boolean fuzzy = false;
         for (int i = 0; i < t.length(); ) {
             if (t.startsWith("ax", i)) {
-                fuzzy = true; // WiFi6
+                fuzzy = true;
                 i += 2;
             } else if (t.startsWith("be", i)) {
-                fuzzy = true; // WiFi7
+                fuzzy = true;
                 i += 2;
             } else if (t.startsWith("ac", i)) {
-                bands(clear, radio).add("5G"); // WiFi5
+                bands(clear, radio).add("5G");
                 i += 2;
             } else {
                 switch (t.charAt(i)) {
-                    case 'b', 'g', 'd' -> bands(clear, radio).add("2.4G"); // WiFi4 及以下
+                    case 'b', 'g', 'd' -> bands(clear, radio).add("2.4G");
                     case 'a' -> bands(clear, radio).add("5G");
-                    case 'n' -> fuzzy = true; // WiFi4：2.4G/5G 都可能
+                    case 'n' -> fuzzy = true;
                     default -> {
                     }
                 }
@@ -233,9 +211,8 @@ public class CapabilityDetector {
         }
     }
 
-    /** 参数路径所属的射频实例标识，不属于任何射频返回 null */
+    /** 参数路径所属的射频实例标识 */
     private String wifiRadioId(String path) {
-        // 邻居 AP 扫描子树是周边环境，不是本机射频能力，必须排除（否则邻居的 Channel/SSID 会污染判据）
         if (path.contains("NeighborAP")) {
             return null;
         }
@@ -247,8 +224,6 @@ public class CapabilityDetector {
         if (m.find()) {
             return "t181:" + m.group(1);
         }
-        // 厂商私有 WiFi 子树兜底（如 X_RAISECOM_WiFi.1.）：带 wlan/wifi/radio 词汇的路径
-        // 也当射频看，频段证据叶（FrequencyBand/RFBand/Standard/Channel/SSID）一并读取
         if (BusinessPaths.wifiHintPath(path)) {
             int cut = path.lastIndexOf('.');
             return "x:" + (cut > 0 ? path.substring(0, cut) : path);
@@ -279,7 +254,6 @@ public class CapabilityDetector {
         int dSip = num(detected.get("sipCount"));
         List<String> dBands = (List<String>) detected.getOrDefault("wifiBands", List.of());
 
-        // 网口数量
         Integer lanPorts = intOf(declared.get("lanPorts"));
         if (lanPorts != null) {
             addCheck(checks, reasons, "网口数量", String.valueOf(dLan), dLan >= lanPorts,
@@ -292,7 +266,6 @@ public class CapabilityDetector {
             addCheck(checks, reasons, "网口速率", speedText(dSpeed), dSpeed >= declaredMax,
                     speedText(declaredMax));
         }
-        // WIFI 频段（申报「无」= 用户确认没有，跳过比对）
         String wifiSpec = str(declared.get("wifiSpec"));
         if (wifiSpec != null && !wifiSpec.isBlank()) {
             Set<String> declaredBands = bandsOf(wifiSpec);
@@ -303,8 +276,6 @@ public class CapabilityDetector {
                 List<String> missing = declaredBands.stream().filter(b -> !dBands.contains(b)).toList();
                 addCheck(checks, reasons, "WIFI 频段", actual, missing.isEmpty(),
                         String.join("+", declaredBands));
-                // 实测为空但树里有 WiFi 相关节点：多半是厂商私有命名的频段字段没被认识，
-                // 把采样到的路径写进原因，便于定位补判据
                 if (!missing.isEmpty() && dBands.isEmpty()) {
                     List<String> hints = findWifiHintPaths(data, 5);
                     if (!hints.isEmpty()) {
@@ -314,7 +285,6 @@ public class CapabilityDetector {
                 }
             }
         }
-        // SIP 路数（申报「无」= 用户确认没有，跳过比对）
         String sipStr = str(declared.get("sipCount"));
         if (sipStr != null && !sipStr.isBlank()) {
             boolean none = sipStr.contains("无");
@@ -327,7 +297,6 @@ public class CapabilityDetector {
             }
         }
 
-        // 探针记录（给前端展示探测到了哪些参数）
         addProbe(probes, "lanPortCount", findProbePath(data, LAN_IF_TR098, root), String.valueOf(dLan));
         addProbe(probes, "lanSpeedMbps", findNamed(data, "MaxBitRate"), String.valueOf(dSpeed));
         addProbe(probes, "wifiBands", findNamed(data,
@@ -345,8 +314,6 @@ public class CapabilityDetector {
         return out;
     }
 
-    // ---------------- 工具 ----------------
-
     private void addCheck(List<Map<String, Object>> checks, List<String> reasons,
                           String label, String detectedText, boolean pass, String declaredText) {
         Map<String, Object> c = new LinkedHashMap<>();
@@ -360,7 +327,7 @@ public class CapabilityDetector {
         }
     }
 
-    /** 申报「无」的能力项：跳过比对，仅占位展示（checked=false，前端渲染为 —） */
+    /** 申报「无」的能力项占位 */
     private void addSkip(List<Map<String, Object>> checks, String label, String detail) {
         Map<String, Object> c = new LinkedHashMap<>();
         c.put("label", label);
@@ -381,7 +348,7 @@ public class CapabilityDetector {
         probes.add(p);
     }
 
-    /** 找一个匹配实例模式的代表参数路径 */
+    /** 找匹配实例模式的代表参数路径 */
     private String findProbePath(DeviceData data, Pattern pat, String root) {
         for (String p : new TreeMap<>(data.all()).keySet()) {
             if (pat.matcher(p).find()) {
@@ -402,11 +369,7 @@ public class CapabilityDetector {
         return null;
     }
 
-    /**
-     * 树里 WiFi 相关节点采样（诊断用）：只取有值的叶子、滤掉 WMM/统计/关联设备等噪声子树，
-     * 输出 {@code 路径 = 值}（值截 40 字符），一眼能看出频段字段叫什么、值长什么样。
-     * 一个有值的都没有时退回展示原始路径（标无值）——说明 WiFi 批次没采到值。
-     */
+    /** WiFi 相关节点采样（诊断用） */
     private List<String> findWifiHintPaths(DeviceData data, int limit) {
         List<String> out = new ArrayList<>();
         List<String> raw = new ArrayList<>();
@@ -434,7 +397,7 @@ public class CapabilityDetector {
         return out;
     }
 
-    /** 树里是否有 WiFi 相关节点（叶子，无论有没有值）——存量树 WiFi 值缺失时判断要不要在线补采 */
+    /** 树里是否有 WiFi 相关节点 */
     public boolean hasWifiNodes(DeviceData data) {
         for (String p : data.allPaths("")) {
             if (!p.endsWith(".") && BusinessPaths.wifiHintPath(p)) {
@@ -444,7 +407,7 @@ public class CapabilityDetector {
         return false;
     }
 
-    /** "2.4G" / "2.4G+5G" / "双频" → 频段集合；「无」返回空集表示要求实测也没有 */
+    /** 频段文案 → 频段集合 */
     private Set<String> bandsOf(String spec) {
         Set<String> out = new LinkedHashSet<>();
         String s = spec.toLowerCase();

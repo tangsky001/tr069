@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** ONT 注册结果 */
 @Data
 public class OltOntRegisterResult {
 

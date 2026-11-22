@@ -22,22 +22,21 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** 首次上报初始化下发（以 SN 为标识，只下发一次）： */
+/** 首次上报初始化下发 */
 @Service
 @RequiredArgsConstructor
 public class InitProvisionService {
 
-    /** 系统自动任务的创建人标识（用于防重复排队） */
+    /** 系统自动任务创建人标识 */
     public static final String CREATED_BY = "system-init";
-    /** 任务参数里的初始化标记：SPV 成功后据此回写台账 */
+    /** 任务参数里的初始化标记 */
     public static final String PARAM_FLAG = "initProvision";
 
-    /** 本次启动内已排过初始化的 SN（同一会话/重复 Inform 不重复排）。 */
+    /** 已排过初始化的 SN */
     private final Set<String> scheduled = ConcurrentHashMap.newKeySet();
-    /** 下发失败次数：达到上限后不再自动重试，避免设备不支持时每轮刷一次 */
+    /** 下发失败次数 */
     private final Map<String, Integer> failures = new ConcurrentHashMap<>();
 
-    /** 内存护栏：进程内缓存最大条目数（按 SN 记录，正常设备规模远小于该值） */
     private static final int MAX_TRACKED_SNS = 50_000;
 
     private void trackScheduled(String sn) {
@@ -51,7 +50,7 @@ public class InitProvisionService {
     private final CpeProperties props;
     private final TaskPlanner planner;
 
-    /** Inform 时调用：查库判断是否已下发，未下发则排 SPV 到当前会话队首 */
+    /** 未下发过则排初始化 SPV 到会话队首 */
     public void provisionIfNeeded(CwmpSession s) {
         String sn = s.getSn();
         if (sn == null || scheduled.contains(sn)) {
@@ -63,7 +62,6 @@ public class InitProvisionService {
                 return;
             }
             if (store.countActiveTasks(sn, TaskPlanner.TYPE_SPV, CREATED_BY) > 0) {
-                // 已有在队/在跑的初始化任务：等它执行，避免重复下发
                 return;
             }
             long taskId = schedule(s);
@@ -77,7 +75,7 @@ public class InitProvisionService {
         }
     }
 
-    /** 设备恢复出厂（0 BOOTSTRAP）：清掉内存去重与失败计数，允许初始化参数重新下发 */
+    /** 设备恢复出厂后清去重与失败计数 */
     public void resetForBootstrap(String sn) {
         if (sn == null) {
             return;
@@ -86,7 +84,7 @@ public class InitProvisionService {
         failures.remove(sn);
     }
 
-    /** 下发失败（设备 Fault）：放开去重等下次 Inform 重试；连续失败 3 次则放弃自动下发 */
+    /** 下发失败后放开去重，连续 3 次失败则放弃 */
     public void retryLater(String sn) {
         if (sn == null) {
             return;
@@ -115,7 +113,6 @@ public class InitProvisionService {
         long taskId = store.insertTask(s.getSn(), TaskPlanner.TYPE_SPV, params, CREATED_BY);
         Map<String, Object> row = store.getTask(taskId);
         TaskRun run = planner.build(row, s.getData(), root, s.getModelParams());
-        // 插队首：首次上报先把管理通道参数落好，再做整树探测这类重活
         s.getQueue().addFirst(run);
         return taskId;
     }

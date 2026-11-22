@@ -12,11 +12,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-/** 设备/分组级 ACL 表自动补建（DDL 与 sql/mysql.sql 保持一致）。 */
+/** ACL 表自动补建 */
 @Component
 public class AclSchemaInitializer implements InitializingBean {
 
-    /** %s = 表名前缀（olt_ / onu_） */
+    /** %s = 表名前缀 */
     private static final String CREATE_ACL_SQL = """
             CREATE TABLE IF NOT EXISTS `%sres_acl` (
                 `id`           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
@@ -50,7 +50,6 @@ public class AclSchemaInitializer implements InitializingBean {
             for (String prefix : new String[]{"olt_", "onu_"}) {
                 jdbcTemplate.execute(String.format(CREATE_ACL_SQL, prefix));
             }
-            // 旧 ACL 全是 OLT 分组/设备授权，迁到 olt_res_acl；目标非空则跳过（幂等）
             Integer legacy = countTable("res_acl");
             if (legacy != null && legacy > 0) {
                 Integer target = countTable("olt_res_acl");

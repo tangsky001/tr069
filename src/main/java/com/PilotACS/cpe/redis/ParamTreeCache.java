@@ -20,12 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Function;
 
-/**
- * 设备存量参数树缓存 cpe:params:tree:{sn}（DB1）：
- * 每次 Inform 都要从 SQLite 全量灌树（几千节点），周期上报场景下是热点读。
- * 缓存以"落库时主动失效"为一致性手段（{@code CpeStore.saveDeviceParams} 是
- * cpe_device_param 的唯一写入点），TTL 只作兜底；Redis 异常时降级直读 DB。
- */
+/** 设备存量参数树缓存 cpe:params:tree:{sn} */
 @Component
 public class ParamTreeCache {
 
@@ -43,14 +38,13 @@ public class ParamTreeCache {
         this.props = props;
     }
 
-    /** 读缓存，未命中/Redis 异常时回源 loader（SQLite 全量查询）并回填 */
+    /** 读缓存，未命中时回源并回填 */
     public Map<String, CpeParam> getOrLoad(String sn, Function<String, Map<String, CpeParam>> loader) {
         String key = CpeRedisKeys.paramTree(sn);
         try {
             String v = template.opsForValue().get(key);
             if (v != null) {
                 if (v.isBlank()) {
-                    // 空树也缓存，避免"设备没采集过参数"反复打 DB
                     return new LinkedHashMap<>();
                 }
                 return JSON.readValue(v, TREE_TYPE);
@@ -66,12 +60,11 @@ public class ParamTreeCache {
         return loaded;
     }
 
-    /** 参数树落库后失效（saveDeviceParams 是唯一写入点，删缓存即回源最新树） */
+    /** 参数树落库后失效 */
     public void evict(String sn) {
         try {
             template.delete(CpeRedisKeys.paramTree(sn));
         } catch (Exception ignore) {
-            // TTL 兜底
         }
     }
 

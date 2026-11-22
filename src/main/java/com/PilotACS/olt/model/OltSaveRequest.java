@@ -12,6 +12,7 @@ import lombok.Data;
 
 import java.util.List;
 
+/** OLT 新增/编辑请求 */
 @Data
 public class OltSaveRequest {
 

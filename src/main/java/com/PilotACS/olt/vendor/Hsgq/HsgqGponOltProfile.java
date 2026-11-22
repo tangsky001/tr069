@@ -56,7 +56,6 @@ public class HsgqGponOltProfile extends HsgqOltProfile {
 
     @Override
     public boolean matches(String output) {
-        // 只认鸿升光自己的记号：横幅 "Neutral GPON OLT Operating System"、型号 Neutral-G16 / HSGQ-G08。
         return containsAny(output, "neutral", "hsgq-g");
     }
 
@@ -67,7 +66,6 @@ public class HsgqGponOltProfile extends HsgqOltProfile {
 
     @Override
     public List<String> boardCommands() {
-        // 整机设备没有板卡表，也没有 show pon-info，什么都别发
         return List.of();
     }
 
@@ -94,31 +92,30 @@ public class HsgqGponOltProfile extends HsgqOltProfile {
         return 8;
     }
 
-    /** GPON 产品线：型号认不出来时按 GPON 兜底，别画成 EPON */
+    /** PON 类型名 */
     @Override
     protected String ponTypeName() {
         return "GPON";
     }
 
-    /** GPON 的 PON 口不做二层成员：业务靠 service-port 绑 GEM Port */
+    /** 可做 VLAN 成员的端口类型 */
     @Override
     public Set<String> vlanMemberPortTypes() {
         return Set.of("ge", "xge");
     }
 
-    /** PON 口的关键字是 {@code gpon}，生成后会被 {@link #vlanMemberPortTypes()} 筛掉 */
+    /** PON 口端口类型关键字 */
     @Override
     protected String ponType() {
         return "gpon";
     }
 
-    /** GPON 的 TR-069 模板命令还没核过（手册第 5 章那套是 {@code ont-tr069-profile}） */
     @Override
     public boolean supportsTr069Profile() {
         return false;
     }
 
-    /** 配置视图下补采：每个 PON 口的 ONT 明细（{@code interface gpon n} → {@code show ont-info all}） */
+    /** 配置视图下补采各 PON 口的 ONT 明细 */
     @Override
     public void collectDetails(OltCli cli, OltSnapshot snapshot, List<OltBoard> boards,
                                List<String> notes, int timeoutMs) {
@@ -168,7 +165,7 @@ public class HsgqGponOltProfile extends HsgqOltProfile {
         }
     }
 
-    /** {@code show ont-info all} → ONT 列表 */
+    /** 解析 ONT 列表 */
     public static List<OltOnt> parseOntInfo(String text) {
         List<OltOnt> onts = new ArrayList<>();
         if (text == null || text.isBlank()) {

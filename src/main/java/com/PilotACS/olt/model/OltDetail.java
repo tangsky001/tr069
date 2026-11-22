@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/** OLT 详情。 */
 @Data
 public class OltDetail {
 
@@ -33,7 +34,7 @@ public class OltDetail {
     @Schema(description = "后台正在补采慢数据（端口状态 / ONT / VLAN / 模板）")
     private boolean deepSyncing;
 
-    // ---------------- 以下由后端算好下发，页面只渲染 ----------------
+    // 以下为后端派生字段
 
     @Schema(description = "ONT 全局汇总：total / online / offline 三个数")
     private Map<String, Integer> ontSummary;

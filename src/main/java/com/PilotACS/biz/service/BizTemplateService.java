@@ -25,7 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 业务模板：一组配置意图模板（WAN / WiFi / SIP / 其他）的有序集合， */
+/** 业务模板服务 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -36,8 +36,6 @@ public class BizTemplateService {
     private final BizTemplateExecutionMapper executionMapper;
     private final ConfigTemplateResolver templateResolver;
     private final ObjectMapper objectMapper;
-
-    // ==================== 查询 ====================
 
     /** 业务模板列表，可按分组筛选与关键字搜索 */
     public List<Map<String, Object>> list(String groupName, String keyword) {
@@ -53,7 +51,6 @@ public class BizTemplateService {
         query.orderByDesc(BizTemplate::getUpdatedAt);
         List<Map<String, Object>> views = new ArrayList<>();
         for (BizTemplate template : templateMapper.selectList(query)) {
-            // 前端（业务模板页 / 设备列表批量下发 / 工单建单）统一按 {template, items} 嵌套消费，
             List<BizTemplateItemView> items = toItemViews(itemsOf(template.getId()));
             Map<String, Object> tpl = new LinkedHashMap<>();
             tpl.put("id", template.getId());
@@ -72,7 +69,7 @@ public class BizTemplateService {
         return views;
     }
 
-    /** 业务模板详情（含成员视图，带配置模板摘要与可用性） */
+    /** 业务模板详情 */
     public BizTemplateDetail get(Long id) {
         BizTemplate template = templateMapper.selectById(id);
         if (template == null) {
@@ -99,7 +96,7 @@ public class BizTemplateService {
                 .orderByAsc(BizTemplateItem::getId));
     }
 
-    /** 成员视图：补配置模板摘要与可用性判定 */
+    /** 成员视图 */
     public List<BizTemplateItemView> toItemViews(List<BizTemplateItem> items) {
         List<BizTemplateItemView> views = new ArrayList<>();
         for (BizTemplateItem item : items) {
@@ -133,9 +130,7 @@ public class BizTemplateService {
         return views;
     }
 
-    // ==================== 保存 / 删除 ====================
-
-    /** 保存业务模板：整体替换成员列表（编辑场景），成员顺序即下发顺序 */
+    /** 保存业务模板 */
     @Transactional
     public Map<String, Object> save(BizTemplateSaveRequest request) {
         if (request == null) {
@@ -196,7 +191,7 @@ public class BizTemplateService {
         return view;
     }
 
-    /** 删除业务模板（成员一并删除；历史执行记录保留可追溯） */
+    /** 删除业务模板 */
     @Transactional
     public void delete(Long id) {
         if (templateMapper.selectById(id) == null) {
@@ -207,9 +202,7 @@ public class BizTemplateService {
         templateMapper.deleteById(id);
     }
 
-    // ==================== 校验 ====================
-
-    /** 下发前校验：模板存在且启用、成员配置模板齐全且启用、成员顺序无重复 */
+    /** 下发前校验 */
     public List<String> validate(Long id) {
         List<String> problems = new ArrayList<>();
         BizTemplate template = templateMapper.selectById(id);
@@ -237,8 +230,6 @@ public class BizTemplateService {
         }
         return problems;
     }
-
-    // ==================== 内部实现 ====================
 
     private Long parseKey(String templateKey) {
         if (templateKey == null || templateKey.isBlank()) {

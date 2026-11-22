@@ -13,28 +13,28 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-// 装维 APP 远程运维配置（全局一份）
+/** 装维 APP 远程运维配置 */
 @Data
 @TableName("ops_remote_config")
 public class OpsRemoteConfig {
     @TableId(type = IdType.AUTO)
     private Long id;
-    // 装维 APP 登录二维码里的 Token，重新生成后旧 Token 立即失效
+    /** APP 登录二维码 Token */
     private String token;
-    // 操作权限：ticket/config/reboot，逗号分隔存储
+    /** 操作权限码，逗号分隔 */
     private String permissions;
-    // 可见设备范围：all/online/5m/10m/15m/1h/2h/24h
+    /** 可见设备范围 */
     private String deviceScope;
-    // 内网穿透分配的随机二级域名前缀
+    /** 穿透二级域名前缀 */
     private String subdomain;
-    // ACS 实例唯一标识（UUID）
+    /** ACS 实例唯一标识 */
     private String instanceId;
-    // 是否启用内网穿透：0否 1是
+    /** 是否启用内网穿透 */
     private Integer remoteEnabled;
     private String lanQrContent;
     private String cloudQrContent;
     private String apkQrContent;
-    // 上次生成 Token 的时间
+    /** 上次生成 Token 的时间 */
     private LocalDateTime tokenCreatedAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

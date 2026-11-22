@@ -48,7 +48,7 @@ import java.util.Set;
 public class DeviceController {
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    /** 排序键白名单（列名），pon/ip/upTime 由参数树派生，退回最近上报排序 */
+    /** 排序键白名单 */
     private static final Map<String, String> SORT_COLUMNS = Map.of(
             "manufacturer", "manufacturer",
             "productClass", "product_class",
@@ -65,26 +65,20 @@ public class DeviceController {
     private final BusinessSnapshotService snapshotService;
     private final ModelProfileService modelProfileService;
     private final com.PilotACS.cpe.service.CapabilityDetector capabilityDetector;
-    /** 光猫资源组 ACL：台账可见性与单设备操作校验（权限归属在「光猫设备」分配树页完成） */
     private final DeviceAclService aclService;
-    /** 本地管理：超管账号查询、Telnet 状态/开关/凭据（移植自旧项目直发通道语义） */
     private final DeviceAdminService deviceAdminService;
-    /** SIP 语音：线路清单与按路直发（移植自旧项目 DeviceSipService） */
     private final com.PilotACS.cpe.service.DeviceSipService deviceSipService;
-    /** 操作审计：重启/恢复出厂/直发下发等设备操作写 sys_oper_log */
     private final com.PilotACS.service.SysOperLogService operLogService;
 
     private static final Map<String, String> ACTION_TEXT = Map.of(
             "view", "查看", "operate", "操作", "update", "编辑", "delete", "删除");
 
-    /** 单设备动作校验：无授权直接 403（管理员/未配置 ACL 放行） */
+    /** 单设备动作权限校验 */
     private void requireOnu(String sn, String action) {
         if (!aclService.allowedOnu(UserContext.get(), sn, action)) {
             throw new BusinessException(403, "无该光猫的" + ACTION_TEXT.getOrDefault(action, action) + "权限");
         }
     }
-
-    // ==================== 台账 ====================
 
     @GetMapping("/page")
     public Result<Map<String, Object>> page(@RequestParam(defaultValue = "1") int page,
@@ -114,7 +108,6 @@ public class DeviceController {
             where.append(" AND room_no LIKE ?");
             args.add("%" + roomNo.trim() + "%");
         }
-        // 资源组 ACL：只显示当前用户有 view 授权的光猫（null = 不限制）
         Set<String> hidden = aclService.hiddenOnuRefs(UserContext.get());
         if (hidden != null) {
             if (hidden.isEmpty()) {
@@ -138,7 +131,6 @@ public class DeviceController {
         List<Map<String, Object>> items = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             Map<String, Object> item = camel(row);
-            // 在线口径与 /device/stat 一致：台账 status 列（15 分钟没上报会被 sweep 翻成 offline）
             item.put("online", "online".equals(row.get("status")));
             item.put("ispText", IspVariant.text(str(row.get("isp"))));
             Map<String, String> bizParams = store.loadBizParams(str(row.get("sn")));
@@ -234,8 +226,6 @@ public class DeviceController {
         return Result.ok();
     }
 
-    // ==================== 轮询/元数据 ====================
-
     @GetMapping("/poll-config")
     public Result<Map<String, Object>> pollConfig() {
         return Result.ok(Map.of(
@@ -279,7 +269,6 @@ public class DeviceController {
     @GetMapping("/tasks/active")
     public Result<Map<String, Object>> activeTasks(@RequestParam(required = false) String sns) {
         List<String> list = sns == null || sns.isBlank() ? List.of() : Arrays.asList(sns.split(","));
-        // 逐台 ACL：防绕过资源组隔离枚举任意 SN 的任务
         for (String sn : list) {
             requireOnu(sn, "view");
         }
@@ -307,11 +296,8 @@ public class DeviceController {
         return Result.ok(out);
     }
 
-    // ==================== 下发 ====================
-
     @PostMapping("/dispatch")
     public Result<Map<String, Object>> dispatch(@RequestBody Map<String, Object> body) {
-        // 批量下发前逐台校验操作权限
         Object snsObj = body.get("sns");
         List<String> sns = new ArrayList<>();
         if (snsObj instanceof List<?> list) {
@@ -331,7 +317,6 @@ public class DeviceController {
             requireOnu(sn, "operate");
         }
         Map<String, Object> out = dispatchService.dispatch(body);
-        // 直发通道审计：受理即发不建工单，操作流水记入 sys_oper_log，进度看 cpe_task
         operLogService.log("设备", "直发下发（不走工单）",
                 "设备=" + sns + "，受理成功=" + out.get("submitted") + "，失败=" + out.get("failed"));
         return Result.ok(out);
@@ -393,16 +378,14 @@ public class DeviceController {
         return Result.ok(out);
     }
 
-    // ==================== SIP 语音直发 ====================
-
-    /** 可编辑的语音线路清单（只读本地快照，不唤醒设备） */
+    /** 语音线路清单 */
     @GetMapping("/{sn}/sip/lines")
     public Result<List<Map<String, Object>>> sipLines(@PathVariable String sn) {
         requireOnu(sn, "view");
         return Result.ok(deviceSipService.lines(sn));
     }
 
-    /** 按路下发 SIP 配置：受理即发不建工单，单路失败记录原因后继续其余线路 */
+    /** 按路下发 SIP 配置 */
     @PostMapping("/{sn}/sip")
     public Result<Map<String, Object>> sipSubmit(@PathVariable String sn,
                                                  @RequestBody Map<String, Object> body) {
@@ -421,7 +404,6 @@ public class DeviceController {
         if (!(items instanceof List<?> list) || list.isEmpty()) {
             throw new BusinessException(400, "items 不能为空");
         }
-        // 后端统一校验/归一：参数名缺失直接 400（此前 Map.of 遇 null NPE 500 整批失败），
         List<Map<String, Object>> values = new ArrayList<>();
         for (Object o : list) {
             if (!(o instanceof Map<?, ?> m)) {
@@ -444,13 +426,10 @@ public class DeviceController {
         return Result.ok();
     }
 
-    // ==================== 业务快照 ====================
-
     @GetMapping("/{sn}/business")
     public Result<Map<String, Object>> business(@PathVariable String sn) {
         requireOnu(sn, "view");
         Map<String, Object> device = store.findDevice(sn);
-        // 优先读落库快照（每次会话结束实时刷新），没有再现算
         Map<String, Object> snap = snapshotService.readSnapshot(store.findSnapshot(sn));
         if (snap == null) {
             Map<String, CpeParam> params = store.loadParams(sn);
@@ -492,7 +471,6 @@ public class DeviceController {
     @PostMapping("/{sn}/business/collect")
     public Result<Map<String, Object>> collect(@PathVariable String sn) {
         requireOnu(sn, "operate");
-        // 有参数树走轻量 GPV（只刷 WAN/WIFI/SIP 叶子，十几秒内回来）；没树才做 GPN 全扫描
         java.util.List<String> leaves = modelProfileService.bizRefreshNames(sn);
         long taskId = leaves.isEmpty()
                 ? taskService.createTask(sn, "RefreshBusiness", Map.of(), "console")
@@ -505,23 +483,18 @@ public class DeviceController {
         Map<String, Object> snap = snapshotService.snapshot(device, params, status,
                 "timeout".equals(status) ? "采集超时，设备没有在等待时间内回参" : null);
         if (!"timeout".equals(status)) {
-            // 采集成功：快照同步落库，下次面板直接读快照
             try {
                 store.saveSnapshot(sn, snapshotService.toJson(snap));
             } catch (Exception ignore) {
-                // 落库失败不影响本次返回
             }
         }
         return Result.ok(snap);
     }
 
-    // ==================== 机型适配 ====================
-
     @PostMapping("/{sn}/adaptation/test")
     public Result<Map<String, Object>> adaptTest(@PathVariable String sn,
                                                  @RequestBody Map<String, Object> declared) {
         requireOnu(sn, "operate");
-        // 参数树已采全（与 ModelProfileService.FULL_TREE_MIN_PARAMS 同口径）：直接用库里树比对，
         Map<String, CpeParam> stored = store.loadParams(sn);
         if (stored.size() >= 100) {
             DeviceData data = new DeviceData();
@@ -530,8 +503,6 @@ public class DeviceController {
             String root = rootObj == null || String.valueOf(rootObj).isBlank()
                     ? "InternetGatewayDevice." : String.valueOf(rootObj);
             Map<String, Object> detected = capabilityDetector.detect(data, root);
-            // 申报了 WiFi 频段但树里 WiFi 叶子全无值：存量树多半是半截采集攒出来的
-            //（WiFi 批次排在最后没采到），落回在线探测把 WiFi 叶子补采一遍再判
             String wifiSpec = str(declared.get("wifiSpec"));
             boolean wifiWanted = wifiSpec != null && !wifiSpec.isBlank()
                     && !wifiSpec.toLowerCase().contains("无") && !wifiSpec.toLowerCase().contains("none");
@@ -548,7 +519,6 @@ public class DeviceController {
                 return Result.ok(out);
             }
         }
-        // 树没采全才走设备探测：复用排队任务防重复建单，等待窗口放宽到 280s（前端超时 300s）
         long taskId = store.findActiveTaskId(sn, "AdaptProbe");
         if (taskId > 0) {
             store.updateTaskParams(taskId, toJson(declared));
@@ -589,7 +559,6 @@ public class DeviceController {
     public Result<Map<String, Object>> adaptSave(@PathVariable String sn,
                                                  @RequestBody Map<String, Object> declared) {
         requireOnu(sn, "operate");
-        // 先做一次能力比对（用库里已采集的参数树），达标才允许入库
         Map<String, CpeParam> params = store.loadParams(sn);
         if (params.isEmpty()) {
             throw new BusinessException(400, "设备还没有采集到参数树，请先执行能力测试");
@@ -605,11 +574,8 @@ public class DeviceController {
     }
 
     private Map<String, Object> modelCapabilities(DeviceData data, String root) {
-        // 实测口径统一走探测器（含 bgn 连写等标准串解析），不再各自维护一份
         return new LinkedHashMap<>(capabilityDetector.detect(data, root));
     }
-
-    // ==================== 工具 ====================
 
     private Map<String, Object> sessionInfo(String sn, Map<String, Object> row) {
         CwmpSession session = cwmpService.findSessionBySn(sn);
@@ -622,7 +588,7 @@ public class DeviceController {
         return out;
     }
 
-    /** snake_case 行 → camelCase（台账字段直接映射前端字段名），厂家字段顺带转中文品牌 */
+    /** snake_case 行转 camelCase */
     private Map<String, Object> camel(Map<String, Object> row) {
         Map<String, Object> out = new LinkedHashMap<>();
         row.forEach((k, v) -> {
@@ -635,7 +601,6 @@ public class DeviceController {
                 }
             }
             if ("manufacturer".equals(k) && v instanceof String s) {
-                // 全称（Huawei Technologies Co., Ltd / CIOT）按包含匹配转简称，缩写（SKYW）走精确匹配
                 String label = BrandName.label(s);
                 v = label != null ? label : BrandName.text(s);
             }

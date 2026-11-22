@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
-// 全局异常处理
+/** 全局异常处理 */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -30,7 +30,6 @@ public class GlobalExceptionHandler {
         return Result.fail(400, msg);
     }
 
-    // 不存在的路径：只记一行，不刷堆栈
     @ExceptionHandler(NoResourceFoundException.class)
     public Result<Void> handleNotFound(NoResourceFoundException e) {
         Logs.warn(Logs.Module.EXCEPTION, "请求了不存在的资源", "路径", e.getResourcePath());

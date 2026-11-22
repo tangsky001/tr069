@@ -11,7 +11,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 组内成员行：绑定关系 + 设备台账（OLT 实时；ONU 为归属快照），展示字段全部在后端拼好 */
+/** 组内成员行。 */
 @Data
 @Schema(description = "组内成员（OLT / ONU）")
 public class GroupMemberView {

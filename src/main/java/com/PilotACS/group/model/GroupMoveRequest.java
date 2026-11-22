@@ -9,6 +9,7 @@ package com.PilotACS.group.model;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+/** 移动设备请求。 */
 @Data
 public class GroupMoveRequest {
 

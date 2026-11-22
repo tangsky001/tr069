@@ -15,13 +15,13 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** TR-098 / TR-181 两个数据模型的路径差异收口： */
+/** TR-098 / TR-181 数据模型路径差异收口 */
 public final class BusinessPaths {
 
     public static final String ROOT_TR098 = "InternetGatewayDevice.";
     public static final String ROOT_TR181 = "Device.";
 
-    /** 会话开始时必探的管理路径（ConnectionRequestURL / 版本） */
+    /** 必探的管理路径 */
     private static final String[] KEY_PARAM_SUFFIXES = {
             "ManagementServer.ConnectionRequestURL",
             "DeviceInfo.SoftwareVersion",
@@ -43,7 +43,7 @@ public final class BusinessPaths {
         return fallback == null || fallback.isBlank() ? ROOT_TR098 : fallback;
     }
 
-    /** 会话 Inform 后必 GPV 的关键叶子（补 Inform 没带的管理参数） */
+    /** 会话 Inform 后必 GPV 的关键叶子 */
     public static List<String> keyPaths(String root) {
         List<String> out = new ArrayList<>();
         for (String suffix : KEY_PARAM_SUFFIXES) {
@@ -69,7 +69,7 @@ public final class BusinessPaths {
         return out;
     }
 
-    /** 路径是否带 WiFi/射频词汇（厂商私有子树识别用，不区分大小写；邻居 AP 扫描子树除外） */
+    /** 路径是否带 WiFi/射频词汇 */
     public static boolean wifiHintPath(String path) {
         if (path == null) {
             return false;
@@ -79,11 +79,7 @@ public final class BusinessPaths {
                 && !lower.contains("neighborap");
     }
 
-    /**
-     * 厂商私有 WiFi 子树的叶子兜底：标准业务域（LANDevice./WiFi.）之外还有自己的 WiFi 树
-     *（如 X_RAISECOM_WiFi.）的机型，GPN 扫得到路径但固定业务域补采不会取值，
-     * 机型适配的 WIFI 频段实测就会一直是"无"。适配探测/业务采集要把这些叶子一并补 GPV。
-     */
+    /** 厂商私有 WiFi 子树叶子兜底 */
     public static List<String> vendorWifiLeaves(DeviceData data) {
         List<String> out = new ArrayList<>();
         for (String p : data.allPaths("")) {
@@ -94,13 +90,9 @@ public final class BusinessPaths {
         return out;
     }
 
-    /** 标准 WLAN 判据叶：GPN 没吐这些叶子（WiFi 关闭/精简实现）时按实例盲探 GPV */
     private static final String[] WIFI_BLIND_LEAVES = {"SSID", "Channel", "Standard", "WirelessMode"};
 
-    /**
-     * 按树里已发现的 WLANConfiguration 实例，盲探标准判据叶（SSID/Channel/Standard/WirelessMode）。
-     * 有的机型 GPN 精简实现不吐这些叶子，但 GPV 能取到值；设备不认的名字由 9005 拆分机制自然丢弃。
-     */
+    /** 按实例盲探标准 WLAN 判据叶 */
     public static List<String> blindWifiLeaves(DeviceData data) {
         Set<String> out = new LinkedHashSet<>();
         Pattern obj = Pattern.compile("\\.WLANConfiguration\\.\\d+\\.");
@@ -128,7 +120,7 @@ public final class BusinessPaths {
         return ROOT_TR181.equals(root);
     }
 
-    /** 枚举 objectPrefix 下的实例（跨中间层），pattern 如 InternetGatewayDevice.LANDevice.1.LANWLANConfiguration. */
+    /** 枚举 objectPrefix 下的实例 */
     public static List<Integer> instances(DeviceData data, String objectPrefix) {
         return data.instances(objectPrefix);
     }

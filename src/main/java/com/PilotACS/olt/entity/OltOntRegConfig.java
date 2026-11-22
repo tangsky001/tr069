@@ -36,10 +36,10 @@ public class OltOntRegConfig {
     /** 一轮最多注册几个 */
     private Integer concurrency;
 
-    /** ONT 换 PON 口上线时自动迁移注册位置 */
+    /** 自动迁移注册位置 */
     private Integer autoMove;
 
-    /** 注册表满时自动删除离线 ONT */
+    /** 自动删除离线 ONT */
     private Integer autoDeleteOffline;
 
     private LocalDateTime lastScanAt;
@@ -48,15 +48,15 @@ public class OltOntRegConfig {
 
     private LocalDateTime lastSaveAt;
 
-    /** 最近扫描时间文本：当天只写时分秒，跨天带上月日；没扫过是「—」 */
+    /** 最近扫描时间文本 */
     @TableField(exist = false)
     private String lastScanText;
 
-    /** 最近注册时间文本，同上 */
+    /** 最近注册时间文本 */
     @TableField(exist = false)
     private String lastRegisterText;
 
-    /** 最近保存（读上来的 ONT 落库）时间文本，同上 */
+    /** 最近保存时间文本 */
     @TableField(exist = false)
     private String lastSaveText;
 

@@ -22,7 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/** CPE 存储访问层，按职责拆两库： */
+/** CPE 存储访问层（MySQL 台账/任务 + SQLite 参数树/机型模板） */
 @Repository
 public class CpeStore {
 
@@ -34,10 +34,8 @@ public class CpeStore {
     private final JdbcTemplate cpeJdbcTemplate;
     /** SQLite 事务（整树重写用） */
     private final TransactionTemplate cpeTxTemplate;
-    /** 存量参数树缓存（Inform 热点读，落库时主动失效） */
     private final ParamTreeCache paramTreeCache;
 
-    /** 容器里有两个 JdbcTemplate/TransactionTemplate，必须显式限定，不能靠参数名推断 */
     public CpeStore(@Qualifier("jdbcTemplate") JdbcTemplate jdbcTemplate,
                     @Qualifier("cpeJdbcTemplate") JdbcTemplate cpeJdbcTemplate,
                     @Qualifier("cpeTxTemplate") TransactionTemplate cpeTxTemplate,
@@ -47,8 +45,6 @@ public class CpeStore {
         this.cpeTxTemplate = cpeTxTemplate;
         this.paramTreeCache = paramTreeCache;
     }
-
-    // ==================== 设备台账（MySQL） ====================
 
     /** Inform 时一次性刷新设备台账 */
     public void upsertDevice(Map<String, Object> row) {
@@ -79,8 +75,7 @@ public class CpeStore {
                 oui, manufacturer, productClass, hw, sw, crUrl, cwmpVersion, rootNode, lastInform, now);
     }
 
-    /** Inform 事件码落台账：0 BOOTSTRAP / 1 BOOT / 2 PERIODIC / 4 VALUE CHANGE / 6 CONNECTION REQUEST /
-     *  8 DIAGNOSTICS COMPLETE（口径与 Netcwmp event.c 一致；null 表示本次 Inform 未携带该事件） */
+    /** Inform 事件码落台账 */
     public void markEvents(String sn, Long bootMs, Long bootstrapMs, Long periodicMs, Long valueChangeMs,
                            Long connReqMs, Long diagMs) {
         jdbcTemplate.update("""
@@ -101,7 +96,7 @@ public class CpeStore {
         return jdbcTemplate.queryForMap("SELECT * FROM cpe_device WHERE sn = ?", sn);
     }
 
-    /** MAC 参数值反查设备 SN（工单页「设备标识」一个框查用） */
+    /** MAC/LOID 参数值反查设备 SN */
     public List<String> findSnsByParamValue(String value) {
         return cpeJdbcTemplate.queryForList("""
                 SELECT DISTINCT device_sn FROM cpe_device_param
@@ -110,7 +105,7 @@ public class CpeStore {
                 """, String.class, "%" + value + "%");
     }
 
-    /** 房间号反查设备 SN：台账 cpe_device.room_no 模糊匹配（工单页筛选用） */
+    /** 房间号反查设备 SN */
     public List<String> findSnsByRoom(String room) {
         return jdbcTemplate.queryForList(
                 "SELECT sn FROM cpe_device WHERE room_no LIKE ? LIMIT 500",
@@ -122,7 +117,7 @@ public class CpeStore {
         return n != null && n > 0;
     }
 
-    /** 设备分页（排序键白名单在服务层处理） */
+    /** 设备分页 */
     public List<Map<String, Object>> pageDevices(String where, Object[] args, String orderBy, int offset, int size) {
         String sql = "SELECT * FROM cpe_device " + where
                 + (orderBy == null ? "" : " ORDER BY " + orderBy)
@@ -155,9 +150,8 @@ public class CpeStore {
                 "SELECT * FROM cpe_device WHERE status = 'online' ORDER BY last_inform_ms DESC");
     }
 
-    /** 超过窗口没上报的设备翻成离线 */
+    /** 超时未上报的设备翻成离线 */
     public void markOfflineStale(long deadlineMs) {
-        // last_inform_ms 为 NULL 的行（外部导入、从未上报的台账）也要能翻离线，否则永远显示 online
         jdbcTemplate.update("""
                 UPDATE cpe_device SET status='offline', updated_at=?
                 WHERE status='online' AND (last_inform_ms IS NULL OR last_inform_ms < ?)
@@ -180,13 +174,10 @@ public class CpeStore {
         set.append(", updated_at = ?");
         args.add(System.currentTimeMillis());
         args.add(sn);
-        // 注意：args 必须是 update(sql, Object...) 的唯一/末尾参数，否则会被当成单个参数绑定
         jdbcTemplate.update("UPDATE cpe_device SET " + set + " WHERE sn = ?", args.toArray());
     }
 
-    // ==================== 业务快照（MySQL） ====================
-
-    /** 会话结束/采集完成后刷新业务快照（整份 JSON 覆盖） */
+    /** 保存业务快照（整份 JSON 覆盖） */
     public void saveSnapshot(String sn, String json) {
         jdbcTemplate.update("""
                 INSERT INTO cpe_device_snapshot (sn, snapshot_json, updated_at) VALUES (?,?,?)
@@ -200,21 +191,21 @@ public class CpeStore {
         return list.isEmpty() ? null : list.get(0);
     }
 
-    /** 首次上报的初始化下发（反向连接账密 + 周期上报）是否已完成 */
+    /** 初始化下发是否已完成 */
     public boolean isInitProvisioned(String sn) {
         Integer n = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM cpe_device WHERE sn = ? AND init_provisioned = 1", Integer.class, sn);
         return n != null && n > 0;
     }
 
-    /** 标记首次下发完成（以 SN 为标识落库） */
+    /** 标记初始化下发完成 */
     public void markInitProvisioned(String sn) {
         jdbcTemplate.update(
                 "UPDATE cpe_device SET init_provisioned = 1, init_provisioned_at = ?, updated_at = ? WHERE sn = ?",
                 System.currentTimeMillis(), System.currentTimeMillis(), sn);
     }
 
-    /** 设备恢复出厂（0 BOOTSTRAP）：管理参数被设备清空，放开标记让初始化参数重新下发 */
+    /** 恢复出厂后重置初始化标记 */
     public void clearInitProvisioned(String sn) {
         jdbcTemplate.update(
                 "UPDATE cpe_device SET init_provisioned = 0, init_provisioned_at = NULL, updated_at = ? WHERE sn = ?",
@@ -224,7 +215,7 @@ public class CpeStore {
     private static final String DEVICE_BRIEF_COLS =
             "sn, oui, manufacturer, product_class, software_version, isp, status, last_inform_ms, connection_request_url";
 
-    /** 分组树/成员装配用：按 SN 批量取台账（MySQL） */
+    /** 按 SN 批量取台账 */
     public List<Map<String, Object>> devicesBySns(java.util.Collection<String> sns) {
         if (sns == null || sns.isEmpty()) {
             return List.of();
@@ -243,15 +234,13 @@ public class CpeStore {
                 "SELECT " + DEVICE_BRIEF_COLS + " FROM cpe_device WHERE sn IN (" + in + ")", args);
     }
 
-    /** 全量台账简要（分组树根节点"未归属光猫"装配用），最近上报倒序 */
+    /** 全量台账简要 */
     public List<Map<String, Object>> allDevices() {
         return jdbcTemplate.queryForList(
                 "SELECT " + DEVICE_BRIEF_COLS + " FROM cpe_device ORDER BY last_inform_ms DESC");
     }
 
-    // ==================== 设备参数树（SQLite） ====================
-
-    /** 存量参数树（走 Redis 缓存：Inform 热点读，落库时主动失效） */
+    /** 存量参数树（走 Redis 缓存） */
     public Map<String, CpeParam> loadParams(String sn) {
         return paramTreeCache.getOrLoad(sn, this::loadParamsFromDb);
     }
@@ -267,7 +256,7 @@ public class CpeStore {
         return out;
     }
 
-    /** 会话结束统一落库：全树刷新 → 整树重写；否则只写脏路径 + 按墓碑清行 */
+    /** 参数树落库 */
     public void saveDeviceParams(String sn, Map<String, CpeParam> all, Set<String> dirty, boolean fullSync,
                                  Set<String> tombstones) {
         cpeTxTemplate.executeWithoutResult(st -> {
@@ -279,7 +268,6 @@ public class CpeStore {
                     List<CpeParam> changed = dirty.stream().map(all::get).filter(p -> p != null).toList();
                     insertParams(sn, changed);
                 }
-                // 墓碑：本会话 DeleteObject 删掉的实例子树，同步清库行
                 if (tombstones != null && !tombstones.isEmpty()) {
                     cpeJdbcTemplate.batchUpdate(
                             "DELETE FROM cpe_device_param WHERE device_sn = ? AND path = ?",
@@ -287,7 +275,6 @@ public class CpeStore {
                 }
             }
         });
-        // 唯一写入点：落库成功后失效参数树缓存（下次 Inform 回源最新树）
         paramTreeCache.evict(sn);
     }
 
@@ -307,7 +294,7 @@ public class CpeStore {
         }
     }
 
-    /** 台账页派生字段用的少量参数（MAC/IP/UpTime/PON 模式/光功率） */
+    /** 台账页派生字段用的少量参数 */
     public Map<String, String> loadBizParams(String sn) {
         Map<String, String> out = new LinkedHashMap<>();
         cpeJdbcTemplate.query("""
@@ -322,13 +309,10 @@ public class CpeStore {
         return out;
     }
 
-    // ==================== 机型模板（SQLite：品牌+型号+版本号+运营商 → 参数树） ====================
-
-    /** 唯一键冲突时整树覆盖 */
+    /** 保存机型模板（冲突时整树覆盖） */
     public long saveModel(String brand, String model, String version, String isp, String ispVersion,
                           String rootNode, String capabilityJson, String sourceSn, Map<String, CpeParam> params) {
         long now = System.currentTimeMillis();
-        // 注意：queryForObject 查无结果会抛 Incorrect result size，不能用「== null 判新增」
         List<Long> ids = cpeJdbcTemplate.queryForList(
                 "SELECT id FROM cpe_model WHERE brand=? AND model=? AND version=? AND isp=?",
                 Long.class, brand, model, version, isp);
@@ -373,7 +357,7 @@ public class CpeStore {
         return cpeJdbcTemplate.queryForMap("SELECT * FROM cpe_model WHERE id = ?", id);
     }
 
-    /** 精确匹配：品牌+型号+版本+运营商 */
+    /** 精确匹配机型模板 */
     public Map<String, Object> findModelExact(String brand, String model, String version, String isp) {
         List<Map<String, Object>> list = cpeJdbcTemplate.queryForList(
                 "SELECT * FROM cpe_model WHERE brand=? AND model=? AND version=? AND isp=?",
@@ -381,7 +365,7 @@ public class CpeStore {
         return list.isEmpty() ? null : list.get(0);
     }
 
-    /** 宽松匹配：同品牌+型号+运营商，忽略版本（取最近更新的） */
+    /** 宽松匹配机型模板 */
     public Map<String, Object> findModelLoose(String brand, String model, String isp) {
         List<Map<String, Object>> list = cpeJdbcTemplate.queryForList(
                 "SELECT * FROM cpe_model WHERE brand=? AND model=? AND isp=? ORDER BY updated_at DESC LIMIT 1",
@@ -405,11 +389,8 @@ public class CpeStore {
         return cpeJdbcTemplate.queryForList("SELECT * FROM cpe_model ORDER BY updated_at DESC");
     }
 
-    // ==================== 任务（MySQL） ====================
-
     public long insertTask(String sn, String type, Map<String, Object> params, String createdBy) {
         long now = System.currentTimeMillis();
-        // 任务号必须带高熵后缀：同毫秒并发建任务时 now%10000 后缀必然碰撞，
         String taskNo = "T" + now + UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
         jdbcTemplate.update("""
                 INSERT INTO cpe_task (task_no, sn, type, params_json, status, created_by, created_at)
@@ -440,7 +421,7 @@ public class CpeStore {
                 "SELECT * FROM cpe_task WHERE sn = ? AND status = 'queued' ORDER BY id ASC LIMIT 20", sn);
     }
 
-    /** 各设备未完成任务（queued/running），按 sn 分组 */
+    /** 各设备未完成任务，按 sn 分组 */
     public Map<String, List<Map<String, Object>>> activeTasksBySn(List<String> sns) {
         Map<String, List<Map<String, Object>>> out = new LinkedHashMap<>();
         if (sns == null || sns.isEmpty()) {
@@ -468,7 +449,7 @@ public class CpeStore {
         return n == null ? 0 : n;
     }
 
-    /** 某设备某类型在队/在跑的任务数（自动排任务防重复用） */
+    /** 某设备某类型在队/在跑的任务数 */
     public int countActiveTasks(String sn, String type) {
         Integer n = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM cpe_task WHERE sn = ? AND type = ? AND status IN ('queued','running')",
@@ -476,7 +457,7 @@ public class CpeStore {
         return n == null ? 0 : n;
     }
 
-    /** 某设备某类型最早的在队/在跑任务 id，没有返回 0（复用排队任务防重复建单用） */
+    /** 某设备某类型最早的在队/在跑任务 id */
     public long findActiveTaskId(String sn, String type) {
         List<Map<String, Object>> list = jdbcTemplate.queryForList(
                 "SELECT id FROM cpe_task WHERE sn = ? AND type = ? AND status IN ('queued','running') "
@@ -484,12 +465,12 @@ public class CpeStore {
         return list.isEmpty() ? 0 : ((Number) list.get(0).get("id")).longValue();
     }
 
-    /** 覆写任务参数（复用排队任务时同步最新申报值） */
+    /** 覆写任务参数 */
     public void updateTaskParams(long id, String paramsJson) {
         jdbcTemplate.update("UPDATE cpe_task SET params_json = ? WHERE id = ?", paramsJson, id);
     }
 
-    /** 某设备某类型、某来源的在队/在跑任务数（系统自动任务防重复用） */
+    /** 按来源统计在队/在跑任务数 */
     public int countActiveTasks(String sn, String type, String createdBy) {
         Integer n = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM cpe_task
@@ -498,14 +479,13 @@ public class CpeStore {
         return n == null ? 0 : n;
     }
 
-    /** 写操作类任务：重发等于真实二次执行（再重启一次/再建一个实例/再下载一次）， */
-    /** 与 TaskPlanner.WRITE_TYPES 单一出处：写操作类卡死超时判 fail 不回队（重发=二次执行） */
+    /** 写操作类任务类型 SQL 片段 */
     private static final String NON_RETRIABLE_TYPES =
             TaskPlanner.WRITE_TYPES.stream()
                     .map(t -> "'" + t + "'")
                     .collect(java.util.stream.Collectors.joining(",", "(", ")"));
 
-    /** 兜底：卡在 running 的任务按类型分流——采集类回队续跑（不判死）； */
+    /** 卡死任务按类型分流收口 */
     public void failStaleRunningTasks(long olderThanMs, java.util.Set<Long> excludeTaskIds) {
         long deadline = System.currentTimeMillis() - olderThanMs;
         StringBuilder placeholders = new StringBuilder();
@@ -530,7 +510,7 @@ public class CpeStore {
                 args.toArray());
     }
 
-    /** 会话中断回队时给任务打续跑标记（params_json.resume=true）： */
+    /** 给任务打续跑标记 */
     public void markTaskResume(long id) {
         Map<String, Object> row = getTask(id);
         if (row == null) {
@@ -542,7 +522,6 @@ public class CpeStore {
             try {
                 params.putAll(new ObjectMapper().readValue(s, Map.class));
             } catch (Exception ignore) {
-                // params_json 坏了就只写 resume 标记
             }
         }
         if (Boolean.TRUE.equals(params.get("resume"))) {

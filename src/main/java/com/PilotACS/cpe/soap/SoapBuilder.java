@@ -34,7 +34,7 @@ public final class SoapBuilder {
                 + "</soap-env:Envelope>";
     }
 
-    /** ACS 侧 Inform 请求：部分设备（收到反向连接后）用空 POST 启动会话（TR-069 3.3.3）， */
+    /** ACS 侧 Inform 请求（空 POST 启会话用） */
     public static String informRequest(String id) {
         return ENVELOPE_OPEN
                 + header(id)
@@ -86,14 +86,14 @@ public final class SoapBuilder {
         return sb.toString();
     }
 
-    /** TransferCompleteResponse（TR-069 要求 ACS 应答，否则设备保留 7 TRANSFER COMPLETE 事件反复重发） */
+    /** TransferCompleteResponse */
     public static String transferCompleteResponse(String id) {
         return ENVELOPE_OPEN
                 + header(id)
                 + "<soap-env:Body><cwmp:TransferCompleteResponse/>" + "</soap-env:Body></soap-env:Envelope>";
     }
 
-    /** AutonomousTransferCompleteResponse（Table 44/45，无参数；Table 5 标注 ACS Responding REQUIRED） */
+    /** AutonomousTransferCompleteResponse */
     public static String autonomousTransferCompleteResponse(String id) {
         return ENVELOPE_OPEN
                 + header(id)
@@ -111,12 +111,7 @@ public final class SoapBuilder {
                 + "</soap-env:Fault></soap-env:Body></soap-env:Envelope>";
     }
 
-    // ---------------- 内部拼装 ----------------
-
-    /**
-     * AddObject/DeleteObject 的 ObjectName 规范要求以 "." 结尾（对象路径）；
-     * 调用方手工拼接的路径容易漏尾点（如 WANIPConnection.1），设备会回 9003 Invalid arguments。
-     */
+    /** 对象路径补尾点 */
     private static String objectName(String path) {
         if (path == null || path.isBlank()) {
             return path;
@@ -146,7 +141,7 @@ public final class SoapBuilder {
         return sb.toString();
     }
 
-    /** SPV 值类型白名单：前端/API 传非法 type（如 "xsd:string"、空串、乱值）不影响报文结构， */
+    /** SPV 值类型白名单 */
     private static final java.util.Set<String> XSD_TYPES = java.util.Set.of(
             "string", "int", "unsignedInt", "long", "unsignedLong", "boolean",
             "dateTime", "date", "time", "base64", "hexBinary", "float", "double");
@@ -191,7 +186,7 @@ public final class SoapBuilder {
                 + "</cwmp:Download>";
     }
 
-    /** 透传型自定义 RPC：方法名 + 结构化参数 */
+    /** 透传型自定义 RPC */
     private static String custom(RpcRequest r) {
         String method = elementName(r.getMethod(), "RPC 方法名");
         StringBuilder sb = new StringBuilder();
@@ -207,7 +202,7 @@ public final class SoapBuilder {
         return sb.toString();
     }
 
-    /** 元素名白名单校验：esc() 只转义叶子值，方法名/参数键名是直接拼进标签的， */
+    /** 元素名白名单校验 */
     private static String elementName(String name, String what) {
         if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_.-]*")) {
             throw new IllegalArgumentException(what + "含非法字符: " + name);

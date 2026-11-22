@@ -18,7 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 前端下发 → 自动组装成 SetParameterValues 任务。 */
+/** 前端下发 → 组装 SetParameterValues 任务 */
 @Service
 @RequiredArgsConstructor
 public class DispatchService {
@@ -26,7 +26,6 @@ public class DispatchService {
     private final CpeStore store;
     private final TaskService taskService;
 
-    /** POST /device/dispatch */
     public Map<String, Object> dispatch(Map<String, Object> req) {
         List<String> sns = snsOf(req.get("sns"));
         String username = str(req.get("username"));
@@ -81,9 +80,7 @@ public class DispatchService {
         return out;
     }
 
-    // ---------------- WiFi 业务字段 → 参数三元组 ----------------
-
-    /** 按设备数据模型把 {instance, ssid, encryption, password, enabled, band} 拼成 SPV 值对 */
+    /** WiFi 业务字段拼成 SPV 值对 */
     public List<Map<String, Object>> wifiValues(String sn, Map<String, Object> wifi) {
         Map<String, Object> device = store.findDevice(sn);
         Map<String, CpeParam> params = store.loadParams(sn);
@@ -146,7 +143,7 @@ public class DispatchService {
         return out;
     }
 
-    /** TR-098 WLAN 配置对象前缀：兼容标准名 LANWLANConfiguration 与私有变体 WLANConfiguration（如 CIOT） */
+    /** TR-098 WLAN 配置对象前缀 */
     private String wlanBase(DeviceData data, String root, int idx) {
         for (String seg : new String[]{"LANWLANConfiguration", "WLANConfiguration"}) {
             String marker = "." + seg + "." + idx + ".";
@@ -159,13 +156,12 @@ public class DispatchService {
         return null;
     }
 
-    /** 按频段找 WLAN 实例号，找不到退回默认值 */
+    /** 按频段找 WLAN 实例号 */
     private int findWifiInstance(DeviceData data, String root, String band, int def) {
         if (band == null || band.isBlank()) {
             return def;
         }
         boolean want5 = band.contains("5");
-        // TR-181：Radio.{i}.OperatingFrequencyBand 直接给频段
         for (String p : data.allPaths("Device.WiFi.Radio.")) {
             if (p.endsWith(".OperatingFrequencyBand")) {
                 String v = data.value(p);
@@ -177,7 +173,6 @@ public class DispatchService {
                 }
             }
         }
-        // TR-098：WLANConfiguration.{i}.Standard 推频段（兼容 LANWLANConfiguration 与私有变体 WLANConfiguration）
         var pat = java.util.regex.Pattern.compile("\\.LANDevice\\.(\\d+)\\.(?:LAN)?WLANConfiguration\\.(\\d+)\\.");
         for (String p : data.allPaths("")) {
             var m = pat.matcher(p);
@@ -245,8 +240,6 @@ public class DispatchService {
         };
     }
 
-    // ---------------- 工具 ----------------
-
     private Map<String, Object> nv(String name, String value, String type) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", name);
@@ -258,7 +251,6 @@ public class DispatchService {
     private List<Map<String, Object>> plainValues(Object o) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (o instanceof Map<?, ?> m) {
-            // {name: value} 形式 → 全 string
             m.forEach((k, v) -> out.add(nv(String.valueOf(k), v == null ? "" : String.valueOf(v), "string")));
         } else if (o instanceof List<?> list) {
             for (Object it : list) {

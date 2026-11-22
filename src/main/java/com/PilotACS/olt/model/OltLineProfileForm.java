@@ -14,12 +14,12 @@ public record OltLineProfileForm(Integer profileId, String profileName, String p
                                  IndexForm tcont, IndexForm gemport, IndexForm mapping,
                                  List<DbaOption> dbaOptions, Integer defaultDbaId) {
 
-    /** 一个索引框的约束与建议值 */
+    /** 索引框的约束与建议值 */
     public record IndexForm(int min, int max, Integer value, List<Integer> used,
                             Integer availableFrom, String hint) {
     }
 
-    /** 新增 T-CONT 时可引用的 DBA 模板：{@code label} 是「DBA 100 · 1000M」这种写法 */
+    /** 可引用的 DBA 模板选项 */
     public record DbaOption(Integer profileId, String label) {
     }
 }

@@ -35,7 +35,7 @@ public class AclController {
     private final DeviceAclService aclService;
     private final SysUserMapper userMapper;
 
-    /** 可授权的用户清单（供授权下拉；不含密码字段，实体上有 @JsonProperty(WRITE_ONLY) 保护） */
+    /** 可授权的用户清单 */
     @Operation(summary = "用户清单（授权下拉用）")
     @GetMapping("/users")
     public Result<List<SysUser>> users() {
@@ -43,7 +43,7 @@ public class AclController {
                 .orderByAsc(SysUser::getId)));
     }
 
-    /** 某范围（分组/设备）的授权清单；memberType=OLT/ONU 各查各的 ACL 表（默认 OLT） */
+    /** 某范围（分组/设备）的授权清单 */
     @Operation(summary = "某范围的授权清单；memberType=OLT/ONU（默认 OLT）")
     @GetMapping("/list")
     public Result<List<ResAcl>> list(@RequestParam String scopeType, @RequestParam String scopeId,

@@ -18,70 +18,65 @@ import java.util.List;
 @ConfigurationProperties(prefix = "acs.cpe")
 public class CpeProperties {
 
-    /** 设备 ACS URL 可指向的路径列表（不带 /api，设备直连）。 */
+    /** 设备直连 ACS 路径列表 */
     private List<String> paths = List.of("/acs");
 
-    /** CPE 设备直连监听端口列表（独立于 server 主端口）。 */
+    /** 设备直连监听端口列表 */
     private List<Integer> ports = List.of(9090, 8080, 8012, 6060, 5481, 9092, 6890, 9095, 7013);
 
-    /** 同设备互斥：是否校验 ACS 用户名密码（Basic，空则不校验） */
     private String authUsername = "";
     private String authPassword = "";
 
-    /** 会话空闲超时（秒），超时未收到 CPE 请求则结束会话并落库 */
+    /** 会话空闲超时（秒） */
     private int sessionTimeoutSeconds = 60;
 
-    /** 单会话最大 RPC 往返数，防失控 */
+    /** 单会话最大 RPC 往返数 */
     private int maxRpcCount = 255;
 
-    /** GetParameterValues 单次批量参数个数 */
     private int gpvBatchSize = 32;
 
-    /** SPV 下发受理成功后是否回读校验（追加 verify GPV 步，比对设备实际生效值） */
+    /** SPV 后是否回读校验 */
     private boolean spvReadback = true;
 
-    /** 设备参数树/机型模板 SQLite 库文件（相对运行目录）。 */
+    /** 参数树 SQLite 库文件路径 */
     private String sqlitePath = "data/template.pack";
 
-    /** 设备台账/下发任务表是否启动时自动补建（MySQL，DDL 与 sql/mysql.sql 一致） */
+    /** 启动时自动补建台账/任务表 */
     private boolean autoCreateTable = true;
 
-    /** Connection Request（反向连接）账号密码，同时用于 ACS→CPE 的 Digest 认证 */
+    /** 反向连接账密 */
     private String crUsername = "itsm";
     private String crPassword = "itsm";
 
-    /** 反向连接超时（毫秒） */
     private int crTimeoutMs = 3000;
 
-    /** 首次上报自动下发的周期 Inform 间隔（秒） */
+    /** 首次下发周期 Inform 间隔（秒） */
     private int initPeriodicInformSeconds = 300;
 
-    /** 采集类同步任务等待设备回参的最大秒数（业务采集/能力测试） */
+    /** 采集任务等待设备回参秒数 */
     private int collectTimeoutSeconds = 120;
 
-    /** Redis 会话生命周期 TTL（秒）：cpe:session:{sn} 的过期时间。 */
+    /** Redis 会话 TTL（秒） */
     private int sessionTtlSeconds = 180;
 
-    /** CWMP 报文体积上限（字节），超出直接拒绝，防止无鉴权大报文内存 DoS */
+    /** CWMP 报文体积上限（字节） */
     private int maxBodyBytes = 1024 * 1024;
 
-    /** SN 粒度令牌桶限流开关（cpe:limit:token:{sn}，风暴报文拦在 Redis 会话之外） */
+    /** SN 粒度令牌桶限流开关 */
     private boolean rateLimitEnabled = true;
-    /** 令牌桶容量（突发放行数） */
     private int rateLimitCapacity = 10;
-    /** 每分钟回填令牌数 */
     private int rateLimitRefillPerMinute = 12;
 
-    /** 设备档案缓存 cpe:info:{sn} 的 TTL（秒），低频更新，避免每次 Inform 查 MySQL */
+    /** 设备档案缓存 TTL（秒） */
     private int deviceInfoTtlSeconds = 600;
 
-    /** 参数树缓存 cpe:params:tree:{sn} 的 TTL（秒），落库时主动失效，TTL 只作兜底 */
+    /** 参数树缓存 TTL（秒） */
     private int paramTreeTtlSeconds = 600;
 
-    /** Redis 派发队列 tr069:queue:rpc 的长度上限（LTRIM 裁剪，防堆积无限膨胀） */
+    /** Redis 派发队列长度上限 */
     private int taskQueueMaxSize = 10000;
 
-    /** 前端轮询节奏建议值，后端统一下发 */
+    /** 前端轮询节奏（秒） */
     private int listPollSeconds = 10;
     private int taskPollSeconds = 5;
     private int bizPollSeconds = 15;
@@ -90,6 +85,6 @@ public class CpeProperties {
     private int detailRpcPollSeconds = 3;
     private int detailRpcMaxAttempts = 40;
 
-    /** 能力测试探测的根路径（两个数据模型自动识别，这里只是兜底） */
+    /** 能力探测兜底根路径 */
     private String defaultRootNode = "InternetGatewayDevice.";
 }

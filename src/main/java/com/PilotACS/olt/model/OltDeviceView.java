@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/** OLT 设备视图。 */
 @Data
 public class OltDeviceView {
 
@@ -119,7 +120,6 @@ public class OltDeviceView {
         view.setMacAddress(device.getMacAddress());
         view.setUptime(device.getUptime());
         view.setStatus(device.getStatus());
-        // 状态文案与配色、固件版本串、账号串都在这里拼：账页、详情页头、设备信息卡用的是同一份
         view.setStatusText(statusTextOf(device.getStatus()));
         view.setStatusLevel(statusLevelOf(device.getStatus()));
         view.setFirmwareText(firmwareTextOf(device.getSoftwareVersion(), device.getPatchVersion()));

@@ -12,6 +12,7 @@ import lombok.Data;
 
 import java.util.Map;
 
+/** 命令动作执行请求。 */
 @Data
 public class OltExecRequest {
 

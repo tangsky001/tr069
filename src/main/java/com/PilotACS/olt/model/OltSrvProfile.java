@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/** ONT 业务（能力）模板 */
 @Data
 public class OltSrvProfile {
 

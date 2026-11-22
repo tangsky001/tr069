@@ -33,16 +33,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-// 装维 APP 远程运维配置服务
+/** 装维 APP 远程运维配置服务 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class OpsRemoteService {
 
-    // 操作权限项：与前端复选框一一对应
+    /** 可勾选的操作权限项 */
     public static final List<String> PERMISSIONS = List.of("ticket", "config", "reboot");
 
-    // 可见设备范围：与前端下拉框一一对应
+    /** 可选的设备可见范围 */
     public static final List<Map<String, String>> DEVICE_SCOPES = List.of(
             scope("all", "显示所有设备列表"),
             scope("online", "仅在线设备"),
@@ -62,18 +62,18 @@ public class OpsRemoteService {
     private final JwtUtil jwtUtil;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
-    // 隧道客户端延迟获取：TunnelClient 构造依赖本类，直接注入会循环依赖
+    /** 隧道客户端（延迟获取避免循环依赖） */
     private final org.springframework.beans.factory.ObjectProvider<TunnelClient> tunnelClient;
 
-    // 内网登录地址：跟下发给设备的连接请求地址保持一致
+    /** 内网登录地址 */
     @Value("${acs.public-host:127.0.0.1}")
     private String publicHost;
 
-    // 管理端端口，内网登录链接里带它
+    /** 管理端端口 */
     @Value("${server.port:8888}")
     private int serverPort;
 
-    // 二维码 Token 有效期（天）
+    /** 二维码 Token 有效期（天） */
     @Value("${acs.itms-token-days:30}")
     private int itmsTokenDays;
 
@@ -86,14 +86,13 @@ public class OpsRemoteService {
         return map;
     }
 
-    // 读配置，没有就建一条默认的
+    /** 读取配置，没有则初始化默认配置 */
     public OpsRemoteConfig current() {
         OpsRemoteConfig config = mapper.selectOne(Wrappers.<OpsRemoteConfig>lambdaQuery()
                 .orderByAsc(OpsRemoteConfig::getId)
                 .last("LIMIT 1"));
         if (config == null) {
             config = new OpsRemoteConfig();
-            // token 列 NOT NULL，先占位；真正绑定 itms 账号的令牌在 view() 里按需签发
             config.setToken("");
             config.setPermissions(String.join(",", PERMISSIONS));
             config.setDeviceScope("all");
@@ -106,10 +105,9 @@ public class OpsRemoteService {
         return config;
     }
 
-    // 前端渲染用的完整视图：配置 + 可选项 + 三个二维码内容
+    /** 组装前端渲染用的完整视图 */
     public OpsRemoteView view() {
         OpsRemoteConfig config = current();
-        // Token 失效（未生成/重启清库/过期）时按 itms 账号重新签发
         if (!tokenValid(config.getToken())) {
             config.setToken(createItmsToken(config.getToken()));
             config.setTokenCreatedAt(LocalDateTime.now());
@@ -126,16 +124,13 @@ public class OpsRemoteService {
         view.setRemoteEnabled(config.getRemoteEnabled() != null && config.getRemoteEnabled() == 1);
         view.setPermissionOptions(permissionOptions());
         view.setDeviceScopeOptions(DEVICE_SCOPES);
-        // 内网：public-host + 管理端端口
         view.setLanQrContent(loginUrl(lanBaseUrl(), config.getToken()));
-        // 外网云登录：有子域名就用穿透地址，没有占位
         view.setCloudQrContent(loginUrl(cloudBaseUrl(config.getSubdomain()), config.getToken()));
-        // APK 下载：占位，接真实下载地址再改
         view.setApkQrContent("https://acs.example.com/download/app.apk");
         return view;
     }
 
-    // 保存设置
+    /** 保存设置 */
     public OpsRemoteView save(List<String> permissions, String deviceScope) {
         OpsRemoteConfig config = current();
         if (permissions != null) {
@@ -158,7 +153,7 @@ public class OpsRemoteService {
         return view();
     }
 
-    // 重新生成 Token：旧 Token 立刻失效
+    /** 重新生成 Token，旧 Token 立即失效 */
     public OpsRemoteView regenerateToken() {
         OpsRemoteConfig config = current();
         config.setToken(createItmsToken(config.getToken()));
@@ -169,7 +164,7 @@ public class OpsRemoteService {
         return view();
     }
 
-    // Token 是否有效：JWT 可解析且 Redis 会话存在
+    /** 判断 Token 是否有效 */
     private boolean tokenValid(String token) {
         if (token == null || token.isBlank()) {
             return false;
@@ -182,7 +177,7 @@ public class OpsRemoteService {
         }
     }
 
-    // 以 itms 账号身份签发长有效期令牌，并让旧 Token 立即失效
+    /** 以 itms 账号签发长有效期令牌 */
     private String createItmsToken(String oldToken) {
         SysUser user = userService.lambdaQuery().eq(SysUser::getUsername, AuthConstant.ITMS_USERNAME).one();
         if (user == null) {
@@ -195,7 +190,6 @@ public class OpsRemoteService {
         String token = jwtUtil.create(user.getId(), user.getUsername(), Map.of(), itmsTokenDays * 24L);
         try {
             String jti = jwtUtil.parse(token).getId();
-            // 旧 Token 立即失效
             if (oldToken != null && !oldToken.isBlank()) {
                 try {
                     redisTemplate.delete(AuthConstant.TOKEN_KEY_PREFIX + jwtUtil.parse(oldToken).getId());
@@ -212,7 +206,7 @@ public class OpsRemoteService {
         return token;
     }
 
-    // 生成 10 位随机子域名 [a-z0-9]
+    /** 生成随机子域名 */
     public String newSubdomain() {
         String chars = "abcdefghijklmnopqrstuvwxyz0123456789";
         StringBuilder sb = new StringBuilder(10);
@@ -222,7 +216,7 @@ public class OpsRemoteService {
         return sb.toString();
     }
 
-    // 分配子域名：有就用，没有就生成并落库
+    /** 分配子域名，没有则生成并落库 */
     public String ensureSubdomain() {
         OpsRemoteConfig config = current();
         if (config.getSubdomain() != null && !config.getSubdomain().isBlank()) {
@@ -235,7 +229,7 @@ public class OpsRemoteService {
         return config.getSubdomain();
     }
 
-    // 重新生成子域名（冲突时调）
+    /** 重新生成子域名 */
     public String regenerateSubdomain() {
         OpsRemoteConfig config = current();
         config.setSubdomain(newSubdomain());
@@ -245,7 +239,7 @@ public class OpsRemoteService {
         return config.getSubdomain();
     }
 
-    // 确保有实例 ID：有就用，没有就生成 UUID 落库
+    /** 确保有实例 ID，没有则生成 */
     public String ensureInstanceId() {
         OpsRemoteConfig config = current();
         if (config.getInstanceId() != null && !config.getInstanceId().isBlank()) {
@@ -258,7 +252,7 @@ public class OpsRemoteService {
         return config.getInstanceId();
     }
 
-    // 内网登录地址：public-host 已带协议时直接用
+    /** 组装内网登录地址 */
     private String lanBaseUrl() {
         String host = publicHost == null || publicHost.isBlank() ? "127.0.0.1" : publicHost.trim();
         if (host.contains("://")) {
@@ -267,7 +261,7 @@ public class OpsRemoteService {
         return "http://" + host + ":" + serverPort;
     }
 
-    // 外网穿透地址：有子域名拼 http://{subdomain}.{当前隧道域名后缀}:{PUBLIC_PORT}
+    /** 组装外网穿透地址 */
     private String cloudBaseUrl(String subdomain) {
         if (subdomain == null || subdomain.isBlank()) {
             return "https://acs.example.com";
@@ -277,7 +271,7 @@ public class OpsRemoteService {
         return "http://" + subdomain.trim() + "." + suffix + ":" + PUBLIC_PORT;
     }
 
-    // 扫码登录链接：地址 + token 查询参数
+    /** 组装扫码登录链接 */
     private String loginUrl(String base, String token) {
         String root = base == null || base.isBlank() ? "" : base.trim();
         while (root.endsWith("/")) {
@@ -286,7 +280,7 @@ public class OpsRemoteService {
         return root + "/app/login?token=" + (token == null ? "" : token);
     }
 
-    // 已勾选的权限项
+    /** 拆分已勾选的权限项 */
     private static List<String> splitPermissions(String permissions) {
         List<String> list = new ArrayList<>();
         if (permissions == null || permissions.isBlank()) {
@@ -301,7 +295,7 @@ public class OpsRemoteService {
         return list;
     }
 
-    // 可选权限项
+    /** 组装可选权限项 */
     private static List<Map<String, String>> permissionOptions() {
         List<Map<String, String>> list = new ArrayList<>();
         list.add(option("ticket", "录入工单"));

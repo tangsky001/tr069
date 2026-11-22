@@ -30,7 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-// 角色管理服务
+/** 角色管理服务 */
 @Service
 @RequiredArgsConstructor
 public class SysRoleService extends ServiceImpl<SysRoleMapper, SysRole> {
@@ -38,7 +38,7 @@ public class SysRoleService extends ServiceImpl<SysRoleMapper, SysRole> {
     private final SysRolePermissionMapper rolePermissionMapper;
     private final SysUserMapper userMapper;
 
-    // 角色列表：code/name/userCount/builtin/permissions
+    /** 角色列表 */
     public List<Map<String, Object>> listRoles() {
         Map<String, Long> counts = userMapper.selectList(null).stream()
                 .collect(Collectors.groupingBy(u -> u.getRoleCode() == null ? "" : u.getRoleCode(), Collectors.counting()));
@@ -58,6 +58,7 @@ public class SysRoleService extends ServiceImpl<SysRoleMapper, SysRole> {
         return list;
     }
 
+    /** 新建角色 */
     @Transactional
     public void createRole(RoleCreateDTO dto) {
         if (!dto.getCode().matches("[A-Z0-9_]{2,32}")) {
@@ -78,7 +79,7 @@ public class SysRoleService extends ServiceImpl<SysRoleMapper, SysRole> {
         this.save(role);
     }
 
-    // 覆盖式保存角色权限码
+    /** 覆盖式保存角色权限 */
     @Transactional
     public void savePermissions(String code, List<String> permissions) {
         SysRole role = this.getById(code);
@@ -86,12 +87,10 @@ public class SysRoleService extends ServiceImpl<SysRoleMapper, SysRole> {
             throw new BusinessException("角色不存在");
         }
         if (role.getBuiltin() != null && role.getBuiltin() == 1) {
-            // 超级管理员角色拥有全部权限，禁止修改
             throw new BusinessException("内置角色禁止修改权限");
         }
         LoginUser operator = UserContext.get();
         if (AuthConstant.ITMS_ROLE_CODE.equals(code) && (operator == null || !operator.isSuperAdmin())) {
-            // ITMS 角色权限仅超级管理员可编辑
             throw new BusinessException("仅超级管理员可以编辑 ITMS 权限");
         }
         rolePermissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>().eq(SysRolePermission::getRoleCode, code));
@@ -105,6 +104,7 @@ public class SysRoleService extends ServiceImpl<SysRoleMapper, SysRole> {
         }
     }
 
+    /** 删除角色 */
     @Transactional
     public void deleteRole(String code) {
         SysRole role = this.getById(code);

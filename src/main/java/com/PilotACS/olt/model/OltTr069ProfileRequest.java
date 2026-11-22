@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** TR069 模板创建/修改请求 */
 @Data
 public class OltTr069ProfileRequest {
 

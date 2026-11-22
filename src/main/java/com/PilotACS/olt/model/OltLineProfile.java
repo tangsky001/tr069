@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/** OLT 线路模板 */
 @Data
 public class OltLineProfile {
 

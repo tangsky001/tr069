@@ -15,7 +15,7 @@ import java.util.UUID;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 
-// 密码加盐哈希工具
+/** 密码加盐哈希工具 */
 public final class PasswordUtil {
 
     private PasswordUtil() {
@@ -24,14 +24,14 @@ public final class PasswordUtil {
     private static final int PBKDF2_ITERATIONS = 120_000;
     private static final int PBKDF2_KEY_BITS = 256;
     private static final String PBKDF2_PREFIX = "pbkdf2$";
-    /** PBKDF2 盐里混入应用固定域，避免与其他系统的同 salt+password 口令撞库 */
+    /** PBKDF2 固定域盐 */
     private static final String PBKDF2_DOMAIN = "pilotacs.v1";
 
     public static String randomSalt() {
         return UUID.randomUUID().toString().replace("-", "").substring(0, 16);
     }
 
-    /** 旧版单轮 SHA-256（存量账号兼容，不再用于新口令） */
+    /** 旧版 SHA-256 加密 */
     public static String encrypt(String password, String salt) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -46,7 +46,7 @@ public final class PasswordUtil {
         }
     }
 
-    /** 新版 PBKDF2 慢哈希（新口令一律用这个） */
+    /** PBKDF2 加密 */
     public static String hash(String password, String salt) {
         try {
             PBEKeySpec spec = new PBEKeySpec(password.toCharArray(),
@@ -63,7 +63,7 @@ public final class PasswordUtil {
         }
     }
 
-    /** 校验口令：按存量格式自动选择算法（pbkdf2$ 前缀 → PBKDF2；否则旧 SHA-256） */
+    /** 校验口令 */
     public static boolean verify(String password, String salt, String stored) {
         if (stored == null || stored.isBlank()) {
             return false;
@@ -73,7 +73,7 @@ public final class PasswordUtil {
                 : constantTimeEquals(encrypt(password, salt), stored);
     }
 
-    /** 存量是否为旧格式（登录校验通过后据此透明升级） */
+    /** 是否为旧格式 */
     public static boolean isLegacy(String stored) {
         return stored != null && !stored.startsWith(PBKDF2_PREFIX);
     }
@@ -83,7 +83,7 @@ public final class PasswordUtil {
                 a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** 随机字节（会话/重置令牌用），保留给后续扩展 */
+    /** 随机令牌 */
     public static String randomToken() {
         byte[] b = new byte[16];
         new SecureRandom().nextBytes(b);

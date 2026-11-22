@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
-// 运维管理页环境信息
+/** 运维管理页环境信息 */
 @Service
 @RequiredArgsConstructor
 public class OpsService {
@@ -114,7 +114,6 @@ public class OpsService {
         String timeText = "未知";
         if (!commitTime.isBlank()) {
             try {
-                // git-commit-id 输出如 2026-10-26T17:23:10+0800（无冒号偏移），需专用格式
                 timeText = FMT.format(OffsetDateTime.parse(commitTime,
                         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ")));
             } catch (Exception e) {
@@ -133,7 +132,7 @@ public class OpsService {
         return rows;
     }
 
-    // 读取 git-commit-id 插件生成的 git.properties
+    /** 读取 git.properties */
     private Properties gitProperties() {
         Properties props = new Properties();
         try (InputStream in = new ClassPathResource("git.properties").getInputStream()) {

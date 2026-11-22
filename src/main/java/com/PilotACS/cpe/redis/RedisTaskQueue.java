@@ -16,13 +16,13 @@ import org.springframework.stereotype.Component;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** 任务派发通知队列 tr069:queue:rpc（DB0）：离线设备建任务后入队， */
+/** 任务派发通知队列 tr069:queue:rpc */
 @Component
 public class RedisTaskQueue {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    /** 单轮最多派发条数，防单轮占死调度线程 */
+    /** 单轮最多派发条数 */
     private static final int MAX_BATCH = 50;
 
     private final StringRedisTemplate template;

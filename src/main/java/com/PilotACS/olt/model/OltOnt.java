@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** OLT 上的 ONT 信息 */
 @Data
 public class OltOnt {
 

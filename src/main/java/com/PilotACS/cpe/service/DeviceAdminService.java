@@ -32,18 +32,17 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class DeviceAdminService {
 
-    /** 本地账号所在的父路径形态（User.{i}. / WebUserInfo.{i}. / TeleComAccount.，含运营商定制前缀） */
+    /** 本地账号父路径形态 */
     private static final Pattern LOCAL_ACCOUNT_PARENT =
             Pattern.compile("[._](User|WebUserInfo|TeleComAccount)\\.(\\d+\\.)?$");
 
-    /** User 实例探测上限：超管一般就在前两路，多试几路成本可控 */
+    /** User 实例探测上限 */
     private static final int MAX_USER_INSTANCE = 4;
 
-    /** 账号叶子名：TR-069 标准写 Username，华为私有节点里写 UserName */
     private static final Set<String> USERNAME_LEAVES = Set.of("username");
     private static final Set<String> PASSWORD_LEAVES = Set.of("password");
 
-    /** GPV 采集任务等待窗口（秒），前端 axios 超时 90s，这里留出轮询余量 */
+    /** GPV 采集任务等待窗口（秒） */
     private static final int READ_TIMEOUT_SECONDS = 70;
 
     /** Telnet 开关下发等待窗口（秒） */
@@ -54,9 +53,7 @@ public class DeviceAdminService {
     private final CwmpService cwmpService;
     private final CpeProperties props;
 
-    // ==================== 超管账号查询 ====================
-
-    /** 查询设备本地账号（含超管 telecomadmin 等）。 */
+    /** 查询设备本地账号 */
     public Map<String, Object> queryAdminAccount(String sn) {
         Map<String, Object> device = requireDevice(sn);
         String root = rootOf(device);
@@ -69,13 +66,11 @@ public class DeviceAdminService {
         out.put("rootNode", root);
 
         if (!online && blank(str(device.get("connection_request_url")))) {
-            // 离线且没有连接请求地址：反向唤醒也没有抓手，直接如实回
             return finish(out, "offline", List.of(),
                     "设备离线且无法反向唤醒：台账里没有这台设备的连接请求地址，"
                             + "检查纳管时设备是否上报了 ConnectionRequestURL");
         }
 
-        // 第一轮候选：参数树里真实采到过的账号路径 + 运营商定制超管节点，都没有再上通用形态。
         Map<String, CpeParam> tree = mergedTree(sn);
         List<String> candidates = adminCandidates(root, isp, tree);
         ReadResult read = readValues(sn, candidates, READ_TIMEOUT_SECONDS);
@@ -98,7 +93,7 @@ public class DeviceAdminService {
         return finish(out, "success", accounts, null);
     }
 
-    /** GPV 读取结果：status + fault + 值表 */
+    /** GPV 读取结果 */
     private record ReadResult(String status, String fault, Map<String, String> values) {
         static ReadResult of(String status, Map<String, String> values) {
             return new ReadResult(status, null, values);
@@ -109,7 +104,7 @@ public class DeviceAdminService {
         }
     }
 
-    /** 建一条 GPV 任务读指定参数，等任务完成后再短轮询取值。 */
+    /** 建 GPV 任务读指定参数并轮询取值 */
     private ReadResult readValues(String sn, List<String> names, int timeoutSeconds) {
         if (names.isEmpty()) {
             return ReadResult.of("fail", "没有可读取的参数路径", Map.of());
@@ -160,7 +155,7 @@ public class DeviceAdminService {
         return ReadResult.of("success", values);
     }
 
-    /** 账号候选路径：参数树里真实存在的账号节点 → 运营商定制节点 → 通用形态兜底 */
+    /** 账号候选路径 */
     private List<String> adminCandidates(String root, String isp, Map<String, CpeParam> tree) {
         LinkedHashSet<String> paths = new LinkedHashSet<>();
         for (String p : tree.keySet()) {
@@ -171,7 +166,6 @@ public class DeviceAdminService {
             if (!USERNAME_LEAVES.contains(leaf.toLowerCase()) && !PASSWORD_LEAVES.contains(leaf.toLowerCase())) {
                 continue;
             }
-            // WAN 拨号账号的叶子名也叫 Username，父路径不是本地账号对象的一律不要
             String parent = parentOf(p);
             if (!LOCAL_ACCOUNT_PARENT.matcher(parent).find()) {
                 continue;
@@ -190,7 +184,7 @@ public class DeviceAdminService {
         return new ArrayList<>(paths);
     }
 
-    /** 运营商定制固件的超管节点（TeleComAccount），按台账归属走对应节点 */
+    /** 运营商定制超管节点 */
     private List<String> ispAdminNodes(String isp) {
         String code = str(IspVariant.of(isp));
         return switch (code == null ? "" : code) {
@@ -201,10 +195,9 @@ public class DeviceAdminService {
         };
     }
 
-    /** 通用形态：华为公开版 Web 账号节点 + TR-098 / TR-181 标准 User 实例 */
+    /** 通用账号路径 */
     private static List<String> genericPaths(String root) {
         LinkedHashSet<String> paths = new LinkedHashSet<>();
-        // 华为公开版固件，两种叶子写法都试，各固件不一致
         for (int i = 1; i <= MAX_USER_INSTANCE; i++) {
             String base = root + "UserInterface.X_HW_WebUserInfo." + i + ".";
             paths.add(base + "UserName");
@@ -218,7 +211,7 @@ public class DeviceAdminService {
         return new ArrayList<>(paths);
     }
 
-    /** 把读到的路径按账号对象实例配对成账号（WAN 拨号账号已在候选阶段过滤） */
+    /** 把读到的路径按账号对象实例配对成账号 */
     static List<Map<String, Object>> assemble(Map<String, String> values) {
         Map<String, Map<String, String>> grouped = new TreeMap<>();
         for (Map.Entry<String, String> entry : values.entrySet()) {
@@ -256,9 +249,7 @@ public class DeviceAdminService {
         return accounts;
     }
 
-    // ==================== Telnet 状态 / 开关 / 凭据 ====================
-
-    /** 查询设备 Telnet 使能状态。 */
+    /** 查询设备 Telnet 使能状态 */
     public Map<String, Object> telnetStatus(String sn) {
         Map<String, Object> device = requireDevice(sn);
         Map<String, Object> out = baseOut(sn, device);
@@ -270,7 +261,6 @@ public class DeviceAdminService {
         }
         String value = valueOf(mergedTree(sn), enablePath);
         if (value == null || value.isBlank()) {
-            // 树里有节点但没值（只做过 GPN 扫描）：补一轮 GPV
             ReadResult read = readValues(sn, List.of(enablePath), TELNET_SWITCH_TIMEOUT_SECONDS);
             value = read.values().get(enablePath);
             if ("fail".equals(read.status)) {
@@ -289,7 +279,7 @@ public class DeviceAdminService {
         return finish(out, enabled ? "enabled" : "disabled", null, null);
     }
 
-    /** 开启 / 关闭 Telnet（可选同时切换 WAN 侧访问）。 */
+    /** 开启/关闭 Telnet */
     public Map<String, Object> setTelnet(String sn, boolean enabled, Boolean wanAccess) {
         Map<String, Object> device = requireDevice(sn);
         Map<String, Object> out = baseOut(sn, device);
@@ -301,7 +291,6 @@ public class DeviceAdminService {
         }
         List<Map<String, Object>> values = new ArrayList<>();
         values.add(nv(enablePath, enabled ? "1" : "0"));
-        // WAN 侧访问：勾了才下发，参数树里有对应节点才写（各厂商节点名不一）
         String wanPath = wanAccess == null ? null : wanAccessPath(tree);
         if (wanPath != null) {
             values.add(nv(wanPath, wanAccess ? "1" : "0"));
@@ -326,12 +315,11 @@ public class DeviceAdminService {
                 "设备离线，指令已排队（任务 " + taskId + "），等设备上报后自动执行");
     }
 
-    /** 查询 Telnet 状态及默认账号密码；未开启会自动下发开启指令再读。 */
+    /** 查询 Telnet 状态及默认账号密码（未开启会自动开启） */
     public Map<String, Object> telnetCredentials(String sn) {
         Map<String, Object> device = requireDevice(sn);
         Map<String, Object> out = baseOut(sn, device);
 
-        // 1. 使能状态
         Map<String, CpeParam> tree = mergedTree(sn);
         String enablePath = telnetEnablePath(tree);
         if (enablePath == null) {
@@ -357,7 +345,6 @@ public class DeviceAdminService {
         out.put("enabled", enabled);
         out.put("path", enablePath);
 
-        // 2. 未开启自动开启：受理即发，不建工单，进度走下发任务
         if (!enabled) {
             Map<String, Object> sw = setTelnet(sn, true, null);
             out.put("enablePath", enablePath);
@@ -370,7 +357,6 @@ public class DeviceAdminService {
             out.put("enabled", true);
         }
 
-        // 3. 读默认账号密码：参数树里真实存在的优先，没有再按常规路径试探
         List<String> credPaths = credentialPaths(mergedTree(sn), rootOf(device));
         if (credPaths.isEmpty()) {
             out.put("status", "success");
@@ -402,7 +388,7 @@ public class DeviceAdminService {
         return finish(out, "success", null, empty ? "设备没有回 Telnet 账号密码" : null);
     }
 
-    /** Telnet 凭据路径：树里有的优先，都没有按根节点常规路径试探 */
+    /** Telnet 凭据路径 */
     private List<String> credentialPaths(Map<String, CpeParam> tree, String root) {
         LinkedHashSet<String> paths = new LinkedHashSet<>();
         for (String p : tree.keySet()) {
@@ -422,7 +408,7 @@ public class DeviceAdminService {
         return new ArrayList<>(paths);
     }
 
-    /** Telnet 使能节点：参数树里叶子名为 TelnetEnable 的路径（含 X_CMCC_/X_CT-COM_ 前缀变体） */
+    /** Telnet 使能节点路径 */
     private static String telnetEnablePath(Map<String, CpeParam> tree) {
         for (String p : tree.keySet()) {
             if (!p.endsWith(".") && leafOf(p).equalsIgnoreCase("TelnetEnable")) {
@@ -432,7 +418,7 @@ public class DeviceAdminService {
         return null;
     }
 
-    /** WAN 侧访问节点：叶子名 WANAccess / RemoteAccess / TelnetWanAccess 等 */
+    /** WAN 侧访问节点路径 */
     private static String wanAccessPath(Map<String, CpeParam> tree) {
         Set<String> want = Set.of("wanaccess", "remoteaccess", "telnetwanaccess", "wanremoteaccess");
         for (String p : tree.keySet()) {
@@ -442,8 +428,6 @@ public class DeviceAdminService {
         }
         return null;
     }
-
-    // ==================== 公共工具 ====================
 
     /** 设备存在校验，返回台账行 */
     private Map<String, Object> requireDevice(String sn) {
@@ -494,13 +478,12 @@ public class DeviceAdminService {
         return out;
     }
 
-    /** 合并参数树：落库树打底，活跃会话的内存树覆盖（GPV 刚采的值落库有延迟，会话里的最新）。 */
+    /** 合并参数树（落库树 + 活跃会话内存树） */
     private Map<String, CpeParam> mergedTree(String sn) {
         Map<String, CpeParam> out = new LinkedHashMap<>();
         try {
             out.putAll(store.loadParams(sn));
         } catch (Exception ignore) {
-            // 设备还没采集过参数树
         }
         CwmpSession session = cwmpService.findSessionBySn(sn);
         if (session != null && !session.isEnded()) {
@@ -514,7 +497,7 @@ public class DeviceAdminService {
         return session != null && !session.isEnded();
     }
 
-    /** 台账登记的根节点，没登记按配置默认（TR-098）处理 */
+    /** 台账登记的根节点 */
     private String rootOf(Map<String, Object> device) {
         String root = str(device.get("root_node"));
         return root == null || root.isBlank() ? props.getDefaultRootNode() : root;

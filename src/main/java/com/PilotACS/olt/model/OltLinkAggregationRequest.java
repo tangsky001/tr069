@@ -10,11 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
-/**
- * 链路聚合组创建/删除请求。
- * 华为口径：创建 {@code link-aggregation 0/17 0-1 ingress workmode lacp-static}，
- * 删除 {@code undo link-aggregation 0/17}（masterFs 即命令里的主控槽位）。
- */
+/** 链路聚合组创建/删除请求 */
 @Data
 public class OltLinkAggregationRequest {
 

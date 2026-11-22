@@ -20,7 +20,6 @@ public class GenericOltProfile extends AbstractOltVendorProfile {
 
     @Override
     public OltVendor.CliStyle cliStyle() {
-        // 认不出厂商就不认领任何风格，用探测时那条版本命令的风格
         return null;
     }
 
@@ -49,7 +48,6 @@ public class GenericOltProfile extends AbstractOltVendorProfile {
         if (text == null || text.isBlank()) {
             return null;
         }
-        // 挨家问一遍：谁认得这个型号就用谁的
         for (OltVendorProfile profile : OltVendorProfiles.brands()) {
             String model = profile.extractModel(text);
             if (model != null) {

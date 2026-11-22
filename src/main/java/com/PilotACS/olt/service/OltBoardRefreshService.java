@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** 板卡状态刷新：每 2 分钟一轮，只发 display board 0，设备忙则跳过（人工优先） */
+/** OLT 板卡状态定时刷新 */
 @Service
 @RequiredArgsConstructor
 public class OltBoardRefreshService {
@@ -51,16 +51,16 @@ public class OltBoardRefreshService {
 
     private final OltService oltService;
 
-    /** 上一轮还没跑完就跳过本轮，避免叠加 */
+    /** 上一轮未完成时跳过本轮 */
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    /** 轮次计数：离线设备按轮次抽检，不每轮都连 */
+    /** 轮次计数 */
     private final java.util.concurrent.atomic.AtomicLong rounds = new java.util.concurrent.atomic.AtomicLong();
 
     /** 整轮调度，单线程 */
     private ExecutorService roundRunner;
 
-    /** 设备刷新并发池，线程按需创建、空闲 60 秒回收 */
+    /** 设备刷新并发池 */
     private ThreadPoolExecutor devicePool;
 
     @PostConstruct
@@ -107,7 +107,6 @@ public class OltBoardRefreshService {
             boolean probeOffline = rounds.incrementAndGet() % OFFLINE_PROBE_ROUNDS == 0;
             List<OltDevice> queue = new ArrayList<>();
             for (OltDevice device : devices) {
-                // 离线设备每 30 分钟探一次就够了：每轮都连会让 connect 超时把整轮拖长
                 if (!probeOffline && "OFFLINE".equals(device.getStatus())) {
                     continue;
                 }
@@ -115,7 +114,6 @@ public class OltBoardRefreshService {
             }
             int updated = 0;
             int skipped = 0;
-            // 分批提交：每批 MAX_CONCURRENCY 台，等这批完成再提交下一批
             for (int from = 0; from < queue.size(); from += MAX_CONCURRENCY) {
                 List<OltDevice> chunk = queue.subList(from, Math.min(from + MAX_CONCURRENCY, queue.size()));
                 List<Future<Boolean>> futures = new ArrayList<>(chunk.size());
@@ -138,7 +136,6 @@ public class OltBoardRefreshService {
                     }
                 }
             }
-            // 2 分钟一轮，成功不打 info，免得日志被刷满；只有状态变化时才值得看
             Logs.debug(Logs.Module.OLT_COLLECT, "OLT 板卡状态刷新：{} 台更新，{} 台跳过（人工操作中或采集失败）", updated, skipped);
         } catch (Exception e) {
             Logs.warn(Logs.Module.OLT_COLLECT, "OLT 板卡状态刷新异常: {}", e.getMessage());

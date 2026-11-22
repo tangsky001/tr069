@@ -26,18 +26,18 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** SIP 语音：可编辑线路清单 + 按路拆单直发（受理即发不建工单）。 */
+/** SIP 语音线路清单与按路直发 */
 @Service
 @RequiredArgsConstructor
 public class DeviceSipService {
 
-    /** 端口没填时的行业默认值；注册与代理各一份，设备侧也是这么默认的 */
+    /** SIP 默认端口 */
     public static final String DEFAULT_SIP_PORT = "5060";
 
-    /** 申报能力文案里的语音路数：{@code 8路SIP} → 8 */
+    /** 申报能力文案里的语音路数 */
     private static final Pattern DECLARED_SIP = Pattern.compile("(\\d+)路SIP");
 
-    /** 服务器四件套在 VoiceProfile 层与 Line 层的候选叶子（兼容厂商变体） */
+    /** 服务器参数候选叶子 */
     private static final String[] REGISTRAR_LEAVES = {"RegistrarServer", "SIPRegistrarServer"};
     private static final String[] REGISTRAR_PORT_LEAVES = {"RegistrarServerPort", "SIPRegistrarServerPort"};
     private static final String[] PROXY_LEAVES = {"ProxyServer", "SIPProxyServer"};
@@ -49,9 +49,7 @@ public class DeviceSipService {
     private final CpeProperties props;
     private final ModelProfileService modelProfileService;
 
-    // ==================== 线路清单 ====================
-
-    /** 这台设备可编辑的语音线路清单（只读库里的快照，不唤醒设备） */
+    /** 可编辑的语音线路清单 */
     public List<Map<String, Object>> lines(String sn) {
         Map<String, Object> device = requireDevice(sn);
         DeviceData data = deviceData(sn);
@@ -84,7 +82,6 @@ public class DeviceSipService {
                 result.add(option);
                 continue;
             }
-            // 申报了但设备还没上报的一路：给一份空表单，端口按默认值填好
             Map<String, Object> blank = new LinkedHashMap<>();
             blank.put("line", line);
             blank.put("number", "");
@@ -101,12 +98,11 @@ public class DeviceSipService {
         return result;
     }
 
-    /** 一条线路的可编辑字段：号码/认证账号密码取 Line 层，服务器四件套 VoiceProfile 层优先 */
+    /** 一条线路的可编辑字段 */
     private Map<String, Object> lineRow(DeviceData data, String prefix, String profilePrefix, int line) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("path", prefix);
         out.put("line", line);
-        // 号码：标准 DirectoryNumber → 厂商参数（SIP.URI / SIP.AuthUserName，不少设备不报标准字段）
         String number = orElse(data.value(prefix + "DirectoryNumber"),
                 orElse(data.value(prefix + "SIP.URI"),
                         orElse(data.value(prefix + "SIP.AuthUserName"),
@@ -124,7 +120,6 @@ public class DeviceSipService {
         out.put("registered", registered);
         out.put("authUser", orElse(data.value(prefix + "SIP.AuthUserName"), data.value(prefix + "AuthUserName")));
         out.put("password", orElse(data.value(prefix + "SIP.AuthPassword"), data.value(prefix + "AuthPassword")));
-        // 服务器四件套挂在 VoiceProfile 上（局点侧地址，整档共用），Line 层有值也认
         out.put("registrar", serverValue(data, profilePrefix, prefix, REGISTRAR_LEAVES));
         out.put("registrarPort", orElse(serverValue(data, profilePrefix, prefix, REGISTRAR_PORT_LEAVES),
                 DEFAULT_SIP_PORT));
@@ -134,9 +129,7 @@ public class DeviceSipService {
         return out;
     }
 
-    // ==================== 按路下发 ====================
-
-    /** 按路下发 SIP 配置（受理即发，不建工单）。 */
+    /** 按路下发 SIP 配置 */
     public Map<String, Object> submit(String sn, Map<String, Object> body) {
         Map<String, Object> device = requireDevice(sn);
         DeviceData data = deviceData(sn);
@@ -149,7 +142,6 @@ public class DeviceSipService {
         List<Integer> lines = normalizedLines(body.get("lines"));
         String operator = str(body.get("username"));
 
-        // 路号 → Line 前缀 / VoiceProfile 前缀（同一路号取第一个出现的实例）
         Map<Integer, String[]> prefixes = linePrefixes(data, root);
 
         List<Map<String, Object>> tasks = new ArrayList<>();
@@ -189,11 +181,10 @@ public class DeviceSipService {
         return result;
     }
 
-    /** 某一路的业务字段 → 参数三元组：只在设备参数树真实存在该叶子时才下发 */
+    /** 业务字段 → 参数三元组 */
     private List<Map<String, Object>> valuesOf(DeviceData data, String prefix, String profilePrefix,
                                                Map<String, Object> body, String number) {
         List<Map<String, Object>> out = new ArrayList<>();
-        // 号码：URI 叶子写完整值（允许带 @domain），DirectoryNumber 只写 @ 前的号码
         String uriLeaf = existingLeaf(data, prefix, "SIP.URI", "URI", "PhoneNumber");
         String dnLeaf = existingLeaf(data, prefix, "DirectoryNumber");
         if (uriLeaf != null) {
@@ -203,19 +194,15 @@ public class DeviceSipService {
             String dn = number.contains("@") ? number.substring(0, number.indexOf('@')) : number;
             out.add(nv(dnLeaf, dn));
         }
-        // 认证账号决定设备用哪个账号注册，没填就退回号码
         String authUser = text(str(body.get("authUser")), number);
         putIfPresent(out, data, prefix, authUser, "SIP.AuthUserName", "AuthUserName");
         putIfPresent(out, data, prefix, str(body.get("password")), "SIP.AuthPassword", "AuthPassword");
-        // 服务器四件套：整档共用，VoiceProfile 层优先，Line 层有变体也认；为空不修改
         putIfPresent(out, data, profilePrefix, str(body.get("registrar")), REGISTRAR_LEAVES);
         putPort(out, data, profilePrefix, str(body.get("registrarPort")), REGISTRAR_PORT_LEAVES);
         putIfPresent(out, data, profilePrefix, str(body.get("proxy")), PROXY_LEAVES);
         putPort(out, data, profilePrefix, str(body.get("proxyPort")), PROXY_PORT_LEAVES);
         return out;
     }
-
-    // ==================== 工具 ====================
 
     private Map<String, Object> requireDevice(String sn) {
         try {
@@ -225,7 +212,7 @@ public class DeviceSipService {
         }
     }
 
-    /** 枚举参数树里的语音线路：路号 → [Line 前缀, VoiceProfile 前缀]。 */
+    /** 路号 → [Line 前缀, VoiceProfile 前缀] */
     private Map<Integer, String[]> linePrefixes(DeviceData data, String root) {
         Map<Integer, String[]> out = new LinkedHashMap<>();
         String base = BusinessPaths.voiceRoot(root);
@@ -251,7 +238,6 @@ public class DeviceSipService {
         try {
             data.loadAll(store.loadParams(sn));
         } catch (Exception ignore) {
-            // 设备还没采集过参数树
         }
         CwmpSession session = cwmpService.findSessionBySn(sn);
         if (session != null && !session.isEnded()) {
@@ -260,7 +246,7 @@ public class DeviceSipService {
         return data;
     }
 
-    /** 申报的语音路数（机型适配能力申报，{@code 4-8} 取最大值），取不到按 0 */
+    /** 申报的语音路数 */
     private int declaredSipCount(String sn) {
         try {
             Object st = modelProfileService.adaptStatus(List.of(sn)).get(sn);
@@ -294,7 +280,6 @@ public class DeviceSipService {
                     out.add(line);
                 }
             } catch (NumberFormatException ignore) {
-                // 非数字路号丢弃
             }
         }
         return out.isEmpty() ? List.of(1) : new ArrayList<>(out.stream().sorted().toList());
@@ -340,7 +325,7 @@ public class DeviceSipService {
         return null;
     }
 
-    /** 厂商私有叶子：按叶子名小写匹配（如 …SIP.X_XXXX_URI） */
+    /** 按叶子名匹配厂商私有叶子 */
     private static String vendorLeaf(DeviceData data, String prefix, String nameLower) {
         for (String p : data.leaves(prefix)) {
             if (p.substring(p.lastIndexOf('.') + 1).equalsIgnoreCase(nameLower)) {
@@ -379,7 +364,7 @@ public class DeviceSipService {
         }
     }
 
-    /** 端口：没填按默认值下发，设备侧也是这么默认的 */
+    /** 端口没填按默认值下发 */
     private static void putPort(List<Map<String, Object>> out, DeviceData data,
                                 String prefix, String value, String... candidates) {
         putIfPresent(out, data, prefix,

@@ -18,7 +18,7 @@ import java.util.regex.Pattern;
 /** 厂商 profile 的默认实现：第三方 OLT 的常见样子 */
 public abstract class AbstractOltVendorProfile implements OltVendorProfile {
 
-    /** 型号常见写法：Model: xxx / Product name : xxx / 设备型号 / 产品名称 */
+    /** 型号常见写法 */
     protected static final Pattern MODEL_LABEL = Pattern.compile(
             "(?im)^\\s*(?:model(?:\\s*name)?|product\\s*name|device\\s*type|equipment\\s*type|设备型号|产品名称)"
                     + "\\s*[:：]\\s*([A-Za-z0-9._/-]{3,40})\\s*$");
@@ -48,12 +48,12 @@ public abstract class AbstractOltVendorProfile implements OltVendorProfile {
         return firstMatch(text, modelPatterns());
     }
 
-    /** 自家型号的识别顺序，子类覆写后把自己的型号放前面 */
+    /** 型号识别正则，子类可覆写 */
     protected List<Pattern> modelPatterns() {
         return List.of(MODEL_LABEL);
     }
 
-    /** 按给定顺序逐个试，第一个匹配上的就是型号 */
+    /** 按顺序试正则，返回首个匹配的型号 */
     protected static String firstMatch(String text, List<Pattern> patterns) {
         if (text == null || text.isBlank()) {
             return null;
@@ -70,7 +70,7 @@ public abstract class AbstractOltVendorProfile implements OltVendorProfile {
         return null;
     }
 
-    /** 回显关键字匹配，避免每个子类都写一遍大小写转换 */
+    /** 回显关键字匹配 */
     protected static boolean containsAny(String output, String... keywords) {
         if (output == null || output.isBlank()) {
             return false;

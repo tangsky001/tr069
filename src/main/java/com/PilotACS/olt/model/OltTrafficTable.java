@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** 流量限速模板 */
 @Data
 public class OltTrafficTable {
 

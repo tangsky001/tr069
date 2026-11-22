@@ -12,13 +12,13 @@ import com.PilotACS.olt.model.OltBoardStatusRule;
 import java.util.List;
 import java.util.Locale;
 
-/** 板卡档案与状态翻译：设备侧知识，以前整张躺在页面里 */
+/** 板卡档案与状态翻译 */
 public final class OltBoardCatalog {
 
     private OltBoardCatalog() {
     }
 
-    /** 环境温度告警阈值(摄氏度)：超过就当告警 */
+    /** 环境温度告警阈值(摄氏度) */
     public static final int ENV_TEMP_ALARM_C = 65;
 
     /** 型号档案 */
@@ -34,7 +34,7 @@ public final class OltBoardCatalog {
             new OltBoardProfile("H808EPSD", "EPSD 8 口 PON 业务板", "pon", "EPON",
                     8, false, List.of("EPSD")));
 
-    /** 状态翻译规则，从上往下第一条命中的生效 */
+    /** 状态翻译规则 */
     private static final List<OltBoardStatusRule> STATUS_RULES = List.of(
             new OltBoardStatusRule(List.of("auto find"), "自动发现", "warning"),
             new OltBoardStatusRule(List.of("not installed"), "未插板", "danger"),
@@ -48,12 +48,12 @@ public final class OltBoardCatalog {
                     List.of("inservice", "in service", "in position", "normal", "working", "online", "up"),
                     "正常", "success"));
 
-    /** 页面要展示整张表时给出去（比如画个型号下拉）；判定一律走 {@link #match} */
+    /** 型号档案列表 */
     public static List<OltBoardProfile> profiles() {
         return PROFILES;
     }
 
-    /** 按板卡型号匹配档案，匹配不到返回 null */
+    /** 按板卡型号匹配档案 */
     public static OltBoardProfile match(String boardType) {
         if (boardType == null || boardType.isBlank()) {
             return null;
@@ -69,7 +69,7 @@ public final class OltBoardCatalog {
         return null;
     }
 
-    /** 灯带丝印标题：PON 业务板按型号认出具体制式（GPON / XGPON / EPON / XEPON）， */
+    /** 面板丝印标题 */
     public static String stripTitleOf(String panelKind, String boardType) {
         switch (panelKind == null ? "" : panelKind) {
             case "pon":
@@ -83,7 +83,7 @@ public final class OltBoardCatalog {
         }
     }
 
-    /** 从板卡型号认 PON 制式（华为业务板的型号字母段就标着制式）： */
+    /** 按板卡型号认 PON 制式 */
     public static String ponTypeOf(String boardType) {
         return ponStripTitle(boardType);
     }
@@ -105,7 +105,7 @@ public final class OltBoardCatalog {
         return "PON";
     }
 
-    /** 没配档案的板卡按端口类型推断面板样式，让主控板、上联板也有像样的面板 */
+    /** 按端口类型推断面板样式 */
     public static String panelKindOf(String portMode) {
         String mode = portMode == null ? "" : portMode.toUpperCase(Locale.ROOT);
         if (mode.isBlank()) {
@@ -123,12 +123,11 @@ public final class OltBoardCatalog {
         return "generic";
     }
 
-    /** 设备返回的英文状态 → 翻译规则，认不出来返回 null（页面就显示原样） */
+    /** 翻译设备返回的英文状态 */
     public static OltBoardStatusRule statusOf(String status) {
         if (status == null || status.isBlank()) {
             return null;
         }
-        // 设备写成 Active_normal / in-service 这类，统一成空格分隔的小写再比
         String text = status.toLowerCase(Locale.ROOT).replaceAll("[_-]+", " ").trim();
         for (OltBoardStatusRule rule : STATUS_RULES) {
             for (String keyword : rule.keywords()) {

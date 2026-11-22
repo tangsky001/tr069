@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/** GEM 映射行。 */
 @Data
 public class OltGemMapping {
 

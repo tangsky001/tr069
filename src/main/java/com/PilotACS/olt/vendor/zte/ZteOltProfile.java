@@ -12,7 +12,7 @@ import com.PilotACS.olt.vendor.AbstractOltVendorProfile;
 import java.util.List;
 import java.util.regex.Pattern;
 
-/** 中兴 ZXA10 C300 / C320 / C350：show 那一套，提示符 ZXAN# */
+/** 中兴 ZXA10 系列厂商适配 */
 public class ZteOltProfile extends AbstractOltVendorProfile {
 
     private static final Pattern MODEL = Pattern.compile(

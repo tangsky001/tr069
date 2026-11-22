@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/** 自动发现开启状态 */
 @Data
 public class OltOntAutoFindStatus {
 

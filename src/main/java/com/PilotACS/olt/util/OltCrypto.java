@@ -34,13 +34,10 @@ public final class OltCrypto {
         if (envKey != null && envKey.length() == 16) {
             raw = envKey.getBytes(StandardCharsets.UTF_8);
         } else {
-            // 存量数据用默认密钥加密，不能直接 fail-fast（会阻断启动），
-            // 但必须把风险喊出来：生产环境务必配置 ACS_OLT_CRYPTO_KEY
             Logs.warn(Logs.Module.OLT, "未配置 ACS_OLT_CRYPTO_KEY（16 字符），使用内置默认密钥——"
                     + "生产环境必须配置，否则库中加密口令形同明文");
             raw = DEFAULT_KEY;
         }
-        // 补齐到 16 字节（AES-128）
         if (raw.length < 16) {
             byte[] padded = new byte[16];
             System.arraycopy(raw, 0, padded, 0, raw.length);
@@ -56,12 +53,11 @@ public final class OltCrypto {
     private OltCrypto() {
     }
 
-    /** 加密：返回带前缀的密文字符串。null 或空串原样返回 */
+    /** 加密 */
     public static String encrypt(String plain) {
         if (plain == null || plain.isEmpty()) {
             return plain;
         }
-        // 已经是密文了，不重复加密
         if (plain.startsWith(PREFIX)) {
             return plain;
         }
@@ -80,7 +76,7 @@ public final class OltCrypto {
         }
     }
 
-    /** 解密：传入密文返回明文。没有前缀的按明文直接返回（兼容存量数据） */
+    /** 解密 */
     public static String decrypt(String stored) {
         if (stored == null || stored.isEmpty()) {
             return stored;

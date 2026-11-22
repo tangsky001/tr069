@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** 线路模板映射关系行 */
 @Data
 public class OltLineMappingRow {
 

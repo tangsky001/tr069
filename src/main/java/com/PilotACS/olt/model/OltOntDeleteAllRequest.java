@@ -12,6 +12,7 @@ import lombok.Data;
 
 import java.util.List;
 
+/** 批量删除 ONT 请求 */
 @Data
 public class OltOntDeleteAllRequest {
 

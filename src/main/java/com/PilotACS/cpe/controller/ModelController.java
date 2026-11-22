@@ -36,7 +36,7 @@ public class ModelController {
         return Result.ok(modelProfileService.adaptStatus(list));
     }
 
-    /** 能力申报候选值（运营商/网口数/网口速率/WIFI 规格），取值口径由后端统一 */
+    /** 能力申报候选值 */
     @GetMapping("/capability-options")
     public Result<Map<String, Object>> capabilityOptions() {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -51,7 +51,6 @@ public class ModelController {
         out.put("ports", List.of("1", "2", "4", "8"));
         out.put("sips", List.of("无", "1", "2", "4", "8"));
         out.put("speeds", List.of("10/100", "10/100/1000", "10/100/1000/2500"));
-        // 只保留能实测到的频段口径：检测端只识别 2.4G / 5G，给 6G 必判不满足；无 WIFI 光猫选「无」
         out.put("wifiSpecs", List.of("无", "2.4G", "2.4G+5G"));
         return Result.ok(out);
     }

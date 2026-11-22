@@ -30,7 +30,7 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** 管理端下发工单：建单、预约调度、转下发、记录步骤、推进状态。 */
+/** 管理端下发工单服务 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -77,7 +77,6 @@ public class WorklistDeliveryService {
             throw new BusinessException("缺少设备序列号");
         }
         if (worklistDesc == null || worklistDesc.isBlank()) {
-            // 页面上直接点提交时调用方不给流水号；流水号是幂等键，
             worklistDesc = newWorklistDesc(category);
         }
 
@@ -91,13 +90,11 @@ public class WorklistDeliveryService {
 
         Map<String, Object> device = findDevice(sn);
         if (device != null && ext != null) {
-            // 第一步：房间号/备注先落设备台账——下发替换 %room% 与页面备注列读的都是台账值
             String room = ext.roomNo() == null ? "" : ext.roomNo().trim();
             String remark = ext.remark() == null ? "" : ext.remark().trim();
             if (!room.isBlank() || !remark.isBlank()) {
                 syncDeviceProfile(sn, room, remark);
             }
-            // 第二步：选了分组就把设备移进该分组（归属关系落分组表，工单只存 group_id 备查）
             if (ext.groupId() != null && ext.groupId() > 0) {
                 String moveError = groupService.moveMember("G:" + ext.groupId(), "ONU", sn.trim(), username);
                 if (moveError != null) {
@@ -106,10 +103,8 @@ public class WorklistDeliveryService {
                 log.info("工单建单移动分组: sn={}, groupId={}", sn, ext.groupId());
             }
         }
-        // 第三步：下发由调度在设备在线后自动跟上（预约 10 秒执行）
 
         boolean bizOrder = ext != null && ext.bizTemplateId() != null;
-        // 变量兜底：空串键移除（下发时用模板默认值）
         Map<String, String> filled = WorklistVariables.applyDefaults(category, values);
         if (bizOrder) {
             filled.put("bizTemplateId", String.valueOf(ext.bizTemplateId()));
@@ -138,13 +133,11 @@ public class WorklistDeliveryService {
             w.setRemark(ext.remark());
         }
         w.setActive(ext == null || ext.active() == null || ext.active() ? 1 : 0);
-        // 口令值不落日志，只记录填了哪些变量
         w.setParameters(toJson(filled));
         w.setUsername(username);
         w.setRollbackFlag(0);
         w.setTimeInit(now);
         if ("reserve".equals(w.getStatus())) {
-            // 在线设备从建单这一刻起算 10 秒
             w.setTimeReserve(now);
         }
         w.setCreatedAt(now);
@@ -179,9 +172,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    // ==================== 待执行工单调度 ====================
-
-    /** 扫描等待执行 / 预约中的工单： */
+    /** 定时扫描等待执行 / 预约中的工单 */
     @Scheduled(fixedDelay = 10000, initialDelay = 5000)
     public void deliverPendingWorklists() {
         List<Worklist> pending;
@@ -208,13 +199,11 @@ public class WorklistDeliveryService {
     private void processPending(Worklist w, LocalDateTime now) {
         Map<String, Object> device = findDevice(w.getSn());
         if (device == null) {
-            // 设备还没登记进台账，继续等待
             return;
         }
         boolean online = "online".equals(device.get("status"));
         if ("standby".equals(w.getStatus())) {
             if (online) {
-                // 设备在线，从现在起预约 10 秒后下发
                 Worklist patch = new Worklist();
                 patch.setId(w.getId());
                 patch.setStatus("reserve");
@@ -227,7 +216,6 @@ public class WorklistDeliveryService {
         }
         // reserve：预约中
         if (!online) {
-            // 掉线了，退回等待，上线后重新预约
             Worklist patch = new Worklist();
             patch.setId(w.getId());
             patch.setStatus("standby");
@@ -239,7 +227,7 @@ public class WorklistDeliveryService {
         if (reserved.plusSeconds(10).isAfter(now)) {
             return;
         }
-        // 抢占：先改成 sending，防止下一轮扫描重复执行
+        // 抢占改成 sending，防止重复执行
         Worklist claim = new Worklist();
         claim.setId(w.getId());
         claim.setStatus("sending");
@@ -251,10 +239,8 @@ public class WorklistDeliveryService {
         w.setStatus("sending");
         Long bizTemplateId = bizTemplateIdOf(w);
         if (bizTemplateId != null || "reset".equals(w.getBizType()) || "reboot".equals(w.getBizType())) {
-            // 复位/重启/整包都在调度线程直接跑（整包内部异步，复位走任务管线）
             executeClaimed(w, bizTemplateId, device);
         } else {
-            // 意图下发同步阻塞，交给工作线程，别把 10 秒调度拖死
             worker.execute(() -> {
                 try {
                     executeClaimed(w, null, device);
@@ -266,7 +252,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    /** 单线程工作池：意图下发同步阻塞（逐条 RPC 等待），串行足够 */
+    /** 单线程工作池 */
     private final java.util.concurrent.ExecutorService worker =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "worklist-delivery");
@@ -274,7 +260,7 @@ public class WorklistDeliveryService {
                 return t;
             });
 
-    /** 抢占到 sending 后的实际执行入口 */
+    /** 实际执行入口 */
     private void executeClaimed(Worklist w, Long bizTemplateId, Map<String, Object> device) {
         if (bizTemplateId != null) {
             runBizDelivery(w, bizTemplateId);
@@ -285,9 +271,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    // ==================== 三类下发 ====================
-
-    /** 配置模板意图下发：变量覆盖字段 → 占位替换 → 逐条 RPC */
+    /** 配置模板意图下发 */
     private void runTemplateDelivery(Worklist w, Map<String, Object> device) {
         Map<String, String> values = readValues(w);
         values.remove("bizTemplateId");
@@ -297,13 +281,11 @@ public class WorklistDeliveryService {
             return;
         }
         Map<String, Object> fields = new LinkedHashMap<>(templateResolver.fieldsOf(tpl));
-        // 工单变量按同键覆盖模板字段（口令没填就留模板默认值）
         values.forEach((k, v) -> {
             if (v != null && !v.isBlank()) {
                 fields.put(k, v);
             }
         });
-        // 房间号以台账为准重算 %room%：建单时设备可能还没登记，兜底值已写进参数，
         String room = device == null ? null : (String) device.get("room_no");
         String desc = device == null ? null : (String) device.get("remark");
         fields.replaceAll((k, v) -> v instanceof String s ? WorklistVariables.resolve(s, room, desc) : v);
@@ -324,7 +306,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    /** 回读确认结果拼进工单结果文案 */
+    /** 回读确认结果摘要 */
     private String verifySummary(Map<String, Object> result) {
         Object v = result.get("verified");
         if (v == null) {
@@ -339,7 +321,7 @@ public class WorklistDeliveryService {
         };
     }
 
-    /** 业务模板整包下发：复用业务模板执行器，轮询执行记录到终态后回写工单 */
+    /** 业务模板整包下发 */
     private void runBizDelivery(Worklist w, Long bizTemplateId) {
         WorklistStepRecord step = addStep(w.getId(),
                 "整包下发 · 业务模板", "BizTemplate", Map.of("templateId", bizTemplateId));
@@ -357,7 +339,6 @@ public class WorklistDeliveryService {
                         break;
                     }
                 } catch (Exception e) {
-                    // 执行记录被清了之类的异常，按失败收口
                     break;
                 }
                 Thread.sleep(5000);
@@ -387,7 +368,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    /** 复位 / 重启工单：不走模板，直接走任务管线发一条 RPC */
+    /** 复位 / 重启工单 */
     private void runRpcDelivery(Worklist w, boolean reboot) {
         String rpc = reboot ? "Reboot" : "FactoryReset";
         String comment = reboot ? "重启设备" : "恢复出厂";
@@ -439,30 +420,28 @@ public class WorklistDeliveryService {
         }
     }
 
-    // ==================== 删改 ====================
-
-    /** 建单扩展字段：管理端「新增工单」弹窗的附加信息 */
+    /** 建单扩展字段 */
     public record OrderExtras(String bizType, Long groupId, String roomNo,
                               String extra, String remark, Boolean active,
                               Long bizTemplateId, String bizTemplateName) {
     }
 
-    /** 工单修改请求：sn 只有未执行的单允许改，其余字段随时可改 */
+    /** 工单修改请求 */
     public record OrderUpdate(String sn, Long groupId, String roomNo, String worklistType,
                               String extra, String remark, Boolean active) {
     }
 
-    /** 执行中的状态，改删都挡掉 */
+    /** 判断是否执行中状态 */
     private boolean inFlight(String status) {
         return "sending".equals(status) || "running".equals(status) || "bind".equals(status);
     }
 
-    /** 还没跑的状态：设备标识还能改 */
+    /** 判断是否待执行状态 */
     private boolean pending(String status) {
         return "build".equals(status) || "standby".equals(status) || "reserve".equals(status);
     }
 
-    /** 修改工单。房间号改动同步设备台账（与建单同口径）；设备标识改动只在 */
+    /** 修改工单 */
     public Worklist update(Long id, OrderUpdate cmd) {
         Worklist w = worklistMapper.selectById(id);
         if (w == null) {
@@ -471,7 +450,6 @@ public class WorklistDeliveryService {
         if (inFlight(w.getStatus())) {
             throw new BusinessException("工单正在执行，暂不能修改");
         }
-        // 设备标识：改了就重新归一（台账里有就取台账的 SN）
         if (cmd.sn() != null && !cmd.sn().isBlank() && !cmd.sn().trim().equals(w.getSn())) {
             if (!pending(w.getStatus())) {
                 throw new BusinessException("工单已执行，设备标识不能再改");
@@ -483,7 +461,6 @@ public class WorklistDeliveryService {
                 w.setDomain((String) device.get("device_type"));
             }
         }
-        // 房间号：工单与台账一起改
         if (cmd.roomNo() != null) {
             w.setRoomNo(cmd.roomNo().isBlank() ? null : cmd.roomNo().trim());
         }
@@ -496,7 +473,6 @@ public class WorklistDeliveryService {
         }
         if (cmd.worklistType() != null && !cmd.worklistType().isBlank()
                 && (pending(w.getStatus()) || w.getBizType() == null)) {
-            // 工单类型只在未执行阶段允许切换，避免已下发的复位单半路变重启
             w.setBizType(cmd.worklistType().trim());
         }
         if (cmd.extra() != null) {
@@ -507,7 +483,6 @@ public class WorklistDeliveryService {
         }
         if (cmd.active() != null) {
             w.setActive(cmd.active() ? 1 : 0);
-            // 未激活单改回激活：进入等待执行，调度自动跟上
             if (cmd.active() && "build".equals(w.getStatus())) {
                 w.setStatus("standby");
             }
@@ -519,7 +494,7 @@ public class WorklistDeliveryService {
         return Worklist.decorate(w);
     }
 
-    /** 删除工单：执行中的单拒删 */
+    /** 删除工单 */
     public void delete(Long id) {
         Worklist w = worklistMapper.selectById(id);
         if (w == null) {
@@ -534,9 +509,7 @@ public class WorklistDeliveryService {
         log.info("删除工单: id={}, sn={}, desc={}", id, w.getSn(), w.getWorklistDesc());
     }
 
-    // ==================== 步骤与状态工具 ====================
-
-    /** 记录工单的一条执行步骤（追加，保留每次尝试的历史） */
+    /** 记录一条执行步骤 */
     public WorklistStepRecord addStep(Long worklistId, String comment,
                                       String rpc, Object requestArgs) {
         Long count = stepMapper.selectCount(new LambdaQueryWrapper<WorklistStepRecord>()
@@ -574,7 +547,7 @@ public class WorklistDeliveryService {
         log.info("工单下发成功: id={}, sn={}", w.getId(), w.getSn());
     }
 
-    /** 模板/整包下发失败：未达上限则退回预约态延时重试（30s/120s），否则终态失败 */
+    /** 下发失败重试或终态失败 */
     private void failOrRetry(Worklist w, String reason) {
         int n = attempts.merge(w.getId(), 1, Integer::sum);
         if (n < MAX_ATTEMPTS) {
@@ -602,7 +575,7 @@ public class WorklistDeliveryService {
         log.warn("工单下发失败: id={}, err={}", w.getId(), reason);
     }
 
-    /** 读回工单里存的参数值 */
+    /** 读回工单参数值 */
     public Map<String, String> readValues(Worklist worklist) {
         if (worklist == null || worklist.getParameters() == null || worklist.getParameters().isBlank()) {
             return new HashMap<>();
@@ -617,7 +590,7 @@ public class WorklistDeliveryService {
         }
     }
 
-    /** 按台账找设备，找不到返回 null（工单留在等待执行） */
+    /** 按台账找设备，找不到返回 null */
     private Map<String, Object> findDevice(String sn) {
         try {
             return store.findDevice(sn);

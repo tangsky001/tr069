@@ -7,19 +7,19 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 
-/** 配置模板桥接：业务模板模块只依赖本接口，避免两模块间交叉依赖蔓延 */
+/** 配置模板桥接 */
 @Component
 @RequiredArgsConstructor
 public class ConfigTemplateResolver {
 
     private final ConfigTemplateService configTemplateService;
 
-    /** 按 id 取配置模板视图（含意图摘要），不存在返回 null */
+    /** 按 id 取配置模板视图 */
     public Map<String, Object> findView(Long id) {
         return configTemplateService.findView(id);
     }
 
-    /** 取配置模板意图字段（含入参覆盖前的默认值） */
+    /** 取配置模板意图字段 */
     public Map<String, Object> fieldsOf(Long id) {
         return configTemplateService.fieldsOf(id);
     }
@@ -29,7 +29,7 @@ public class ConfigTemplateResolver {
         return configTemplateService.incrementalOf(id);
     }
 
-    /** 按业务类型列配置模板（工单默认模板挑选用） */
+    /** 按业务类型列配置模板 */
     public List<Map<String, Object>> list(String category, String keyword) {
         return configTemplateService.list(category, keyword);
     }

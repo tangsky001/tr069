@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** 业务快照派生：从设备参数树按数据模型（TR-098/TR-181）整理出 */
+/** 业务快照派生 */
 @Service
 public class BusinessSnapshotService {
 
@@ -42,7 +42,7 @@ public class BusinessSnapshotService {
         }
     }
 
-    /** 反序列化落库的快照 JSON；解析失败返回 null（调用方现算兜底） */
+    /** 反序列化落库的快照 JSON */
     @SuppressWarnings("unchecked")
     public Map<String, Object> readSnapshot(String json) {
         if (json == null || json.isBlank()) {
@@ -55,7 +55,7 @@ public class BusinessSnapshotService {
         }
     }
 
-    /** 读取落库快照后，用台账最新时间覆盖（快照生成时刻的"注册/最后联系/运行时长"会过时） */
+    /** 用台账最新时间覆盖快照时间 */
     public void refreshTimes(Map<String, Object> snapshot, Map<String, Object> deviceRow) {
         if (snapshot == null) {
             return;
@@ -64,7 +64,6 @@ public class BusinessSnapshotService {
         Long informMs = longOf(deviceRow.get("last_inform_ms"));
         snapshot.put("registerTime", fmt(bootMs));
         snapshot.put("lastContactTime", fmt(informMs));
-        // 运行时长动态推算：采集时刻的 UpTime + 距最近一次上报经过的时间
         if (informMs != null && snapshot.get("upTimeSeconds") instanceof Number n) {
             long up = n.longValue() + Math.max(0, (System.currentTimeMillis() - informMs) / 1000);
             snapshot.put("uptimeText", uptimeText(String.valueOf(up)));
@@ -81,7 +80,6 @@ public class BusinessSnapshotService {
         out.put("ip", firstValue(data, "ExternalIPAddress"));
         out.put("ponType", ponType(data));
         out.put("opticText", opticText(data));
-        // 系统运行时长优先取 DeviceInfo.UpTime（精确路径）；全树模糊匹配会把
         String upTime = data.value(root + "DeviceInfo.UpTime");
         if (upTime == null || upTime.isBlank()) {
             upTime = firstValue(data, "DeviceInfo.UpTime");
@@ -104,8 +102,6 @@ public class BusinessSnapshotService {
         return out;
     }
 
-    // ---------------- WAN ----------------
-
     private List<Map<String, Object>> wanList(DeviceData data, String root) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (int wanDev : data.instances(root + "WANDevice.")) {
@@ -116,7 +112,6 @@ public class BusinessSnapshotService {
                     String obj = base + kind + ".";
                     for (int i : data.instances(obj)) {
                         String prefix = obj + i + ".";
-                        // 幽灵实例过滤：GPN 能列出但 GPV 采不到任何值（设备实际不存在该连接）
                         String ctype = data.value(prefix + "ConnectionType");
                         String cstat = data.value(prefix + "ConnectionStatus");
                         if ((ctype == null || ctype.isBlank()) && (cstat == null || cstat.isBlank())) {
@@ -137,24 +132,20 @@ public class BusinessSnapshotService {
         for (String p : data.leaves(prefix)) {
             params.put(p.substring(prefix.length()), data.value(p));
         }
-        // 业务模式：标准 ServiceList → 厂商参数（X_CMCC_ServiceList / X_CT-COM_ServiceList）→ 连接名 → 连接模式
         String serviceList = orElse(data.value(prefix + "ServiceList"), vendorParam(params, "servicelist"));
         out.put("path", prefix);
         out.put("instance", instance);
         out.put("connMode", connMode);
         out.put("ipProtocol", data.value(prefix + "ConnectionType"));
-        // 地址类型：编址方式（DHCP/Static/PPPoE），厂商参数回退（X_CMCC_AddressType 等）
         out.put("addrType", orElse(data.value(prefix + "AddressingType"), vendorParam(params, "addresstype")));
         out.put("up", boolValue(data, prefix + "Enable", true));
         out.put("statusText", data.value(prefix + "ConnectionStatus"));
         out.put("uptimeText", uptimeText(data.value(prefix + "Uptime")));
         out.put("natEnabled", boolValue(data, prefix + "NATEnabled", null));
         out.put("mtu", data.value(prefix + "MaxMTUSize"));
-        // 卡片标题：连接名（设备网页里叫 Internet连接 / 1_TR069_R_VID 这类）→ 业务清单 → 模式+实例号
         out.put("title", orElse(name, orElse(serviceList, connMode + " " + instance)));
         out.put("service", orElse(serviceList, orElse(name, connMode)));
         out.put("bindPorts", "");
-        // VLAN ID：不少设备不用标准字段，只有厂商参数（X_CMCC_VLANIDMark / X_CT-COM_VLANID / …）
         out.put("vlanId", vendorParam(params, "vlanidmark") != null
                 ? vendorParam(params, "vlanidmark") : vendorParam(params, "vlanid"));
         out.put("params", params);
@@ -171,8 +162,6 @@ public class BusinessSnapshotService {
         }
         return null;
     }
-
-    // ---------------- LAN ----------------
 
     private List<Map<String, Object>> lanList(DeviceData data, String root) {
         List<Map<String, Object>> out = new ArrayList<>();
@@ -212,8 +201,6 @@ public class BusinessSnapshotService {
         return out;
     }
 
-    // ---------------- WIFI ----------------
-
     private List<Map<String, Object>> wifiList(DeviceData data, String root) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (BusinessPaths.isTr181(root)) {
@@ -239,13 +226,11 @@ public class BusinessSnapshotService {
             String base = root + "LANDevice." + lanDev + ".LANWLANConfiguration.";
             java.util.List<Integer> ids = data.instances(base);
             if (ids.isEmpty()) {
-                // 厂商变体：部分固件（如 SKYW/移动定制）少写 LAN 前缀 → WLANConfiguration
                 base = root + "LANDevice." + lanDev + ".WLANConfiguration.";
                 ids = data.instances(base);
             }
             for (int i : ids) {
                 String p = base + i + ".";
-                // 频段判据优先级：X_CMCC_RFBand(0=2.4G,1=5G) → Standard → Channel。
                 String band = bandOfRfBand(data.value(p + "X_CMCC_RFBand"));
                 if (band == null) {
                     band = bandOfTr098(data.value(p + "Standard"));
@@ -325,7 +310,6 @@ public class BusinessSnapshotService {
             return null;
         }
         Set<String> toks = Set.of(standard.toLowerCase().split("[,;\\s]+"));
-        // 严格口径：a/ac 只在 5G，b/g/n 只在 2.4G；ax 两边都有 → 不作判据（留给 RFBand/Channel）
         boolean b5 = toks.contains("a") || toks.contains("ac");
         boolean b24 = toks.contains("b") || toks.contains("g") || toks.contains("n");
         if (b5 && b24) {
@@ -334,7 +318,7 @@ public class BusinessSnapshotService {
         return b5 ? "5.8G" : b24 ? "2.4G" : null;
     }
 
-    /** CMCC 私有 X_CMCC_RFBand：0=2.4G，1=5G（2 预留 6G）；其余返回 null */
+    /** CMCC 私有 RFBand 换算频段 */
     private String bandOfRfBand(String rfBand) {
         if (rfBand == null || rfBand.isBlank()) {
             return null;
@@ -351,7 +335,7 @@ public class BusinessSnapshotService {
         }
     }
 
-    /** 按工作信道推断频段：1~14 → 2.4G，>14 → 5.8G；0(自动)/解析失败返回 null */
+    /** 按工作信道推断频段 */
     private String bandOfChannel(String channel) {
         if (channel == null || channel.isBlank()) {
             return null;
@@ -366,8 +350,6 @@ public class BusinessSnapshotService {
             return null;
         }
     }
-
-    // ---------------- SIP ----------------
 
     private List<Map<String, Object>> sipList(DeviceData data, String root) {
         List<Map<String, Object>> out = new ArrayList<>();
@@ -392,7 +374,6 @@ public class BusinessSnapshotService {
         for (String p : data.leaves(prefix)) {
             params.put(p.substring(prefix.length()), data.value(p));
         }
-        // 空壳线路（GPN 扫出实例但从未采到任何值）不渲染
         boolean hasData = params.values().stream().anyMatch(v -> v != null && !String.valueOf(v).isBlank());
         if (!hasData) {
             return null;
@@ -400,13 +381,11 @@ public class BusinessSnapshotService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("path", prefix);
         out.put("line", line);
-        // 号码：标准 DirectoryNumber → 厂商参数（SIP.URI / SIP.AuthUserName，不少设备不报标准字段）
         String number = orElse(data.value(prefix + "DirectoryNumber"),
                 orElse(data.value(prefix + "SIP.URI"),
                         orElse(data.value(prefix + "SIP.AuthUserName"),
                                 orElse(vendorParam(params, "uri"), vendorParam(params, "authusername")))));
         if (number != null && number.contains("@")) {
-            // URI 形如 0003@ims.mnc001.mcc460.xxx → 截 @ 前的号码
             number = number.substring(0, number.indexOf('@'));
         }
         out.put("number", number);
@@ -415,11 +394,9 @@ public class BusinessSnapshotService {
         out.put("server", server);
         String status = orElse(data.value(prefix + "Status"), data.value(prefix + "SIPRegisterStatus"));
         status = orElse(status, data.value(prefix + "RegisterStatus"));
-        // 注册判定（先于中文归一化）："Unregistered" 含 "registered"，不能命中
         String low = status == null ? "" : status.toLowerCase();
         boolean registered = low.equals("up") || low.contains("ok")
                 || (low.contains("registered") && !low.contains("unregistered") && !low.contains("registering"));
-        // 状态文案统一中文，前端只管颜色
         out.put("statusText", sipStatusText(status));
         out.put("registered", registered);
         out.put("params", params);
@@ -451,8 +428,6 @@ public class BusinessSnapshotService {
         return status;
     }
 
-    // ---------------- 派生字段 ----------------
-
     private String ponType(DeviceData data) {
         for (String p : data.allPaths("")) {
             if (p.contains("PON") && p.endsWith(".Mode")) {
@@ -471,8 +446,6 @@ public class BusinessSnapshotService {
         }
         return null;
     }
-
-    // ---------------- 工具 ----------------
 
     private String firstValue(DeviceData data, String suffix) {
         for (String p : data.allPaths("")) {

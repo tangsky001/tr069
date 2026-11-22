@@ -12,12 +12,12 @@ import org.springframework.beans.factory.InitializingBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-/** sys_user 表结构守护（老库升级，幂等）： */
+/** sys_user 表结构守护 */
 @Component
 @RequiredArgsConstructor
 public class SysSchemaInitializer implements InitializingBean {
 
-    /** PBKDF2 格式实际需要 71 字符，留余量扩到 100 */
+    /** 密码列最小长度 */
     private static final int PASSWORD_MIN_LENGTH = 72;
 
     private final JdbcTemplate jdbcTemplate;

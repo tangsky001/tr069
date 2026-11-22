@@ -13,6 +13,7 @@ import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
 
+/** GEM Port 信息 */
 @Data
 public class OltGemport {
 

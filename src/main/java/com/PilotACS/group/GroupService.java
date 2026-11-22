@@ -39,7 +39,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** 分组管理服务：默认只有固定根节点「资源根组」，分组节点逐级手动创建落库。 */
+/** 分组管理服务。 */
 @Service
 @RequiredArgsConstructor
 public class GroupService {
@@ -48,7 +48,7 @@ public class GroupService {
     public static final String MEMBER_TYPE_ONU = "ONU";
     private static final String GROUP_PREFIX = "G:";
 
-    /** 固定根节点引用：未绑定设备的默认归属 */
+    /** 根节点引用 */
     public static final String ROOT_REF = "ROOT";
     public static final String ROOT_NAME = "资源根组";
 
@@ -56,16 +56,14 @@ public class GroupService {
     private final GroupMemberMapper memberMapper;
     private final OltDeviceMapper oltDeviceMapper;
     private final CivilCodeService civilCodeService;
-    /** 光猫台账（cpe_device，MySQL）：ONU 树/成员装配用 */
     private final com.PilotACS.cpe.store.CpeStore cpeStore;
-    /** 运营商自动识别（参数树私有节点） */
     private final com.PilotACS.cpe.service.ModelProfileService modelProfileService;
 
-    /** 设备级 ACL：树/成员清单按用户可见性过滤 */
+    /** 设备级 ACL 过滤 */
     private final DeviceAclService deviceAclService;
     private final SysOperLogService operLogService;
 
-    /** 分组树：根节点 + 已落库的分组节点（区划节点只有创建过才出现）。 */
+    /** 查询分组树。 */
     public List<GroupNodeView> tree() {
         return tree(MEMBER_TYPE_OLT);
     }
@@ -75,17 +73,14 @@ public class GroupService {
         return GroupScopeContext.with(type, () -> doTree(type));
     }
 
-    /** 地图上有设备的省统一用的高亮蓝 */
     private static final String PROVINCE_DEVICE_COLOR = "#5b9bd5";
-    /** 地图上无设备的省统一用的中性灰 */
     private static final String PROVINCE_EMPTY_COLOR = "#eef1f6";
 
-    /** 省份地图汇总：以区划骨架的 34 省为全集（没建过分组的省也要下发颜色，否则地图整幅灰白）， */
+    /** 省份地图汇总。 */
     public ProvinceMapVO provinceMap(String memberType) {
         String type = normalizeMemberType(memberType);
         List<GroupNodeView> tree = GroupScopeContext.with(type, () -> doTree(type));
         GroupNodeView root = tree.isEmpty() ? null : tree.get(0);
-        // 树里出现过的省级节点（区划节点只有创建过才落库，所以不能只遍历树）
         Map<String, GroupNodeView> treeByName = new HashMap<>();
         if (root != null && root.getChildren() != null) {
             for (GroupNodeView node : root.getChildren()) {
@@ -108,7 +103,6 @@ public class GroupService {
             rows.add(row);
             index++;
         }
-        // 有设备的省按设备数降序排在前面（右侧清单直接按顺序渲染），无设备的殿后
         rows.sort(Comparator.comparingLong(ProvinceMapVO.Province::getValue).reversed());
 
         ProvinceMapVO vo = new ProvinceMapVO();
@@ -116,7 +110,7 @@ public class GroupService {
         return vo;
     }
 
-    /** 无设备省份的随机观感底色：色相按黄金角（137.5°）散开——相邻省色相必然差得远， */
+    /** 计算无设备省份的底色。 */
     private static String pastelOf(int index, String name) {
         int seed = index * 31 + (name == null ? 0 : name.hashCode());
         int hue = (int) Math.round((index * 137.508 + Math.floorMod(seed, 17)) % 360);
@@ -125,7 +119,7 @@ public class GroupService {
         return hslToHex(hue, sat / 100.0, light / 100.0);
     }
 
-    /** HSL(h:0-360, s/l:0-1) → #RRGGBB，供前端地图直接使用 */
+    /** HSL 转 HEX 颜色。 */
     private static String hslToHex(int h, double s, double l) {
         double c = (1 - Math.abs(2 * l - 1)) * s;
         double hp = (h % 360) / 60.0;
@@ -166,7 +160,6 @@ public class GroupService {
     }
 
     private List<GroupNodeView> doTree(String type) {
-        // 设备级 ACL：受限用户看不到未授权设备（null = 不限制）；OLT 按 id、ONU 按 SN
         Set<Long> hidden = MEMBER_TYPE_OLT.equals(type) ? deviceAclService.hiddenOltIds(UserContext.get()) : null;
         Set<String> hiddenOnuRefs = MEMBER_TYPE_ONU.equals(type)
                 ? deviceAclService.hiddenOnuRefs(UserContext.get()) : null;
@@ -176,7 +169,6 @@ public class GroupService {
         Map<Long, GroupNodeView> viewById = new LinkedHashMap<>();
         for (ResGroup group : groups) {
             GroupNodeView view = GroupNodeView.group(group);
-            // 层级标注：按节点自己的区划编号推（省/市/区县），纯自定义节点为 0
             if (group.getCivilCode() != null) {
                 CivilCodeNode civil = civilCodeService.node(group.getCivilCode());
                 view.setLevel(civil == null ? 0 : civil.getLevel());
@@ -192,14 +184,12 @@ public class GroupService {
                 parent.getChildren().add(view);
             }
         }
-        // 根节点：已落库的顶级分组挂在它下面
         GroupNodeView root = new GroupNodeView();
         root.setNodeRef(ROOT_REF);
         root.setKind("root");
         root.setName(ROOT_NAME);
         root.setLevel(0);
         root.getChildren().addAll(topLevel);
-        // 节点直属设备名称清单（悬停提示用）：member 表里存了 label，按类型过滤
         List<GroupMember> memberRows = memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, type));
         if (hidden != null) {
@@ -216,10 +206,8 @@ public class GroupService {
         }
         fillCounts(root.getChildren(), counts);
         fillMembers(root.getChildren(), membersByRef);
-        // 根节点直属成员 = 未绑定任何节点的设备（默认归根）
         List<GroupMemberBrief> rootMembers = new ArrayList<>();
         if (MEMBER_TYPE_OLT.equals(type)) {
-            // OLT：总数来自台账，根成员 = 台账里没写归属关系的设备
             long boundCount = 0;
             for (Map.Entry<String, Long> entry : counts.entrySet()) {
                 if (!ROOT_REF.equals(entry.getKey())) {
@@ -249,7 +237,6 @@ public class GroupService {
             root.setMemberCount(Math.max(visibleTotal - boundCount, 0));
             root.setMemberTotal(Math.max(visibleTotal, 0));
         } else {
-            // ONU：台账在 cpe_device；根成员 = 未归属任何分组的光猫（含显式 ROOT 归属），全部走真实台账
             List<Map<String, Object>> devices = cpeStore.allDevices();
             Set<String> boundRefs = new HashSet<>();
             for (GroupMember member : memberRows) {
@@ -283,12 +270,12 @@ public class GroupService {
         return List.of(root);
     }
 
-    /** 成员类型归一：空/未知 → OLT（老接口默认行为不变） */
+    /** 成员类型归一。 */
     public static String normalizeMemberType(String memberType) {
         return MEMBER_TYPE_ONU.equalsIgnoreCase(memberType) ? MEMBER_TYPE_ONU : MEMBER_TYPE_OLT;
     }
 
-    /** 成员简要信息：OLT 用 member_id，ONU 用 member_ref（光猫标识） */
+    /** 成员简要信息。 */
     private GroupMemberBrief briefOf(GroupMember member) {
         GroupMemberBrief brief = new GroupMemberBrief();
         if (MEMBER_TYPE_ONU.equals(member.getMemberType())) {
@@ -303,7 +290,7 @@ public class GroupService {
         return brief;
     }
 
-    /** 建组候选：某节点下一级可选的区划列表。 */
+    /** 查询建组候选。 */
     public List<GroupNodeView> candidates(String parentRef) {
         return candidates(parentRef, MEMBER_TYPE_OLT);
     }
@@ -315,7 +302,6 @@ public class GroupService {
     private List<GroupNodeView> doCandidates(String parentRef) {
         String civilCode = ROOT_REF.equals(parentRef) ? null : civilOfNode(parentRef);
         if (civilCode == null && !ROOT_REF.equals(parentRef)) {
-            // 自定义节点没有区划锚点，没有下级区划候选
             return List.of();
         }
         List<GroupNodeView> options = new ArrayList<>();
@@ -327,7 +313,7 @@ public class GroupService {
         return options;
     }
 
-    /** 节点的区划编号：ROOT 视为无锚点（候选=省份），G: 查落库记录 */
+    /** 节点的区划编号。 */
     private String civilOfNode(String nodeRef) {
         if (nodeRef == null || !nodeRef.startsWith(GROUP_PREFIX)) {
             return null;
@@ -337,7 +323,7 @@ public class GroupService {
         return group == null ? null : group.getCivilCode();
     }
 
-    /** 直接成员数按节点引用统计（入参行已按类型/可见性过滤） */
+    /** 按节点统计成员数。 */
     private Map<String, Long> countByRef(List<GroupMember> memberRows) {
         Map<String, Long> counts = new HashMap<>();
         for (GroupMember member : memberRows) {
@@ -368,7 +354,7 @@ public class GroupService {
         return total;
     }
 
-    /** 节点引用是否有效：根节点 / G: 前缀查落库记录（须在 scope 上下文内调用，默认 OLT 域） */
+    /** 判断节点引用是否有效。 */
     public boolean refExists(String nodeRef) {
         if (nodeRef == null || nodeRef.isBlank()) {
             return false;
@@ -390,7 +376,7 @@ public class GroupService {
         }
     }
 
-    /** 节点全路径文案：资源根组 / 北京市 / 海淀片区（须在 scope 上下文内调用，默认 OLT 域） */
+    /** 节点全路径文案。 */
     public String pathText(String nodeRef) {
         if (nodeRef == null || nodeRef.isBlank()) {
             return "";
@@ -436,7 +422,6 @@ public class GroupService {
                 .eq(GroupMember::getGroupRef, nodeRef)
                 .orderByDesc(GroupMember::getCreatedAt));
         if (MEMBER_TYPE_ONU.equals(type)) {
-            // ONU：按 SN 关联 cpe_device 真实台账（在线状态/版本/IP 等后端算好），并做 ACL 可见性过滤
             Set<String> hiddenRefs = deviceAclService.hiddenOnuRefs(UserContext.get());
             List<String> sns = bindings.stream()
                     .map(GroupMember::getMemberRef).filter(java.util.Objects::nonNull).toList();
@@ -468,7 +453,7 @@ public class GroupService {
         return rows;
     }
 
-    /** 根节点成员 = 未绑定任何节点的 OLT（默认归属） */
+    /** 根节点 OLT 成员。 */
     private List<GroupMemberView> rootMembers() {
         List<GroupMemberView> rows = new ArrayList<>();
         Set<Long> boundIds = new HashSet<>();
@@ -488,7 +473,7 @@ public class GroupService {
         return rows;
     }
 
-    /** ONU 根节点成员 = 全部光猫（含归属在子分组的），真实台账展示；实际归属看 actualGroupText */
+    /** 根节点 ONU 成员。 */
     private List<GroupMemberView> rootOnuMembers() {
         List<GroupMemberView> rows = new ArrayList<>();
         Map<String, GroupMember> bindingBySn = onuBindingsBySn();
@@ -503,7 +488,7 @@ public class GroupService {
         return rows;
     }
 
-    /** ONU 全部归属记录按 SN 归一（同 SN 取最新一条） */
+    /** ONU 归属记录按 SN 归一。 */
     private Map<String, GroupMember> onuBindingsBySn() {
         Map<String, GroupMember> bySn = new HashMap<>();
         for (GroupMember binding : memberMapper.selectList(new LambdaQueryWrapper<GroupMember>()
@@ -516,7 +501,7 @@ public class GroupService {
         return bySn;
     }
 
-    /** ONU 成员行组装：归属记录 + 真实台账（deviceRow 可能为 null，如台账已被清理） */
+    /** 组装 ONU 成员行。 */
     private GroupMemberView onuMemberView(GroupMember binding, String nodeRef, String groupText,
                                           Map<String, Object> device) {
         GroupMemberView row = new GroupMemberView();
@@ -561,13 +546,13 @@ public class GroupService {
         return row;
     }
 
-    /** 光猫显示名：优先终端型号，缺省 SN */
+    /** 光猫显示名。 */
     private String onuDisplayName(Map<String, Object> device, String sn) {
         Object productClass = device.get("product_class");
         return productClass == null || String.valueOf(productClass).isBlank() ? sn : String.valueOf(productClass);
     }
 
-    /** 厂商显示：全称（Huawei Technologies Co., Ltd / CIOT）→ 中文简称，未登记原样返回 */
+    /** 厂商显示名。 */
     private String orBrand(String manufacturer) {
         String label = BrandName.label(manufacturer);
         return label != null ? label : BrandName.text(manufacturer);
@@ -577,14 +562,14 @@ public class GroupService {
         return v == null || String.valueOf(v).isBlank();
     }
 
-    /** 毫秒时间戳 → 展示文案 */
+    /** 毫秒时间戳转展示文案。 */
     private String fmtMs(long ms) {
         return java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ms),
                 java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter
                 .ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
-    /** 成员行组装：绑定关系 + 实时台账，展示文案这里算好 */
+    /** 组装 OLT 成员行。 */
     private GroupMemberView memberView(Long bindingId, String nodeRef, String groupText,
                                        OltDevice device, LocalDateTime boundAt, String createdBy) {
         GroupMemberView row = new GroupMemberView();
@@ -605,7 +590,7 @@ public class GroupService {
         return row;
     }
 
-    /** 创建分组（落库）：parentRef 指向父节点（null=根节点下）。 */
+    /** 创建分组。 */
     public String create(String parentRef, String civilCode, String name, String operator) {
         return create(parentRef, civilCode, name, operator, MEMBER_TYPE_OLT);
     }
@@ -626,7 +611,6 @@ public class GroupService {
                 return "父分组不存在";
             }
         }
-        // 父节点的区划锚点：决定子节点可选的区划层级
         ResGroup parentGroup = parentId == null ? null : groupMapper.selectById(parentId);
         String parentCivil = parentGroup == null ? null : parentGroup.getCivilCode();
 
@@ -637,7 +621,6 @@ public class GroupService {
             if (civil == null) {
                 return "区划不存在：" + civilCode;
             }
-            // 层级衔接校验：所选区划的上级必须正好是父节点的区划（根节点下只能建省级）
             List<CivilCodeNode> chain = civilCodeService.path(civilCode);
             String expectedParent = chain.size() >= 2 ? chain.get(chain.size() - 2).getCode() : null;
             if (parentCivil == null ? expectedParent != null : !parentCivil.equals(expectedParent)) {
@@ -650,7 +633,6 @@ public class GroupService {
             }
             finalName = name.trim();
         }
-        // 同级同名提醒式拦截，避免手抖建出两个一样的组
         Long same = groupMapper.selectCount(new LambdaQueryWrapper<ResGroup>()
                 .eq(ResGroup::getName, finalName)
                 .eq(parentId == null, ResGroup::getParentId, null)
@@ -695,7 +677,7 @@ public class GroupService {
         return null;
     }
 
-    /** 删除分组：无下级且无绑定成员才允许；根节点不可删 */
+    /** 删除分组。 */
     @Transactional
     public String delete(String nodeRef) {
         return delete(nodeRef, MEMBER_TYPE_OLT);
@@ -734,7 +716,7 @@ public class GroupService {
         return null;
     }
 
-    /** 设备添加即落组：OltService 新增 OLT 时调用。 */
+    /** 设备新增时落组。 */
     public String attachAfterCreate(String groupRef, Long oltId, String label) {
         return GroupScopeContext.with(MEMBER_TYPE_OLT, () -> doAttachAfterCreate(groupRef, oltId, label));
     }
@@ -757,7 +739,7 @@ public class GroupService {
         return null;
     }
 
-    /** 通用归属落库：光猫等设备模块接入时调用。 */
+    /** 通用归属落库。 */
     public String attach(String memberType, String memberRef, String label, String groupRef) {
         String type = normalizeMemberType(memberType);
         return GroupScopeContext.with(type, () -> doAttach(type, memberRef, label, groupRef));
@@ -791,7 +773,7 @@ public class GroupService {
         return null;
     }
 
-    /** 移动设备到目标分组：ROOT = 移回根节点（删除归属关系）。 */
+    /** 移动设备到目标分组。 */
     public String move(String targetRef, Long oltId, String operator) {
         return GroupScopeContext.with(MEMBER_TYPE_OLT, () -> doMove(targetRef, oltId, operator));
     }
@@ -808,7 +790,6 @@ public class GroupService {
                 .eq(GroupMember::getMemberType, MEMBER_TYPE_OLT)
                 .eq(GroupMember::getMemberId, oltId)
                 .last("LIMIT 1"));
-        // 移回根节点 = 回到默认归属：删掉归属关系即可
         if (ROOT_REF.equals(targetRef)) {
             if (existing == null) {
                 return "该设备已在根节点";
@@ -842,7 +823,7 @@ public class GroupService {
         return null;
     }
 
-    /** 通用移动：光猫等设备模块接入时调用。 */
+    /** 通用移动。 */
     public String moveMember(String targetRef, String memberType, String memberRef, String operator) {
         String type = normalizeMemberType(memberType);
         return GroupScopeContext.with(type, () -> doMoveMember(targetRef, type, memberRef, operator));
@@ -856,7 +837,6 @@ public class GroupService {
             return "设备标识不能为空";
         }
         if (MEMBER_TYPE_OLT.equals(type)) {
-            // OLT：标识就是 olt_device.id，走台账校验的老逻辑
             try {
                 return move(targetRef, Long.valueOf(memberRef), operator);
             } catch (NumberFormatException e) {
@@ -868,7 +848,6 @@ public class GroupService {
                 .eq(GroupMember::getMemberRef, memberRef)
                 .last("LIMIT 1"));
         String label = existing != null && existing.getMemberLabel() != null ? existing.getMemberLabel() : memberRef;
-        // 移回根节点 = 回到默认归属：删掉归属关系即可
         if (ROOT_REF.equals(targetRef)) {
             if (existing == null) {
                 return "该设备已在根节点";
@@ -902,14 +881,14 @@ public class GroupService {
         return null;
     }
 
-    /** 设备删除时清理归属关系，避免孤儿记录 */
+    /** 设备删除时清理归属关系。 */
     public void onDeviceDeleted(Long oltId) {
         GroupScopeContext.with(MEMBER_TYPE_OLT, () -> memberMapper.delete(new LambdaQueryWrapper<GroupMember>()
                 .eq(GroupMember::getMemberType, MEMBER_TYPE_OLT)
                 .eq(GroupMember::getMemberId, oltId)));
     }
 
-    /** 通用清理：设备模块删除设备时调用（ONU 按业务标识清） */
+    /** 通用清理。 */
     public void onMemberDeleted(String memberType, String memberRef) {
         String type = normalizeMemberType(memberType);
         GroupScopeContext.with(type, () -> doMemberDeleted(type, memberRef));

@@ -25,7 +25,7 @@ public class OltSchemaInitializer implements InitializingBean {
                     "olt_ont_reg_template", "olt_ont_reg_config", "olt_ont_reg_record",
                     "olt_quick_setup_config");
 
-    /** 后续版本新增的列：{表, 列, 列定义}，缺哪列补哪列 */
+    /** 需补齐的列 */
     private static final String[][] EXPECTED_COLUMNS = {
             {"olt_device", "patch_version", "VARCHAR(64) DEFAULT NULL COMMENT '补丁版本，如 SPC107'"},
             {"olt_device", "backplane", "VARCHAR(64) DEFAULT NULL COMMENT '背板/主板型号，如 H802MABO'"},
@@ -39,7 +39,7 @@ public class OltSchemaInitializer implements InitializingBean {
             {"olt_board", "ports_json", "LONGTEXT DEFAULT NULL COMMENT '端口光模块状态快照(JSON)'"}
     };
 
-    /** 建表语句，与 sql/mysql.sql 同步维护 */
+    /** 建表语句。 */
     private static final String[] CREATE_SQL = {
             """
             CREATE TABLE IF NOT EXISTS `olt_device` (
@@ -212,7 +212,7 @@ public class OltSchemaInitializer implements InitializingBean {
         }
     }
 
-    /** 老库升级：新增字段靠 ALTER 补，避免用户手工改表 */
+    /** 补齐缺失字段。 */
     private void ensureColumns() {
         for (String[] spec : EXPECTED_COLUMNS) {
             if (columnExists(spec[0], spec[1])) {

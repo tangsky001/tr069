@@ -17,7 +17,7 @@ public record OltHuaweiSetupForm(HuaweiQuickSetupRequest request,
                                  int minTr069ProfileId,
                                  int maxTr069ProfileId) {
 
-    /** 取值约束按设备当前认的区间给 */
+    /** 构建一键开局表单，取值约束取华为规划器常量 */
     public static OltHuaweiSetupForm of(HuaweiQuickSetupRequest request) {
         return new OltHuaweiSetupForm(request,
                 HuaweiQuickSetupPlanner.MIN_BANDWIDTH_MBPS,

@@ -10,10 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
-/**
- * 链路聚合组（{@code display link-aggregation} 表格的一行）。
- * 主端口在回显里可能带空格（{@code 0 /17/0}），入库前已归一成 {@code 0/17/0}。
- */
+/** 链路聚合组信息 */
 @Data
 public class OltLinkAggregation {
 

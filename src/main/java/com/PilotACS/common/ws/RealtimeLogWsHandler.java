@@ -22,15 +22,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** 实时日志 WebSocket（独立于概览 WebSocket，不共用任何逻辑）： */
+/** 实时日志 WebSocket */
 @Component
 public class RealtimeLogWsHandler extends TextWebSocketHandler {
 
-    /** 新会话接入时补发的最近日志条数 */
+    /** 新会话补发的日志条数 */
     private static final int BACKLOG_SIZE = 500;
 
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
-    /** 最近日志环形缓冲，新会话接入时补发，避免页面只有打开之后的日志 */
+    /** 最近日志环形缓冲 */
     private final Deque<Map<String, Object>> backlog = new ArrayDeque<>(BACKLOG_SIZE);
     private final ObjectMapper objectMapper;
 
@@ -54,7 +54,7 @@ public class RealtimeLogWsHandler extends TextWebSocketHandler {
         sessions.remove(session);
     }
 
-    /** 由 RealtimeLogAppender 调用：一行日志推给所有在线会话并写入环形缓冲。 */
+    /** 推送一行日志并写入环形缓冲 */
     public void publish(String level, String text) {
         Map<String, Object> line = Map.of("text", text, "level", level);
         synchronized (backlog) {

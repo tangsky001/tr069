@@ -13,14 +13,14 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-// 角色
+/** 角色 */
 @Data
 @TableName("sys_role")
 public class SysRole {
     @TableId(value = "code", type = IdType.INPUT)
     private String code;
     private String name;
-    // 内置角色 1是 0否，内置禁止删除/改权限
+    /** 内置角色 1是 0否 */
     private Integer builtin;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

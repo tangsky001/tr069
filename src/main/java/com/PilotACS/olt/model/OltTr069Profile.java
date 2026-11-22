@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** TR069 服务器模板 */
 @Data
 public class OltTr069Profile {
 

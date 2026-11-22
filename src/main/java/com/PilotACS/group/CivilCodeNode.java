@@ -12,23 +12,23 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/** 行政区划节点（civilCode.csv 一行）。 */
+/** 行政区划节点 */
 @Data
 public class CivilCodeNode {
 
-    /** 区划编号：11 / 1101 / 110101 */
+    /** 区划编号 */
     private String code;
 
-    /** 区划名称：北京市 / 市辖区 / 东城区 */
+    /** 区划名称 */
     private String name;
 
-    /** 上级编号；省级（根节点）为空 */
+    /** 上级编号 */
     private String parentCode;
 
-    /** 层级：1=省，2=市，3=区县（按编号长度推） */
+    /** 层级：1=省，2=市，3=区县 */
     private int level;
 
-    /** 下级区划，叶子为空列表 */
+    /** 下级区划 */
     private List<CivilCodeNode> children = new ArrayList<>();
 
     public CivilCodeNode(String code, String name, String parentCode) {
@@ -38,12 +38,12 @@ public class CivilCodeNode {
         this.level = code.length() == 2 ? 1 : code.length() == 4 ? 2 : 3;
     }
 
-    /** 只读子节点视图，防止外部改坏树结构 */
+    /** 只读子节点视图 */
     public List<CivilCodeNode> getChildren() {
         return Collections.unmodifiableList(children);
     }
 
-    /** 建树用：只有本包的加载逻辑可以挂子节点 */
+    /** 建树用 */
     void addChild(CivilCodeNode child) {
         children.add(child);
     }

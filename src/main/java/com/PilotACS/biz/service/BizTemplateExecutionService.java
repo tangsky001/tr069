@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** 业务模板整包下发执行器：串行逐成员下发（意图下发服务按机型翻译）， */
+/** 业务模板整包下发执行器 */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -42,22 +42,17 @@ public class BizTemplateExecutionService {
     private final IntentDeliveryService intentDeliveryService;
     private final CpeStore store;
     private final ObjectMapper objectMapper;
-    /** 工单留痕：页面直接触发的整包下发也要建工单（下发与工单必须可互相追溯） */
     private final WorklistMapper worklistMapper;
     private final WorklistStepMapper stepMapper;
 
-    /** 执行线程池：同一时间只跑一个整包下发（逐成员串行足够） */
+    /** 下发执行线程池 */
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "biz-template-executor");
         t.setDaemon(true);
         return t;
     });
 
-    // ==================== 入口 ====================
-
-    /** 提交整包下发：建执行记录后交给后台线程，返回记录 id 供轮询。
-     *  linkedWorklistId：经工单触发的传工单 id（工单由调用方回写，不重复建单）；
-     *  页面直接触发传 null，这里自动建一条 sending 工单留痕并在收尾回写。 */
+    /** 提交整包下发，返回执行记录 id */
     public Long execute(Long templateId, String sn, Map<String, Map<String, String>> itemParams,
                         String roomNo, String username) {
         return execute(templateId, sn, itemParams, roomNo, username, null);
@@ -95,8 +90,6 @@ public class BizTemplateExecutionService {
         executionMapper.insert(exec);
         Long execId = exec.getId();
 
-        // 页面直接触发的整包下发：自动建工单留痕（status=sending，调度器只扫 standby/reserve，
-        // 不会重复执行；经工单触发的由 WorklistDeliveryService 回写状态，这里不碰）
         Long createdWorklistId = null;
         if (linkedWorklistId == null) {
             try {
@@ -114,7 +107,7 @@ public class BizTemplateExecutionService {
         return execId;
     }
 
-    /** 直接触发的整包下发建留痕工单 + 首条步骤记录 */
+    /** 直接触发的整包下发建留痕工单 */
     private Long createTraceWorklist(BizTemplate template, String sn, Long execId, String username) {
         Worklist w = new Worklist();
         w.setWorklistDesc(String.format(Locale.ROOT, "ADMIN-BIZ-%s-%d",
@@ -147,9 +140,7 @@ public class BizTemplateExecutionService {
         return w.getId();
     }
 
-    // ==================== 执行 ====================
-
-    /** 后台串行执行整包，逐成员写入执行记录；traceWorklistId 非空时收尾回写留痕工单 */
+    /** 后台串行执行整包，逐成员写入执行记录 */
     private void run(Long execId, String sn, List<BizTemplateItem> items,
                      Map<String, Map<String, String>> overrides, String roomNo,
                      String username, boolean continueOnError, Long traceWorklistId) {
@@ -187,7 +178,6 @@ public class BizTemplateExecutionService {
                     continue;
                 }
 
-                // 合并入参：配置模板字段打底，成员入参覆盖
                 Map<String, Object> fields = new LinkedHashMap<>(templateResolver.fieldsOf(key));
                 Map<String, String> override = overrides.get(item.getTemplateKey());
                 if (override != null) {
@@ -198,7 +188,6 @@ public class BizTemplateExecutionService {
                 Map<String, Object> result = intentDeliveryService.deliver(sn, category, fields,
                         incremental, username);
                 boolean ok = Boolean.TRUE.equals(result.get("success"));
-                // 每个成员的独立下发日志（意图下发内部还会打每一步 RPC 的明细）
                 log.info("[下发] 整包成员 execId={} sn={} 模板={}({}) 结果={}{}",
                         execId, sn, row.get("name"), category, ok ? "成功" : "失败",
                         ok ? "" : "，原因=" + result.get("error"));
@@ -216,7 +205,6 @@ public class BizTemplateExecutionService {
                 }
                 persist(execId, results, success, fail, item.getTemplateKey());
 
-                // 房间号同步到设备资料（首个成员成功且要求同步时）
                 if (ok && roomNo != null && !roomNo.isBlank() && success == 1) {
                     try {
                         store.updateDeviceColumns(sn, Map.of("room_no", roomNo));
@@ -252,7 +240,7 @@ public class BizTemplateExecutionService {
         executionMapper.updateById(exec);
     }
 
-    /** 收尾：更新状态与结束时间；留痕工单（页面直接触发时创建的）同步回写终态 */
+    /** 收尾：更新执行记录状态 */
     private void finish(Long execId, List<Map<String, Object>> results, int success, int fail,
                         boolean aborted, Long traceWorklistId) {
         BizTemplateExecution exec = executionMapper.selectById(execId);
@@ -275,7 +263,7 @@ public class BizTemplateExecutionService {
         finishTraceWorklist(execId, traceWorklistId, status, success, fail, writeJson(results));
     }
 
-    /** 留痕工单回写终态 + 步骤记录收尾（仅页面直接触发路径；工单触发的由 WorklistDeliveryService 回写） */
+    /** 留痕工单回写终态 */
     private void finishTraceWorklist(Long execId, Long worklistId, String status,
                                      int success, int fail, String resultJson) {
         if (worklistId == null) {
@@ -313,9 +301,7 @@ public class BizTemplateExecutionService {
         return steps.isEmpty() ? null : steps.get(0).getId();
     }
 
-    // ==================== 查询 ====================
-
-    /** 执行记录列表（可按 sn 过滤，条数上限 100） */
+    /** 执行记录列表 */
     public List<Map<String, Object>> executions(String sn, int limit) {
         LambdaQueryWrapper<BizTemplateExecution> query = new LambdaQueryWrapper<>();
         if (sn != null && !sn.isBlank()) {
@@ -345,7 +331,7 @@ public class BizTemplateExecutionService {
         return views;
     }
 
-    /** 单次执行详情：记录 + 每成员结果（含每条步骤的 detail） */
+    /** 单次执行详情 */
     public Map<String, Object> execution(Long id) {
         BizTemplateExecution exec = executionMapper.selectById(id);
         if (exec == null) {
@@ -369,8 +355,6 @@ public class BizTemplateExecutionService {
         view.put("results", readJson(exec.getResult()));
         return view;
     }
-
-    // ==================== 工具 ====================
 
     private Long parseKey(String templateKey) {
         if (templateKey == null || templateKey.isBlank()) {

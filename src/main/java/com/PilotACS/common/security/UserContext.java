@@ -6,7 +6,7 @@
 
 package com.PilotACS.common.security;
 
-// 当前登录用户上下文
+/** 当前登录用户上下文 */
 public final class UserContext {
     private static final ThreadLocal<LoginUser> HOLDER = new ThreadLocal<>();
 

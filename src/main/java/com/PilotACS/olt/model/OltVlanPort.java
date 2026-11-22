@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
 
+/** 可做 VLAN 成员的端口 */
 @Data
 public class OltVlanPort {
 
@@ -31,6 +32,7 @@ public class OltVlanPort {
         this.label = label(type, no);
     }
 
+    /** 生成端口显示名，如 PON01 */
     public static String label(String type, Integer no) {
         String prefix = switch (type == null ? "" : type.toLowerCase()) {
             case "epon", "gpon" -> "PON";

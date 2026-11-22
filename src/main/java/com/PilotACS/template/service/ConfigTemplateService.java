@@ -26,18 +26,14 @@ public class ConfigTemplateService {
     private final ConfigTemplateMapper mapper;
     private final ObjectMapper objectMapper;
 
-    // ==================== 元数据 ====================
-
-    /** 模板类型与各类别的意图字段定义，供页面按类型渲染表单 */
+    /** 模板类型与意图字段定义 */
     public Map<String, Object> meta() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("categories", TemplateFieldDefs.CATEGORIES);
-        // 只有 WAN 类业务有「先清理存量再新建」的覆盖语义，增量开关只对它们有意义；
         data.put("incrementalCategories", TemplateFieldDefs.CATEGORIES.stream()
                 .map(c -> c.get("code"))
                 .filter(code -> code != null && code.toUpperCase(Locale.ROOT).startsWith("WAN_"))
                 .toList());
-        // 绑定端口候选：与 bind_ports 意图字段的取值同源，页面照它渲染勾选组
         data.put("bindPortGroups", TemplateFieldDefs.BIND_PORT_GROUPS);
         Map<String, List<Map<String, Object>>> fieldsByType = new LinkedHashMap<>();
         for (Map<String, Object> def : TemplateFieldDefs.FIELD_DEFS) {
@@ -48,8 +44,7 @@ public class ConfigTemplateService {
         return data;
     }
 
-    // ==================== 查询 ====================
-
+    /** 模板列表 */
     public List<Map<String, Object>> list(String category, String keyword) {
         LambdaQueryWrapper<ConfigTemplate> query = new LambdaQueryWrapper<>();
         if (category != null && !category.isBlank()) {
@@ -69,6 +64,7 @@ public class ConfigTemplateService {
         return views;
     }
 
+    /** 模板详情 */
     public Map<String, Object> get(Long id) {
         ConfigTemplate template = mapper.selectById(id);
         if (template == null) {
@@ -77,7 +73,7 @@ public class ConfigTemplateService {
         return toView(template);
     }
 
-    /** 按 id 取模板视图，不存在返回 null（业务模板成员引用时用） */
+    /** 按模板 ID 取视图，不存在返回 null */
     public Map<String, Object> findView(Long id) {
         if (id == null) {
             return null;
@@ -86,8 +82,7 @@ public class ConfigTemplateService {
         return template == null ? null : toView(template);
     }
 
-    // ==================== 保存 / 删除 ====================
-
+    /** 保存模板 */
     public Map<String, Object> save(ConfigTemplateSaveRequest request) {
         if (request == null) {
             throw new BusinessException("提交内容不能为空");
@@ -135,6 +130,7 @@ public class ConfigTemplateService {
         return toView(template);
     }
 
+    /** 删除模板 */
     public void delete(Long id) {
         if (mapper.selectById(id) == null) {
             throw new BusinessException("模板不存在: " + id);
@@ -142,7 +138,7 @@ public class ConfigTemplateService {
         mapper.deleteById(id);
     }
 
-    /** 取模板的意图字段，供下发时按机型数据模型翻译成真实参数 */
+    /** 取模板的意图字段 */
     public Map<String, Object> fieldsOf(Long id) {
         ConfigTemplate template = mapper.selectById(id);
         if (template == null) {
@@ -151,7 +147,7 @@ public class ConfigTemplateService {
         return readFields(template.getFields());
     }
 
-    /** 模板是否勾了「增量业务」 */
+    /** 是否为增量业务模板 */
     public boolean incrementalOf(Long id) {
         if (id == null) {
             return false;
@@ -159,8 +155,6 @@ public class ConfigTemplateService {
         ConfigTemplate template = mapper.selectById(id);
         return template != null && template.getIncremental() != null && template.getIncremental();
     }
-
-    // ==================== 内部实现 ====================
 
     private Map<String, Object> toView(ConfigTemplate template) {
         Map<String, Object> view = new LinkedHashMap<>();
@@ -172,10 +166,8 @@ public class ConfigTemplateService {
         view.put("enabled", template.getEnabled() != null && template.getEnabled());
         view.put("remark", template.getRemark());
         Map<String, Object> fields = readFields(template.getFields());
-        // 读出口也归一一次：存量模板里的历史脏值（Internet / Internet,TR069 混合大小写）
         normalizeServiceList(fields);
         view.put("fields", fields);
-        // 列表页的「开通意图」摘要与类型标签色：字段定义在服务端，取值中文也只在这边查得到
         view.put("intentSummary", intentSummaryOf(template.getCategory(), fields));
         view.put("categoryLevel", TemplateFieldDefs.categoryLevelOf(template.getCategory()));
         view.put("incremental", template.getIncremental() != null && template.getIncremental());
@@ -184,7 +176,7 @@ public class ConfigTemplateService {
         return view;
     }
 
-    /** 「开通意图」摘要：按该类型的字段定义逐个拼「标签：取值」，取值翻成中文 */
+    /** 生成「开通意图」摘要 */
     private static String intentSummaryOf(String category, Map<String, Object> fields) {
         if (category == null || fields == null || fields.isEmpty()) {
             return "-";
@@ -209,11 +201,10 @@ public class ConfigTemplateService {
                 parts.add(def.get("label") + "：" + text);
             }
         }
-        // 全角空格分隔：一行里几个字段能看出分组，又不至于挤成一片
         return parts.isEmpty() ? "-" : String.join("　", parts);
     }
 
-    /** 多选拼「a、b」，单选翻中文；选项表里没有的原样显示 */
+    /** 字段取值转展示文本 */
     private static String optionTextOf(Object value, Map<String, Object> def) {
         if (value instanceof List<?> list) {
             List<String> texts = new ArrayList<>();
@@ -260,7 +251,7 @@ public class ConfigTemplateService {
         return fields;
     }
 
-    /** 业务模式归一成设备口径（INTERNET / TR069 / VOIP / IPTV，大写、逗号分隔、去重） */
+    /** 业务模式归一成设备口径 */
     private static void normalizeServiceList(Map<String, Object> fields) {
         if (fields == null) {
             return;
