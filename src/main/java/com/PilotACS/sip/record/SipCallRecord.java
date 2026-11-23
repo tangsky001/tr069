@@ -27,6 +27,12 @@ public class SipCallRecord {
     /** 被叫分机（队列呼叫为实际接通的分机） */
     private String callee;
 
+    /** 主叫显示名 */
+    private String callerName;
+
+    /** 被叫显示名 */
+    private String calleeName;
+
     /** 呼叫发起时间 */
     private LocalDateTime startedAt;
 

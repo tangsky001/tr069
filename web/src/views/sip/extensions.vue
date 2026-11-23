@@ -31,6 +31,9 @@
             <span class="mono">{{ row.password }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="显示名" prop="displayName" width="120">
+          <template slot-scope="{ row }">{{ row.displayName || '-' }}</template>
+        </el-table-column>
         <el-table-column label="备注" prop="remark" min-width="130">
           <template slot-scope="{ row }">{{ row.remark || '-' }}</template>
         </el-table-column>
@@ -80,6 +83,9 @@
         <el-form-item label="密码">
           <el-input v-model="editForm.password" placeholder="留空默认同分机号" />
         </el-form-item>
+        <el-form-item label="显示名">
+          <el-input v-model="editForm.displayName" placeholder="来电显示姓名，如 张三；留空则取备注" />
+        </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="editForm.remark" placeholder="选填" />
         </el-form-item>
@@ -102,6 +108,11 @@
         </el-form-item>
         <el-form-item label="统一密码">
           <el-input v-model="genForm.password" placeholder="留空默认同分机号" />
+        </el-form-item>
+        <el-form-item label="显示名模板">
+          <el-input v-model="genForm.displayName" placeholder="留空默认同分机号；如 销售部-{ext} → 销售部-8201">
+            <template slot="append">{ext}=分机号</template>
+          </el-input>
         </el-form-item>
         <el-form-item label="排除含4">
           <el-switch v-model="genForm.exclude4" />
@@ -132,8 +143,8 @@ export default {
       dialogVisible: false,
       genDialogVisible: false,
       saving: false,
-      editForm: { id: null, extension: '', password: '', remark: '' },
-      genForm: { prefix: '82', start: 1, end: 99, password: '', exclude4: true }
+      editForm: { id: null, extension: '', password: '', displayName: '', remark: '' },
+      genForm: { prefix: '82', start: 1, end: 99, password: '', displayName: '', exclude4: true }
     }
   },
   computed: {
@@ -179,11 +190,12 @@ export default {
       return sec + ' 秒'
     },
     openAdd() {
-      this.editForm = { id: null, extension: '', password: '', remark: '' }
+      this.editForm = { id: null, extension: '', password: '', displayName: '', remark: '' }
       this.dialogVisible = true
     },
     openEdit(row) {
-      this.editForm = { id: row.id, extension: row.extension, password: row.password, remark: row.remark || '' }
+      this.editForm = { id: row.id, extension: row.extension, password: row.password,
+        displayName: row.displayName || '', remark: row.remark || '' }
       this.dialogVisible = true
     },
     onSave() {
@@ -194,8 +206,8 @@ export default {
       }
       this.saving = true
       const req = f.id
-        ? updateSipExt(f.id, { password: f.password, remark: f.remark })
-        : addSipExt({ extension: f.extension.trim(), password: f.password, remark: f.remark })
+        ? updateSipExt(f.id, { password: f.password, displayName: f.displayName, remark: f.remark })
+        : addSipExt({ extension: f.extension.trim(), password: f.password, displayName: f.displayName, remark: f.remark })
       req.then(() => {
         this.$message.success('已保存')
         this.dialogVisible = false
@@ -230,7 +242,7 @@ export default {
       }).catch(() => {})
     },
     openGenerate() {
-      this.genForm = { prefix: '82', start: 1, end: 99, password: '', exclude4: true }
+      this.genForm = { prefix: '82', start: 1, end: 99, password: '', displayName: '', exclude4: true }
       this.genDialogVisible = true
     },
     onGenerate() {
@@ -244,7 +256,7 @@ export default {
         return
       }
       this.saving = true
-      generateSipExts({ prefix: f.prefix, start: f.start, end: f.end, exclude4: f.exclude4, password: f.password })
+      generateSipExts({ prefix: f.prefix, start: f.start, end: f.end, exclude4: f.exclude4, password: f.password, displayName: f.displayName })
         .then(res => {
           const r = res.data || {}
           this.$message.success(`生成完成：新增 ${r.added}，跳过 ${r.skipped}（含排除含4/已存在）`)

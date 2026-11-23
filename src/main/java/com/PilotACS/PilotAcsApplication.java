@@ -21,6 +21,14 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.PilotACS.sip.reg", "com.PilotACS.sip.queue", "com.PilotACS.sip.record"})
 public class PilotAcsApplication {
     public static void main(String[] args) {
-        SpringApplication.run(PilotAcsApplication.class, args);
+        try{
+            SpringApplication.run(PilotAcsApplication.class, args);
+            System.out.println("PilotACS TR-069 ACS 启动成功");
+        }catch (Exception e) {
+            System.out.println("PilotACS TR-069 ACS 启动失败");
+            e.printStackTrace();
+        }
+        
+        
     }
 }

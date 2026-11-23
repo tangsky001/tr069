@@ -86,6 +86,7 @@ public class SipAdminController {
             row.put("id", e.getId());
             row.put("extension", ext);
             row.put("password", e.getPassword());
+            row.put("displayName", e.getDisplayName());
             row.put("remark", e.getRemark());
             Registration reg = registry.findAlive(ext);
             row.put("registered", reg != null);
@@ -104,14 +105,15 @@ public class SipAdminController {
     @RequiresPermission("sip:update")
     @PostMapping("/extensions")
     public Result<SipExtension> addExtension(@RequestBody Map<String, String> body) {
-        return Result.ok(extService.add(body.get("extension"), body.get("password"), body.get("remark")));
+        return Result.ok(extService.add(body.get("extension"), body.get("password"),
+                body.get("displayName"), body.get("remark")));
     }
 
     @Operation(summary = "修改分机")
     @RequiresPermission("sip:update")
     @PutMapping("/extensions/{id}")
     public Result<Void> updateExtension(@PathVariable Long id, @RequestBody Map<String, String> body) {
-        extService.update(id, body.get("password"), body.get("remark"));
+        extService.update(id, body.get("password"), body.get("displayName"), body.get("remark"));
         return Result.ok();
     }
 
@@ -139,7 +141,8 @@ public class SipAdminController {
         int end = Integer.parseInt(String.valueOf(body.getOrDefault("end", "99")));
         boolean exclude4 = Boolean.parseBoolean(String.valueOf(body.getOrDefault("exclude4", "false")));
         String password = body.get("password") == null ? "" : String.valueOf(body.get("password"));
-        return Result.ok(extService.generate(prefix, start, end, exclude4, password));
+        String displayName = body.get("displayName") == null ? "" : String.valueOf(body.get("displayName"));
+        return Result.ok(extService.generate(prefix, start, end, exclude4, password, displayName));
     }
 
     @Operation(summary = "呼叫队列列表")
@@ -172,6 +175,8 @@ public class SipAdminController {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("caller", s.getCallerExt());
             row.put("callee", s.getCalleeExt());
+            row.put("callerName", extService.displayNameOf(s.getCallerExt()));
+            row.put("calleeName", extService.displayNameOf(s.getCalleeExt()));
             row.put("state", s.getState().name());
             row.put("durationSeconds", s.getState() == CallSession.State.ACTIVE
                     ? (System.currentTimeMillis() - s.getCreatedAt()) / 1000 : 0);

@@ -36,8 +36,24 @@ public class SipExtensionService {
         return mapper.selectList(new QueryWrapper<SipExtension>().orderByAsc("extension"));
     }
 
+    /** 按分机号查配置，无则 null */
+    public SipExtension findByExtension(String ext) {
+        return ext == null ? null : mapper.selectOne(new QueryWrapper<SipExtension>().eq("extension", ext.trim()));
+    }
+
+    /** 按分机号查显示名（displayName 优先，退回备注；无配置返回空串） */
+    public String displayNameOf(String ext) {
+        SipExtension e = findByExtension(ext);
+        if (e == null) {
+            return "";
+        }
+        return e.getDisplayName() != null && !e.getDisplayName().isBlank()
+                ? e.getDisplayName().trim()
+                : (e.getRemark() == null ? "" : e.getRemark().trim());
+    }
+
     /** 单个添加分机，密码留空默认同分机号 */
-    public SipExtension add(String extension, String password, String remark) {
+    public SipExtension add(String extension, String password, String displayName, String remark) {
         String ext = normalize(extension);
         if (ext == null) {
             throw new IllegalArgumentException("分机号不能为空");
@@ -48,6 +64,7 @@ public class SipExtensionService {
         SipExtension e = new SipExtension();
         e.setExtension(ext);
         e.setPassword(password == null || password.isBlank() ? ext : password.trim());
+        e.setDisplayName(displayName == null ? "" : displayName.trim());
         e.setRemark(remark == null ? "" : remark.trim());
         mapper.insert(e);
         registry.reload();
@@ -55,14 +72,17 @@ public class SipExtensionService {
         return e;
     }
 
-    /** 修改密码/备注 */
-    public void update(Long id, String password, String remark) {
+    /** 修改密码/显示名/备注 */
+    public void update(Long id, String password, String displayName, String remark) {
         SipExtension e = mapper.selectById(id);
         if (e == null) {
             throw new IllegalArgumentException("分机不存在");
         }
         if (password != null && !password.isBlank()) {
             e.setPassword(password.trim());
+        }
+        if (displayName != null) {
+            e.setDisplayName(displayName.trim());
         }
         if (remark != null) {
             e.setRemark(remark.trim());
@@ -88,8 +108,11 @@ public class SipExtensionService {
      * 批量生成号段：前缀 + 起止号补齐为 4 位（如前缀 82、起止 1~99 → 8201~8299）。
      * exclude4 为真时跳过第 3/4 位含 4 的号码（如 8404/8424/8204/8214）；
      * 已存在的分机跳过不覆盖，密码留空默认同分机号。
+     * nameTemplate 显示名模板支持 {@code {ext}} 占位符（如 {@code 销售部-{ext}} → {@code 销售部-8201}）；
+     * 留空默认与分机号同名（如 8201 → 8201），话机来电显示保持有名字。
      */
-    public Map<String, Object> generate(String prefix, int start, int end, boolean exclude4, String password) {
+    public Map<String, Object> generate(String prefix, int start, int end, boolean exclude4,
+                                        String password, String nameTemplate) {
         String p = prefix == null ? "" : prefix.trim();
         if (!p.matches("\\d{2,3}")) {
             throw new IllegalArgumentException("前缀须为 2~3 位数字，如 82");
@@ -99,6 +122,7 @@ public class SipExtensionService {
         if (start < 1 || end < start || end > max) {
             throw new IllegalArgumentException("起止范围须在 1~" + max);
         }
+        String tpl = nameTemplate == null ? "" : nameTemplate.trim();
         int added = 0;
         int skipped = 0;
         for (int n = start; n <= end; n++) {
@@ -114,6 +138,7 @@ public class SipExtensionService {
             SipExtension e = new SipExtension();
             e.setExtension(ext);
             e.setPassword(password == null || password.isBlank() ? ext : password.trim());
+            e.setDisplayName(tpl.isEmpty() ? ext : tpl.replace("{ext}", ext));
             mapper.insert(e);
             added++;
         }

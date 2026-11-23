@@ -27,6 +27,9 @@ public class SipExtension {
     /** SIP 注册密码 */
     private String password;
 
+    /** 显示名（From display-name / 话机来电姓名） */
+    private String displayName;
+
     /** 备注 */
     private String remark;
 

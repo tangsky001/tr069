@@ -162,6 +162,30 @@ public class SipMessage {
         return semi >= 0 ? headerValue.substring(0, semi).trim() : headerValue.trim();
     }
 
+    /**
+     * From/To/Contact 头的 display-name（{@code "张三" <sip:1001@..>} 里的 {@code 张三}），
+     * 无显示名返回 null。入站主叫姓名透传、来电显示都用它。
+     */
+    public static String displayNameOf(String headerValue) {
+        if (headerValue == null) {
+            return null;
+        }
+        String v = headerValue.trim();
+        int lt = v.indexOf('<');
+        String name = lt > 0 ? v.substring(0, lt).trim() : "";
+        if (name.length() >= 2 && name.charAt(0) == '"' && name.charAt(name.length() - 1) == '"') {
+            name = name.substring(1, name.length() - 1).trim();
+        }
+        return name.isBlank() ? null : name;
+    }
+
+    /** 拼 {@code "name" <sip:..>} 地址头；name 为空退回裸地址（与旧口径一致） */
+    public static String addrWithDisplay(String name, String uri) {
+        return name == null || name.isBlank()
+                ? '<' + uri + '>'
+                : '"' + name.replace("\"", "") + "\" <" + uri + '>';
+    }
+
     /** From/To/Request-URI 中的 user 部分（sip:user@host） */
     public static String userOf(String uri) {
         if (uri == null) {

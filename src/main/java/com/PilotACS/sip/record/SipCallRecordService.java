@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import com.PilotACS.sip.reg.SipExtensionService;
+
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -27,10 +29,13 @@ public class SipCallRecordService {
 
     private final SipCallRecordMapper mapper;
     private final SipProperties props;
+    private final SipExtensionService extService;
 
-    public SipCallRecordService(SipCallRecordMapper mapper, SipProperties props) {
+    public SipCallRecordService(SipCallRecordMapper mapper, SipProperties props,
+                                SipExtensionService extService) {
         this.mapper = mapper;
         this.props = props;
+        this.extService = extService;
     }
 
     /** 呼叫结束后写记录（CallManager 在会话首次结束时调用一次） */
@@ -38,6 +43,8 @@ public class SipCallRecordService {
         SipCallRecord r = new SipCallRecord();
         r.setCaller(session.getCallerExt());
         r.setCallee(session.getCalleeExt());
+        r.setCallerName(extService.displayNameOf(session.getCallerExt()));
+        r.setCalleeName(extService.displayNameOf(session.getCalleeExt()));
         r.setStartedAt(LocalDateTime.ofInstant(Instant.ofEpochMilli(session.getCreatedAt()), ZoneId.systemDefault()));
         r.setAnswered(session.getAnsweredAt() > 0);
         r.setDurationSeconds(session.getAnsweredAt() > 0

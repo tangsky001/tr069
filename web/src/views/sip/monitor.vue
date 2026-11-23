@@ -14,8 +14,18 @@
         </div>
       </div>
       <el-table v-loading="loading" :data="calls" border size="small">
-        <el-table-column label="主叫" prop="caller" width="120" align="center" />
-        <el-table-column label="被叫" prop="callee" width="120" align="center" />
+        <el-table-column label="主叫" width="140" align="center">
+          <template slot-scope="{ row }">
+            <div>{{ row.caller }}</div>
+            <div v-if="row.callerName" class="name-line">{{ row.callerName }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="被叫" width="140" align="center">
+          <template slot-scope="{ row }">
+            <div>{{ row.callee }}</div>
+            <div v-if="row.calleeName" class="name-line">{{ row.calleeName }}</div>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="120" align="center">
           <template slot-scope="{ row }">
             <el-tag size="mini" :type="row.state === 'ACTIVE' ? 'success' : 'warning'">
@@ -134,5 +144,12 @@ export default {
 .tip-line {
   color: #909399;
   font-size: 12px;
+}
+.name-line {
+  color: #909399;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

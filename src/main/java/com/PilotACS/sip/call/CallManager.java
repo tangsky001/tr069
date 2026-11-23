@@ -16,6 +16,7 @@ import com.PilotACS.sip.queue.SipQueue;
 import com.PilotACS.sip.queue.SipQueueService;
 import com.PilotACS.sip.record.SipCallRecordService;
 import com.PilotACS.sip.reg.ExtensionRegistry;
+import com.PilotACS.sip.reg.SipExtensionService;
 import com.PilotACS.sip.rtp.RtpAgent;
 import com.PilotACS.sip.server.SipUdpServer;
 import jakarta.annotation.PostConstruct;
@@ -44,6 +45,7 @@ public class CallManager {
     private final GatewayRegistry h248Gateways;
     private final SipQueueService queueService;
     private final SipCallRecordService recordService;
+    private final SipExtensionService extService;
 
     private final Map<String, CallEntry> byCallA = new ConcurrentHashMap<>();
     private final Map<String, CallEntry> byCallB = new ConcurrentHashMap<>();
@@ -57,13 +59,14 @@ public class CallManager {
 
     public CallManager(SipProperties props, SipUdpServer server, ExtensionRegistry registry,
                        GatewayRegistry h248Gateways, SipQueueService queueService,
-                       SipCallRecordService recordService) {
+                       SipCallRecordService recordService, SipExtensionService extService) {
         this.props = props;
         this.server = server;
         this.registry = registry;
         this.h248Gateways = h248Gateways;
         this.queueService = queueService;
         this.recordService = recordService;
+        this.extService = extService;
     }
 
     private H248Controller h248c() {
@@ -260,9 +263,16 @@ public class CallManager {
             return;
         }
         // 外呼 B（SIP 分机）
+        // 主叫显示名：入站 From 带 display-name 优先，退回分机表 display_name/备注；
+        // From 带名 + P-Asserted-Identity + Remote-Party-ID，话机端能显示"张三 1001"
+        String callerName = resolveCallerName(callerExt, SipMessage.displayNameOf(invite.header("From")));
+        String callerAddr = "sip:" + callerExt + "@" + server.publicIp();
         SipMessage inviteB = SipMessage.request("INVITE", "sip:" + calleeExt + "@" + server.publicIp());
         inviteB.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
-        inviteB.addHeader("From", "<sip:" + callerExt + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
+        inviteB.addHeader("From", SipMessage.addrWithDisplay(callerName, callerAddr) + ";tag=" + entry.bServerTag);
+        inviteB.addHeader("P-Asserted-Identity", "<" + callerAddr + ">");
+        inviteB.addHeader("Remote-Party-ID",
+                SipMessage.addrWithDisplay(callerName, callerAddr) + ";privacy=off;screen=no");
         inviteB.addHeader("To", "<sip:" + calleeExt + "@" + server.publicIp() + ">");
         inviteB.setHeader("Call-ID", entry.session.getCallIdB());
         inviteB.setHeader("CSeq", "101 INVITE");
@@ -275,6 +285,18 @@ public class CallManager {
         server.send(inviteB, bAddr);
         Logs.info(Logs.Module.SIP, "新呼叫", "主叫", callerExt, "被叫", calleeExt,
                 "主叫端口", agentA.getLocalPort(), "被叫端口", agentB.getLocalPort());
+    }
+
+    /**
+     * 主叫显示名解析：入站 From 的 display-name 优先（对端带来的透传），否则查分机表
+     * display_name（退回备注），都查不到返回 null（From 退回裸地址，与旧口径一致）。
+     */
+    private String resolveCallerName(String ext, String fromDisplay) {
+        if (fromDisplay != null && !fromDisplay.isBlank()) {
+            return fromDisplay.trim();
+        }
+        String fromDb = extService.displayNameOf(ext);
+        return fromDb.isBlank() ? null : fromDb;
     }
 
     /** 忙线提示音：应答主叫（200+SDP）并循环播提示音；N 秒后服务端挂断，主叫提前挂断立即释放 */
@@ -673,7 +695,13 @@ public class CallManager {
 
         SipMessage invite = SipMessage.request("INVITE", "sip:" + number + "@" + server.publicIp());
         invite.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
-        invite.addHeader("From", "<sip:" + callerNumber + "@" + server.publicIp() + ">;tag=" + entry.uaFromTag);
+        // MG 主叫号码如果在分机表里有配置，同样带显示名 + 身份头（网关侧来电显示）
+        String uaCallerName = resolveCallerName(callerNumber, null);
+        String uaCallerAddr = "sip:" + callerNumber + "@" + server.publicIp();
+        invite.addHeader("From", SipMessage.addrWithDisplay(uaCallerName, uaCallerAddr) + ";tag=" + entry.uaFromTag);
+        invite.addHeader("P-Asserted-Identity", "<" + uaCallerAddr + ">");
+        invite.addHeader("Remote-Party-ID",
+                SipMessage.addrWithDisplay(uaCallerName, uaCallerAddr) + ";privacy=off;screen=no");
         invite.addHeader("To", "<sip:" + number + "@" + server.publicIp() + ">");
         invite.setHeader("Call-ID", entry.uaCallId);
         invite.setHeader("CSeq", "1 INVITE");
