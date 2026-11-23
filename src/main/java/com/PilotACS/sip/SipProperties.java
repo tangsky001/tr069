@@ -43,6 +43,12 @@ public class SipProperties {
     private int maxCallSeconds = 3600;
     /** RTP 空闲超时（秒）：ACTIVE 期间连续无 RTP 即拆线，0 关闭；用于清理客户端异常退出产生的僵尸会话 */
     private int rtpIdleSeconds = 30;
+    /** 忙线提示音（秒）：主叫拨正在通话的分机时先应答并循环播放提示音，N 秒后由服务端挂断主叫；0 = 维持直接回 486 */
+    private int busyPromptSeconds = 10;
+    /** 忙线提示音 wav（8k/16bit/单声道 PCM，如"您拨打的用户正在通话中"），留空用合成忙音（嘟嘟嘟） */
+    private String busyPromptWav = "";
+    /** 挂断忙音时长（秒）：通话中任意一方挂机，另一方听忙音（嘟嘟嘟）N 秒后由服务端拆线，0 = 立即拆线 */
+    private int busyToneSeconds = 10;
     /** 注册过期清理周期（秒） */
     private int registrationSweepSeconds = 30;
     /** H.248 网关控制开关（MGC 角色，UDP 文本编码） */

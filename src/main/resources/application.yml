@@ -113,6 +113,12 @@ acs:
     max-call-seconds: 3600
     # RTP 空闲超时（秒）：接通后连续无 RTP 即拆线（防客户端异常退出的僵尸会话），0 关闭
     rtp-idle-seconds: 30
+    # 忙线提示音：主叫拨正在通话的分机时先应答并循环播放提示音 N 秒，然后服务器挂断主叫；0 = 直接回 486
+    busy-prompt-seconds: 10
+    # 忙线提示音 wav（8k/16bit/单声道，如"您拨打的用户正在通话中"），留空用合成忙音（嘟嘟嘟）
+    busy-prompt-wav: ""
+    # 挂断忙音时长（秒）：通话中任意一方挂机，另一方听忙音（嘟嘟嘟）10 秒后由服务器拆线，0 = 立即拆线
+    busy-tone-seconds: 10
     # H.248（Megaco）网关控制，MGC 角色，UDP 文本编码
     h248-enabled: false
     h248-port: 2944

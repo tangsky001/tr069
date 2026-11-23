@@ -41,6 +41,11 @@ public class CallSession {
     private final boolean recordEnabled;
     /** 振铃期是否给 A 腿（SIP 主叫）发服务器回铃早媒体；MG 主叫用网关侧信号则关掉 */
     private final boolean earlyMediaToA;
+    /** 忙线提示音会话：占位呼叫，振铃期循环向 A 腿放"正在通话"提示音 */
+    private volatile BusyToneSource busyPrompt;
+    /** 挂断忙音：一方挂断后，向存活方循环播忙音直至拆线 */
+    private volatile BusyToneSource toneA;
+    private volatile BusyToneSource toneB;
     private String recordPath;
 
     public CallSession(String callIdA, String callerExt, String calleeExt, RtpAgent agentA,
@@ -90,6 +95,12 @@ public class CallSession {
             return;
         }
         if (state == State.RINGING) {
+            if (busyPrompt != null) {
+                // 忙线提示音会话：循环向主叫放"正在通话"提示音
+                agentA.sendPcm(busyPrompt.nextFrame());
+                agentA.poll();
+                return;
+            }
             if (earlyMediaToA) {
                 agentA.sendPcm(ringback.nextFrame());
             }
@@ -109,8 +120,9 @@ public class CallSession {
         byte[] fromA = agentA.poll();
         short[] pcmA = decode(fromA, alawA);
         short[] pcmB = decode(fromB, alawB);
-        agentA.sendPcm(pcmB);
-        agentB.sendPcm(pcmA);
+        // 挂断忙音：一方已挂，向存活方播忙音代替对端媒体
+        agentA.sendPcm(toneA != null ? toneA.nextFrame() : pcmB);
+        agentB.sendPcm(toneB != null ? toneB.nextFrame() : pcmA);
         if (recorder != null) {
             try {
                 recorder.writeFrame(pcmA, pcmB);
@@ -166,6 +178,10 @@ public class CallSession {
     /** B 腿 RTP 在 CallManager 创建后挂入会话（SIP 外呼 / H.248 腿） */
     public void setAgentB(RtpAgent agentB) { this.agentB = agentB; }
     public State getState() { return state; }
+    public boolean isPromptOnly() { return busyPrompt != null; }
+    public void setBusyPrompt(BusyToneSource src) { this.busyPrompt = src; }
+    public void setToneA(BusyToneSource src) { this.toneA = src; }
+    public void setToneB(BusyToneSource src) { this.toneB = src; }
     public long getCreatedAt() { return createdAt; }
     public long getAnsweredAt() { return answeredAt; }
     public String getRecordPath() { return recordPath; }

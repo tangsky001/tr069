@@ -100,6 +100,9 @@ public class CallManager {
                 if (e.session.getState() == CallSession.State.ACTIVE) {
                     endActive(e, h, "服务停止");
                 } else {
+                    if (e.session.isPromptOnly() && e.inviteA != null && e.aAddr != null) {
+                        sendByeToA(e, null, null, e.session.getCallIdA(), e.aAddr);
+                    }
                     teardown(e, "服务停止");
                 }
             } catch (Exception ex) {
@@ -170,7 +173,17 @@ public class CallManager {
             respondToA(invite, remote, null, 480, "Temporarily Unavailable", null);
             return;
         }
-        if (isBusy(callerExt) || isBusy(calleeExt)) {
+        if (isBusy(callerExt)) {
+            respondToA(invite, remote, null, 486, "Busy Here", null);
+            Logs.info(Logs.Module.SIP, "忙线拒绝", "主叫", callerExt, "被叫", calleeExt);
+            return;
+        }
+        if (isBusy(calleeExt)) {
+            // 被叫正在通话：应答主叫并循环播放"正在通话"提示音，N 秒后服务端挂断（0 配置则维持 486）
+            if (props.getBusyPromptSeconds() > 0 && !mgCallee && queues.isEmpty()
+                    && startBusyPrompt(invite, remote, callerExt, calleeExt)) {
+                return;
+            }
             respondToA(invite, remote, null, 486, "Busy Here", null);
             Logs.info(Logs.Module.SIP, "忙线拒绝", "主叫", callerExt, "被叫", calleeExt);
             return;
@@ -262,6 +275,54 @@ public class CallManager {
         server.send(inviteB, bAddr);
         Logs.info(Logs.Module.SIP, "新呼叫", "主叫", callerExt, "被叫", calleeExt,
                 "主叫端口", agentA.getLocalPort(), "被叫端口", agentB.getLocalPort());
+    }
+
+    /** 忙线提示音：应答主叫（200+SDP）并循环播提示音；N 秒后服务端挂断，主叫提前挂断立即释放 */
+    private boolean startBusyPrompt(SipMessage invite, InetSocketAddress remote, String callerExt, String calleeExt) {
+        Sdp sdpA = Sdp.parse(invite.getBody());
+        Sdp.Media mediaA = sdpA.getAudio();
+        if (mediaA == null || (mediaA.ip == null && remote.getAddress() == null)) {
+            return false;
+        }
+        boolean alaw = mediaA.payloadTypes.contains(8) || mediaA.codecs.containsValue("PCMA");
+        RtpAgent agentA = createAgent(alaw, callerExt + ">" + calleeExt + "-busy");
+        if (agentA == null) {
+            return false;
+        }
+        agentA.start();
+        // A 腿媒体目标：优先 SDP 地址，缺 IP 时贴住信令源
+        java.net.InetAddress sdpIp = mediaA.ip != null ? null : remote.getAddress();
+        if (mediaA.ip != null) {
+            try {
+                sdpIp = java.net.InetAddress.getByName(mediaA.ip);
+            } catch (Exception ignored) {
+                sdpIp = remote.getAddress();
+            }
+        }
+        agentA.setTarget(new InetSocketAddress(sdpIp, mediaA.port));
+        CallEntry entry = new CallEntry(new CallSession(invite.callId(), callerExt, calleeExt,
+                agentA, alaw, new RingbackSource(""), false, true));
+        entry.inviteA = invite;
+        entry.aAddr = remote;
+        entry.aTag = invite.fromTag();
+        entry.aServerTag = randTag();
+        entry.session.setCallIdB("ACS-BUSY-" + UUID.randomUUID());
+        entry.session.setBusyPrompt(new BusyToneSource(props.getBusyPromptWav()));
+        byCallA.put(entry.session.getCallIdA(), entry);
+        // 应答呼叫：主叫与服务器建立媒体，循环收听提示音
+        respondToA(invite, remote, entry.aServerTag, 200, "OK",
+                Sdp.build(server.publicIp(), agentA.getLocalPort(), alaw ? 8 : 0, alaw ? "PCMA" : "PCMU"));
+        long sec = props.getBusyPromptSeconds();
+        Logs.info(Logs.Module.SIP, "忙线提示音", "主叫", callerExt, "被叫", calleeExt,
+                "时长", sec + "s");
+        // 播 N 秒后服务端挂断主叫；提示音期间主叫同样视为占线（isBusy）
+        scheduler.schedule(() -> {
+            if (entry.session.getState() != CallSession.State.ENDED) {
+                sendByeToA(entry, null, null, entry.session.getCallIdA(), entry.aAddr);
+                teardown(entry, "被叫忙，提示音结束");
+            }
+        }, sec, TimeUnit.SECONDS);
+        return true;
     }
 
     /** 响应进来（B 腿 180/200/4xx、MG 主叫呼叫的 UA 腿响应、BYE/CANCEL 的 200 等） */
@@ -401,6 +462,7 @@ public class CallManager {
             server.send(notFound(bye), remote);
             return;
         }
+        final CallEntry ce = entry;   // entry 被重新赋值过，lambda 里须用 final 快照
         if (fromA) {
             respondToA(bye, remote, entry.aServerTag, 200, "OK", null);
             if (entry.mgCallee) {
@@ -408,10 +470,42 @@ public class CallManager {
                 if (h != null && entry.mgTermCallee != null) {
                     h.subtract(entry.mgTermCallee, entry.mgAddr, entry.mgContext);
                 }
+            } else if (entry.bAddr != null && entry.session.getState() == CallSession.State.ACTIVE
+                    && props.getBusyToneSeconds() > 0) {
+                // 主叫挂断：先给被叫循环播忙音（嘟嘟嘟），N 秒后再发 BYE 拆线
+                entry.session.setToneB(new BusyToneSource(null));
+                long sec = props.getBusyToneSeconds();
+                Logs.info(Logs.Module.SIP, "主叫挂断，向被叫播忙音", "主叫", entry.session.getCallerExt(),
+                        "被叫", entry.session.getCalleeExt(), "时长", sec + "s");
+                scheduler.schedule(() -> {
+                    if (ce.session.getState() != CallSession.State.ENDED) {
+                        sendByeToB(ce);
+                        teardown(ce, "主叫挂断");
+                    }
+                }, sec, TimeUnit.SECONDS);
+                return;
             } else {
-                sendByeToB(entry);
+                if (entry.bAddr != null) {   // 忙线提示音会话无 B 腿
+                    sendByeToB(entry);
+                }
             }
         } else {
+            if (entry.inviteA != null && entry.aAddr != null && !entry.mgCallee
+                    && entry.session.getState() == CallSession.State.ACTIVE
+                    && props.getBusyToneSeconds() > 0) {
+                // 被叫挂断：先给主叫循环播忙音，N 秒后再发 BYE 拆线
+                entry.session.setToneA(new BusyToneSource(null));
+                long sec = props.getBusyToneSeconds();
+                Logs.info(Logs.Module.SIP, "被叫挂断，向主叫播忙音", "主叫", entry.session.getCallerExt(),
+                        "被叫", entry.session.getCalleeExt(), "时长", sec + "s");
+                scheduler.schedule(() -> {
+                    if (ce.session.getState() != CallSession.State.ENDED) {
+                        sendByeToA(ce, null, null, ce.session.getCallIdA(), ce.aAddr);
+                        teardown(ce, "被叫挂断");
+                    }
+                }, sec, TimeUnit.SECONDS);
+                return;
+            }
             // 被叫挂断：BYE 必须发往主叫 A 的地址并携带 A 腿 Call-ID（原先误发 remote=B 的地址）
             sendByeToA(entry, null, null, entry.session.getCallIdA(), entry.aAddr);
         }
@@ -696,7 +790,7 @@ public class CallManager {
         long now = System.currentTimeMillis();
         for (CallEntry e : new ArrayList<>(byCallA.values())) {
             CallSession s = e.session;
-            if (s.getState() == CallSession.State.RINGING
+            if (s.getState() == CallSession.State.RINGING && !s.isPromptOnly()
                     && now - s.getCreatedAt() > props.getRingTimeoutSeconds() * 1000L) {
                 if (e.inviteA != null) {
                     respondToA(e.inviteA, e.aAddr, e.aServerTag, 487, "Request Terminated", null);
