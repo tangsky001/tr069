@@ -27,6 +27,7 @@ public class PilotAcsApplication {
         }catch (Exception e) {
             System.out.println("PilotACS TR-069 ACS 启动失败");
             e.printStackTrace();
+            System.exit(1);
         }
         
         
