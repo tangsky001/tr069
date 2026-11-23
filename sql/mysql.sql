@@ -477,3 +477,63 @@ CREATE TABLE IF NOT EXISTS `biz_template_execution` (
     KEY `idx_bte_sn` (`sn`),
     KEY `idx_bte_tpl` (`template_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '业务模板执行记录';
+
+-- =====================================================================
+-- SIP 软交换（对应 SipSchemaInitializer，启动自动补建；此处含预置数据）
+-- =====================================================================
+
+-- SIP 分机配置
+CREATE TABLE IF NOT EXISTS `sys_sip_extension` (
+    `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `extension`  VARCHAR(32)  NOT NULL COMMENT '分机号',
+    `password`   VARCHAR(64)  DEFAULT '' COMMENT 'SIP 注册密码',
+    `remark`     VARCHAR(128) DEFAULT NULL COMMENT '备注',
+    `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_sip_ext` (`extension`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'SIP 分机配置';
+
+-- 默认分机（密码统一 12345678，按惯例跳过 4444）
+INSERT INTO `sys_sip_extension` (`extension`, `password`, `remark`) VALUES
+('1111', '12345678', '备用'),
+('2222', '12345678', '备用'),
+('3333', '12345678', '备用'),
+('5555', '12345678', '备用'),
+('6666', '12345678', '总台6666'),
+('7777', '12345678', '备用'),
+('8888', '12345678', '总台8888'),
+('9999', '12345678', '机器人');
+
+-- 呼叫队列：队列号 → 有序目标分机（忙音顺延），成员为空=所有分机可拨打
+CREATE TABLE IF NOT EXISTS `sys_sip_queue` (
+    `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `queue_no`   VARCHAR(8)   NOT NULL COMMENT '队列号（拨打的号码，如 0/1/9）',
+    `queue_name` VARCHAR(64)  DEFAULT NULL COMMENT '队列名称',
+    `targets`    VARCHAR(255) DEFAULT NULL COMMENT '有序目标分机，逗号分隔，忙音顺延下一目标',
+    `members`    VARCHAR(2000) DEFAULT NULL COMMENT '允许呼叫的分机，逗号分隔，空=不限制',
+    `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_sip_queue_no` (`queue_no`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'SIP 呼叫队列';
+
+-- 默认队列：拨 0 接总台 8888（忙自动转 9999/6666）
+INSERT INTO `sys_sip_queue` (`queue_no`, `queue_name`, `targets`) VALUES
+('0', '总台8888', '8888,9999,6666'),
+('1', '总台9999', '9999,6666'),
+('9', '总台6666', '6666');
+
+-- 通话记录（分机互打自动落库，录音在 data/sip-records/，页面可下载）
+CREATE TABLE IF NOT EXISTS `sys_sip_call_record` (
+    `id`               BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `caller`           VARCHAR(32)  NOT NULL COMMENT '主叫分机',
+    `callee`           VARCHAR(32)  NOT NULL COMMENT '被叫分机',
+    `started_at`       DATETIME     NOT NULL COMMENT '呼叫发起时间',
+    `answered`         TINYINT      DEFAULT 0 COMMENT '是否接通',
+    `duration_seconds` INT          DEFAULT 0 COMMENT '通话时长（秒）',
+    `end_reason`       VARCHAR(128) DEFAULT NULL COMMENT '结束原因',
+    `record_path`      VARCHAR(255) DEFAULT NULL COMMENT '录音文件相对路径',
+    PRIMARY KEY (`id`),
+    KEY `idx_sip_rec_caller` (`caller`),
+    KEY `idx_sip_rec_callee` (`callee`),
+    KEY `idx_sip_rec_started` (`started_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'SIP 通话记录';

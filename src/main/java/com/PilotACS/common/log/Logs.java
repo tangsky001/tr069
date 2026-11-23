@@ -56,7 +56,9 @@ public final class Logs {
         /** 光猫 → 下发：任务派发/执行、参数下发、反向连接、初始化开通、参数树探测 */
         CPE_PUSH("光猫", "下发"),
         /** 光猫 → 工单：工单台账初始化等 */
-        CPE_WORKLIST("光猫", "工单");
+        CPE_WORKLIST("光猫", "工单"),
+        /** SIP 软交换：注册、呼叫、RTP 媒体、录音 */
+        SIP("SIP", null);
 
         private final String label;
         private final String child;

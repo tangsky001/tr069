@@ -17,7 +17,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication(exclude = {RedisAutoConfiguration.class, RedisRepositoriesAutoConfiguration.class})
 @EnableScheduling
 @MapperScan({"com.PilotACS.mapper", "com.PilotACS.olt.mapper", "com.PilotACS.group.mapper", "com.PilotACS.acl",
-        "com.PilotACS.template.mapper", "com.PilotACS.biz.mapper", "com.PilotACS.worklist.mapper"})
+        "com.PilotACS.template.mapper", "com.PilotACS.biz.mapper", "com.PilotACS.worklist.mapper",
+        "com.PilotACS.sip.reg", "com.PilotACS.sip.queue", "com.PilotACS.sip.record"})
 public class PilotAcsApplication {
     public static void main(String[] args) {
         SpringApplication.run(PilotAcsApplication.class, args);

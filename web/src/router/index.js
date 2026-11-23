@@ -180,6 +180,19 @@ export const constantRoutes = [
     }]
   },
 
+  // SIP 软交换：单菜单 + 页内标签页（分机/队列/记录/监控）
+  {
+    path: '/sip',
+    component: Layout,
+    redirect: '/sip/index',
+    children: [{
+      path: 'index',
+      name: 'SipPanel',
+      component: () => import('@/views/sip/index'),
+      meta: { title: '电话交换', icon: 'el-icon-phone-outline', permission: 'sip:view' }
+    }]
+  },
+
   // 设备根域：OLT / 光猫 两个独立二级菜单（共用同一棵资源分组树，根节点=资源根组）
   {
     path: '/group',

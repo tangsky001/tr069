@@ -91,6 +91,37 @@ acs:
     param-tree-ttl-seconds: 600
     # Redis 派发队列 tr069:queue:rpc 长度上限（LTRIM 封顶，防堆积膨胀）
     task-queue-max-size: 10000
+  sip:
+    # SIP 软交换总开关（默认开启）关闭=false
+    enabled: true
+    # SIP 信令监听端口
+    udp-port: 5060
+    # 对外公布的 IP（SDP/Contact 用），留空自动探测本机非回环地址
+    public-ip: ""
+    # 401 Digest 鉴权开关
+    auth-enabled: true
+    # 回铃背景音乐 wav（8k/16bit/单声道 PCM），留空用合成 450Hz 回铃音
+    ringback-wav: ""
+    # 通话录音
+    record-enabled: true
+    record-dir: data/sip-records
+    # 抖动缓冲深度（毫秒）
+    jitter-ms: 60
+    # 振铃超时（秒）
+    ring-timeout-seconds: 60
+    # 单通通话最大时长（秒），0 不限制
+    max-call-seconds: 3600
+    # RTP 空闲超时（秒）：接通后连续无 RTP 即拆线（防客户端异常退出的僵尸会话），0 关闭
+    rtp-idle-seconds: 30
+    # H.248（Megaco）网关控制，MGC 角色，UDP 文本编码
+    h248-enabled: false
+    h248-port: 2944
+    # H.248 分机号 → 终结点 ID；带 @IP 时按 IP 匹配网关，不带则用任一已注册网关
+    # 注意：不要与 SIP 分机号段冲突（2001+ 已用于 SIP 分机）
+    h248-terminals:
+      "7001": "AALN/1"
+      "7002": "AALN/2"
+
 
 mybatis-plus:
   configuration:

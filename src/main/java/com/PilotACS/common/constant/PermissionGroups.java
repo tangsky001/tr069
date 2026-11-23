@@ -30,6 +30,7 @@ public final class PermissionGroups {
         MODULES.put("file", "文件与固件");
         MODULES.put("worklist", "工单管理");
         MODULES.put("olt", "OLT管理");
+        MODULES.put("sip", "电话交换");
         MODULES.put("system", "系统管理");
         MODULES.put("ops", "运维管理");
     }

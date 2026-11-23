@@ -43,6 +43,10 @@ service.interceptors.response.use(
    * You can also judge the status by HTTP Status Code
    */
   response => {
+    // blob 下载直接透传完整响应，不做业务码拆包
+    if (response.config.responseType === 'blob') {
+      return response
+    }
     const res = response.data
 
     // 业务码沿用 HTTP 语义：不是 200 一律算失败
