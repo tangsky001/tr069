@@ -22,6 +22,8 @@ import java.util.List;
 /** CPE → ACS 的 SOAP 报文解析（Inform、各 RPC 响应、Fault、TransferComplete） */
 public final class SoapParser {
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(SoapParser.class);
+
     private static final String XSI_NS = "http://www.w3.org/2001/XMLSchema-instance";
 
     private SoapParser() {
@@ -265,14 +267,59 @@ public final class SoapParser {
 
     private static Document readDoc(String xml) {
         try {
-            DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-            dbf.setNamespaceAware(true);
-            dbf.setExpandEntityReferences(false);
-            dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            return dbf.newDocumentBuilder().parse(new InputSource(new StringReader(xml)));
-        } catch (Exception e) {
-            throw new SoapException("SOAP 报文解析失败: " + e.getMessage(), e);
+            return parseDoc(xml);
+        } catch (Exception first) {
+            // 部分设备在参数值里夹带 XML 1.0 非法控制字符（如 0x1），导致整个 Inform 解析失败；
+            // 剥离非法字符后重试一次，避免一颗坏参数毁掉整个会话
+            String cleaned = stripInvalidXmlChars(xml);
+            if (cleaned.length() != xml.length()) {
+                LOG.info("报文含非法 XML 控制字符，已剥离 {} 个后重试解析", xml.length() - cleaned.length());
+                try {
+                    return parseDoc(cleaned);
+                } catch (Exception second) {
+                    throw new SoapException("SOAP 报文解析失败: " + second.getMessage(), second);
+                }
+            }
+            throw new SoapException("SOAP 报文解析失败: " + first.getMessage(), first);
         }
+    }
+
+    private static Document parseDoc(String xml) throws Exception {
+        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+        dbf.setNamespaceAware(true);
+        dbf.setExpandEntityReferences(false);
+        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        javax.xml.parsers.DocumentBuilder db = dbf.newDocumentBuilder();
+        // 不设 ErrorHandler 时解析器会把 [Fatal Error] 直接打到 stderr，改成显式抛出由上层统一处理
+        db.setErrorHandler(new org.xml.sax.ErrorHandler() {
+            @Override
+            public void warning(org.xml.sax.SAXParseException e) {
+                // 警告忽略
+            }
+
+            @Override
+            public void error(org.xml.sax.SAXParseException e) throws org.xml.sax.SAXException {
+                throw e;
+            }
+
+            @Override
+            public void fatalError(org.xml.sax.SAXParseException e) throws org.xml.sax.SAXException {
+                throw e;
+            }
+        });
+        return db.parse(new InputSource(new StringReader(xml)));
+    }
+
+    /** 剥离 XML 1.0 不允许的控制字符（保留 TAB/LF/CR，不影响合法报文） */
+    private static String stripInvalidXmlChars(String xml) {
+        StringBuilder sb = new StringBuilder(xml.length());
+        for (int i = 0; i < xml.length(); i++) {
+            char c = xml.charAt(i);
+            if (c >= 0x20 || c == 0x9 || c == 0xA || c == 0xD) {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     /** 按本地名找第一个子元素（不区分命名空间） */

@@ -22,6 +22,7 @@ public final class TemplateFieldDefs {
             cat("WIFI_24G", "2.4G WiFi"),
             cat("WIFI_58G", "5.8G WiFi"),
             cat("SIP", "SIP 语音"),
+            cat("LAN", "LAN 网口"),
             cat("OTHER", "其他"));
 
     /** 绑定端口候选，供页面渲染勾选组 */
@@ -59,8 +60,24 @@ public final class TemplateFieldDefs {
                 List.of(opt("auto", "自动"), opt("20MHz", "20MHz"),
                         opt("40MHz", "40MHz"), opt("80MHz", "80MHz"))));
         defs.addAll(sipFieldDefs());
+        defs.addAll(lanFieldDefs());
         defs.addAll(otherFieldDefs());
         return List.copyOf(defs);
+    }
+
+    /** LAN 网口模板字段：勾端口 + 启停/双工/速率（渲染逻辑参考 master lan()） */
+    private static List<Map<String, Object>> lanFieldDefs() {
+        List<Map<String, Object>> defs = new ArrayList<>();
+        defs.add(def("LAN", "lan_ports", "目标网口", "ports", List.of(), null,
+                Map.of("tip", "勾选要配置的 LAN 网口")));
+        defs.add(def("LAN", "lan_enable", "网口启停", "enum", "true",
+                List.of(opt("true", "启用"), opt("false", "禁用")), null));
+        defs.add(def("LAN", "lan_duplex", "双工模式", "enum", "Auto",
+                List.of(opt("Auto", "自协商"), opt("Full", "全双工"), opt("Half", "半双工")), null));
+        defs.add(def("LAN", "lan_speed", "端口速率", "enum", "Auto",
+                List.of(opt("Auto", "自协商"), opt("10", "10 Mbps"), opt("100", "100 Mbps"),
+                        opt("1000", "1000 Mbps"), opt("2500", "2500 Mbps")), null));
+        return defs;
     }
 
     /** WiFi 模板字段，对照开通界面：SSID / 信道带宽 / 信道 / 隐藏 / WPS / 发射功率 */
@@ -70,7 +87,11 @@ public final class TemplateFieldDefs {
         List<Map<String, Object>> defs = new ArrayList<>();
         defs.add(def(category, "radio_enable", "启用无线 SSID", "enum", "true",
                 List.of(opt("true", "是"), opt("false", "否")), null));
-        defs.add(def(category, "ssid", "SSID 名称", "string", "", null, null));
+        defs.add(def(category, "ssid", "SSID 名称", "string", "", null,
+                Map.of("tip", "支持变量：%room% 表示房间号（台账未登记时兜底 0000）")));
+        defs.add(def(category, "wifi_instance", "SSID 实例号", "number", null, null,
+                Map.of("tip", "机型适配用：明确指定该频段对应的 WLANConfiguration 实例号（2.4G 通常 1、5.8G 通常 5）；留空自动识别",
+                        "min", 1, "max", 64)));
         defs.add(def(category, "bandwidth", "信道带宽", "enum", "auto", bandwidths, null));
         defs.add(def(category, "channel", channelLabel, "enum", "auto", channels, null));
         defs.add(def(category, "hidden", "隐藏 SSID", "enum", "false",
@@ -89,7 +110,8 @@ public final class TemplateFieldDefs {
                 List.of(opt("AES+TKIP", "AES+TKIP (默认)"), opt("AES", "AES"),
                         opt("TKIP", "TKIP")), null));
         defs.add(def(category, "wpa_key", "WPA 预共享密钥", "string", "", null,
-                Map.of("inputType", "password", "tip", "8-63 位，加密方式为开放时无效")));
+                Map.of("inputType", "password",
+                        "tip", "8-63 位，加密方式为开放时无效；支持变量 %wifi_pwd%，未填写时按 88888888 下发")));
         return defs;
     }
 
@@ -182,6 +204,12 @@ public final class TemplateFieldDefs {
         defs.add(def(category, "ip_protocol", "IP 协议", "enum", "IPv4",
                 List.of(opt("IPv4", "IPv4 (默认)"), opt("IPv6", "IPv6"),
                         opt("IPv4+IPv6", "IPv4 + IPv6")), null));
+        if (List.of("WAN_DHCP", "WAN_STATIC").contains(category)) {
+            defs.add(def(category, "addr_type", "WAN IP 模式(寻址方式)", "enum", "",
+                    List.of(opt("", "按模板类别（DHCP→DHCP / STATIC→Static）"),
+                            opt("DHCP", "DHCP / IPoE"), opt("Static", "静态 IP")),
+                    Map.of("tip", "留空即按类别：WAN_DHCP 下发 IPAddressingType=DHCP，WAN_STATIC 下发 Static；显式选择可覆盖")));
+        }
         defs.add(def(category, "vlan_id", "WAN VLAN ID", "number", null, null,
                 Map.of("tip", "如 201，为空表示无", "min", 0, "max", 4094)));
         defs.add(def(category, "vlan_priority", "802.1p QoS 优先级", "number", null, null,

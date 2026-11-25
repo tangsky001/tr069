@@ -57,23 +57,26 @@ public class SessionRegistry {
         return s != null && !s.isEnded() && bySn.get(s.getSn()) == s;
     }
 
-    /** 无 Cookie 时按来源地址找最近会话 */
+    /**
+     * 无 Cookie 时按来源地址找最近活跃会话。
+     * 多台设备共用出口 IP（NAT/CGNAT）时返回最近活跃的那台而不是 null：
+     * 返回 null 会让设备收 204/400 只能重新 Inform，形成会话重建循环；
+     * 绑错的报文会被 SN 校验兜住（handleKnown 按 SN 重建）。
+     */
     public CwmpSession byRemoteAddr(String addr) {
         if (addr == null || addr.isBlank()) {
             return null;
         }
         CwmpSession best = null;
-        int matches = 0;
         for (CwmpSession s : bySn.values()) {
             if (s.isEnded() || !addr.equals(s.getRemoteAddr())) {
                 continue;
             }
-            matches++;
             if (best == null || s.getLastActivity() > best.getLastActivity()) {
                 best = s;
             }
         }
-        return matches == 1 ? best : null;
+        return best;
     }
 
     public void remove(CwmpSession s) {

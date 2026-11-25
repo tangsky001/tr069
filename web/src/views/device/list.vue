@@ -148,7 +148,7 @@
                     <line x1="12" y1="8" x2="12" y2="4" stroke="currentColor" stroke-width="1.5" />
                     <line x1="17" y1="8" x2="17" y2="4" stroke="currentColor" stroke-width="1.5" />
                   </svg>
-                  <span class="lan-list-label">LAN{{ item.instance }}</span>
+                  <span class="lan-list-label">{{ item.name || ('LAN' + item.instance) }}</span>
                 </div>
               </div>
               <!-- 机型适配入口：未适配的给适配入口，已适配的给绿标 -->
@@ -642,7 +642,7 @@
       </span>
     </el-dialog>
 
-    <!-- SIP 语音：与「编辑 WLAN」同款——点开就是表单，点下发 = 提交一张 SIP 工单 -->
+    <!-- SIP 语音：与「编辑 WLAN」同款——点开就是表单，点下发 = 直接下发到设备（不建工单） -->
     <el-dialog
       :title="'SIP 语音 - ' + sipEditForm.sn"
       :visible.sync="sipVisible"
@@ -1404,9 +1404,14 @@ export default {
       this.adaptResult = null
       try {
         const res = await testAdaptation(this.adaptRow.sn, this.adaptForm)
-        this.adaptResult = res.data || {}
-        if (!this.adaptResult.detected) this.adaptResult.detected = { wifiBands: [] }
-        if (!this.adaptResult.probes) this.adaptResult.probes = []
+        const data = res.data || {}
+        // LAN 口数量等一律展示后端申报口径（LanPortCatalog），前端不做伪造兜底；
+        // detected 缺失时由后端保证（能力探测固定产出四个字段）
+        this.adaptResult = {
+          ...data,
+          detected: data.detected || {},
+          probes: data.probes || []
+        }
       } catch (e) {
         this.$message.error('测试失败：' + (e.message || '请确认设备在线'))
       } finally {
@@ -1451,7 +1456,7 @@ export default {
     lanPortTip(item) {
       const state = item.connected ? '已连接' : '未连接'
       const mac = item.mac ? ' MAC: ' + item.mac : ''
-      return 'LAN' + (item.instance || '') + ' ' + state + mac
+      return (item.name || 'LAN' + (item.instance || '')) + ' ' + state + mac
     },
 
     openWifiEdit(row, item) {
@@ -2119,7 +2124,7 @@ export default {
       const picked = String(this.selectedTemplate)
       const id = Number(picked.slice(4))
       if (picked.startsWith('biz-')) {
-        this.batchCreateBizWorklist(sns, id)
+        this.batchExecuteBizTemplate(sns, id)
         return
       }
       const tpl = this.templates.find(t => t.id === id) || {}
@@ -2128,12 +2133,13 @@ export default {
     },
 
     /**
-     * 业务模板整包下发：交给后端按成员编排顺序串行执行，逐台各起一条执行记录。
+     * 业务模板整包下发：走独立下发器，不建工单、不写工单记录。
+     * 后端按成员编排顺序串行执行，逐台各起一条执行记录。
      *
      * <p>成员依赖是有先后顺序的（先建连接再挂业务），所以不在这里一次性全排进队列，
      * 而是让执行器等前一个成员结束再发下一个；失败即停由模板的「出错继续」决定。</p>
      */
-    batchCreateBizWorklist(sns, templateId) {
+    batchExecuteBizTemplate(sns, templateId) {
       const biz = this.bizTemplates.find(b => b.template && b.template.id === templateId)
       if (!biz) {
         this.$message.warning('业务模板不存在，请刷新后重试')
@@ -2238,7 +2244,7 @@ export default {
           .catch(() => {})
         return
       }
-      // 开通 / 检修：按勾选设备逐台建单，业务类型留空由下发侧推导
+      // 开通 / 检修：按勾选设备逐台直接下发（独立下发器），不建工单
       if (cmd === 'worklist-batch') {
         const sns = this.requireSelection()
         if (!sns) return

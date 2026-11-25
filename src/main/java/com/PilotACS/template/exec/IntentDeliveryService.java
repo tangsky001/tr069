@@ -1,5 +1,6 @@
 package com.PilotACS.template.exec;
 
+import com.PilotACS.cpe.model.CpeParam;
 import com.PilotACS.cpe.model.DeviceData;
 import com.PilotACS.cpe.service.BusinessPaths;
 import com.PilotACS.cpe.service.TaskService;
@@ -11,9 +12,12 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -40,6 +44,10 @@ public class IntentDeliveryService {
         List<Map<String, String>> detail = new ArrayList<>();
         out.put("detail", detail);
         try {
+            // %room%/%desc%/字段变量统一在入口解析，WiFi/SIP/WAN/LAN/OTHER 渲染层无感知
+            Map<String, String> vars = buildVars(sn, fields);
+            fields = resolveFields(fields, vars, detail);
+            detail.add(row("变量解析", "%room%=" + vars.get("%room%"), "ok", ""));
             DeviceData data = new DeviceData();
             data.loadAll(store.loadParams(sn));
             if (data.all() == null || data.all().isEmpty()) {
@@ -53,11 +61,13 @@ public class IntentDeliveryService {
             List<Map.Entry<String, String>> plan = new ArrayList<>();
             switch (category.toUpperCase(Locale.ROOT)) {
                 case "WAN_DHCP", "WAN_PPPOE", "WAN_STATIC", "WAN_BRIDGE" ->
-                        renderWan(root, data, category, fields, incremental, plan, detail);
+                        renderWan(sn, root, data, category, fields, incremental, plan, detail);
                 case "WIFI_24G", "WIFI_58G" ->
                         renderWifi(root, data, category, fields, plan, detail);
                 case "SIP" ->
                         renderSip(root, data, fields, plan, detail);
+                case "LAN" ->
+                        renderLan(root, data, fields, plan, detail);
                 case "OTHER" ->
                         renderOther(root, data, fields, plan, detail);
                 default -> throw new BusinessException("未知模板类型: " + category);
@@ -67,6 +77,9 @@ public class IntentDeliveryService {
 
             boolean allOk = true;
             String newInstance = null;
+            boolean usedFallbackInstance = false;
+            String connObj = null;
+            Set<Integer> knownInstances = null;
             Map<String, String> expected = new LinkedHashMap<>();
             for (Map.Entry<String, String> step : plan) {
                 String desc = step.getKey();
@@ -74,6 +87,8 @@ public class IntentDeliveryService {
                 String type = String.valueOf(taskParams.remove("__type"));
                 String path = String.valueOf(taskParams.remove("__path"));
                 String fallback = String.valueOf(taskParams.remove("__fallback"));
+                Object connObjMeta = taskParams.remove("__conn_obj");
+                Object knownMeta = taskParams.remove("__known");
                 final String newOrFallback = newInstance != null ? newInstance : fallback;
                 String realPath = path.contains("__NEW__") ? path.replace("__NEW__", newOrFallback) : path;
                 Object values = taskParams.get("values");
@@ -111,34 +126,75 @@ public class IntentDeliveryService {
                 log.info("[下发] 步骤 sn={} 任务={} 类型={} 路径={} 结果={}", sn, desc, type, realPath,
                         ok ? "成功" : "失败(" + fault + ")");
                 if (!ok && "DeleteObject".equals(type)) {
-                    // 9005 表示存量对象不在了，属可继续下发的正常情形
-                    if (fault.contains("9005")) {
-                        detail.add(row("跳过: " + desc, realPath, "skip", fault));
-                        continue;
-                    }
+                    // 设备拒绝删除（9002 占用/内置不可删）或对象已不存在（9005）都按「没清掉」处理，
+                    // 跳过该连接继续下发——总比整单判死、新业务一条都发不下去强（master 口径）
+                    detail.add(row("跳过: " + desc, realPath, "skip", fault));
+                    continue;
                 }
                 if ("AddObject".equals(type) && ok) {
                     String result = String.valueOf(stepResult.getOrDefault("result_content", ""));
-                    Matcher m = Pattern.compile("(?i)instance[^0-9]{0,6}(\\d+)").matcher(result);
-                    newInstance = m.find() ? m.group(1) : fallback;
+                    String parsed = parseInstanceNumber(result);
+                    if (parsed != null) {
+                        newInstance = parsed;
+                        usedFallbackInstance = false;
+                    } else {
+                        newInstance = fallback;
+                        usedFallbackInstance = true;
+                        log.warn("[下发] AddObject 结果未解析到实例号，只能用兜底={}（结果={}），SPV 可能写向不存在的实例",
+                                fallback, result);
+                    }
+                    if (connObjMeta instanceof String co && !co.isBlank()) {
+                        connObj = co;
+                        knownInstances = parseKnownInstances(String.valueOf(knownMeta));
+                        // 登记新建连接路径：窗口内后续清理绝不删它（master rememberCreated 口径）
+                        wanCleanupLedger.computeIfAbsent(sn, k -> new WanCleanupState())
+                                .remember(co + newInstance + ".");
+                    }
                     log.info("[下发] AddObject 新实例号={}（设备返回={}，兜底={}）", newInstance, result, fallback);
                 }
                 // 整批 SPV 参数级被拒时逐条重发定位
                 if (!ok && effective != null && SPV_REJECT.matcher(fault).find()) {
-                    LocateResult located = new LocateResult();
-                    locateRejected(sn, effective, detail, located);
-                    if (!located.rejected.isEmpty()) {
-                        detail.add(row("执行: " + desc, realPath, "fail",
-                                "整批被拒，逐条重发（含换写法）后仍有 " + located.rejected.size()
-                                        + " 个参数被拒: " + String.join("; ", located.rejected)));
-                        allOk = false;
-                        break; // 核心参数写不进去，继续发没意义
+                    // 实例号兜底猜错是整批 9003 的常见原因：AddObject 已建实例但 SPV 写向不存在的路径。
+                    // 先按落库参数树实测新实例号，校正路径整包重发一次
+                    if (usedFallbackInstance && connObj != null && newInstance != null) {
+                        String real = rediscoverNewInstance(sn, connObj, knownInstances);
+                        if (real != null && !real.equals(newInstance)) {
+                            List<Map<String, String>> fixed = fixInstancePaths(effective, connObj, newInstance, real);
+                            Map<String, Object> r2 = runTask(sn, "SetParameterValues", "",
+                                    Map.of("values", List.copyOf(fixed)), username);
+                            if (r2 != null && Boolean.TRUE.equals(r2.get("ok"))) {
+                                log.info("[下发] SPV 整批被拒：实例号校正 {}→{} 后整包重发成功 sn={}",
+                                        newInstance, real, sn);
+                                ok = true;
+                                fault = "";
+                                effective = fixed;
+                                newInstance = real;
+                                usedFallbackInstance = false;
+                            } else {
+                                log.warn("[下发] SPV 实例号校正 {}→{} 整包重发仍失败 sn={}",
+                                        newInstance, real, sn);
+                            }
+                        } else if (real == null) {
+                            log.warn("[下发] SPV 整批被拒且参数树未发现新实例（AddObject 可能返回 Status=1 待重启生效）sn={}",
+                                    sn);
+                        }
                     }
-                    ok = true;
-                    fault = "";
-                    effective = located.accepted;
-                    detail.add(row("执行: " + desc, realPath, "ok",
-                            "整批被拒，逐条定位后全部落定（含换写法重试）"));
+                    if (!ok) {
+                        LocateResult located = new LocateResult();
+                        locateRejected(sn, effective, detail, located);
+                        if (!located.rejected.isEmpty()) {
+                            detail.add(row("执行: " + desc, realPath, "fail",
+                                    "整批被拒，逐条重发（含换写法）后仍有 " + located.rejected.size()
+                                            + " 个参数被拒: " + String.join("; ", located.rejected)));
+                            allOk = false;
+                            break; // 核心参数写不进去，继续发没意义
+                        }
+                        ok = true;
+                        fault = "";
+                        effective = located.accepted;
+                        detail.add(row("执行: " + desc, realPath, "ok",
+                                "整批被拒，逐条定位后全部落定（含换写法重试）"));
+                    }
                 }
                 detail.add(row("执行: " + desc, realPath, ok ? "ok" : "fail", ok ? "" : fault));
                 if (ok && effective != null) {
@@ -207,7 +263,9 @@ public class IntentDeliveryService {
         if (fault == null || "null".equals(fault) || fault.isBlank()) {
             fault = String.valueOf(task.get("result_content"));
         }
-        return Map.of("ok", ok, "fault", ok ? "" : fault);
+        // result_content 必须带回：AddObject 靠它解析设备返回的真实实例号
+        return Map.of("ok", ok, "fault", ok ? "" : fault,
+                "result_content", String.valueOf(task.get("result_content")));
     }
 
     private Map<String, Object> parseParams(String json) {
@@ -271,7 +329,7 @@ public class IntentDeliveryService {
     }
 
     /** 渲染 WAN 类意图：清理存量、AddObject、SPV */
-    private void renderWan(String root, DeviceData data, String category, Map<String, Object> fields,
+    private void renderWan(String sn, String root, DeviceData data, String category, Map<String, Object> fields,
                            boolean incremental,
                            List<Map.Entry<String, String>> plan, List<Map<String, String>> detail) {
         String wanDevicePrefix = root + "WANDevice.";
@@ -296,18 +354,7 @@ public class IntentDeliveryService {
         String serviceList = normalizeServiceList(text(fields, "service_list"));
 
         if (!incremental) {
-            for (String connType : List.of("WANIPConnection", "WANPPPConnection")) {
-                for (Integer i : data.instances(connDevice + "." + connType + ".")) {
-                    String existing = connDevice + "." + connType + "." + i;
-                    String svc = findLeafValue(data, existing, "ServiceList", "X_CMCC_ServiceList");
-                    if (svc != null && svc.toUpperCase(Locale.ROOT).contains("TR069")) {
-                        detail.add(row("跳过存量连接", existing, "skip", "承载 TR069，不动"));
-                        continue;
-                    }
-                    plan.add(step("删除存量 " + connType + "." + i,
-                            taskJson("DeleteObject", existing, Map.of())));
-                }
-            }
+            cleanupLegacyWan(sn, connDevice, data, plan, detail);
         }
 
         // 增量模式若已有实例则复用第一条
@@ -318,8 +365,18 @@ public class IntentDeliveryService {
             detail.add(row("复用增量连接", base, "ok", ""));
         } else {
             int known = existing.size();
+            StringBuilder knownStr = new StringBuilder();
+            for (Integer i : existing) {
+                if (knownStr.length() > 0) {
+                    knownStr.append(',');
+                }
+                knownStr.append(i);
+            }
             plan.add(step("新增实例 " + connObj,
-                    taskJson("AddObject", connObj, Map.of("__fallback", known + 1))));
+                    taskJson("AddObject", connObj, Map.of(
+                            "__fallback", known + 1,
+                            "__conn_obj", connObj,
+                            "__known", knownStr.toString()))));
             base = connObj + "__NEW__.";
             detail.add(row("新实例号", connObj, "ok",
                     "以 AddObject 返回为准，兜底为 " + (known + 1)));
@@ -352,8 +409,11 @@ public class IntentDeliveryService {
                     "X_CMCC_VLANMode", "X_CT-COM_VLANMode", "VLANMode");
         }
         String proto = text(fields, "ip_protocol");
-        if (proto != null && !proto.isBlank() && !"IPv4".equalsIgnoreCase(proto)) {
-            putValue(values, data, base, detail, "IP 协议版本(X_CMCC_IPMode)", proto, "X_CMCC_IPMode");
+        if (proto != null && !proto.isBlank()) {
+            // IPv4/IPv6/双栈统一归一成设备数值口径（1/2/3）并全场景下发，
+            // 这样 DHCP/静态 WAN 也能显式切回 IPv4，双栈也能写对
+            putValue(values, data, base, detail, "IP 协议版本(X_CMCC_IPMode)",
+                    normalizeIpProtocol(proto), "X_CMCC_IPMode");
         }
         String mtu = text(fields, "mtu");
         if (mtu != null && !mtu.isBlank()) {
@@ -368,13 +428,26 @@ public class IntentDeliveryService {
             putValue(values, data, base, detail, "PPPoE 账号", text(fields, "username"), "Username");
             putValue(values, data, base, detail, "PPPoE 密码", text(fields, "password"), "Password");
         }
-        if ("WAN_STATIC".equals(category)) {
-            putValue(values, data, base, detail, "寻址方式", "Static", "AddressingType");
+        // 寻址方式（master TemplateBuilder 口径）：WAN_DHCP 必须显式写 IPAddressingType=DHCP。
+        // AddObject 新建的 WANIPConnection 固件默认就是 Static，漏写就会「选 DHCP 却变静态」；
+        // WAN_STATIC 同理显式写 Static。增量复用旧连接时也要写，把上次残留的 Static 改回 DHCP。
+        if (routed && !pppoe) {
+            String addrType = text(fields, "addr_type");
+            if (addrType == null || addrType.isBlank()) {
+                addrType = "WAN_STATIC".equalsIgnoreCase(category) ? "Static" : "DHCP";
+            } else if ("dhcp".equalsIgnoreCase(addrType) || "ipoe".equalsIgnoreCase(addrType)) {
+                addrType = "DHCP";
+            } else if ("static".equalsIgnoreCase(addrType)) {
+                addrType = "Static";
+            }
+            putAddressingType(values, data, base, detail, addrType);
+        }
+        if ("WAN_STATIC".equalsIgnoreCase(category)) {
             putValue(values, data, base, detail, "静态 IP", text(fields, "external_ip"), "ExternalIPAddress");
             putValue(values, data, base, detail, "子网掩码", text(fields, "subnet_mask"), "SubnetMask");
             putValue(values, data, base, detail, "默认网关", text(fields, "default_gateway"), "DefaultGateway");
         }
-        String bindPorts = text(fields, "bind_ports");
+        String bindPorts = textList(fields, "bind_ports", "bind_port");
         if (bindPorts != null && !bindPorts.isBlank()) {
             String bound = lanInterfaceValue(root, data, bindPorts);
             if (bound == null) {
@@ -389,32 +462,68 @@ public class IntentDeliveryService {
         emitSpv(plan, "WAN 参数包", values, detail);
     }
 
+    /** 频段实例约定（master TemplateBuilder 口径）：2.4G 起始实例 1，5.8G 起始实例 5 */
+    private static final int SSID_24G = 1;
+    private static final int SSID_58G = 5;
+
     /** 渲染 WiFi 类意图 */
     private void renderWifi(String root, DeviceData data, String category, Map<String, Object> fields,
                             List<Map.Entry<String, String>> plan, List<Map<String, String>> detail) {
-        boolean band5 = "WIFI_58G".equals(category);
-        String cfgBase = root + "LANDevice.1.LANWLANConfiguration.";
-        if (data.instances(cfgBase).isEmpty()) {
-            cfgBase = root + "LANDevice.1.WLANConfiguration.";
-        }
+        boolean band5 = "WIFI_58G".equalsIgnoreCase(category);
+        String cfgBase = wifiCfgBase(root, data);
         List<Integer> instances = data.instances(cfgBase);
         if (instances.isEmpty()) {
             throw new BusinessException("设备参数树无 WLAN 配置实例，无法下发 WiFi");
         }
         String base = null;
-        for (Integer i : instances) {
-            String std = findLeafValue(data, cfgBase + i, "Standard");
-            String s = std == null ? "" : std.toLowerCase(Locale.ROOT);
-            boolean has5 = s.contains("802.11a") || s.contains("802.11ac") || s.contains("802.11ax");
-            if (band5 == has5) {
-                base = cfgBase + i + ".";
-                break;
+        // 模板可显式指定 SSID 实例号（机型适配口径），优先级最高
+        String explicit = text(fields, "wifi_instance");
+        if (explicit != null) {
+            try {
+                int n = Integer.parseInt(explicit.trim());
+                if (instances.contains(n)) {
+                    base = cfgBase + n + ".";
+                    detail.add(row("频段实例匹配", base, "ok", "模板指定 SSID 实例 " + n));
+                } else {
+                    detail.add(row("频段实例匹配", "SSID." + n, "skip", "设备参数树无此实例，改按频段识别"));
+                }
+            } catch (NumberFormatException ignore) {
             }
         }
         if (base == null) {
-            int pick = band5 && instances.size() > 1 ? instances.get(1) : instances.get(0);
+            // 按设备申报的频段标记挑实例：RFBand/OperatingFrequencyBand → Standard → Channel → SSID 名
+            for (Integer i : instances) {
+                String band = wifiBandOf(data, cfgBase + i);
+                if (band != null && "5.8G".equals(band) == band5) {
+                    base = cfgBase + i + ".";
+                    detail.add(row("频段实例匹配", base, "ok", "依据设备申报标记 " + band));
+                    break;
+                }
+            }
+        }
+        if (base == null) {
+            // 无标记时按 master 厂商约定取实例：2.4G=1、5.8G=5；
+            // 5G 若无 5 号实例则取最大的非 2.4G 实例，绝不落到 2.4G 实例上
+            Integer pick = null;
+            if (band5) {
+                for (Integer i : instances) {
+                    if (i >= SSID_58G) {
+                        pick = i;
+                        break;
+                    }
+                }
+                if (pick == null && instances.size() > 1) {
+                    pick = instances.get(instances.size() - 1);
+                }
+            } else if (instances.contains(SSID_24G)) {
+                pick = SSID_24G;
+            }
+            if (pick == null) {
+                pick = instances.get(0);
+            }
             base = cfgBase + pick + ".";
-            detail.add(row("频段实例匹配", base, "ok", "未识别到频段标记，按序取实例 " + pick));
+            detail.add(row("频段实例匹配", base, "ok", "未识别到频段标记，按实例约定取 " + pick
+                    + (instances.size() < 2 && band5 ? "（设备仅一个 SSID 实例，请核对机型适配）" : "")));
         }
 
         Map<String, String> values = new LinkedHashMap<>();
@@ -456,16 +565,88 @@ public class IntentDeliveryService {
                     "WPAEncryptionModes", "BasicEncryptionModes", "IEEE11iEncryptionModes");
         }
         String key = text(fields, "wpa_key");
-        if (key != null && !key.isBlank()) {
-            putValue(values, data, base, detail, "WiFi 密码", key, "KeyPassphrase",
-                    "PreSharedKey.1.KeyPassphrase", "PreSharedKey.1.PreSharedKey", "PreSharedKey");
+        if (key == null || key.isBlank()) {
+            // 加密方式为开放时密码无效，其余情况按行业惯例默认值下发（master 同口径）
+            key = DEFAULT_WIFI_PWD;
+            detail.add(row("WiFi 密码", "（未填写）", "ok", "按惯例默认值下发 " + DEFAULT_WIFI_PWD));
         }
+        putValue(values, data, base, detail, "WiFi 密码", key, "KeyPassphrase",
+                "PreSharedKey.1.KeyPassphrase", "PreSharedKey.1.PreSharedKey", "PreSharedKey");
         String bandwidth = text(fields, "bandwidth");
         if (bandwidth != null && !"auto".equalsIgnoreCase(bandwidth)) {
             putValue(values, data, base, detail, "频宽", bandwidth,
                     "X_CMCC_ChannelWidth", "X_CT-COM_ChannelWidth");
         }
         emitSpv(plan, "WiFi 参数包 [" + (band5 ? "5.8G" : "2.4G") + "]", values, detail);
+    }
+
+    /** 找设备上真正有实例的 WLAN 配置对象（TR-098 两种写法 + TR-181 WiFi.SSID） */
+    private static String wifiCfgBase(String root, DeviceData data) {
+        List<Integer> lds = data.instances(root + "LANDevice.");
+        if (lds.isEmpty()) {
+            lds = List.of(1);
+        }
+        for (Integer ld : lds) {
+            for (String obj : List.of("LANWLANConfiguration.", "WLANConfiguration.")) {
+                String b = root + "LANDevice." + ld + "." + obj;
+                if (!data.instances(b).isEmpty()) {
+                    return b;
+                }
+            }
+        }
+        String ssid = root + "WiFi.SSID.";
+        if (!data.instances(ssid).isEmpty()) {
+            return ssid;
+        }
+        return root + "LANDevice.1.WLANConfiguration.";
+    }
+
+    /** 判断某个 WLAN 实例属于哪个频段：设备申报标记优先，其次 Standard/Channel/SSID 名 */
+    private static String wifiBandOf(DeviceData data, String instanceBase) {
+        String prefix = instanceBase.endsWith(".") ? instanceBase : instanceBase + ".";
+        String band = bandFromText(data.value(prefix + "X_CMCC_RFBand"));
+        if (band == null) {
+            band = bandFromText(data.value(prefix + "OperatingFrequencyBand"));
+        }
+        if (band != null) {
+            return band;
+        }
+        String std = data.value(prefix + "Standard");
+        if (std != null && !std.isBlank()) {
+            String low = std.toLowerCase(Locale.ROOT);
+            if (low.contains("802.11a") || low.contains("802.11ac") || low.contains("802.11ax")) {
+                return "5.8G";
+            }
+            if (low.contains("802.11b") || low.contains("802.11g") || low.contains("802.11n")) {
+                return "2.4G";
+            }
+        }
+        String ch = data.value(prefix + "Channel");
+        if (ch != null && !ch.isBlank()) {
+            try {
+                double c = Double.parseDouble(ch.trim().replaceAll("[^0-9.]", ""));
+                if (c > 0) {
+                    return c > 14 ? "5.8G" : "2.4G";
+                }
+            } catch (NumberFormatException ignore) {
+            }
+        }
+        return bandFromText(data.value(prefix + "SSID"));
+    }
+
+    /** 从 "2.4G"/"5G"/"5GHz"/"5.8GHz" 等文本里认频段 */
+    private static String bandFromText(String v) {
+        if (v == null || v.isBlank()) {
+            return null;
+        }
+        String low = v.toLowerCase(Locale.ROOT);
+        if (low.contains("2.4")) {
+            return "2.4G";
+        }
+        if (low.contains("5.8") || low.contains("5g") || low.contains("5 ghz")) {
+            return "5.8G";
+        }
+        return null;
     }
 
     /** 渲染 SIP 类意图 */
@@ -553,6 +734,225 @@ public class IntentDeliveryService {
             }
         }
         emitSpv(plan, "SIP 参数包", values, detail);
+    }
+
+    /** 渲染 LAN 网口意图（参考 master lan()：Enable / AutoNegotiate / DuplexMode / MaxSpeed） */
+    private void renderLan(String root, DeviceData data, Map<String, Object> fields,
+                           List<Map.Entry<String, String>> plan, List<Map<String, String>> detail) {
+        String ports = textList(fields, "lan_ports");
+        if (ports == null || ports.isBlank()) {
+            throw new BusinessException("LAN 模板未勾选网口");
+        }
+        String enable = text(fields, "lan_enable");
+        String duplex = text(fields, "lan_duplex");
+        String speed = text(fields, "lan_speed");
+        boolean autoMode = "Auto".equalsIgnoreCase(duplex) || "Auto".equalsIgnoreCase(speed);
+        Map<String, String> values = new LinkedHashMap<>();
+        List<String> okPorts = new ArrayList<>();
+        for (String p : ports.split("[,;\\s]+")) {
+            if (p.isBlank()) {
+                continue;
+            }
+            String base = lanPortPath(root, data, p);
+            if (base == null) {
+                detail.add(row("跳过网口", p, "skip", "设备参数树上找不到该网口"));
+                continue;
+            }
+            if (enable != null && !enable.isBlank()) {
+                putValue(values, data, base + ".", detail, "网口启停(" + p + ")",
+                        "true".equalsIgnoreCase(enable) || "1".equals(enable) ? "1" : "0", "Enable");
+            }
+            // 双工或速率任一为自协商时写 AutoNegotiate=1，非自协商才写死 DuplexMode/MaxSpeed
+            if (autoMode) {
+                putValue(values, data, base + ".", detail, "自协商(" + p + ")", "1", "AutoNegotiate");
+            }
+            if (duplex != null && !duplex.isBlank() && !"Auto".equalsIgnoreCase(duplex)) {
+                String d = duplex.substring(0, 1).toUpperCase(Locale.ROOT)
+                        + duplex.substring(1).toLowerCase(Locale.ROOT);
+                putValue(values, data, base + ".", detail, "双工模式(" + p + ")", d, "DuplexMode");
+            }
+            if (speed != null && !speed.isBlank() && !"Auto".equalsIgnoreCase(speed)) {
+                putValue(values, data, base + ".", detail, "端口速率(" + p + ")", speed.trim(), "MaxSpeed");
+            }
+            okPorts.add(p);
+        }
+        if (okPorts.isEmpty()) {
+            throw new BusinessException("勾选的网口在设备参数树上都不存在: " + ports);
+        }
+        emitSpv(plan, "LAN 网口参数包 [" + String.join(",", okPorts) + "]", values, detail);
+    }
+
+    /**
+     * WAN 下发前清理旧业务连接（master WanCleanup 口径）：
+     * TR069 管理通道保留——ServiceList → Name/路径 → ManagementServer 指向三重判定；
+     * 本批次已新建的连接保留；一条管理通道都认不出时一条都不删（防止设备脱管）；
+     * 台账窗口内不重复清理，避免整包第二个 WAN 成员删掉第一个刚建的连接。
+     */
+    private void cleanupLegacyWan(String sn, String connDevice, DeviceData data,
+                                  List<Map.Entry<String, String>> plan, List<Map<String, String>> detail) {
+        long now = System.currentTimeMillis();
+        // 过期台账惰性回收
+        wanCleanupLedger.entrySet().removeIf(e -> now - e.getValue().lastCleanupAt > WAN_CLEANUP_WINDOW_MS * 2);
+        synchronized (wanCleanupLocks.computeIfAbsent(sn, k -> new Object())) {
+            WanCleanupState state = wanCleanupLedger.computeIfAbsent(sn, k -> new WanCleanupState());
+            if (state.fresh()) {
+                detail.add(row("跳过存量清理", connDevice, "skip",
+                        "本批次已清理过 WAN，避免删掉刚建的业务连接"));
+                return;
+            }
+            state.createdPaths.clear();
+            String managementHint = findManagementHint(data);
+            List<String> keep = new ArrayList<>();
+            List<String> victims = new ArrayList<>();
+            boolean managementSeen = false;
+            for (String connType : List.of("WANIPConnection", "WANPPPConnection")) {
+                for (Integer i : data.instances(connDevice + "." + connType + ".")) {
+                    String existing = connDevice + "." + connType + "." + i;
+                    boolean created = false;
+                    for (String guard : state.createdPaths) {
+                        if (existing.startsWith(guard)) {
+                            created = true;
+                            break;
+                        }
+                    }
+                    boolean management = isManagementLink(existing, data, managementHint);
+                    managementSeen |= management;
+                    if (management || created) {
+                        keep.add(existing + (management ? "（管理通道）" : "（本批次新建）"));
+                    } else {
+                        victims.add(existing);
+                    }
+                }
+            }
+            if (!managementSeen) {
+                detail.add(row("跳过存量清理", connDevice, "skip",
+                        "未认出 TR069 管理通道，一条都不删（防止设备脱管）"));
+                return;
+            }
+            if (victims.isEmpty()) {
+                detail.add(row("清理存量连接", connDevice, "ok", "存量全是管理通道，无需删除"));
+                state.lastCleanupAt = now;
+                return;
+            }
+            detail.add(row("清理存量连接", connDevice, "ok",
+                    "保留 " + keep + "，删除 " + victims));
+            for (String victim : victims) {
+                plan.add(step("删除存量 " + victim, taskJson("DeleteObject", victim, Map.of())));
+            }
+            // 清理只此一次：同批后面的成员不再触发任何删除；新建连接由 rememberCreated 保护
+            state.lastCleanupAt = now;
+        }
+    }
+
+    /**
+     * ManagementServer.* 参数值里指向的连接片段（如 WANIPConnection.9.）。
+     * 纯数字兜底只认键名含 WAN/Instance 的参数——PeriodicInformInterval 这类数值与连接无关，不能拿来猜。
+     */
+    private String findManagementHint(DeviceData data) {
+        String numeric = null;
+        for (Map.Entry<String, CpeParam> e : data.all().entrySet()) {
+            String key = e.getKey();
+            if (key == null || !key.contains("ManagementServer.")) {
+                continue;
+            }
+            String val = e.getValue() == null ? null : e.getValue().value();
+            if (val == null || val.isBlank()) {
+                continue;
+            }
+            Matcher m = WAN_CONNECTION.matcher(val);
+            if (m.find()) {
+                return m.group(0);
+            }
+            String t = val.trim();
+            if (numeric == null && t.matches("\\d+")
+                    && (key.toLowerCase(Locale.ROOT).contains("wan")
+                    || key.toLowerCase(Locale.ROOT).contains("instance"))) {
+                numeric = t;
+            }
+        }
+        return numeric;
+    }
+
+    /** TR069 管理通道判定（master WanServiceClassifier 口径）：ServiceList → Name/路径 → ManagementServer 指向 */
+    private static boolean isManagementLink(String path, DeviceData data, String hint) {
+        String svc = declaredService(data, path);
+        if (svc == null || svc.isBlank()) {
+            String name = findLeafValue(data, path, "Name");
+            svc = (name == null ? "" : name) + " " + stripRoot(path);
+        }
+        if (svc != null && svc.toUpperCase(Locale.ROOT).contains("TR069")) {
+            return true;
+        }
+        return matchesManagement(path, hint);
+    }
+
+    /**
+     * 该连接申报的业务类型：不挑厂商前缀，凡是连接下名字含 ServiceList 的叶子都认。
+     * 标准树是 ServiceList，移动/电信/华为/中兴/联通各有私有变体（X_CMCC_/X_CT-COM_/X_HUAWEI_/X_ZTE-...），
+     * 逐个枚举永远枚举不全，扫描覆盖任意写法。
+     */
+    private static String declaredService(DeviceData data, String connPath) {
+        String direct = findLeafValue(data, connPath, "ServiceList");
+        if (direct != null && !direct.isBlank()) {
+            return direct;
+        }
+        String prefix = connPath.endsWith(".") ? connPath : connPath + ".";
+        for (Map.Entry<String, CpeParam> e : data.all().entrySet()) {
+            String key = e.getKey();
+            if (key == null || !key.startsWith(prefix)
+                    || !key.toLowerCase(Locale.ROOT).contains("servicelist")) {
+                continue;
+            }
+            String val = e.getValue() == null ? null : e.getValue().value();
+            if (val != null && !val.isBlank()) {
+                return val;
+            }
+        }
+        return "";
+    }
+
+    /** 去掉数据模型根节点，避免根名本身命中关键字 */
+    private static String stripRoot(String path) {
+        for (String root : List.of("InternetGatewayDevice.", "Device.")) {
+            if (path.regionMatches(true, 0, root, 0, root.length())) {
+                return path.substring(root.length());
+            }
+        }
+        return path;
+    }
+
+    /** 连接路径与管理通道线索是否对得上（master WanCleanup.matchesManagement） */
+    private static boolean matchesManagement(String path, String hint) {
+        if (path == null || hint == null || hint.isBlank()) {
+            return false;
+        }
+        String text = hint.trim();
+        if (text.matches("\\d+")) {
+            Integer own = instanceNumberOf(path);
+            return own != null && own == Integer.parseInt(text);
+        }
+        if (path.contains(text)) {
+            return true;
+        }
+        Integer hintInstance = instanceNumberOf(text);
+        Integer own = instanceNumberOf(path);
+        return hintInstance != null && own != null && hintInstance.equals(own);
+    }
+
+    /** 路径里的连接实例号，形如 WANIPConnection.9. 取 9；认不出返回 null */
+    private static Integer instanceNumberOf(String path) {
+        if (path == null) {
+            return null;
+        }
+        Matcher m = WAN_CONNECTION.matcher(path);
+        if (!m.find()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(m.group(1));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** 渲染设备管理类意图 */
@@ -655,6 +1055,25 @@ public class IntentDeliveryService {
         values.put(path, value);
     }
 
+    /**
+     * 写 WAN 寻址方式：master 适配库里 WAN_DHCP 的 path_addr_type 是 IPAddressingType、val=DHCP，
+     * WAN_STATIC 是同叶子 val=Static。这里同时兼容厂商私有写法；
+     * 参数树没有申报该叶子时不能静默跳过（否则设备保持默认 Static），
+     * 按 master 口径强制写 IPAddressingType，由设备/回读校验兜底。
+     */
+    private static void putAddressingType(Map<String, String> values, DeviceData data, String base,
+                                          List<Map<String, String>> detail, String value) {
+        String[] candidates = {"IPAddressingType", "AddressingType", "X_CMCC_IPAddressingType",
+                "X_CT-COM_IPAddressingType", "X_CMCC_AddressingType"};
+        String path = leaf(data, base, candidates);
+        if (path == null) {
+            path = base + candidates[0];
+            detail.add(row("寻址方式路径", path, "ok",
+                    "参数树未申报寻址叶子，按 master 适配口径写 IPAddressingType"));
+        }
+        values.put(path, value);
+    }
+
     /** 探测候选叶子路径，都不存在返回 null；__NEW__ 基础下用同类型已有实例做存在性参照 */
     private static String leaf(DeviceData data, String base, String... candidates) {
         String refBase = null;
@@ -711,7 +1130,8 @@ public class IntentDeliveryService {
             }
             String port = lanPortPath(root, data, p);
             if (port == null) {
-                return null;
+                // 个别端口（如 PON）映射不出来时跳过它，不再让整条绑定作废
+                continue;
             }
             if (sb.length() > 0) {
                 sb.append(',');
@@ -727,7 +1147,19 @@ public class IntentDeliveryService {
         if (p.startsWith(root)) {
             return p;
         }
-        if (!p.toUpperCase(Locale.ROOT).matches("LAN\\d+")) {
+        String upper = p.toUpperCase(Locale.ROOT);
+        if (upper.matches("SSID\\d+")) {
+            // 无线 SSID 也可以作为桥接绑定端口
+            int ssid = Integer.parseInt(p.substring(4));
+            for (String obj : List.of(root + "LANDevice.1.LANWLANConfiguration.",
+                    root + "LANDevice.1.WLANConfiguration.", root + "WiFi.SSID.")) {
+                if (data.instances(obj).contains(ssid)) {
+                    return obj + ssid;
+                }
+            }
+            return null;
+        }
+        if (!upper.matches("LAN\\d+")) {
             return null;
         }
         int no = Integer.parseInt(p.substring(3));
@@ -754,9 +1186,216 @@ public class IntentDeliveryService {
     /** SPV 参数级被拒的错误码 */
     private static final Pattern SPV_REJECT = Pattern.compile("\\b900[3-8]\\b");
 
+    /** WAN 连接路径末段，形如 WANIPConnection.9. */
+    private static final Pattern WAN_CONNECTION = Pattern.compile("WAN(?:IP|PPP)Connection\\.(\\d+)\\.");
+
+    /** 清理台账窗口：同批多个 WAN 成员（整包多模板）只清理一次 */
+    private static final long WAN_CLEANUP_WINDOW_MS = 5 * 60_000L;
+
+    /** 每台设备一把清理锁：同一批次的多个业务任务不能同时清点、删除连接（master 口径） */
+    private final Map<String, Object> wanCleanupLocks = new ConcurrentHashMap<>();
+    /** 每台设备的清理台账：窗口内不重复清理，本批次新建的连接永不进删除清单 */
+    private final Map<String, WanCleanupState> wanCleanupLedger = new ConcurrentHashMap<>();
+
+    private static final class WanCleanupState {
+        volatile long lastCleanupAt;
+        final Set<String> createdPaths = ConcurrentHashMap.newKeySet();
+
+        boolean fresh() {
+            return lastCleanupAt > 0 && System.currentTimeMillis() - lastCleanupAt < WAN_CLEANUP_WINDOW_MS;
+        }
+
+        void remember(String prefix) {
+            createdPaths.add(prefix);
+        }
+    }
+
+    /** 变量占位符，如 %room%（口径与 master TemplateVariables 一致） */
+    private static final Pattern VAR = Pattern.compile("%([A-Za-z0-9_]+)%");
+
+    /** 房间号没登记时的兜底值 */
+    private static final String DEFAULT_ROOM = "0000";
+    /** WiFi 密码没填写时的兜底值 */
+    private static final String DEFAULT_WIFI_PWD = "88888888";
+
+    /** IP 协议版本：X_CMCC_IPMode 设备口径是数值（master 实测口径） */
+    private static final Map<String, String> IP_PROTOCOL_MODES = Map.of(
+            "ipv4", "1",
+            "ipv6", "2",
+            "ipv4+ipv6", "3",
+            "ipv4v6", "3",
+            "ipv4/v6", "3",
+            "dual", "3");
+
+    /** IP 协议写法归一：IPv4/IPv6/IPv4+IPv6 → 1/2/3，无法识别按 IPv4 */
+    private static String normalizeIpProtocol(String value) {
+        String v = value.trim();
+        if (v.isEmpty() || v.matches("\\d+")) {
+            return v;
+        }
+        String mapped = IP_PROTOCOL_MODES.get(v.toLowerCase(Locale.ROOT).replace(" ", ""));
+        if (mapped == null) {
+            log.warn("[下发] IP 协议值无法识别，按 IPv4 下发: {}", value);
+            return "1";
+        }
+        return mapped;
+    }
+
+    /**
+     * 变量取值表：%room% 优先字段 room，其次设备台账 room_no，最后兜底 0000；
+     * %desc% 取台账 remark；%wifi_pwd% 兜底 88888888；其余字段键值以 %键% 直通。
+     */
+    private Map<String, String> buildVars(String sn, Map<String, Object> fields) {
+        Map<String, String> vars = new LinkedHashMap<>();
+        Map<String, Object> device = null;
+        try {
+            device = store.findDevice(sn);
+        } catch (Exception ignore) {
+        }
+        String room = text(fields, "room");
+        if (room == null || room.isBlank()) {
+            Object dr = device == null ? null : device.get("room_no");
+            room = dr == null ? "" : String.valueOf(dr).trim();
+        }
+        vars.put("%room%", room == null || room.isBlank() ? DEFAULT_ROOM : room);
+        Object remark = device == null ? null : device.get("remark");
+        vars.put("%desc%", remark == null ? "" : String.valueOf(remark).trim());
+        String wifiPwd = text(fields, "wpa_key");
+        vars.put("%wifi_pwd%", wifiPwd == null || wifiPwd.isBlank() ? DEFAULT_WIFI_PWD : wifiPwd.trim());
+        for (Map.Entry<String, Object> e : fields.entrySet()) {
+            if (e.getValue() != null) {
+                vars.putIfAbsent("%" + e.getKey() + "%", String.valueOf(e.getValue()).trim());
+            }
+        }
+        return vars;
+    }
+
+    /** 把字段值里的 %var% 换成真实值；变量值本身可能还是变量，最多解两层 */
+    private Map<String, Object> resolveFields(Map<String, Object> fields, Map<String, String> vars,
+                                              List<Map<String, String>> detail) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : fields.entrySet()) {
+            Object v = e.getValue();
+            if (v instanceof String s && s.indexOf('%') >= 0) {
+                out.put(e.getKey(), resolveVars(s, vars, e.getKey(), detail));
+            } else {
+                out.put(e.getKey(), v);
+            }
+        }
+        return out;
+    }
+
+    /** 变量替换；识别不了的 %token% 直接报错，避免把字面量下发给设备（master 同口径） */
+    private String resolveVars(String val, Map<String, String> vars, String field,
+                               List<Map<String, String>> detail) {
+        String out = val;
+        for (int depth = 0; depth < 2; depth++) {
+            Matcher it = VAR.matcher(out);
+            if (!it.find()) {
+                break;
+            }
+            StringBuilder sb = new StringBuilder();
+            it.reset();
+            List<String> missing = new ArrayList<>();
+            while (it.find()) {
+                String token = it.group();
+                String rep = vars.get(token);
+                if (rep == null) {
+                    missing.add(token);
+                    rep = token;
+                }
+                it.appendReplacement(sb, Matcher.quoteReplacement(rep == null ? "" : rep));
+            }
+            it.appendTail(sb);
+            out = sb.toString();
+            if (!missing.isEmpty()) {
+                detail.add(row("变量缺失", String.join(", ", missing), "fail",
+                        "字段 " + field + " 里的变量没有值，下发终止"));
+                throw new BusinessException("字段 " + field + " 的变量没有值: " + String.join(", ", missing));
+            }
+        }
+        return out.trim();
+    }
+
+    /** AddObject 响应实例号：result_content 形如 {"instanceNumber":2,"status":0} */
+    private static final Pattern INSTANCE_NUMBER = Pattern.compile("(?i)\"instanceNumber\"\\s*:\\s*(\\d+)");
+    /** 兜底宽松解析 */
+    private static final Pattern INSTANCE_NUMBER_LOOSE = Pattern.compile("(?i)instance[^0-9]{0,20}(\\d+)");
+
     private static class LocateResult {
         final List<Map<String, String>> accepted = new ArrayList<>();
         final List<String> rejected = new ArrayList<>();
+    }
+
+    /** 从 AddObject 任务结果解析设备返回的实例号 */
+    private static String parseInstanceNumber(String result) {
+        if (result == null || result.isBlank() || "null".equals(result)) {
+            return null;
+        }
+        Matcher m = INSTANCE_NUMBER.matcher(result);
+        if (m.find()) {
+            return m.group(1);
+        }
+        m = INSTANCE_NUMBER_LOOSE.matcher(result);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** 解析 renderWan 快照里的存量实例号清单（逗号分隔） */
+    private static Set<Integer> parseKnownInstances(String known) {
+        Set<Integer> out = new LinkedHashSet<>();
+        if (known != null && !known.isBlank() && !"null".equals(known)) {
+            for (String p : known.split(",")) {
+                try {
+                    out.add(Integer.parseInt(p.trim()));
+                } catch (NumberFormatException ignore) {
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * AddObject 后从落库参数树实测新实例号（等会话收尾落库，最多等 ~20s）。
+     * 新实例 = 参数树里出现、且不在 AddObject 前存量快照中的那一个。
+     */
+    private String rediscoverNewInstance(String sn, String connObj, Set<Integer> known) {
+        for (int i = 0; i < 20; i++) {
+            try {
+                DeviceData d = new DeviceData();
+                d.loadAll(store.loadParams(sn));
+                for (Integer inst : d.instances(connObj)) {
+                    if (known == null || !known.contains(inst)) {
+                        return String.valueOf(inst);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[下发] 实例号实测读参数树失败 sn={}: {}", sn, e.getMessage());
+            }
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** SPV 参数路径里的猜错实例号统一替换为实测号 */
+    private static List<Map<String, String>> fixInstancePaths(List<Map<String, String>> values,
+                                                              String connObj, String guessed, String real) {
+        String wrongPrefix = connObj + guessed + ".";
+        String rightPrefix = connObj + real + ".";
+        List<Map<String, String>> out = new ArrayList<>();
+        for (Map<String, String> v : values) {
+            Map<String, String> nv = new LinkedHashMap<>(v);
+            String name = nv.get("name");
+            if (name != null && name.startsWith(wrongPrefix)) {
+                nv.put("name", rightPrefix + name.substring(wrongPrefix.length()));
+            }
+            out.add(nv);
+        }
+        return out;
     }
 
     /** 整批 SPV 被拒时逐条重发定位，设备不认的开关类记 skip */
@@ -900,6 +1539,53 @@ public class IntentDeliveryService {
     private static String textOrEmpty(Map<String, Object> fields, String key) {
         String v = text(fields, key);
         return v == null ? "" : v;
+    }
+
+    /**
+     * 端口类字段取值：模板页 ports 勾选组提交的是 JSON 数组（List），
+     * 工单覆盖参数也可能是 "[LAN1, LAN2]" 字符串。统一转成 "LAN1,LAN2"，
+     * 否则 String.valueOf(List) 会变成 "[LAN1, LAN2]"，端口映射全部失败。
+     * 依次尝试多个别名（master 里 bind_port / bind_ports 同义）。
+     */
+    private static String textList(Map<String, Object> fields, String... keys) {
+        if (fields == null) {
+            return null;
+        }
+        for (String key : keys) {
+            Object v = fields.get(key);
+            if (v == null) {
+                continue;
+            }
+            String joined;
+            if (v instanceof java.util.Collection<?> list) {
+                StringBuilder sb = new StringBuilder();
+                for (Object o : list) {
+                    if (o == null) {
+                        continue;
+                    }
+                    String s = String.valueOf(o).trim().replace("[", "").replace("]", "");
+                    if (!s.isEmpty()) {
+                        if (sb.length() > 0) {
+                            sb.append(',');
+                        }
+                        sb.append(s);
+                    }
+                }
+                joined = sb.toString();
+            } else {
+                joined = String.valueOf(v).trim();
+                if (joined.startsWith("[")) {
+                    joined = joined.substring(1);
+                }
+                if (joined.endsWith("]")) {
+                    joined = joined.substring(0, joined.length() - 1);
+                }
+            }
+            if (!joined.isBlank() && !"null".equalsIgnoreCase(joined)) {
+                return joined.trim();
+            }
+        }
+        return null;
     }
 
     /** 拼一个计划步骤 */

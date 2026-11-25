@@ -30,6 +30,13 @@ public class CpeProperties {
     /** 会话空闲超时（秒） */
     private int sessionTimeoutSeconds = 60;
 
+    /**
+     * 空队列捎带等待（毫秒，master piggyback-wait-ms 同值）：
+     * 会话内任务跑完且队列空时，ACS 不立刻收尾，短等下发引擎串行塞入下一步任务，
+     * 避免每步 RPC 都经历"会话结束→CR 唤醒→Inform→新会话"的重建（当前分支 8 分钟/台的主因）
+     */
+    private int piggybackWaitMs = 1500;
+
     /** 单会话最大 RPC 往返数 */
     private int maxRpcCount = 255;
 

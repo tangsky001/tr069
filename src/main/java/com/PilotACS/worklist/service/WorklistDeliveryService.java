@@ -326,8 +326,9 @@ public class WorklistDeliveryService {
         WorklistStepRecord step = addStep(w.getId(),
                 "整包下发 · 业务模板", "BizTemplate", Map.of("templateId", bizTemplateId));
         try {
+            // 手动工单：执行独立下发器，本工单的终态由下方 succeed/failOrRetry 回写
             Long execId = bizExecutionService.execute(bizTemplateId, w.getSn(),
-                    new HashMap<>(), w.getRoomNo(), w.getUsername(), w.getId());
+                    new HashMap<>(), w.getRoomNo(), w.getUsername());
             long deadline = System.currentTimeMillis() + BIZ_EXEC_TIMEOUT_MS;
             Map<String, Object> exec = null;
             while (System.currentTimeMillis() < deadline) {

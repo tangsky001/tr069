@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -39,9 +40,10 @@ public class DeviceSipService {
 
     /** 服务器参数候选叶子 */
     private static final String[] REGISTRAR_LEAVES = {"RegistrarServer", "SIPRegistrarServer"};
-    private static final String[] REGISTRAR_PORT_LEAVES = {"RegistrarServerPort", "SIPRegistrarServerPort"};
-    private static final String[] PROXY_LEAVES = {"ProxyServer", "SIPProxyServer"};
-    private static final String[] PROXY_PORT_LEAVES = {"ProxyServerPort", "SIPProxyServerPort"};
+    private static final String[] REGISTRAR_PORT_LEAVES = {"RegistrarServerPort", "SIPRegistrarServerPort",
+            "RegistrarPort"};
+    private static final String[] PROXY_LEAVES = {"ProxyServer", "SIPProxyServer", "OutboundProxy"};
+    private static final String[] PROXY_PORT_LEAVES = {"ProxyServerPort", "SIPProxyServerPort", "ProxyPort"};
 
     private final CpeStore store;
     private final TaskService taskService;
@@ -106,7 +108,11 @@ public class DeviceSipService {
         String number = orElse(data.value(prefix + "DirectoryNumber"),
                 orElse(data.value(prefix + "SIP.URI"),
                         orElse(data.value(prefix + "SIP.AuthUserName"),
-                                orElse(vendorLeaf(data, prefix, "uri"), vendorLeaf(data, prefix, "authusername")))));
+                                orElse(vendorLeafValue(data, prefix, "uri"),
+                                        vendorLeafValue(data, prefix, "authusername")))));
+        if (isParamPath(number)) {
+            number = null; // 绝不把参数路径当电话号码显示
+        }
         if (number != null && number.contains("@")) {
             number = number.substring(0, number.indexOf('@'));
         }
@@ -118,8 +124,10 @@ public class DeviceSipService {
                 || (low.contains("registered") && !low.contains("unregistered") && !low.contains("registering"));
         out.put("statusText", sipStatusText(status));
         out.put("registered", registered);
-        out.put("authUser", orElse(data.value(prefix + "SIP.AuthUserName"), data.value(prefix + "AuthUserName")));
-        out.put("password", orElse(data.value(prefix + "SIP.AuthPassword"), data.value(prefix + "AuthPassword")));
+        out.put("authUser", orElse(data.value(prefix + "SIP.AuthUserName"),
+                orElse(data.value(prefix + "AuthUserName"), vendorLeafValue(data, prefix, "authusername"))));
+        out.put("password", orElse(data.value(prefix + "SIP.AuthPassword"),
+                orElse(data.value(prefix + "AuthPassword"), vendorLeafValue(data, prefix, "authpassword"))));
         out.put("registrar", serverValue(data, profilePrefix, prefix, REGISTRAR_LEAVES));
         out.put("registrarPort", orElse(serverValue(data, profilePrefix, prefix, REGISTRAR_PORT_LEAVES),
                 DEFAULT_SIP_PORT));
@@ -136,8 +144,8 @@ public class DeviceSipService {
         String root = BusinessPaths.detectRoot(data, str(device.get("root_node")));
 
         String number = str(body.get("number"));
-        if (number == null || number.isBlank()) {
-            throw new BusinessException(400, "电话号码 / URI 不能为空");
+        if (number == null || number.isBlank() || isParamPath(number)) {
+            throw new BusinessException(400, "电话号码 / URI 不能为空，且不能是参数路径");
         }
         List<Integer> lines = normalizedLines(body.get("lines"));
         String operator = str(body.get("username"));
@@ -325,21 +333,70 @@ public class DeviceSipService {
         return null;
     }
 
-    /** 按叶子名匹配厂商私有叶子 */
-    private static String vendorLeaf(DeviceData data, String prefix, String nameLower) {
+    /** 按叶子名匹配厂商私有叶子，返回参数值（不是路径） */
+    private static String vendorLeafValue(DeviceData data, String prefix, String nameLower) {
         for (String p : data.leaves(prefix)) {
-            if (p.substring(p.lastIndexOf('.') + 1).equalsIgnoreCase(nameLower)) {
-                return p;
+            String leaf = p.substring(p.lastIndexOf('.') + 1);
+            if (leaf.equalsIgnoreCase(nameLower)
+                    || leaf.toLowerCase(Locale.ROOT).endsWith(nameLower.toLowerCase(Locale.ROOT))) {
+                String v = data.value(p);
+                if (v != null && !v.isBlank()) {
+                    return v;
+                }
             }
         }
         return null;
     }
 
-    /** 服务器参数：VoiceProfile 层候选优先，Line 层兜底 */
+    /** 完整参数路径（早期 bug 曾把路径当值返回，这里兜底识别） */
+    private static boolean isParamPath(String v) {
+        return v != null && (v.startsWith("InternetGatewayDevice.") || v.startsWith("Device."));
+    }
+
+    /** 服务器参数：VoiceProfile 层候选优先，Line 层兜底，最后扫厂商私有叶子 */
     private static String serverValue(DeviceData data, String profilePrefix, String linePrefix,
                                       String... candidates) {
         String v = firstValue(data, profilePrefix, candidates);
-        return v != null ? v : firstValue(data, linePrefix, candidates);
+        if (v != null) {
+            return v;
+        }
+        v = firstValue(data, linePrefix, candidates);
+        if (v != null) {
+            return v;
+        }
+        for (String c : candidates) {
+            String key = c.toLowerCase(Locale.ROOT);
+            String found = vendorLeafContains(data, profilePrefix, key);
+            if (found == null) {
+                found = vendorLeafContains(data, linePrefix, key);
+            }
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /** 叶子名包含关键字（如 RegistrarServer / X_CMCC_SIPRegistrarServer）时返回其值 */
+    private static String vendorLeafContains(DeviceData data, String prefix, String keyword) {
+        if (prefix == null) {
+            return null;
+        }
+        for (String p : data.leaves(prefix)) {
+            String leaf = p.substring(p.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+            if (!leaf.contains(keyword)) {
+                continue;
+            }
+            // 服务器地址不能拿端口值顶替，端口也不能拿地址顶替
+            if (keyword.contains("port") != leaf.contains("port")) {
+                continue;
+            }
+            String v = data.value(p);
+            if (v != null && !v.isBlank()) {
+                return v;
+            }
+        }
+        return null;
     }
 
     private static String firstValue(DeviceData data, String prefix, String... candidates) {

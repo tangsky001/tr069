@@ -258,6 +258,9 @@ public class ModelProfileService {
     /** 按设备身份匹配模板并挂到会话 */
     public void attachModel(CwmpSession s) {
         try {
+            String brand = normalizeBrand(s.getManufacturer());
+            String model = str(s.getProductClass());
+            String version = str(s.getSoftwareVersion());
             Map<String, Object> device = store.findDevice(s.getSn());
             String isp = str(device.get("isp"));
             if (isp == null || isp.isBlank()) {
@@ -265,39 +268,49 @@ public class ModelProfileService {
                 if (detected == null) {
                     detected = detectIsp(s.getSn());
                 }
-                if (detected == null) {
-                    probeInSession(s);
-                    return;
-                }
-                isp = detected;
+                isp = detected == null ? "" : detected;
             }
-            String brand = normalizeBrand(s.getManufacturer());
-            String model = str(s.getProductClass());
-            String version = str(s.getSoftwareVersion());
             Map<String, Object> row = null;
-            for (String ispCode : IspVariant.candidateCodes(isp)) {
-                row = store.findModelExact(brand, model, version, ispCode);
-                if (row != null) {
-                    break;
-                }
-            }
-            if (row == null) {
+            if (!isp.isBlank()) {
                 for (String ispCode : IspVariant.candidateCodes(isp)) {
-                    row = store.findModelLoose(brand, model, ispCode);
+                    row = store.findModelExact(brand, model, version, ispCode);
                     if (row != null) {
                         break;
                     }
                 }
+                if (row == null) {
+                    for (String ispCode : IspVariant.candidateCodes(isp)) {
+                        row = store.findModelLoose(brand, model, ispCode);
+                        if (row != null) {
+                            break;
+                        }
+                    }
+                }
+            }
+            boolean ispAgnostic = false;
+            if (row == null) {
+                // isp 未识别，或库内模板的 isp 口径与识别结果不一致：按品牌+型号兜底（不校验运营商），
+                // 否则库里有同型号模板也永远"机型模板=无"
+                row = store.findModelAnyIsp(brand, model, version);
+                ispAgnostic = row != null;
             }
             if (row == null) {
+                Logs.warn(Logs.Module.CPE_PUSH, "机型模板未匹配到（库内共 " + store.countModels() + " 条）",
+                        "sn", s.getSn(), "品牌", brand, "型号", model, "版本", version,
+                        "运营商", isp.isBlank() ? "未识别" : isp);
                 probeInSession(s);
                 return;
+            }
+            if (ispAgnostic) {
+                Logs.info(Logs.Module.CPE_PUSH, "机型模板兜底匹配（未校验运营商）", "sn", s.getSn(),
+                        "模板", row.get("id"), "模板运营商", row.get("isp"),
+                        "设备运营商", isp.isBlank() ? "未识别" : isp);
             }
             s.setModelRow(row);
             s.setModelParams(store.loadModelParams(((Number) row.get("id")).longValue()));
             probeInSession(s);
         } catch (Exception e) {
-            Logs.debug(Logs.Module.CPE_PUSH, "机型模板匹配跳过: {}", e.getMessage());
+            Logs.warn(Logs.Module.CPE_PUSH, "机型模板匹配异常", "sn", s.getSn(), "原因", e.toString());
         }
     }
 

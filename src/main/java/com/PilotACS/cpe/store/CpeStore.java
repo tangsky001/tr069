@@ -357,20 +357,38 @@ public class CpeStore {
         return cpeJdbcTemplate.queryForMap("SELECT * FROM cpe_model WHERE id = ?", id);
     }
 
-    /** 精确匹配机型模板 */
+    /** 精确匹配机型模板（brand/model 大小写归一，兼容外部导入库的原始大小写） */
     public Map<String, Object> findModelExact(String brand, String model, String version, String isp) {
         List<Map<String, Object>> list = cpeJdbcTemplate.queryForList(
-                "SELECT * FROM cpe_model WHERE brand=? AND model=? AND version=? AND isp=?",
+                "SELECT * FROM cpe_model WHERE lower(brand)=lower(?) AND lower(model)=lower(?) AND version=? AND isp=?",
                 brand, model, version, isp);
         return list.isEmpty() ? null : list.get(0);
     }
 
-    /** 宽松匹配机型模板 */
+    /** 宽松匹配机型模板（不比版本，brand/model 大小写归一） */
     public Map<String, Object> findModelLoose(String brand, String model, String isp) {
         List<Map<String, Object>> list = cpeJdbcTemplate.queryForList(
-                "SELECT * FROM cpe_model WHERE brand=? AND model=? AND isp=? ORDER BY updated_at DESC LIMIT 1",
+                "SELECT * FROM cpe_model WHERE lower(brand)=lower(?) AND lower(model)=lower(?) AND isp=?"
+                        + " ORDER BY updated_at DESC LIMIT 1",
                 brand, model, isp);
         return list.isEmpty() ? null : list.get(0);
+    }
+
+    /** 兜底匹配：不限运营商（isp 未识别或口径不一致时用），优先同版本、其次最近更新 */
+    public Map<String, Object> findModelAnyIsp(String brand, String model, String version) {
+        List<Map<String, Object>> list = cpeJdbcTemplate.queryForList("""
+                SELECT * FROM cpe_model
+                WHERE lower(brand)=lower(?) AND lower(model)=lower(?)
+                ORDER BY CASE WHEN version = ? THEN 0 ELSE 1 END, updated_at DESC
+                LIMIT 1
+                """, brand, model, version == null ? "" : version);
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    /** 模板总数（诊断日志用） */
+    public int countModels() {
+        Integer n = cpeJdbcTemplate.queryForObject("SELECT COUNT(*) FROM cpe_model", Integer.class);
+        return n == null ? 0 : n;
     }
 
     public Map<String, CpeParam> loadModelParams(long modelId) {
@@ -419,6 +437,18 @@ public class CpeStore {
     public List<Map<String, Object>> loadQueuedTasks(String sn) {
         return jdbcTemplate.queryForList(
                 "SELECT * FROM cpe_task WHERE sn = ? AND status = 'queued' ORDER BY id ASC LIMIT 20", sn);
+    }
+
+    /** 长时间排队无人派发的任务（按 sn 分组取最早一条），兜底重派发用 */
+    public List<Map<String, Object>> findStaleQueuedTasks(long createdBefore, int limit) {
+        return jdbcTemplate.queryForList("""
+                SELECT sn, MIN(id) AS task_id, COUNT(*) AS task_cnt
+                FROM cpe_task
+                WHERE status = 'queued' AND created_at < ?
+                GROUP BY sn
+                ORDER BY task_id ASC
+                LIMIT ?
+                """, createdBefore, limit);
     }
 
     /** 各设备未完成任务，按 sn 分组 */

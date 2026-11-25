@@ -24,6 +24,11 @@ spring:
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
+  task:
+    scheduling:
+      pool:
+        # 默认 1 个调度线程会被 drain/sweep/工单扫描互相拖死，扩容避免兜底任务漏跑
+        size: 4
 
 # 对外公布的主机地址：内网登录二维码用它 + 管理端端口拼链接
 acs:

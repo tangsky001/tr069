@@ -138,7 +138,7 @@
           <line x1="12" y1="8" x2="12" y2="4" stroke="currentColor" stroke-width="1.5" />
           <line x1="17" y1="8" x2="17" y2="4" stroke="currentColor" stroke-width="1.5" />
         </svg>
-        <div class="lan-label">LAN{{ item.instance }}</div>
+        <div class="lan-label">{{ item.name || ('LAN' + item.instance) }}</div>
         <div class="lan-status">{{ item.connected ? '已连接' : '未连接' }}</div>
       </div>
     </div>

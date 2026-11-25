@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -136,7 +137,7 @@ public class BusinessSnapshotService {
         out.put("path", prefix);
         out.put("instance", instance);
         out.put("connMode", connMode);
-        out.put("ipProtocol", data.value(prefix + "ConnectionType"));
+        out.put("ipProtocol", ipProtocolOf(params));
         out.put("addrType", orElse(data.value(prefix + "AddressingType"), vendorParam(params, "addresstype")));
         out.put("up", boolValue(data, prefix + "Enable", true));
         out.put("statusText", data.value(prefix + "ConnectionStatus"));
@@ -152,6 +153,134 @@ public class BusinessSnapshotService {
         return out;
     }
 
+    /**
+     * 地址协议类型：IPv4 / IPv6 / IPv4+IPv6，判不出来返回 null（master DeviceBusinessService 口径）。
+     * 只认设备申报的 IPMode 类字段（各厂商私有名：X_CMCC_IPMode / X_CT-COM_IPMode /
+     * IPProtocolVersion / X_HUAWEI_IPMode / X_ZTE_IPMode ...），值 1/2/3 或标准写法；
+     * 认不出绝不把 ConnectionType 的 IP_Routed/IP_Bridged 之类原样当协议显示。
+     * 没上报 IPMode 时才按实锤证据推断：IPv4 有效外网地址 / IPv6 状态 Connected / IPv6 地址。
+     */
+    private static String ipProtocolOf(Map<String, Object> params) {
+        String mode = firstIpMode(params);
+        String declared = normalizeIpMode(mode);
+        if (declared != null) {
+            return declared;
+        }
+        boolean v4 = hasIpv4(params);
+        boolean v6 = hasIpv6(params);
+        if (v4 && v6) {
+            return "IPv4+IPv6";
+        }
+        if (v4) {
+            return "IPv4";
+        }
+        if (v6) {
+            return "IPv6";
+        }
+        return null;
+    }
+
+    /** 取该连接上报的 IPMode 类字段值（键名匹配，覆盖任意厂商私有前缀） */
+    private static String firstIpMode(Map<String, Object> params) {
+        for (Map.Entry<String, Object> e : params.entrySet()) {
+            String k = e.getKey() == null ? "" : e.getKey().toLowerCase(Locale.ROOT);
+            if (!k.contains("ipmode") && !k.contains("ipprotocol") && !k.contains("ipversion")) {
+                continue;
+            }
+            String val = e.getValue() == null ? "" : String.valueOf(e.getValue()).trim();
+            if (!val.isEmpty()) {
+                return val;
+            }
+        }
+        return null;
+    }
+
+    /** 协议值归一：1/2/3 → IPv4/IPv6/IPv4+IPv6；其它写法只认标准关键字，认不出返回 null */
+    private static String normalizeIpMode(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String v = raw.trim();
+        switch (v) {
+            case "1":
+                return "IPv4";
+            case "2":
+                return "IPv6";
+            case "3":
+                return "IPv4+IPv6";
+            default:
+                break;
+        }
+        String low = v.toLowerCase(Locale.ROOT);
+        boolean v4 = low.contains("ipv4");
+        boolean v6 = low.contains("ipv6");
+        if ((v4 && v6) || low.contains("dual") || low.contains("both")) {
+            return "IPv4+IPv6";
+        }
+        if (v6) {
+            return "IPv6";
+        }
+        if (v4) {
+            return "IPv4";
+        }
+        return null; // 不回显乱七八糟的原值
+    }
+
+    /** 是否拿到了可用的 IPv4 地址（master hasIpv4 口径） */
+    private static boolean hasIpv4(Map<String, Object> params) {
+        for (Map.Entry<String, Object> e : params.entrySet()) {
+            String k = e.getKey() == null ? "" : e.getKey().toLowerCase(Locale.ROOT);
+            if (!k.endsWith("externalipaddress") && !k.endsWith("ipaddress")) {
+                continue;
+            }
+            String val = e.getValue() == null ? "" : String.valueOf(e.getValue()).trim();
+            if (!val.isEmpty() && !"0.0.0.0".equals(val) && !val.contains(":")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** IPv6 侧是否真的起来了：连接状态 Connected/Up，或分配到合法 IPv6 地址（排除 MAC 形态） */
+    private static boolean hasIpv6(Map<String, Object> params) {
+        for (Map.Entry<String, Object> e : params.entrySet()) {
+            String k = e.getKey() == null ? "" : e.getKey().toLowerCase(Locale.ROOT);
+            if (!k.contains("ipv6")) {
+                continue;
+            }
+            String val = e.getValue() == null ? "" : String.valueOf(e.getValue()).trim();
+            if (val.isEmpty()) {
+                continue;
+            }
+            if ((k.contains("status") || k.contains("connectionstatus"))
+                    && ("connected".equalsIgnoreCase(val) || "up".equalsIgnoreCase(val))) {
+                return true;
+            }
+            if ((k.contains("address") || k.contains("prefix")) && looksLikeIpv6(val)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 值是否为 IPv6 地址形态；MAC（6 段两位十六进制）不算 */
+    private static boolean looksLikeIpv6(String val) {
+        if (val == null || !val.contains(":") || "::".equals(val)) {
+            return false;
+        }
+        String[] parts = val.split(":", -1);
+        boolean mac = parts.length == 6;
+        if (mac) {
+            for (String p : parts) {
+                if (!p.matches("[0-9a-fA-F]{2}")) {
+                    mac = false;
+                    break;
+                }
+            }
+        }
+        return !mac && (parts.length >= 3 || val.contains("::"));
+    }
+
     /** 在连接参数里找厂商自定义参数（键名后缀匹配，不区分大小写），取第一个非空值 */
     private String vendorParam(Map<String, Object> params, String suffix) {
         for (Map.Entry<String, Object> e : params.entrySet()) {
@@ -163,42 +292,9 @@ public class BusinessSnapshotService {
         return null;
     }
 
+    /** LAN 口清单：统一走 LanPortCatalog（设备申报口径），不再各自枚举 */
     private List<Map<String, Object>> lanList(DeviceData data, String root) {
-        List<Map<String, Object>> out = new ArrayList<>();
-        if (BusinessPaths.isTr181(root)) {
-            String base = "Device.Ethernet.Interface.";
-            for (int i : data.instances(base)) {
-                String p = base + i + ".";
-                String up = data.value(p + "Upstream");
-                if (up != null && up.matches("(?i)1|true")) {
-                    continue;
-                }
-                String st = data.value(p + "Status");
-                boolean connected = "Up".equals(st) || Boolean.TRUE.equals(boolValue(data, p + "Up", null));
-                out.add(lanEntry(p, i, connected, data.value(p + "MACAddress")));
-            }
-            return out;
-        }
-        // TR-098：LANEthernetInterface{状态} + LANEthernetInterfaceConfig{MAC}
-        for (int lanDev : data.instances(root + "LANDevice.")) {
-            String base = root + "LANDevice." + lanDev + ".LANEthernetInterface.";
-            for (int i : data.instances(base)) {
-                String p = base + i + ".";
-                String status = data.value(p + "EthernetLinkStatus");
-                String cfg = root + "LANDevice." + lanDev + ".LANEthernetInterfaceConfig." + i + ".";
-                out.add(lanEntry(p, i, "Up".equals(status), data.value(cfg + "MACAddress")));
-            }
-        }
-        return out;
-    }
-
-    private Map<String, Object> lanEntry(String path, int instance, boolean connected, String mac) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("path", path);
-        out.put("instance", instance);
-        out.put("connected", connected);
-        out.put("mac", mac);
-        return out;
+        return LanPortCatalog.enumerate(data, root);
     }
 
     private List<Map<String, Object>> wifiList(DeviceData data, String root) {

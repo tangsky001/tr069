@@ -9,7 +9,10 @@ package com.PilotACS.cpe.service;
 import com.PilotACS.cpe.model.CpeParam;
 import com.PilotACS.cpe.model.DeviceData;
 import com.PilotACS.cpe.store.CpeStore;
+import com.PilotACS.common.exception.BusinessException;
 import com.PilotACS.common.log.Logs;
+import com.PilotACS.template.exec.IntentDeliveryService;
+import com.PilotACS.template.service.ConfigTemplateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -17,14 +20,25 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/** 前端下发 → 组装 SetParameterValues 任务 */
+/** 前端下发 → 独立下发器（意图模板）或直接 SetParameterValues 任务，均不建工单 */
 @Service
 @RequiredArgsConstructor
 public class DispatchService {
 
     private final CpeStore store;
     private final TaskService taskService;
+    private final ConfigTemplateService configTemplateService;
+    private final IntentDeliveryService intentDeliveryService;
+
+    /** 意图下发器内部逐步骤 awaitTask，耗时较长；这里异步受理，HTTP 请求不被阻塞 */
+    private final ExecutorService intentExecutor = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "console-intent-delivery");
+        t.setDaemon(true);
+        return t;
+    });
 
     public Map<String, Object> dispatch(Map<String, Object> req) {
         List<String> sns = snsOf(req.get("sns"));
@@ -46,10 +60,29 @@ public class DispatchService {
                 } else if (!values.isEmpty()) {
                     taskId = taskService.createTask(sn, "SetParameterValues", Map.of("values", values), username);
                 } else if (req.get("templateId") != null) {
+                    // 配置模板：走独立下发器（IntentDeliveryService），不建工单、不写 worklist 表。
+                    // 工单只由手动新建工单入口产生并调度。
+                    Map<String, Object> tpl = configTemplateService.findView(longId(req.get("templateId")));
+                    if (tpl == null) {
+                        throw new BusinessException("配置模板不存在: " + req.get("templateId"));
+                    }
+                    String category = str(tpl.get("category"));
+                    Map<String, Object> tplFields = new LinkedHashMap<>(castMap(tpl.get("fields")));
+                    boolean incremental = Boolean.TRUE.equals(tpl.get("incremental"));
+                    final String tplName = str(tpl.get("name"));
+                    intentExecutor.submit(() -> {
+                        try {
+                            intentDeliveryService.deliver(sn, category, tplFields, incremental, username);
+                            Logs.info(Logs.Module.CPE_PUSH, "配置模板独立下发完成", "sn", sn, "模板", tplName);
+                        } catch (Exception e) {
+                            Logs.warn(Logs.Module.CPE_PUSH, "配置模板独立下发失败", "sn", sn,
+                                    "模板", tplName, "原因", e.getMessage());
+                        }
+                    });
                     row.put("taskId", null);
-                    row.put("status", "fail");
-                    row.put("errorMsg", "配置模板模块未接入，请直接下发参数或 WiFi 字段");
-                    failed++;
+                    row.put("status", "queued");
+                    row.put("errorMsg", null);
+                    submitted++;
                     rows.add(row);
                     continue;
                 } else {
@@ -286,5 +319,19 @@ public class DispatchService {
 
     private String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    private Long longId(Object o) {
+        if (o instanceof Number n) {
+            return n.longValue();
+        }
+        if (o == null || String.valueOf(o).isBlank()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(String.valueOf(o).trim());
+        } catch (NumberFormatException e) {
+            throw new BusinessException("模板 ID 非法: " + o);
+        }
     }
 }

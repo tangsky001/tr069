@@ -67,6 +67,8 @@ public class CwmpSession {
     private volatile TaskRun current;
     /** 当前在飞的 ACS RPC */
     private volatile RpcRequest pending;
+    /** 在飞 RPC 的下发时刻（毫秒），配合 collect-timeout 做无回执看门狗 */
+    private volatile long pendingDispatchAt;
     private volatile int rpcCount;
 
     /** 会话是否已结束 */

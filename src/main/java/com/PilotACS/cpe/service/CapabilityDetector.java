@@ -42,23 +42,9 @@ public class CapabilityDetector {
         return detected;
     }
 
+    /** 申报网口数：统一走 LanPortCatalog 口径（TR-098 两套子树并集 / TR-181 排除上联） */
     private int detectLanPorts(DeviceData data, String root) {
-        Set<String> keys = new LinkedHashSet<>();
-        for (String p : data.allPaths("")) {
-            Matcher m = LAN_IF_TR098.matcher(p);
-            if (m.find()) {
-                keys.add(m.group(1) + '.' + m.group(2));
-                continue;
-            }
-            m = LAN_IF_TR181.matcher(p);
-            if (m.find()) {
-                String up = data.value(p.substring(0, m.end()) + "Upstream");
-                if (up == null || !up.matches("(?i)1|true")) {
-                    keys.add(m.group(1));
-                }
-            }
-        }
-        return keys.size();
+        return LanPortCatalog.declaredCount(data, root);
     }
 
     private int detectLanSpeed(DeviceData data, String root) {

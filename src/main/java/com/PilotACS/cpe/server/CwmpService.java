@@ -21,6 +21,7 @@ import com.PilotACS.cpe.service.CapabilityDetector;
 import com.PilotACS.cpe.service.ConnectionRequestService;
 import com.PilotACS.cpe.service.InitProvisionService;
 import com.PilotACS.cpe.service.ModelProfileService;
+import com.PilotACS.cpe.service.TaskDispatcher;
 import com.PilotACS.cpe.session.CwmpSession;
 import com.PilotACS.cpe.session.SessionRegistry;
 import com.PilotACS.cpe.soap.SoapBuilder;
@@ -49,14 +50,19 @@ import java.util.regex.Pattern;
 public class CwmpService {
 
     private final ConnectionRequestService connectionRequestService;
+    private final TaskDispatcher taskDispatcher;
     private final SnRateLimiter rateLimiter;
     private final RedisSessionLifecycle lifecycle;
     private final DeviceInfoCache infoCache;
 
     /** 一次 HTTP 交互的输出 */
-    public record Reply(int httpStatus, String body, String newSessionId) {
+    public record Reply(int httpStatus, String body, String newSessionId, int cookieMaxAgeSeconds) {
+        public Reply(int httpStatus, String body, String newSessionId) {
+            this(httpStatus, body, newSessionId, 0);
+        }
+
         public static Reply empty(int status) {
-            return new Reply(status, null, null);
+            return new Reply(status, null, null, 0);
         }
     }
 
@@ -64,8 +70,14 @@ public class CwmpService {
     private static final long OFFLINE_AFTER_MS = 15 * 60 * 1000L;
     private static final Pattern TASK_KEY = Pattern.compile("task-(\\d+)");
     private static final long RESUME_KICK_DELAY_MS = 30_000L;
+    /** 排队任务超过该时长未派发成功 → 兜底重派发 */
+    private static final long STALE_QUEUED_MS = 5 * 60_000L;
+    /** 同一设备兜底重派发的最小间隔 */
+    private static final long REDISPATCH_INTERVAL_MS = 5 * 60_000L;
 
     private final Map<String, Long> delayedResumeKicks = new ConcurrentHashMap<>();
+    /** 兜底重派发的节流记录：sn → 上次重派发时刻 */
+    private final Map<String, Long> lastQueuedRedispatch = new ConcurrentHashMap<>();
 
     private final CpeProperties props;
     private final SessionRegistry registry;
@@ -97,14 +109,14 @@ public class CwmpService {
             }
         }
         if (known != null) {
-            return locked(known.getSn(), () -> handleKnown(known, msg, remoteAddr));
+            return lockedKnown(known, msg, remoteAddr);
         }
         if (msg.getName() == null) {
             CwmpSession fallback = registry.byRemoteAddr(remoteAddr);
             if (fallback != null && fallback.getState() == CwmpSession.STATE_INFORMED) {
                 Logs.info(Logs.Module.CPE_ONLINE, "设备不带 Cookie，按来源地址找回会话", "sn", fallback.getSn(),
                         "地址", remoteAddr);
-                return locked(fallback.getSn(), () -> handleKnown(fallback, msg, remoteAddr));
+                return lockedKnown(fallback, msg, remoteAddr);
             }
             Logs.debug(Logs.Module.CPE_ONLINE, "无会话空 POST，回 204 空响应结束会话", "地址", remoteAddr);
             return Reply.empty(204);
@@ -114,7 +126,7 @@ public class CwmpService {
             if (fallback != null && fallback.getState() != CwmpSession.STATE_CREATED) {
                 Logs.info(Logs.Module.CPE_ONLINE, "设备不带 Cookie，按来源地址找回会话", "sn", fallback.getSn(),
                         "地址", remoteAddr, "报文", msg.getName());
-                return locked(fallback.getSn(), () -> handleKnown(fallback, msg, remoteAddr));
+                return lockedKnown(fallback, msg, remoteAddr);
             }
             return new Reply(400, SoapBuilder.acsFault(8000, "No session, Inform required"), null);
         }
@@ -140,6 +152,52 @@ public class CwmpService {
                         "秒", msg.getSessionTimeoutSeconds());
             }
         }
+    }
+
+    /** 空队列捎带等待标记：处理线程先释放 per-SN 锁再短等下一步任务入队（master piggyback 口径） */
+    private static final Reply PIGGYBACK_WAIT = new Reply(-1, null, null, 0);
+
+    /** 锁内处理 + 空队列时锁外短等（等待期间不占 per-SN 锁，下发引擎可随时入队） */
+    private Reply lockedKnown(CwmpSession known, SoapMessage msg, String remoteAddr) {
+        Reply r = locked(known.getSn(), () -> handleKnown(known, msg, remoteAddr));
+        return r == PIGGYBACK_WAIT ? piggybackWait(known) : r;
+    }
+
+    /**
+     * 捎带等待：队列空时不立刻收尾会话，而是每 150ms 短锁轮询一次队列，
+     * 给下发引擎"上一步完成→建下一步任务"留时间；窗口内拿到任务就同一会话继续，
+     * 超时才收尾（下一步走原有的 CR 唤醒兜底）。
+     */
+    private Reply piggybackWait(CwmpSession s) {
+        long deadline = System.currentTimeMillis() + Math.max(0, props.getPiggybackWaitMs());
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(150);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            Reply r = locked(s.getSn(), () -> {
+                if (s.isEnded()) {
+                    return Reply.empty(204);
+                }
+                RpcRequest next = nextRpc(s);
+                if (next == null) {
+                    return null;
+                }
+                s.setState(CwmpSession.STATE_RPC_RUNNING);
+                return reply(s, 200, SoapBuilder.request(next));
+            });
+            if (r != null) {
+                return r;
+            }
+        }
+        return locked(s.getSn(), () -> {
+            if (!s.isEnded()) {
+                endSession(s, "捎带等待超时，无后续任务");
+            }
+            return Reply.empty(204);
+        });
     }
 
     /** per-SN 串行处理锁 */
@@ -173,6 +231,16 @@ public class CwmpService {
         }
         if ("Inform".equals(msg.getName()) && msg.getSerialNumber() != null
                 && !msg.getSerialNumber().isBlank()) {
+            // TR-069：设备重发 Inform 是拿不到 InformResponse 后的重传（RetryCount>0）；
+            // 只要会话尚无 RPC 在飞且非 BOOTSTRAP/BOOT 触发，复答 InformResponse 续用会话，
+            // 避免顶替现役会话导致"会话频繁重建 + 在飞任务被误杀"
+            if (msg.getSerialNumber().equals(s.getSn()) && isInformRetransmission(s, msg)) {
+                Logs.info(Logs.Module.CPE_ONLINE, "现役会话收到 Inform 重传，复答 InformResponse 续用会话",
+                        "sn", s.getSn(), "重传计数", msg.getRetryCount(), "状态", s.getState());
+                s.touch();
+                return reply(s, 200, SoapBuilder.informResponse(
+                        msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()));
+            }
             if (!msg.getSerialNumber().equals(s.getSn())) {
                 Logs.warn(Logs.Module.CPE_ONLINE, "Cookie 与报文 SN 不匹配，按报文 SN 重建会话",
                         "会话SN", s.getSn(), "报文SN", msg.getSerialNumber());
@@ -190,6 +258,26 @@ public class CwmpService {
             lifecycle.renew(s);
         }
         return reply;
+    }
+
+    /** 现役会话上的 Inform 判定为重传：尚无 RPC 在飞，且非 BOOTSTRAP/BOOT 触发的新会话 */
+    private boolean isInformRetransmission(CwmpSession s, SoapMessage msg) {
+        if (s.getState() == CwmpSession.STATE_RPC_RUNNING) {
+            return false;
+        }
+        for (String ev : msg.getEvents()) {
+            if (ev.startsWith("0 BOOTSTRAP") || ev.startsWith("1 BOOT")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 携带会话 id 的应答（Cookie Max-Age 跟随会话实际空闲超时） */
+    private Reply reply(CwmpSession s, int status, String body) {
+        int maxAge = (int) Math.max(60,
+                s.effectiveTimeout(props.getSessionTimeoutSeconds() * 1000L) / 1000);
+        return new Reply(status, body, s.getSessionId(), maxAge);
     }
 
     /** 嵌套处理另一 SN 的新 Inform（tryLock 防死锁） */
@@ -243,9 +331,8 @@ public class CwmpService {
             return Reply.empty(500);
         }
         s.setState(CwmpSession.STATE_INFORMED);
-        return new Reply(200, SoapBuilder.informResponse(
-                msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
-                s.getSessionId());
+        return reply(s, 200, SoapBuilder.informResponse(
+                msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()));
     }
 
     private void handleInform(CwmpSession s, SoapMessage msg) {
@@ -349,33 +436,30 @@ public class CwmpService {
             }
             RpcRequest next = nextRpc(s);
             if (next == null) {
-                endSession(s, "无待执行任务");
-                return Reply.empty(204);
+                // 不立即收尾：释放 per-SN 锁后短等下发引擎塞入下一步任务（捎带等待）
+                return PIGGYBACK_WAIT;
             }
             s.setState(CwmpSession.STATE_RPC_RUNNING);
-            return new Reply(200, SoapBuilder.request(next), s.getSessionId());
+            return reply(s, 200, SoapBuilder.request(next));
         }
         if (isTransferComplete(msg)) {
             handleTransferComplete(s, msg);
-            return new Reply(200, tcResponse(msg,
-                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
-                    s.getSessionId());
+            return reply(s, 200, tcResponse(msg,
+                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()));
         }
         if ("GetRPCMethods".equals(msg.getName())) {
-            return new Reply(200, SoapBuilder.getRpcMethodsResponse(
+            return reply(s, 200, SoapBuilder.getRpcMethodsResponse(
                     msg.getId() == null ? sessionRpcId(s) : msg.getId(),
-                    List.of("Inform", "GetRPCMethods", "TransferComplete")), s.getSessionId());
+                    List.of("Inform", "GetRPCMethods", "TransferComplete")));
         }
-        return new Reply(200, SoapBuilder.acsFault(8000, "Method not supported: " + msg.getName()),
-                s.getSessionId());
+        return reply(s, 200, SoapBuilder.acsFault(8000, "Method not supported: " + msg.getName()));
     }
 
     private Reply onRpcRunning(CwmpSession s, SoapMessage msg) {
         if (isTransferComplete(msg)) {
             handleTransferComplete(s, msg);
-            return new Reply(200, tcResponse(msg,
-                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()),
-                    s.getSessionId());
+            return reply(s, 200, tcResponse(msg,
+                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()));
         }
         applyResponse(s, msg);
         if (s.isEnded()) {
@@ -387,10 +471,10 @@ public class CwmpService {
         }
         RpcRequest next = nextRpc(s);
         if (next == null) {
-            endSession(s, "任务执行完毕");
-            return Reply.empty(204);
+            // 不立即收尾：同一会话内等下一步任务入队，避免每步 RPC 重建会话（8 分钟/台的主因）
+            return PIGGYBACK_WAIT;
         }
-        return new Reply(200, SoapBuilder.request(next), s.getSessionId());
+        return reply(s, 200, SoapBuilder.request(next));
     }
 
     /** 应用 CPE 对在飞 RPC 的响应或 Fault */
@@ -398,6 +482,7 @@ public class CwmpService {
         RpcRequest req = s.getPending();
         TaskRun cur = s.getCurrent();
         s.setPending(null);
+        s.setPendingDispatchAt(0);
         if (req == null || cur == null) {
             return;
         }
@@ -677,6 +762,7 @@ public class CwmpService {
             RpcRequest req = step.request();
             req.setId(s.getSessionId() + "-" + s.getRpcCount());
             s.setPending(req);
+            s.setPendingDispatchAt(System.currentTimeMillis());
             s.setPendingPurpose(step.purpose());
             s.setRpcCount(s.getRpcCount() + 1);
             store.updateTask(cur.getTaskId(), "running", null,
@@ -821,9 +907,28 @@ public class CwmpService {
     @Scheduled(fixedDelay = 10_000)
     public void sweep() {
         long defaultTimeout = props.getSessionTimeoutSeconds() * 1000L;
+        long collectTimeoutMs = props.getCollectTimeoutSeconds() * 1000L;
         for (CwmpSession s : List.copyOf(registry.allBySn().values())) {
             long timeout = s.effectiveTimeout(defaultTimeout);
             if (!s.expired(timeout)) {
+                // 活会话但在飞 RPC 长时间无回执 → 终结会话走统一收口（写类判 fail、其余回队续跑），
+                // 否则半死设备（TCP 通但 RPC 不回）的任务会一直挂着
+                if (s.getPending() != null && s.getCurrent() != null && s.getPendingDispatchAt() > 0
+                        && System.currentTimeMillis() - s.getPendingDispatchAt() > collectTimeoutMs) {
+                    try {
+                        locked(s.getSn(), () -> {
+                            CwmpSession cur = registry.bySn(s.getSn());
+                            if (cur == s && cur.getPending() != null && cur.getPendingDispatchAt() > 0
+                                    && System.currentTimeMillis() - cur.getPendingDispatchAt() > collectTimeoutMs) {
+                                endSession(cur, "在飞 RPC 超过 collect-timeout(" + props.getCollectTimeoutSeconds()
+                                        + "s) 未收到设备回执");
+                            }
+                            return null;
+                        });
+                    } catch (Exception e) {
+                        Logs.error(Logs.Module.CPE_OFFLINE, "在飞 RPC 看门狗收尾异常", e, "sn", s.getSn());
+                    }
+                }
                 continue;
             }
             try {
@@ -862,6 +967,44 @@ public class CwmpService {
                 }
             }
         }
+        try {
+            redispatchStaleQueued();
+        } catch (Exception e) {
+            Logs.error(Logs.Module.CPE_PUSH, "排队任务兜底重派发异常", e);
+        }
+    }
+
+    /**
+     * 兜底重派发：排队超过 STALE_QUEUED_MS 仍无人派发的任务周期性重派发。
+     * 堵住"离线任务只派发一次：CR 重试链放弃/无 CR 地址后任务永远 queued"的漏洞。
+     * 有活会话的设备跳过——会话内 nextRpc 会自动装载 queued 任务。
+     */
+    private void redispatchStaleQueued() {
+        long now = System.currentTimeMillis();
+        long createdBefore = now - STALE_QUEUED_MS;
+        for (Map<String, Object> row : store.findStaleQueuedTasks(createdBefore, 50)) {
+            String sn = String.valueOf(row.get("sn"));
+            long taskId = row.get("task_id") instanceof Number n ? n.longValue() : 0;
+            if (sn.isBlank() || "null".equals(sn) || taskId <= 0) {
+                continue;
+            }
+            Long last = lastQueuedRedispatch.get(sn);
+            if (last != null && now - last < REDISPATCH_INTERVAL_MS) {
+                continue;
+            }
+            lastQueuedRedispatch.put(sn, now);
+            if (registry.bySn(sn) != null) {
+                continue;
+            }
+            try {
+                taskDispatcher.wakeNow(sn, taskId);
+                Logs.info(Logs.Module.CPE_PUSH, "兜底重派发长时间排队任务", "sn", sn, "任务", taskId,
+                        "排队任务数", row.get("task_cnt"));
+            } catch (Exception e) {
+                Logs.warn(Logs.Module.CPE_PUSH, "兜底重派发失败", "sn", sn, "任务", taskId, "原因", e.getMessage());
+            }
+        }
+        lastQueuedRedispatch.entrySet().removeIf(e -> now - e.getValue() > REDISPATCH_INTERVAL_MS * 2);
     }
 
     /** 反踢用的 CR URL */
