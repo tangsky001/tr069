@@ -223,6 +223,7 @@ public class CallManager {
         entry.inviteA = invite;
         entry.aAddr = remote;
         entry.aTag = invite.fromTag();
+        entry.aFromHeader = invite.header("From");
         entry.aServerTag = randTag();
         entry.bServerTag = randTag();
         entry.session.setCallIdB("ACS-" + UUID.randomUUID());
@@ -268,7 +269,7 @@ public class CallManager {
         String callerName = resolveCallerName(callerExt, SipMessage.displayNameOf(invite.header("From")));
         String callerAddr = "sip:" + callerExt + "@" + server.publicIp();
         SipMessage inviteB = SipMessage.request("INVITE", "sip:" + calleeExt + "@" + server.publicIp());
-        inviteB.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+        inviteB.addHeader("Via", requestVia());
         inviteB.addHeader("From", SipMessage.addrWithDisplay(callerName, callerAddr) + ";tag=" + entry.bServerTag);
         inviteB.addHeader("P-Asserted-Identity", "<" + callerAddr + ">");
         inviteB.addHeader("Remote-Party-ID",
@@ -327,6 +328,7 @@ public class CallManager {
         entry.inviteA = invite;
         entry.aAddr = remote;
         entry.aTag = invite.fromTag();
+        entry.aFromHeader = invite.header("From");
         entry.aServerTag = randTag();
         entry.session.setCallIdB("ACS-BUSY-" + UUID.randomUUID());
         entry.session.setBusyPrompt(new BusyToneSource(props.getBusyPromptWav()));
@@ -373,9 +375,11 @@ public class CallManager {
                     Logs.error(Logs.Module.SIP, "被叫 SDP 地址非法", "错误", e.toString());
                 }
             }
+            // 保存被叫 200 OK 的 To（含被叫 tag），拆线 BYE 的 To 必须带它
+            entry.bToHeader = resp.header("To");
             // ACK B 腿
             SipMessage ack = SipMessage.request("ACK", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-            ack.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+            ack.addHeader("Via", requestVia());
             ack.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
             ack.addHeader("To", resp.header("To"));
             ack.setHeader("Call-ID", resp.callId());
@@ -424,7 +428,7 @@ public class CallManager {
             entry.uaToHeader = resp.header("To");
             // ACK UA
             SipMessage ack = SipMessage.request("ACK", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-            ack.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+            ack.addHeader("Via", requestVia());
             ack.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.uaFromTag);
             ack.addHeader("To", entry.uaToHeader);
             ack.setHeader("Call-ID", entry.uaCallId);
@@ -512,6 +516,8 @@ public class CallManager {
                 }
             }
         } else {
+            // RFC 3261：收到 BYE 必须回 2xx，被叫才能释放 dialog；否则其残留会话导致后续来电 486
+            respondToA(bye, remote, null, 200, "OK", null);
             if (entry.inviteA != null && entry.aAddr != null && !entry.mgCallee
                     && entry.session.getState() == CallSession.State.ACTIVE
                     && props.getBusyToneSeconds() > 0) {
@@ -543,7 +549,7 @@ public class CallManager {
         respondToA(cancel, remote, entry.aServerTag, 200, "OK", null);
         respondToA(entry.inviteA, entry.aAddr, entry.aServerTag, 487, "Request Terminated", null);
         SipMessage cancelB = SipMessage.request("CANCEL", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-        cancelB.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+        cancelB.addHeader("Via", requestVia());
         cancelB.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
         cancelB.addHeader("To", "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
         cancelB.setHeader("Call-ID", entry.session.getCallIdB());
@@ -694,7 +700,7 @@ public class CallManager {
         byCallUa.put(entry.uaCallId, entry);
 
         SipMessage invite = SipMessage.request("INVITE", "sip:" + number + "@" + server.publicIp());
-        invite.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+        invite.addHeader("Via", requestVia());
         // MG 主叫号码如果在分机表里有配置，同样带显示名 + 身份头（网关侧来电显示）
         String uaCallerName = resolveCallerName(callerNumber, null);
         String uaCallerAddr = "sip:" + callerNumber + "@" + server.publicIp();
@@ -879,9 +885,11 @@ public class CallManager {
 
     private void sendByeToB(CallEntry entry) {
         SipMessage bye = SipMessage.request("BYE", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-        bye.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+        bye.addHeader("Via", requestVia());
         bye.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
-        bye.addHeader("To", "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
+        // RFC 3261：dialog 内 BYE 的 To 必须带被叫在 200 OK 里返回的 tag，否则对端视为未知对话不释放
+        bye.addHeader("To", entry.bToHeader != null ? entry.bToHeader
+                : "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
         bye.setHeader("Call-ID", entry.session.getCallIdB());
         bye.setHeader("CSeq", "102 BYE");
         server.send(bye, entry.bAddr);
@@ -889,7 +897,7 @@ public class CallManager {
 
     private void sendByeToA(CallEntry entry, String toHeader, String fromHeader, String callId, InetSocketAddress remote) {
         SipMessage bye = SipMessage.request("BYE", "sip:" + entry.session.getCallerExt() + "@" + server.publicIp());
-        bye.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+        bye.addHeader("Via", requestVia());
         if (fromHeader != null) {
             bye.addHeader("From", fromHeader);
         } else {
@@ -898,7 +906,9 @@ public class CallManager {
         if (toHeader != null) {
             bye.addHeader("To", toHeader);
         } else {
-            bye.addHeader("To", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">");
+            // RFC 3261：dialog 内 BYE 的 To 必须带主叫 INVITE 的 From tag，否则主叫不认、dialog 不释放
+            bye.addHeader("To", entry.aFromHeader != null ? entry.aFromHeader
+                    : "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">");
         }
         bye.setHeader("Call-ID", callId);
         bye.setHeader("CSeq", "102 BYE");
@@ -908,7 +918,7 @@ public class CallManager {
 
     private void sendCancelToB(CallEntry entry) {
         SipMessage cancel = SipMessage.request("CANCEL", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-        cancel.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+        cancel.addHeader("Via", requestVia());
         cancel.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
         cancel.addHeader("To", "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
         cancel.setHeader("Call-ID", entry.session.getCallIdB());
@@ -919,7 +929,7 @@ public class CallManager {
     /** CANCEL 给 UA 被叫（MG 主叫振铃超时） */
     private void sendCancelToUa(CallEntry entry) {
         SipMessage cancel = SipMessage.request("CANCEL", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-        cancel.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+        cancel.addHeader("Via", requestVia());
         cancel.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.uaFromTag);
         cancel.addHeader("To", entry.uaToHeader != null ? entry.uaToHeader
                 : "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
@@ -931,7 +941,7 @@ public class CallManager {
     /** BYE 给 UA 被叫（MG 主叫挂断） */
     private void sendByeToUa(CallEntry entry) {
         SipMessage bye = SipMessage.request("BYE", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-        bye.addHeader("Via", "SIP/2.0/UDP " + server.publicIp() + ":" + server.port());
+        bye.addHeader("Via", requestVia());
         bye.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.uaFromTag);
         bye.addHeader("To", entry.uaToHeader != null ? entry.uaToHeader
                 : "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
@@ -1030,6 +1040,16 @@ public class CallManager {
         return UUID.randomUUID().toString().substring(0, 8);
     }
 
+    /**
+     * RFC 3261：请求的 Via 必须携带 branch 参数（z9hG4bK 前缀）供事务匹配；
+     * 缺失时对端按 RFC 2543 兼容模式处理，PJSIP 类客户端（MicroSIP）在该模式下
+     * dialog 状态机会进入异常路径（如接通后挂断不触发 BYE）
+     */
+    private String requestVia() {
+        return "SIP/2.0/UDP " + server.publicIp() + ":" + server.port()
+                + ";branch=z9hG4bK-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20);
+    }
+
     /** 一通呼叫的信令上下文（媒体在 CallSession 里） */
     private static class CallEntry {
         final CallSession session;
@@ -1039,6 +1059,10 @@ public class CallManager {
         String aTag;
         String aServerTag;
         String bServerTag;
+        /** A 腿 INVITE 的 From（含主叫 tag）：服务器发 BYE 的 To 必须带它主叫才认 */
+        String aFromHeader;
+        /** B 腿 200 OK 的 To（含被叫 tag）：服务器发 BYE 的 To 必须带它被叫才认 */
+        String bToHeader;
         InetSocketAddress bAddr;
         /** 被叫是否 H.248 终结点 */
         boolean mgCallee;
