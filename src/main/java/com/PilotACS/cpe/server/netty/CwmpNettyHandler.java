@@ -45,12 +45,7 @@ public class CwmpNettyHandler extends SimpleChannelInboundHandler<FullHttpReques
      * 必须移出 Netty event loop，否则一台慢设备会卡住同 event loop 上所有设备的响应，
      * 导致设备超时重发 Inform → 会话被顶替重建。
      */
-    private final ExecutorService businessPool = Executors.newFixedThreadPool(
-            Math.max(8, Runtime.getRuntime().availableProcessors() * 4), r -> {
-                Thread t = new Thread(r, "cwmp-biz");
-                t.setDaemon(true);
-                return t;
-            });
+    private final ExecutorService businessPool = Executors.newVirtualThreadPerTaskExecutor();
 
     public CwmpNettyHandler(CwmpService cwmpService, CpeProperties props) {
         this.cwmpService = cwmpService;

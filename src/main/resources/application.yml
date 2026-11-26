@@ -27,7 +27,8 @@ spring:
   task:
     scheduling:
       pool:
-        # 默认 1 个调度线程会被 drain/sweep/工单扫描互相拖死，扩容避免兜底任务漏跑
+        # 只承载轻量兜底任务：Redis 派发队列消费、会话清扫、工单台账扫描。
+        # 下发并发不在这里——由 acs.cpe.delivery-threads 限流（虚拟线程）
         size: 4
 
 # 对外公布的主机地址：内网登录二维码用它 + 管理端端口拼链接
@@ -62,6 +63,16 @@ acs:
     auth-password: ""
     # 会话空闲超时（秒）
     session-timeout-seconds: 60
+    # 空 POST 挂起窗口（毫秒，master suspendForNextRpc 口径）：设备上报后把那一跳 HTTP
+    # 挂起等指令，指令入队 signal 立刻唤醒同跳下发（毫秒级，无需 CR 反踢）。
+    # 与 master 一致取 1.5s：指令不在窗口内到达也没关系——它已落在 cpe_task，
+    # 设备下一跳空 POST 会无条件装载；挂太久反而会撞上设备 HTTP 读超时
+    piggyback-wait-ms: 1500
+    # 最大同时下发的光猫台数（业务模板+工单共用），超出排队：小批量 3 台以内天然全并发，
+    # 万台规模限流 10 并发先到先做。虚拟线程承载，调大按 DB/设备侧承受能力
+    delivery-threads: 10
+    # 反向连接唤醒最大并发数（虚拟线程）：多台离线设备并行反踢
+    cr-threads: 8
     # 单会话最大 RPC 往返数（防失控）
     max-rpc-count: 255
     # GetParameterValues 单批参数个数
@@ -102,7 +113,7 @@ acs:
     # SIP 信令监听端口
     udp-port: 5060
     # 对外公布的 IP（SDP/Contact 用），留空自动探测本机非回环地址
-    public-ip: ""
+    public-ip: "10.101.125.100"
     # 401 Digest 鉴权开关
     auth-enabled: true
     # 回铃背景音乐 wav（8k/16bit/单声道 PCM），留空用合成 450Hz 回铃音
@@ -118,6 +129,10 @@ acs:
     max-call-seconds: 3600
     # RTP 空闲超时（秒）：接通后连续无 RTP 即拆线（防客户端异常退出的僵尸会话），0 关闭
     rtp-idle-seconds: 30
+    # 外呼 INVITE 是否携带主叫信息头（P-Asserted-Identity / Remote-Party-ID）。
+    # 中兴 IAD 解析这些头发现"主叫是本地用户"会走内部呼叫逻辑，同光猫互打摘机即
+    # BYE——默认关闭（From 里的显示名已足够话机显示主叫）
+    caller-info-headers: false
     # 忙线提示音：主叫拨正在通话的分机时先应答并循环播放提示音 N 秒，然后服务器挂断主叫；0 = 直接回 486
     busy-prompt-seconds: 10
     # 忙线提示音 wav（8k/16bit/单声道，如"您拨打的用户正在通话中"），留空用合成忙音（嘟嘟嘟）

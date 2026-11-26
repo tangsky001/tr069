@@ -108,6 +108,20 @@ public class SessionRegistry {
         return out;
     }
 
+    /** sn → 最近一次设备实际上报 Inform 的时刻（毫秒），用于校验 CR 是否真的唤醒了设备 */
+    private final Map<String, Long> lastInformAt = new ConcurrentHashMap<>();
+
+    public void markInform(String sn) {
+        if (sn != null && !sn.isBlank()) {
+            lastInformAt.put(sn, System.currentTimeMillis());
+        }
+    }
+
+    public long lastInformAt(String sn) {
+        Long t = sn == null ? null : lastInformAt.get(sn);
+        return t == null ? 0L : t;
+    }
+
     /** sn → 唤醒标记过期时刻（毫秒） */
     private final Map<String, Long> pendingKicks = new ConcurrentHashMap<>();
 

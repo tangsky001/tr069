@@ -62,8 +62,8 @@ public class RedisTaskQueue {
         }
     }
 
-    /** 派发线程：每 2s 批量消费，非阻塞 leftPop，队列空即返回 */
-    @Scheduled(fixedDelay = 2000)
+    /** 派发线程：每 500ms 批量消费，非阻塞 leftPop，队列空即返回（间隔直接计入离线任务拾取延迟） */
+    @Scheduled(fixedDelay = 500)
     public void drain() {
         for (int i = 0; i < MAX_BATCH; i++) {
             String msg;

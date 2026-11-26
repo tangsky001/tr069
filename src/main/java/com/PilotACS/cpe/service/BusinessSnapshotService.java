@@ -138,9 +138,19 @@ public class BusinessSnapshotService {
         out.put("instance", instance);
         out.put("connMode", connMode);
         out.put("ipProtocol", ipProtocolOf(params));
-        out.put("addrType", orElse(data.value(prefix + "AddressingType"), vendorParam(params, "addresstype")));
+        String addrType = orElse(data.value(prefix + "AddressingType"), vendorParam(params, "addresstype"));
+        out.put("addrType", addrType);
         out.put("up", boolValue(data, prefix + "Enable", true));
         out.put("statusText", data.value(prefix + "ConnectionStatus"));
+        // 桥接 WAN（IPTV/监控透传）不建立三层连接，ConnectionStatus 不会 Up——
+        // 不能拿 Up/Disconnected 判健康（master 口径：桥接以是否透传/拿专网地址为准）
+        String connType = orElse(data.value(prefix + "ConnectionType"), vendorParam(params, "connectiontype"));
+        boolean bridge = (addrType != null && addrType.toLowerCase(Locale.ROOT).contains("bridge"))
+                || (connType != null && connType.toLowerCase(Locale.ROOT).contains("bridge"));
+        out.put("bridge", bridge);
+        out.put("healthy", bridge
+                ? "bridge"                       // 桥接：健康与否看业务侧（机顶盒/专网地址），不看 ConnectionStatus
+                : Boolean.TRUE.equals(out.get("up")) ? "ok" : "down");
         out.put("uptimeText", uptimeText(data.value(prefix + "Uptime")));
         out.put("natEnabled", boolValue(data, prefix + "NATEnabled", null));
         out.put("mtu", data.value(prefix + "MaxMTUSize"));

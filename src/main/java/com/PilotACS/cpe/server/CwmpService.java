@@ -69,11 +69,12 @@ public class CwmpService {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final long OFFLINE_AFTER_MS = 15 * 60 * 1000L;
     private static final Pattern TASK_KEY = Pattern.compile("task-(\\d+)");
-    private static final long RESUME_KICK_DELAY_MS = 30_000L;
+    /** RPC 预算耗尽/会话中断后快速反踢续跑（旧值 30s，加上 5min 兜底就是"排队 10 分钟"） */
+    private static final long RESUME_KICK_DELAY_MS = 2_000L;
     /** 排队任务超过该时长未派发成功 → 兜底重派发 */
-    private static final long STALE_QUEUED_MS = 5 * 60_000L;
+    private static final long STALE_QUEUED_MS = 30_000L;
     /** 同一设备兜底重派发的最小间隔 */
-    private static final long REDISPATCH_INTERVAL_MS = 5 * 60_000L;
+    private static final long REDISPATCH_INTERVAL_MS = 30_000L;
 
     private final Map<String, Long> delayedResumeKicks = new ConcurrentHashMap<>();
     /** 兜底重派发的节流记录：sn → 上次重派发时刻 */
@@ -87,6 +88,8 @@ public class CwmpService {
     private final ModelProfileService modelProfileService;
     private final InitProvisionService initProvisionService;
     private final BusinessSnapshotService snapshotService;
+    /** 设备空 POST 挂起跳：指令入队时立刻唤醒同一下发（master signal 口径） */
+    private final DeliveryWaiter deliveryWaiter;
 
     /** 处理 CPE 的一次 POST（body 为空表示空 POST） */
     public Reply processRequest(String body, String cookieSessionId, String remoteAddr) {
@@ -164,35 +167,43 @@ public class CwmpService {
     }
 
     /**
-     * 捎带等待：队列空时不立刻收尾会话，而是每 150ms 短锁轮询一次队列，
-     * 给下发引擎"上一步完成→建下一步任务"留时间；窗口内拿到任务就同一会话继续，
-     * 超时才收尾（下一步走原有的 CR 唤醒兜底）。
+     * 捎带等待（对齐 master 的 suspendForNextRpc）：
+     * 设备空 POST 这一跳挂起，指令入队时由 DeliveryWaiter.signal(sn) 立刻唤醒，
+     * 在【同一跳 HTTP 请求】里把 RPC 发下去——1 秒内完成，不需要 CR 反踢、不等周期上报。
+     * 挂起期间持续 touch 会话，避免 sweep 按空闲超时提前收尾；窗口耗尽才回 204。
      */
     private Reply piggybackWait(CwmpSession s) {
+        String sn = s.getSn();
         long deadline = System.currentTimeMillis() + Math.max(0, props.getPiggybackWaitMs());
-        while (System.currentTimeMillis() < deadline) {
-            try {
-                Thread.sleep(150);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-            Reply r = locked(s.getSn(), () -> {
-                if (s.isEnded()) {
-                    return Reply.empty(204);
+        java.util.concurrent.Semaphore ticket = deliveryWaiter.register(sn);
+        try {
+            while (System.currentTimeMillis() < deadline) {
+                Reply r = locked(sn, () -> {
+                    if (s.isEnded()) {
+                        return Reply.empty(204);
+                    }
+                    s.touch();
+                    RpcRequest next = nextRpc(s);
+                    if (next == null) {
+                        return null;
+                    }
+                    s.setState(CwmpSession.STATE_RPC_RUNNING);
+                    return reply(s, 200, SoapBuilder.request(next));
+                });
+                if (r != null) {
+                    return r;
                 }
-                RpcRequest next = nextRpc(s);
-                if (next == null) {
-                    return null;
+                long remain = deadline - System.currentTimeMillis();
+                if (remain <= 0) {
+                    break;
                 }
-                s.setState(CwmpSession.STATE_RPC_RUNNING);
-                return reply(s, 200, SoapBuilder.request(next));
-            });
-            if (r != null) {
-                return r;
+                // 信号驱动：指令入队瞬间醒来；至多 500ms 兜底轮询一次，防漏信号
+                deliveryWaiter.await(ticket, Math.min(remain, 500));
             }
+        } finally {
+            deliveryWaiter.unregister(sn, ticket);
         }
-        return locked(s.getSn(), () -> {
+        return locked(sn, () -> {
             if (!s.isEnded()) {
                 endSession(s, "捎带等待超时，无后续任务");
             }
@@ -336,6 +347,7 @@ public class CwmpService {
     }
 
     private void handleInform(CwmpSession s, SoapMessage msg) {
+        registry.markInform(s.getSn());
         s.setDeviceId(msg.getOui() + "-" + msg.getProductClass() + "-" + s.getSn());
         s.setManufacturer(msg.getManufacturer());
         s.setOui(msg.getOui());
@@ -383,12 +395,16 @@ public class CwmpService {
                 Logs.debug(Logs.Module.CPE_ONLINE, "未特殊处理的事件码", "sn", s.getSn(), "事件", ev);
             }
         }
+        // 只有设备真的带 6 CONNECTION REQUEST 事件（或 BOOT/BOOTSTRAP 后的首次会话）才算被 CR 唤醒。
+        // 旧逻辑把任何落在 60s 窗口内的 2 PERIODIC 周期上报也 consumeKick，
+        // 于是 CR 明明没生效却显示"反向连接成功/归因 CR 触发"，唤醒链提前结束 → 任务无限排队
         if (connReq != null) {
+            registry.consumeKick(s.getSn());
             Logs.info(Logs.Module.CPE_ONLINE, "设备经 Connection Request 唤醒上报", "sn", s.getSn(),
                     "地址", s.getRemoteAddr());
-        } else if (registry.consumeKick(s.getSn())) {
-            Logs.info(Logs.Module.CPE_ONLINE, "设备 Inform 落在唤醒窗口内，归因为 Connection Request 触发",
-                    "sn", s.getSn(), "事件", msg.getEvents());
+        } else if (msg.getEvents().stream().anyMatch(ev -> ev.startsWith("0 BOOT")
+                || ev.startsWith("1 BOOT"))) {
+            registry.consumeKick(s.getSn());
         }
         if (diag != null) {
             Logs.info(Logs.Module.CPE_ONLINE, "设备诊断完成上报", "sn", s.getSn(), "事件", msg.getEvents());
@@ -410,6 +426,10 @@ public class CwmpService {
 
         modelProfileService.attachModel(s);
         initProvisionService.provisionIfNeeded(s);
+        // 每个新会话建立都装载一次离线排队任务：nextRpc 里"队列空才装载"会在
+        // 连续下发时被永久饿死（队列永不为空），兜底只能反复 CR 反踢 → 无限排队
+        loadQueuedTasks(s);
+        deliveryWaiter.signal(s.getSn());
         modelProfileService.refreshBizInSession(s);
 
         boolean routineInform = !msg.getEvents().isEmpty()
@@ -545,7 +565,16 @@ public class CwmpService {
                             .computeIfAbsent("readbackDeviations", k -> new LinkedHashMap<String, String>());
                     for (CpeParam p : msg.getResults()) {
                         String exp = expected.get(p.path());
-                        if (exp != null && p.value() != null && !exp.equals(p.value())) {
+                        if (exp == null || p.value() == null) {
+                            continue;
+                        }
+                        // TR-069 规范允许设备对 Password 类参数回读返回空串/掩码（安全设计），
+                        // 拿它比对必报偏差，还可能诱发"验证失败重写"循环——按规范跳过比对
+                        String leaf = p.path().substring(p.path().lastIndexOf('.') + 1);
+                        if (leaf.toLowerCase(java.util.Locale.ROOT).contains("password")) {
+                            continue;
+                        }
+                        if (!exp.equals(p.value())) {
                             deviations.put(p.path(), "下发值[" + exp + "] 设备值[" + p.value() + "]");
                         }
                     }
@@ -664,6 +693,20 @@ public class CwmpService {
         if (Boolean.TRUE.equals(cur.getParams().get(InitProvisionService.PARAM_FLAG))) {
             initProvisionService.retryLater(s.getSn());
         }
+        // DeleteObject 9005：实例在设备上已不存在（参数树过期/上轮已删），
+        // 按成功收口——否则一次清理失败整包报废，还白白多走一轮 CR 唤醒
+        if (msg.getFaultCode() == 9005 && TaskPlanner.TYPE_DEL.equals(cur.getType())) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("deleted", false);
+            result.put("note", "实例已不存在(9005)，视为删除成功");
+            store.updateTask(cur.getTaskId(), "success", null, null, toJson(result));
+            lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+            cur.markCompleted();
+            s.setCurrent(null);
+            Logs.info(Logs.Module.CPE_PUSH, "DeleteObject 实例已不存在，按成功收口", "sn", s.getSn(),
+                    "任务", cur.getTaskId(), "路径", detail.toString());
+            return;
+        }
         store.updateTask(cur.getTaskId(), "fail", String.valueOf(msg.getFaultCode()), detail.toString(), null);
         lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
         cur.markCompleted();
@@ -756,6 +799,13 @@ public class CwmpService {
                 lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
                 s.setCurrent(null);
                 delayedResumeKicks.put(s.getSn(), System.currentTimeMillis() + RESUME_KICK_DELAY_MS);
+                // 立即收尾会话：预算耗尽的会话若还留在 registry 里，
+                // enqueueOrWake 会继续把新任务塞进这个"活着但发不出 RPC"的会话，
+                // redispatchStaleQueued 又因"有活会话"跳过兜底 → 任务无限排队。
+                // 收尾后设备下次 Inform 会开新会话，queued 任务自动装载续跑。
+                endSession(s, "会话 RPC 次数超限(" + props.getMaxRpcCount() + ")，让设备重 Inform 续跑");
+                Logs.warn(Logs.Module.CPE_OFFLINE, "会话 RPC 预算耗尽，已结束会话等快速反踢续跑",
+                        "sn", s.getSn(), "任务", cur.getTaskId(), "RPC数", s.getRpcCount());
                 return null;
             }
             TaskRun.RpcStep step = cur.poll();
@@ -795,14 +845,33 @@ public class CwmpService {
 
     private void loadQueuedTasks(CwmpSession s) {
         String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
+        // 会话内去重：enqueueOrWake 直接入队的任务 DB 状态仍是 queued，
+        // 不加去重会把同一任务重复 build 进队列，导致重复下发
+        java.util.Set<Long> inSession = new java.util.HashSet<>();
+        TaskRun current = s.getCurrent();
+        if (current != null) {
+            inSession.add(current.getTaskId());
+        }
+        for (TaskRun r : s.getQueue()) {
+            inSession.add(r.getTaskId());
+        }
+        int loaded = 0;
         for (Map<String, Object> row : store.loadQueuedTasks(s.getSn())) {
+            long id = row.get("id") instanceof Number n ? n.longValue() : 0;
+            if (id > 0 && inSession.contains(id)) {
+                continue;
+            }
             try {
                 s.getQueue().add(planner.build(row, s.getData(), root, s.getModelParams()));
+                inSession.add(id);
+                loaded++;
             } catch (Exception e) {
-                long id = row.get("id") instanceof Number n ? n.longValue() : 0;
                 store.updateTask(id, "fail", "0", "任务组装失败: " + e.getMessage(), null);
                 Logs.error(Logs.Module.CPE_PUSH, "任务组装失败", e, "sn", s.getSn(), "任务", id);
             }
+        }
+        if (loaded > 0) {
+            Logs.info(Logs.Module.CPE_PUSH, "会话装载排队任务", "sn", s.getSn(), "装载数", loaded);
         }
     }
 
@@ -823,6 +892,20 @@ public class CwmpService {
         } else if (TaskPlanner.TYPE_REFRESH_BIZ.equals(cur.getType())) {
             result.put("collectStatus", s.getData().all().isEmpty() ? "empty" : "success");
         } else if (TaskPlanner.TYPE_GPV.equals(cur.getType())) {
+            // 删后确认（DeleteObject 后的 NumberOfEntries 回读）：明确回报非 0 → 删除没干净，
+            // 判 fail（设备没回报/叶子不存在则视为无法确认，按成功放行，与 9005 容错口径一致）
+            if (Boolean.TRUE.equals(cur.getParams().get("deleteVerify"))) {
+                String leftover = deleteVerifyLeftover(s, cur);
+                if (leftover != null) {
+                    store.updateTask(cur.getTaskId(), "fail", "deleteVerify",
+                            "删后确认失败，仍有实例残留: " + leftover, null);
+                    lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+                    Logs.warn(Logs.Module.CPE_PUSH, "删后确认失败：条目未归零", "sn", s.getSn(),
+                            "任务", cur.getTaskId(), "残留", leftover);
+                    return;
+                }
+                result.put("deleteVerified", true);
+            }
             result.put("collectStatus", s.getData().all().isEmpty() ? "empty" : "success");
         } else if (TaskPlanner.TYPE_SPV.equals(cur.getType())) {
             Map<String, Object> collected = new LinkedHashMap<>(cur.getCollected());
@@ -833,6 +916,27 @@ public class CwmpService {
         }
         store.updateTask(cur.getTaskId(), "success", null, null, toJson(result));
         lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+    }
+
+    /** 删后确认：统计仍非 0 的 NumberOfEntries（设备没回报的不算残留），全归零返回 null */
+    private String deleteVerifyLeftover(CwmpSession s, TaskRun cur) {
+        Object namesObj = cur.getParams().get("names");
+        if (!(namesObj instanceof List<?> names) || names.isEmpty()) {
+            return null;
+        }
+        StringBuilder left = new StringBuilder();
+        for (Object o : names) {
+            String name = String.valueOf(o);
+            if (!name.endsWith("NumberOfEntries")) {
+                continue;
+            }
+            String val = s.getData().value(name);
+            if (val == null || val.isBlank() || "0".equals(val.trim())) {
+                continue;
+            }
+            left.append(name).append('=').append(val.trim()).append(' ');
+        }
+        return left.isEmpty() ? null : left.toString().trim();
     }
 
     /** 会话收尾（幂等） */
@@ -993,7 +1097,24 @@ public class CwmpService {
                 continue;
             }
             lastQueuedRedispatch.put(sn, now);
-            if (registry.bySn(sn) != null) {
+            CwmpSession live = registry.bySn(sn);
+            if (live != null && !live.isEnded()) {
+                // 设备有活会话：直接把 queued 任务装载进该会话（幂等去重），不再打 CR。
+                // 同一 IP/端口多台设备时 CR 可能唤醒错设备（串台），反踢只会无限刷屏且永远唤不醒目标
+                try {
+                    locked(sn, () -> {
+                        CwmpSession cur = registry.bySn(sn);
+                        if (cur != null && !cur.isEnded()) {
+                            loadQueuedTasks(cur);
+                        }
+                        return null;
+                    });
+                    deliveryWaiter.signal(sn);
+                    Logs.info(Logs.Module.CPE_PUSH, "兜底重派发：直接装载进活会话并唤醒挂起跳（跳过 CR 反踢）",
+                            "sn", sn, "任务", taskId);
+                } catch (Exception e) {
+                    Logs.warn(Logs.Module.CPE_PUSH, "兜底装载进活会话失败", "sn", sn, "原因", e.getMessage());
+                }
                 continue;
             }
             try {

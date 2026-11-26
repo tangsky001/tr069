@@ -25,11 +25,11 @@ public class RtpAgent {
 
     private final DatagramSocket socket;
     private final JitterBuffer jitter;
-    private final int payloadType;
     /** true=A 律（PCMA 8），false=U 律（PCMU 0） */
     private final boolean alaw;
     private volatile InetSocketAddress target;
     private volatile boolean running;
+    private int payloadType;
     /** 最近一次收到有效 RTP 的时间戳（毫秒），用于会话空闲检测 */
     private volatile long lastRxAt;
     private Thread recvThread;
@@ -56,6 +56,11 @@ public class RtpAgent {
 
     public void setTarget(InetSocketAddress target) {
         this.target = target;
+    }
+
+    /** 按被叫 200 OK answer 调整发送载荷（offer 报双编码时，对端可能选另一个） */
+    public void setPayloadType(int pt) {
+        this.payloadType = pt;
     }
 
     public void start() {
@@ -89,9 +94,17 @@ public class RtpAgent {
                 if (rtp != null && (rtp.getPayloadType() == 0 || rtp.getPayloadType() == 8)) {
                     lastRxAt = System.currentTimeMillis();
                     jitter.push(rtp.getSequence(), rtp.getPayload());
-                    // 目标未定（对端 SDP 缺失）时贴住来包源地址
-                    if (target == null) {
-                        target = (InetSocketAddress) pkt.getSocketAddress();
+                    // Symmetric RTP（RFC 4961 思路）：以实际来包源为准。
+                    // 光猫 SDP 申报的媒体地址（VOIP WAN 私网 IP）可能路由不可达，
+                    // 只要它的 RTP 能发进来，回程就贴住实际源地址，修复单向媒体
+                    InetSocketAddress src = (InetSocketAddress) pkt.getSocketAddress();
+                    if (target == null || !src.getAddress().equals(target.getAddress())
+                            || src.getPort() != target.getPort()) {
+                        if (target != null) {
+                            Logs.debug(Logs.Module.SIP, "RTP 源地址与 SDP 申报不一致，按来包源修正回程目标",
+                                    "tag", tag, "申报", target, "实际", src);
+                        }
+                        target = src;
                     }
                 }
             } catch (SocketTimeoutException ignored) {
@@ -110,13 +123,25 @@ public class RtpAgent {
     }
 
     /** 编码 PCM 帧并按 RTP 发出（seq/timestamp 自增） */
+    /**
+     * 发送 20ms 帧；pcm 为空（对端暂无 RTP，如主叫仍在振铃）时改发静音帧。
+     * 光猫 IAD 有 RTP 流丢失保护：摘机后等不到服务器 RTP 会直接 BYE 拆线，
+     * 表现为"一接听就被挂断"。接通后必须持续向两端供流。
+     */
     public synchronized void sendPcm(short[] pcm) {
-        if (!running || target == null || pcm == null || pcm.length == 0) {
+        if (!running || target == null) {
             return;
         }
-        byte[] frame = new byte[pcm.length];
-        for (int i = 0; i < pcm.length; i++) {
-            frame[i] = alaw ? G711.pcmToAlaw(pcm[i]) : G711.pcmToUlaw(pcm[i]);
+        boolean silent = pcm == null || pcm.length == 0;
+        int n = silent ? 160 : pcm.length;   // 20ms @ 8kHz
+        byte[] frame = new byte[n];
+        if (silent) {
+            // G.711 静音：μ-law 0x7F / A-law 0xD5
+            java.util.Arrays.fill(frame, (byte) (alaw ? (byte) 0xD5 : (byte) 0x7F));
+        } else {
+            for (int i = 0; i < n; i++) {
+                frame[i] = alaw ? G711.pcmToAlaw(pcm[i]) : G711.pcmToUlaw(pcm[i]);
+            }
         }
         RtpPacket pkt = new RtpPacket();
         pkt.setPayloadType(payloadType);

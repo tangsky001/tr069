@@ -177,6 +177,8 @@ public class CallSession {
     public RtpAgent getAgentB() { return agentB; }
     /** B 腿 RTP 在 CallManager 创建后挂入会话（SIP 外呼 / H.248 腿） */
     public void setAgentB(RtpAgent agentB) { this.agentB = agentB; }
+    /** B 腿解码编码按被叫 200 OK answer 回填（false=PCMU） */
+    public void setAlawB(boolean alawB) { this.alawB = alawB; }
     public State getState() { return state; }
     public boolean isPromptOnly() { return busyPrompt != null; }
     public void setBusyPrompt(BusyToneSource src) { this.busyPrompt = src; }

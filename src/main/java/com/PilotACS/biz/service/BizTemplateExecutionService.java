@@ -36,13 +36,17 @@ public class BizTemplateExecutionService {
     private final IntentDeliveryService intentDeliveryService;
     private final CpeStore store;
     private final ObjectMapper objectMapper;
+    private final com.PilotACS.cpe.config.CpeProperties props;
 
-    /** 下发执行线程池 */
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "biz-template-executor");
-        t.setDaemon(true);
-        return t;
-    });
+    /** 下发执行线程池：多设备并行（同设备由 IntentDeliveryService per-SN 锁串行），大小 acs.cpe.delivery-threads */
+    private ExecutorService executor;
+
+    @jakarta.annotation.PostConstruct
+    void initExecutor() {
+        // 固定池大小限制"同时下发台数"（超出排队），worker 用虚拟线程承载
+        executor = Executors.newFixedThreadPool(Math.max(1, props.getDeliveryThreads()),
+                Thread.ofVirtual().name("biz-delivery-", 0).factory());
+    }
 
     /**
      * 提交整包下发（独立下发器通道，master 口径）：

@@ -36,6 +36,9 @@ public class ModelProfileService {
 
     /** 已自动排过探测的 sn */
     private final Set<String> ispProbeDone = ConcurrentHashMap.newKeySet();
+    /** 每台设备上次业务参数轻量刷新时间：每次 Inform 全量 GPV 会白耗会话 RPC 预算 */
+    private final Map<String, Long> lastBizRefreshAt = new ConcurrentHashMap<>();
+    private static final long BIZ_REFRESH_INTERVAL_MS = 5 * 60_000L;
 
     private final CpeStore store;
     private final CapabilityDetector capabilityDetector;
@@ -125,17 +128,25 @@ public class ModelProfileService {
         if (ispProbeDone.contains(sn)) {
             return;
         }
-        ispProbeDone.add(sn);
         Map<String, CpeParam> stored = store.loadParams(sn);
         int count = Math.max(stored.size(), s.getData().all().size());
         if (count >= FULL_TREE_MIN_PARAMS) {
-            boolean shell = hasBizShell(stored);
-            if (!shell) {
-                Logs.info(Logs.Module.CPE_PUSH, "参数树已采全且业务域无空壳，不再探测", "sn", sn, "参数数", count);
-                return;
-            }
-            Logs.info(Logs.Module.CPE_PUSH, "参数树已采全但业务域有空壳叶子，本会话补一次全树探测",
+            // 全量探测只留给"首次适配"（树为空/不完整）。树已采全后：
+            // 全树 GPN + 几十批 GPV 会打满会话 255 个 RPC 预算，把同会话业务下发挤成排队；
+            // 空值叶子由 refreshBizInSession 的白名单内 GPV 补齐，不再为此重启全量探测。
+            ispProbeDone.add(sn);
+            Logs.debug(Logs.Module.CPE_PUSH, "参数树已采全，跳过全量探测（仅首次适配做）",
                     "sn", sn, "参数数", count);
+            return;
+        }
+        // 有待下发的业务任务时探测让路：探测排队在业务前面会把业务饿死
+        boolean deliveryPending = store.loadQueuedTasks(sn).stream().anyMatch(row -> {
+            String t = row.get("type") == null ? "" : String.valueOf(row.get("type"));
+            return !"AdaptProbe".equals(t) && !"GetParameterValues".equals(t);
+        });
+        if (deliveryPending) {
+            Logs.debug(Logs.Module.CPE_PUSH, "有业务下发任务排队，全树探测让路", "sn", sn);
+            return;
         }
         if (store.countActiveTasks(sn, "AdaptProbe") > 0) {
             return;
@@ -144,27 +155,9 @@ public class ModelProfileService {
         Map<String, Object> row = store.getTask(id);
         String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
         s.getQueue().add(planner.build(row, s.getData(), root, s.getModelParams()));
-        Logs.info(Logs.Module.CPE_PUSH, "参数树不完整/业务域有空壳，本会话立即全树探测",
+        ispProbeDone.add(sn);
+        Logs.info(Logs.Module.CPE_PUSH, "参数树不完整/业务域大面积空壳，本会话立即全树探测",
                 "sn", sn, "参数数", count, "任务", id);
-    }
-
-    /** 业务域里是否有空壳叶子 */
-    private boolean hasBizShell(Map<String, CpeParam> stored) {
-        if (stored.isEmpty()) {
-            return true;
-        }
-        com.PilotACS.cpe.model.DeviceData data = new com.PilotACS.cpe.model.DeviceData();
-        data.loadAll(stored);
-        String root = BusinessPaths.detectRoot(data, props.getDefaultRootNode());
-        for (String br : BusinessPaths.businessRoots(root)) {
-            for (String p : data.leaves(br)) {
-                CpeParam v = stored.get(p);
-                if (v == null || v.value() == null || v.value().isBlank()) {
-                    return true;
-                }
-            }
-        }
-        return !BusinessPaths.vendorWifiLeaves(data).isEmpty();
     }
 
     /** 系统业务刷新任务创建人标识 */
@@ -173,6 +166,13 @@ public class ModelProfileService {
     /** Inform 时排一条轻量 GPV 刷 WAN/WIFI/SIP 最新值 */
     public void refreshBizInSession(CwmpSession s) {
         try {
+            // 5 分钟内只刷一次：设备每次 Inform 都全量 GPV 业务叶子会白耗 26~32 个 RPC，
+            // 且排在业务下发任务前面，把并发会话预算吃光
+            long now = System.currentTimeMillis();
+            Long last = lastBizRefreshAt.get(s.getSn());
+            if (last != null && now - last < BIZ_REFRESH_INTERVAL_MS) {
+                return;
+            }
             java.util.List<String> leaves = bizRefreshNames(s.getSn());
             if (leaves.isEmpty()) {
                 return;
@@ -180,6 +180,7 @@ public class ModelProfileService {
             if (store.countActiveTasks(s.getSn(), TaskPlanner.TYPE_GPV, BIZ_REFRESH_BY) > 0) {
                 return;
             }
+            lastBizRefreshAt.put(s.getSn(), now);
             long id = store.insertTask(s.getSn(), TaskPlanner.TYPE_GPV,
                     Map.of("names", leaves, "bizRefresh", true), BIZ_REFRESH_BY);
             Map<String, Object> row = store.getTask(id);
@@ -192,7 +193,7 @@ public class ModelProfileService {
         }
     }
 
-    /** 业务域叶子路径 */
+    /** 业务域内白名单叶子路径：只刷业务真正消费的参数（WAN连接/WiFi/SIP/LAN/telnet/账号密码），不刷全树 */
     public java.util.List<String> bizRefreshNames(String sn) {
         Map<String, CpeParam> params = store.loadParams(sn);
         if (params.isEmpty()) {
@@ -213,10 +214,16 @@ public class ModelProfileService {
                 if (v == null || v.value() == null || v.value().isBlank() || bad.contains(p)) {
                     continue;
                 }
+                // 白名单收敛：落库都不要的参数，刷新也不值得花 RPC
+                if (!com.PilotACS.cpe.store.ParamTreeFilter.keep(p)) {
+                    continue;
+                }
                 out.add(p);
             }
         }
-        return new java.util.ArrayList<>(out);
+        java.util.List<String> list = new java.util.ArrayList<>(out);
+        // 硬上限：gpv-batch-size=32 时最多 16 个 RPC，防白名单意外膨胀吃掉会话预算
+        return list.size() > 512 ? list.subList(0, 512) : list;
     }
 
     /** 设备不认的参数名集合 */

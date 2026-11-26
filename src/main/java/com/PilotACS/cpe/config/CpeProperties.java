@@ -32,10 +32,23 @@ public class CpeProperties {
 
     /**
      * 空队列捎带等待（毫秒，master piggyback-wait-ms 同值）：
-     * 会话内任务跑完且队列空时，ACS 不立刻收尾，短等下发引擎串行塞入下一步任务，
-     * 避免每步 RPC 都经历"会话结束→CR 唤醒→Inform→新会话"的重建（当前分支 8 分钟/台的主因）
+     * 会话内任务跑完且队列空时，ACS 不立刻收尾，短等下发引擎塞入下一步任务，
+     * 避免每步 RPC 都经历"会话结束→CR 唤醒→Inform→新会话"的重建。
+     * master suspendForNextRpc 口径：设备空 POST 这一跳挂起等指令，指令入队 signal
+     * 立刻唤醒同跳下发；默认 1.5 秒与 master 一致，指令不在窗口内到达也没关系
+     * （已落 cpe_task，设备下一跳空 POST 会无条件装载），挂太久会撞设备读超时。
      */
     private int piggybackWaitMs = 1500;
+
+    /**
+     * 最大并发下发台数（超出排队），虚拟线程承载：
+     * 小批量（3 台以内）天然全部并发、互不等待；批量很大时限流在 N 台，
+     * 其余按先来先服务排队。同设备多批次仍由 deliver 内 per-SN 锁串行。
+     */
+    private int deliveryThreads = 10;
+
+    /** 反向连接（CR）唤醒最大并发数（虚拟线程承载）：离线设备并行反踢，不共享单线程排队 */
+    private int crThreads = 8;
 
     /** 单会话最大 RPC 往返数 */
     private int maxRpcCount = 255;

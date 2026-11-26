@@ -46,6 +46,7 @@ public class WorklistDeliveryService {
     private final BizTemplateExecutionMapper bizExecutionMapper;
     private final TaskService taskService;
     private final GroupService groupService;
+    private final com.PilotACS.cpe.config.CpeProperties cpeProps;
 
     /** 流水号自增段：同一秒内连开多单时靠它区分 */
     private static final AtomicLong DESC_SEQ = new AtomicLong();
@@ -238,27 +239,27 @@ public class WorklistDeliveryService {
         }
         w.setStatus("sending");
         Long bizTemplateId = bizTemplateIdOf(w);
-        if (bizTemplateId != null || "reset".equals(w.getBizType()) || "reboot".equals(w.getBizType())) {
-            executeClaimed(w, bizTemplateId, device);
-        } else {
-            worker.execute(() -> {
-                try {
-                    executeClaimed(w, null, device);
-                } catch (Exception e) {
-                    log.error("工单下发异常: id={}", w.getId(), e);
-                    fail(w, e.getMessage());
-                }
-            });
-        }
+        // 全部走工作池异步执行：整包/重启工单同步执行会阻塞调度线程数分钟，拖死整轮扫描
+        worker.execute(() -> {
+            try {
+                executeClaimed(w, bizTemplateId, device);
+            } catch (Exception e) {
+                log.error("工单下发异常: id={}", w.getId(), e);
+                fail(w, e.getMessage());
+            }
+        });
     }
 
-    /** 单线程工作池 */
-    private final java.util.concurrent.ExecutorService worker =
-            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "worklist-delivery");
-                t.setDaemon(true);
-                return t;
-            });
+    /** 工单下发工作池：多设备并行（同设备由 IntentDeliveryService per-SN 锁串行），大小 acs.cpe.delivery-threads */
+    private java.util.concurrent.ExecutorService worker;
+
+    @jakarta.annotation.PostConstruct
+    void initWorker() {
+        // 与业务模板共用"最大并发下发台数"限流，worker 用虚拟线程承载
+        worker = java.util.concurrent.Executors.newFixedThreadPool(
+                Math.max(1, cpeProps.getDeliveryThreads()),
+                Thread.ofVirtual().name("worklist-delivery-", 0).factory());
+    }
 
     /** 实际执行入口 */
     private void executeClaimed(Worklist w, Long bizTemplateId, Map<String, Object> device) {

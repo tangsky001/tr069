@@ -198,6 +198,31 @@ public class SipMessage {
         return at >= 0 ? core.substring(0, at) : core;
     }
 
+    /**
+     * 把报文里出现的"本机对外 IP"整体换成对端可达的地址。
+     * 覆盖 Request-URI、Contact、Via、From、To 以及 SDP body；
+     * 由 serialize() 重新计算 Content-Length，不会出现长度错配。
+     * 多网卡服务器自动探测到错误网卡时，光猫的 ACK/BYE 会按 Contact 发往不可达地址，
+     * 表现为"一摘机就挂断、服务器侧会话永远不结束"。
+     */
+    public void replaceText(String from, String to) {
+        if (from == null || to == null || from.isBlank() || from.equals(to)) {
+            return;
+        }
+        if (uri != null) {
+            uri = uri.replace(from, to);
+        }
+        for (Map.Entry<String, List<String>> e : headers.entrySet()) {
+            List<String> values = e.getValue();
+            for (int i = 0; i < values.size(); i++) {
+                values.set(i, values.get(i).replace(from, to));
+            }
+        }
+        if (body != null) {
+            body = body.replace(from, to);
+        }
+    }
+
     public int cseqNumber() {
         String cseq = header("CSeq");
         if (cseq == null || cseq.isBlank()) {

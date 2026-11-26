@@ -51,6 +51,13 @@ public class SipProperties {
     private int busyToneSeconds = 10;
     /** 注册过期清理周期（秒） */
     private int registrationSweepSeconds = 30;
+    /**
+     * 外呼 INVITE 是否携带主叫信息头（P-Asserted-Identity / Remote-Party-ID）。
+     * 中兴等 IAD 解析这些头识别主叫；当主叫与被叫在同一台光猫上（自呼自）时，
+     * IAD 发现"主叫是本地用户"可能走内部呼叫逻辑，摘机后立即释放并 BYE。
+     * 默认关闭：From 的显示名已足够话机显示主叫。
+     */
+    private boolean callerInfoHeaders = false;
     /** H.248 网关控制开关（MGC 角色，UDP 文本编码） */
     private boolean h248Enabled = false;
     /** H.248 监听端口（文本编码默认 2944） */

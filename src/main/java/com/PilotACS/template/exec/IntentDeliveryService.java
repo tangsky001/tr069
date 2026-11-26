@@ -40,6 +40,16 @@ public class IntentDeliveryService {
     /** 下发单个意图 */
     public Map<String, Object> deliver(String sn, String category, Map<String, Object> fields,
                                        boolean incremental, String username) {
+        // 同一设备互斥：业务模板/工单下发线程池并行后，同 SN 必须串行，
+        // 否则两批任务交错入队、WAN 清理与新实例定位互相踩踏
+        Object deliverLock = deliverLocks.computeIfAbsent(sn, k -> new Object());
+        synchronized (deliverLock) {
+            return doDeliver(sn, category, fields, incremental, username);
+        }
+    }
+
+    private Map<String, Object> doDeliver(String sn, String category, Map<String, Object> fields,
+                                          boolean incremental, String username) {
         Map<String, Object> out = new LinkedHashMap<>();
         List<Map<String, String>> detail = new ArrayList<>();
         out.put("detail", detail);
@@ -74,6 +84,9 @@ public class IntentDeliveryService {
             }
             log.info("[下发] 计划生成 sn={} 类别={} 增量={} 步骤={} 条: {}", sn, category, incremental,
                     plan.size(), plan.stream().map(Map.Entry::getKey).toList());
+            // master 口径：计划渲染完（耗时不占挂起窗口），先反向唤醒并等设备建链，
+            // 再提交第一条指令——避免"指令先入队、会话还没建立"只能等周期上报
+            taskService.awaitSession(sn);
 
             boolean allOk = true;
             String newInstance = null;
@@ -129,6 +142,13 @@ public class IntentDeliveryService {
                     // 设备拒绝删除（9002 占用/内置不可删）或对象已不存在（9005）都按「没清掉」处理，
                     // 跳过该连接继续下发——总比整单判死、新业务一条都发不下去强（master 口径）
                     detail.add(row("跳过: " + desc, realPath, "skip", fault));
+                    continue;
+                }
+                if (!ok && taskParams.get("deleteVerify") != null) {
+                    // 删后确认失败（条目未归零/设备不支持该叶子）：提示但不中断，
+                    // 与「删除失败跳过继续」口径一致，残留实例由下次清理兜底
+                    detail.add(row("跳过: " + desc, realPath, "skip", fault));
+                    log.warn("[下发] 删后确认未通过 sn={} 详情={}", sn, fault);
                     continue;
                 }
                 if ("AddObject".equals(type) && ok) {
@@ -382,10 +402,11 @@ public class IntentDeliveryService {
                     "以 AddObject 返回为准，兜底为 " + (known + 1)));
         }
 
-        // 3) 渲染参数
+        // 3) 渲染参数。注意：Enable 不在这里写——SPV 报文按顺序应用，
+        // Enable 先置位会提前触发连接，VLAN/账号还没生效 → 拨号失败退避重试
+        // （"参数全对但要等好几分钟才通"）。Enable 统一在报文末尾下发（见 emitSpv 前）
         Map<String, String> values = new LinkedHashMap<>();
         boolean routed = !bridge;
-        values.put("Enable", "1");
         putValue(values, data, base, detail, "ConnectionType",
                 routed ? "IP_Routed" : (pppoe ? "PPPoE_Bridged" : "IP_Bridged"),
                 "ConnectionType");
@@ -393,16 +414,28 @@ public class IntentDeliveryService {
                 + (bridge ? "_BRIDGE" : "") + "_" + category.replace("WAN_", "");
         putValue(values, data, base, detail, "Name", name, "Name");
         if (routed && !pppoe) {
-            putValue(values, data, base, detail, "NATEnabled", "1", "NATEnabled");
+            // 部分固件只认厂商私有 NAT 叶子，候选找不到就写不进去，NAT 静默变禁用
+            putValue(values, data, base, detail, "NATEnabled", "1", "NATEnabled",
+                    "X_CT-COM_NATEnabled", "X_CMCC_NATEnabled");
         }
         putValue(values, data, base, detail, "业务绑定(ServiceList)", serviceList,
                 "ServiceList", "X_CMCC_ServiceList", "X_CT-COM_ServiceList");
         String vlanId = text(fields, "vlan_id");
         if (vlanId != null && !vlanId.isBlank()) {
             String prio = text(fields, "vlan_priority");
-            String combined = vlanId + " " + (prio == null || prio.isBlank() ? "0" : prio);
-            putValue(values, data, base, detail, "VLAN 标记(X_CMCC_VLANIDMark)", combined,
-                    "X_CMCC_VLANIDMark");
+            String pbit = prio == null || prio.isBlank() ? "0" : prio.trim();
+            // X_CMCC_VLANIDMark 各厂商口径不一：字符串型是 "VID 802.1p" 组合串；
+            // 数值型（unsignedInt/int）只能写 VID，802.1p 改走独立的 X_CMCC_802-1pMark。
+            // 组合串写进数值型叶子会被客户端预检拒绝（参数类型不匹配），整包直接报废——瑞斯康达这台就是 unsignedInt
+            if (isNumericType(declaredType(data, base, "X_CMCC_VLANIDMark"))) {
+                putValue(values, data, base, detail, "VLAN 标记(X_CMCC_VLANIDMark)", vlanId.trim(),
+                        "X_CMCC_VLANIDMark");
+                putValue(values, data, base, detail, "802.1p 优先级(X_CMCC_802-1pMark)", pbit,
+                        "X_CMCC_802-1pMark");
+            } else {
+                putValue(values, data, base, detail, "VLAN 标记(X_CMCC_VLANIDMark)",
+                        vlanId.trim() + " " + pbit, "X_CMCC_VLANIDMark");
+            }
             putValue(values, data, base, detail, "VLAN ID(VLANIDMark)", vlanId,
                     "VLANIDMark", "X_CT-COM_VLANIDMark");
             putValue(values, data, base, detail, "VLAN 模式(VLANMode)", "2",
@@ -445,6 +478,9 @@ public class IntentDeliveryService {
         if ("WAN_STATIC".equalsIgnoreCase(category)) {
             putValue(values, data, base, detail, "静态 IP", text(fields, "external_ip"), "ExternalIPAddress");
             putValue(values, data, base, detail, "子网掩码", text(fields, "subnet_mask"), "SubnetMask");
+            // 默认路由唯一性自查（master 口径）：只允许上网 WAN 当默认路由，
+            // 其他连接也挂着 DefaultGateway 会出口漂移（业务时通时不通）
+            warnDefaultRouteClash(data, base, detail);
             putValue(values, data, base, detail, "默认网关", text(fields, "default_gateway"), "DefaultGateway");
         }
         String bindPorts = textList(fields, "bind_ports", "bind_port");
@@ -459,7 +495,39 @@ public class IntentDeliveryService {
                         "X_CT-COM_LANInterfaceBind", "BindLANPort");
             }
         }
+        // Enable 必须走 putValue 拼完整路径（裸 key "Enable" 设备必拒 9005，
+        // 曾导致新建 WAN 连接从未启用——Disconnected 拿不到 IP 的根因）；
+        // 且必须排在报文末尾：先配 VLAN/承载/账号，最后置位触发连接
+        putValue(values, data, base, detail, "启用连接(Enable)", "1", "Enable");
         emitSpv(plan, "WAN 参数包", values, detail);
+    }
+
+    /**
+     * 默认路由竞争提示（master 口径）：同一 WANConnectionDevice 下其他连接已挂默认网关时提醒。
+     * 不阻断——是否让位由模板决定，但必须在下发记录里留下痕迹，避免"业务时通时不通、出口漂移"
+     * 这类疑难杂症无从查起。
+     */
+    private void warnDefaultRouteClash(DeviceData data, String base, List<Map<String, String>> detail) {
+        if (base.contains("__NEW__")) {
+            return;
+        }
+        int cut = base.lastIndexOf('.', base.lastIndexOf('.') - 1);
+        String connDevice = base.substring(0, cut + 1);
+        for (String connType : List.of("WANIPConnection", "WANPPPConnection")) {
+            for (Integer i : data.instances(connDevice + connType + ".")) {
+                String other = connDevice + connType + "." + i;
+                if ((base + ".").startsWith(other + ".")) {
+                    continue;
+                }
+                String gw = data.value(other + ".DefaultGateway");
+                if (gw == null || gw.isBlank() || "0".equals(gw.trim())) {
+                    continue;
+                }
+                detail.add(row("默认路由竞争", other, "warn",
+                        "该连接 DefaultGateway=" + gw.trim() + " 与本连接冲突，出口可能漂移；"
+                                + "只允许上网 WAN 挂默认路由，其余业务走静态路由"));
+            }
+        }
     }
 
     /** 频段实例约定（master TemplateBuilder 口径）：2.4G 起始实例 1，5.8G 起始实例 5 */
@@ -839,6 +907,14 @@ public class IntentDeliveryService {
             for (String victim : victims) {
                 plan.add(step("删除存量 " + victim, taskJson("DeleteObject", victim, Map.of())));
             }
+            // 删后确认（master WanCleanup 增强）：回读条目数，归零才算清干净，
+            // 别假设删除一定成功——部分固件删上层后子对象悬空会留脏实例。
+            // 设备不申报 NumberOfEntries 时走 9005 容错跳过，不阻断下发
+            plan.add(step("删后确认 " + connDevice, taskJson("GetParameterValues", "", Map.of(
+                    "names", List.of(
+                            connDevice + ".WANIPConnectionNumberOfEntries",
+                            connDevice + ".WANPPPConnectionNumberOfEntries"),
+                    "deleteVerify", true))));
             // 清理只此一次：同批后面的成员不再触发任何删除；新建连接由 rememberCreated 保护
             state.lastCleanupAt = now;
         }
@@ -1074,6 +1150,31 @@ public class IntentDeliveryService {
         values.put(path, value);
     }
 
+    /** 叶子在参数树里的声明类型；__NEW__ 基础下参照同类型已有实例，查不到返回 null */
+    private static String declaredType(DeviceData data, String base, String leafName) {
+        String refPath = null;
+        if (base.contains("__NEW__")) {
+            String parent = base.substring(0, base.indexOf("__NEW__"));
+            List<Integer> refs = data.instances(parent);
+            if (!refs.isEmpty()) {
+                refPath = parent + refs.get(0) + "." + leafName;
+            }
+        }
+        CpeParam p = data.get(base + leafName);
+        if (p == null && refPath != null) {
+            p = data.get(refPath);
+        }
+        return p == null ? null : p.type();
+    }
+
+    private static boolean isNumericType(String type) {
+        if (type == null) {
+            return false;
+        }
+        String t = type.toLowerCase(Locale.ROOT);
+        return "unsignedint".equals(t) || "int".equals(t);
+    }
+
     /** 探测候选叶子路径，都不存在返回 null；__NEW__ 基础下用同类型已有实例做存在性参照 */
     private static String leaf(DeviceData data, String base, String... candidates) {
         String refBase = null;
@@ -1194,6 +1295,8 @@ public class IntentDeliveryService {
 
     /** 每台设备一把清理锁：同一批次的多个业务任务不能同时清点、删除连接（master 口径） */
     private final Map<String, Object> wanCleanupLocks = new ConcurrentHashMap<>();
+    /** 每台设备的下发互斥锁：并发下发线程池下同 SN 串行，任务不交错 */
+    private final Map<String, Object> deliverLocks = new ConcurrentHashMap<>();
     /** 每台设备的清理台账：窗口内不重复清理，本批次新建的连接永不进删除清单 */
     private final Map<String, WanCleanupState> wanCleanupLedger = new ConcurrentHashMap<>();
 
@@ -1422,9 +1525,11 @@ public class IntentDeliveryService {
                 continue;
             }
             if (isSwitch(name)) {
-                log.warn("[下发] 启用开关设备不接受，跳过不下发: {}", name);
-                detail.add(row("跳过参数", name, "skip",
-                        "开关类参数设备不接受（其余参数已写进去），不影响本次下发"));
+                log.warn("[下发] 启用开关类参数设备不接受: {}（按失败处理，不再静默跳过）", name);
+                detail.add(row("参数被拒", name, "fail",
+                        "开关类参数（Enable/NATEnabled 等）逐条重发（含换写法）仍被设备拒绝，"
+                                + "新连接可能无法启用，按失败处理"));
+                out.rejected.add(name + "=" + raw + "（type=" + v.get("type") + "）");
                 continue;
             }
             out.rejected.add(name + "=" + raw + "（type=" + v.get("type") + "）");

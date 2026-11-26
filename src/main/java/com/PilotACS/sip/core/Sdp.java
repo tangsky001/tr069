@@ -90,6 +90,27 @@ public class Sdp {
                 + "a=sendrecv\r\n";
     }
 
+    /** 组装 SDP（双编码 offer）：首个为服务器首选，对端 answer 可能选任意一个 */
+    public static String build(String ip, int port, int[] payloadTypes, String[] codecNames) {
+        long now = System.currentTimeMillis();
+        StringBuilder sb = new StringBuilder();
+        sb.append("v=0\r\n")
+                .append("o=- ").append(now).append(' ').append(now).append(" IN IP4 ").append(ip).append("\r\n")
+                .append("s=PilotACS\r\n")
+                .append("c=IN IP4 ").append(ip).append("\r\n")
+                .append("t=0 0\r\n")
+                .append("m=audio ").append(port).append(" RTP/AVP");
+        for (int pt : payloadTypes) {
+            sb.append(' ').append(pt);
+        }
+        sb.append("\r\n");
+        for (int i = 0; i < payloadTypes.length; i++) {
+            sb.append("a=rtpmap:").append(payloadTypes[i]).append(' ').append(codecNames[i]).append("/8000\r\n");
+        }
+        sb.append("a=ptime:20\r\n").append("a=sendrecv\r\n");
+        return sb.toString();
+    }
+
     public Media getAudio() { return audio; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
     public String getSessionId() { return sessionId; }

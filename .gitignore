@@ -13,6 +13,7 @@ test/
 #configuration/
 deploy/
 tmp/
+logs/
 TR-069-1-6-1/
 #############
 ## 前端（server/web，vue-admin-template）

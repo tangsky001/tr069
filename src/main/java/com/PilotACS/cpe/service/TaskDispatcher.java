@@ -8,6 +8,7 @@ package com.PilotACS.cpe.service;
 
 import com.PilotACS.cpe.redis.DeviceInfoCache;
 import com.PilotACS.cpe.redis.RedisTaskQueue;
+import com.PilotACS.cpe.server.DeliveryWaiter;
 import com.PilotACS.cpe.store.CpeStore;
 import com.PilotACS.common.log.Logs;
 import lombok.RequiredArgsConstructor;
@@ -23,12 +24,20 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
     private final CpeStore store;
     private final ConnectionRequestService connectionRequestService;
     private final DeviceInfoCache infoCache;
+    private final DeliveryWaiter deliveryWaiter;
 
     @Override
     public void dispatch(String sn, long taskId) {
         Map<String, Object> task = store.getTask(taskId);
         if (task == null || !"queued".equals(String.valueOf(task.get("status")))) {
             Logs.debug(Logs.Module.CPE_PUSH, "派发消息对应任务已失效，跳过唤醒", "sn", sn, "任务", taskId);
+            return;
+        }
+        // 设备当前有挂起的空 POST：直接 signal 唤醒同跳下发，不要打 CR（可能串台/无效）
+        if (deliveryWaiter.hasPendingHop(sn)) {
+            deliveryWaiter.signal(sn);
+            Logs.info(Logs.Module.CPE_PUSH, "设备有挂起跳，指令直接同跳下发（跳过 CR 反踢）",
+                    "sn", sn, "任务", taskId);
             return;
         }
         wakeNow(sn, taskId);

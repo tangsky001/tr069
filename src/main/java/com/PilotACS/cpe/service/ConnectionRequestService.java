@@ -40,13 +40,17 @@ public class ConnectionRequestService {
     private static final int MAX_KICKS = 10;
     /** 踢成功后等待设备 Inform 的归因窗口 */
     private static final long KICK_INFORM_WINDOW_MS = 60_000L;
+    /** HTTP 200 后等设备真正上报的校验窗口；超时视为"CR 送达但设备没醒" */
+    private static final long KICK_CONFIRM_MS = 8_000L;
 
-    private final ScheduledExecutorService retryPool =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "cr-retry");
-                t.setDaemon(true);
-                return t;
-            });
+    /** CR 唤醒调度池：多台离线设备并行反踢（单线程时一台设备退避链可拖死所有唤醒），大小 acs.cpe.cr-threads */
+    private ScheduledExecutorService retryPool;
+
+    @jakarta.annotation.PostConstruct
+    void initRetryPool() {
+        retryPool = Executors.newScheduledThreadPool(Math.max(1, props.getCrThreads()),
+                Thread.ofVirtual().name("cr-retry-", 0).factory());
+    }
 
     /** 一条重试链 */
     private record Kick(long chain, ScheduledFuture<?> head) {
@@ -143,10 +147,15 @@ public class ConnectionRequestService {
                     pendingKicks.remove(sn, cur);
                     return;
                 }
+                long kickedAt = System.currentTimeMillis();
                 if (wake(url, username, password)) {
-                    Logs.info(Logs.Module.CPE_PUSH, "反向连接成功", "sn", sn, "第几次", round + 1);
+                    // HTTP 200 只代表 CR 请求被设备 HTTP 服务受理，不代表设备会发起 Inform
+                    // （同 IP/端口多设备串台、设备忽略 CR 时都只会 200 不上报）。
+                    // 先挂标记，8 秒后校验是否真的有该 SN 的 Inform；没来就继续重试并告警
+                    Logs.info(Logs.Module.CPE_PUSH, "反向连接请求已送达，等待设备上报确认",
+                            "sn", sn, "第几次", round + 1);
                     registry.markKickPending(sn, KICK_INFORM_WINDOW_MS);
-                    pendingKicks.remove(sn, cur);
+                    scheduleConfirm(sn, url, username, password, round, chain, cur, kickedAt);
                     return;
                 }
                 if (round + 1 >= MAX_KICKS) {
@@ -162,6 +171,34 @@ public class ConnectionRequestService {
                 pendingKicks.remove(sn, cur);
             }
         }, delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    /** 校验 CR 是否真的唤醒了目标设备：只认该 SN 在踢之后的新 Inform，周期上报不算命中 */
+    private void scheduleConfirm(String sn, String url, String username, String password,
+                                 int round, long chain, Kick cur, long kickedAt) {
+        retryPool.schedule(() -> {
+            Kick now = pendingKicks.get(sn);
+            if (now == null || now.chain() != chain) {
+                return;
+            }
+            if (registry.lastInformAt(sn) >= kickedAt - 1_000L) {
+                Logs.info(Logs.Module.CPE_PUSH, "反向连接命中：设备已上报 Inform（排队任务已装载）", "sn", sn,
+                        "第几次", round + 1);
+                pendingKicks.remove(sn, cur);
+                return;
+            }
+            // HTTP 200 但设备没醒：明确告警（串台/CR 地址不可达），继续重试而不是假成功
+            Logs.warn(Logs.Module.CPE_PUSH,
+                    "CR 请求已送达但设备未上报（疑似 CR 地址串台/设备忽略 CR），继续重试",
+                    "sn", sn, "第几次", round + 1, "校验窗口ms", KICK_CONFIRM_MS);
+            if (round + 1 >= MAX_KICKS) {
+                Logs.warn(Logs.Module.CPE_PUSH, "反向连接命中校验重试放弃", "sn", sn,
+                        "次数", MAX_KICKS, "建议", "检查 CR URL 端口映射/两设备是否共用地址");
+                pendingKicks.remove(sn, cur);
+                return;
+            }
+            scheduleKick(sn, url, username, password, round + 1, 5_000L, chain);
+        }, KICK_CONFIRM_MS, TimeUnit.MILLISECONDS);
     }
 
     private HttpURLConnection open(String url) throws Exception {

@@ -256,16 +256,29 @@ public class CpeStore {
         return out;
     }
 
-    /** 参数树落库 */
+    /**
+     * 参数树落库（只落白名单内的参数，见 {@link ParamTreeFilter}）：
+     * 全量同步 = 全删重插（自然只留白名单）；增量 = 只 upsert 白名单内的脏路径，
+     * 并把存量库里白名单外的行清掉（老数据收敛，避免占库）。
+     */
     public void saveDeviceParams(String sn, Map<String, CpeParam> all, Set<String> dirty, boolean fullSync,
                                  Set<String> tombstones) {
+        Map<String, CpeParam> filtered = new LinkedHashMap<>();
+        for (Map.Entry<String, CpeParam> e : all.entrySet()) {
+            if (ParamTreeFilter.keep(e.getKey())) {
+                filtered.put(e.getKey(), e.getValue());
+            }
+        }
+        Set<String> dirtyKept = dirty == null ? Set.of()
+                : dirty.stream().filter(ParamTreeFilter::keep).collect(java.util.stream.Collectors.toSet());
         cpeTxTemplate.executeWithoutResult(st -> {
             if (fullSync) {
                 cpeJdbcTemplate.update("DELETE FROM cpe_device_param WHERE device_sn = ?", sn);
-                insertParams(sn, all.values());
+                insertParams(sn, filtered.values());
             } else {
-                if (dirty != null && !dirty.isEmpty()) {
-                    List<CpeParam> changed = dirty.stream().map(all::get).filter(p -> p != null).toList();
+                if (!dirtyKept.isEmpty()) {
+                    List<CpeParam> changed = dirtyKept.stream()
+                            .map(filtered::get).filter(p -> p != null).toList();
                     insertParams(sn, changed);
                 }
                 if (tombstones != null && !tombstones.isEmpty()) {
@@ -273,9 +286,25 @@ public class CpeStore {
                             "DELETE FROM cpe_device_param WHERE device_sn = ? AND path = ?",
                             tombstones.stream().map(p -> new Object[]{sn, p}).toList());
                 }
+                purgeOutsideWhitelist(sn);
             }
         });
         paramTreeCache.evict(sn);
+    }
+
+    /** 存量库里白名单外的行清掉（老数据迁移收敛；对象行不在清理范围） */
+    private void purgeOutsideWhitelist(String sn) {
+        List<String> junk = new ArrayList<>();
+        cpeJdbcTemplate.query("SELECT path FROM cpe_device_param WHERE device_sn = ?", rs -> {
+            String p = rs.getString(1);
+            if (!ParamTreeFilter.keep(p)) {
+                junk.add(p);
+            }
+        }, sn);
+        if (!junk.isEmpty()) {
+            cpeJdbcTemplate.batchUpdate("DELETE FROM cpe_device_param WHERE device_sn = ? AND path = ?",
+                    junk.stream().map(p -> new Object[]{sn, p}).toList());
+        }
     }
 
     private void insertParams(String sn, Iterable<CpeParam> params) {
@@ -435,8 +464,16 @@ public class CpeStore {
     }
 
     public List<Map<String, Object>> loadQueuedTasks(String sn) {
-        return jdbcTemplate.queryForList(
-                "SELECT * FROM cpe_task WHERE sn = ? AND status = 'queued' ORDER BY id ASC LIMIT 20", sn);
+        // 业务下发任务（DeleteObject/AddObject/SPV/GPV verify/Reboot）优先装载；
+        // 采集探测/业务刷新排后，避免它们占满会话 RPC 预算把下发饿死
+        return jdbcTemplate.queryForList("""
+                SELECT * FROM cpe_task WHERE sn = ? AND status = 'queued'
+                ORDER BY CASE WHEN type IN ('AdaptProbe','GetParameterValues')
+                              AND created_by IN ('system-isp-detect','system-biz-refresh')
+                              THEN 1 ELSE 0 END,
+                         id ASC
+                LIMIT 20
+                """, sn);
     }
 
     /** 长时间排队无人派发的任务（按 sn 分组取最早一条），兜底重派发用 */

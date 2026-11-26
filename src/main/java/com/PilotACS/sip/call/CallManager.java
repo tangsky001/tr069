@@ -224,6 +224,8 @@ public class CallManager {
         entry.aAddr = remote;
         entry.aTag = invite.fromTag();
         entry.aFromHeader = invite.header("From");
+        // A dialog 中服务器身份 = INVITE 的 To + aServerTag，发 BYE 时 From 必须与此一致
+        entry.aToHeader = invite.header("To");
         entry.aServerTag = randTag();
         entry.bServerTag = randTag();
         entry.session.setCallIdB("ACS-" + UUID.randomUUID());
@@ -232,8 +234,16 @@ public class CallManager {
         byCallB.put(entry.session.getCallIdB(), entry);
 
         // 183 带本端 SDP（早媒体回铃）+ 180 振铃
-        respondToA(invite, remote, entry.aServerTag, 183, "Session Progress",
-                Sdp.build(server.publicIp(), agentA.getLocalPort(), alaw ? 8 : 0, alaw ? "PCMA" : "PCMU"));
+        // 媒体地址按对端网段自适应：多网卡服务器固定 publicIp 可能是终端路由不到的网段，RTP 全丢
+        // 同设备互打（主/被叫注册在同一 IP）时关闭 183 早媒体，对齐 Asterisk 默认行为：
+        // 光猫 FXS 处于早媒体状态再收本设备另一 FXS 的摘机事件，内部状态冲突会摘机即 BYE
+        InetSocketAddress bAddrEarly = registry.findAlive(calleeExt) == null ? null : registry.findAlive(calleeExt).getAddress();
+        boolean sameDevice = remote != null && bAddrEarly != null
+                && remote.getAddress().equals(bAddrEarly.getAddress());
+        if (!sameDevice) {
+            respondToA(invite, remote, entry.aServerTag, 183, "Session Progress",
+                    Sdp.build(server.mediaIpFor(remote.getAddress()), agentA.getLocalPort(), alaw ? 8 : 0, alaw ? "PCMA" : "PCMU"));
+        }
         respondToA(invite, remote, entry.aServerTag, 180, "Ringing", null);
 
         if (!queues.isEmpty()) {
@@ -257,7 +267,7 @@ public class CallManager {
             H248Controller h = h248c();
             if (h != null) {
                 h.addForIncomingCall(entry.session.getCallIdB(), entry.mgTermCallee, mg.address,
-                        agentB.getLocalPort(), server.publicIp());
+                        agentB.getLocalPort(), server.mediaIpFor(mg.address.getAddress()));
             }
             Logs.info(Logs.Module.SIP, "新呼叫（SIP→H.248）", "主叫", callerExt, "被叫", calleeExt,
                     "终结点", entry.mgTermCallee, "B腿口", agentB.getLocalPort());
@@ -268,24 +278,44 @@ public class CallManager {
         // From 带名 + P-Asserted-Identity + Remote-Party-ID，话机端能显示"张三 1001"
         String callerName = resolveCallerName(callerExt, SipMessage.displayNameOf(invite.header("From")));
         String callerAddr = "sip:" + callerExt + "@" + server.publicIp();
-        SipMessage inviteB = SipMessage.request("INVITE", "sip:" + calleeExt + "@" + server.publicIp());
-        inviteB.addHeader("Via", requestVia());
-        inviteB.addHeader("From", SipMessage.addrWithDisplay(callerName, callerAddr) + ";tag=" + entry.bServerTag);
-        inviteB.addHeader("P-Asserted-Identity", "<" + callerAddr + ">");
-        inviteB.addHeader("Remote-Party-ID",
-                SipMessage.addrWithDisplay(callerName, callerAddr) + ";privacy=off;screen=no");
+        // Request-URI 用被叫注册地址（对齐 Asterisk）：中兴 IAD 严格校验入呼 INVITE 的
+        // Request-URI host，写服务器自己的域时 IAD 认为请求不属于本设备，摘机即 BYE
+        InetSocketAddress bAddrReq = registry.findAlive(calleeExt).getAddress();
+        SipMessage inviteB = SipMessage.request("INVITE", "sip:" + calleeExt + "@"
+                + bAddrReq.getAddress().getHostAddress() + ":" + bAddrReq.getPort());
+        // 保存 B 腿 INVITE 的 Via：2xx 的 ACK 与 CANCEL 必须复用同一 branch（RFC 3261 §17.1.1.3 / §9.1）
+        entry.bVia = requestVia();
+        inviteB.addHeader("Via", entry.bVia);
+        // 保存 From 原文：dialog 内请求（ACK/BYE）的 From 必须与建呼时逐字节一致（RFC 3261 §12.2.1.1），
+        // 光猫 IAD 严格校验，显示名缺失即判 dialog 失败，摘机后立即 BYE
+        entry.bFromHeader = SipMessage.addrWithDisplay(callerName, callerAddr) + ";tag=" + entry.bServerTag;
+        inviteB.addHeader("From", entry.bFromHeader);
+        // PAI/RPID 会把"主叫=本地用户"暴露给 IAD；同光猫互打（自呼自）时中兴 IAD
+        // 解析 RPID 判定内部呼叫，摘机后立即 BYE——可用 acs.sip.caller-info-headers 关闭试验
+        if (props.isCallerInfoHeaders()) {
+            inviteB.addHeader("P-Asserted-Identity", "<" + callerAddr + ">");
+            inviteB.addHeader("Remote-Party-ID",
+                    SipMessage.addrWithDisplay(callerName, callerAddr) + ";privacy=off;screen=no");
+        }
         inviteB.addHeader("To", "<sip:" + calleeExt + "@" + server.publicIp() + ">");
         inviteB.setHeader("Call-ID", entry.session.getCallIdB());
         inviteB.setHeader("CSeq", "101 INVITE");
         inviteB.setHeader("Contact", "<sip:acs@" + server.publicIp() + ":" + server.port() + ">");
         inviteB.setHeader("Max-Forwards", "70");
         inviteB.setHeader("User-Agent", "PilotACS-SIP");
-        inviteB.setBody(Sdp.build(server.publicIp(), agentB.getLocalPort(), alaw ? 8 : 0, alaw ? "PCMA" : "PCMU"));
-        InetSocketAddress bAddr = registry.findAlive(calleeExt).getAddress();
+        InetSocketAddress bAddr = bAddrReq;
+        // offer 报双编码（首选与 A 腿一致在前）：被叫光猫 FXS 若不支持首选编码，
+        // answer 可选另一个，摘机后不会因"编码不支持"立即 BYE
+        inviteB.setBody(Sdp.build(server.mediaIpFor(bAddr.getAddress()), agentB.getLocalPort(),
+                new int[]{alaw ? 8 : 0, alaw ? 0 : 8},
+                new String[]{alaw ? "PCMA" : "PCMU", alaw ? "PCMU" : "PCMA"}));
         entry.bAddr = bAddr;
         server.send(inviteB, bAddr);
-        Logs.info(Logs.Module.SIP, "新呼叫", "主叫", callerExt, "被叫", calleeExt,
-                "主叫端口", agentA.getLocalPort(), "被叫端口", agentB.getLocalPort());
+        Logs.info(Logs.Module.SIP, "外呼被叫 INVITE", "主叫", callerExt, "被叫", calleeExt,
+                "主叫端口", agentA.getLocalPort(), "被叫端口", agentB.getLocalPort(),
+                "发往", bAddr, "Call-ID", entry.session.getCallIdB(),
+                "主叫信息头", props.isCallerInfoHeaders() ? "PAI+RPID" : "已关闭",
+                "offer编码", alaw ? "PCMA>PCMU" : "PCMU>PCMA");
     }
 
     /**
@@ -335,7 +365,7 @@ public class CallManager {
         byCallA.put(entry.session.getCallIdA(), entry);
         // 应答呼叫：主叫与服务器建立媒体，循环收听提示音
         respondToA(invite, remote, entry.aServerTag, 200, "OK",
-                Sdp.build(server.publicIp(), agentA.getLocalPort(), alaw ? 8 : 0, alaw ? "PCMA" : "PCMU"));
+                Sdp.build(server.mediaIpFor(remote.getAddress()), agentA.getLocalPort(), alaw ? 8 : 0, alaw ? "PCMA" : "PCMU"));
         long sec = props.getBusyPromptSeconds();
         Logs.info(Logs.Module.SIP, "忙线提示音", "主叫", callerExt, "被叫", calleeExt,
                 "时长", sec + "s");
@@ -374,17 +404,40 @@ public class CallManager {
                 } catch (Exception e) {
                     Logs.error(Logs.Module.SIP, "被叫 SDP 地址非法", "错误", e.toString());
                 }
+                // 按 answer 回填 B 腿编解码（offer 报了双编码，对端可能选另一个）；
+                // 不回填的话服务器按首选编码发 RTP，对端按 answer 解码会乱码甚至判媒体无效
+                Integer chosen = mediaB.payloadTypes.stream().filter(p -> p == 0 || p == 8).findFirst().orElse(8);
+                entry.session.getAgentB().setPayloadType(chosen);
+                entry.session.setAlawB(chosen == 8);
+                Logs.info(Logs.Module.SIP, "被叫编解码", "载荷", chosen, "编码", chosen == 8 ? "PCMA" : "PCMU",
+                        "媒体地址", mediaB.ip + ":" + mediaB.port);
             }
             // 保存被叫 200 OK 的 To（含被叫 tag），拆线 BYE 的 To 必须带它
             entry.bToHeader = resp.header("To");
-            // ACK B 腿
-            SipMessage ack = SipMessage.request("ACK", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-            ack.addHeader("Via", requestVia());
-            ack.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
+            // ACK 的 Request-URI 必须取 200 OK 的 Contact（RFC 3261 §12.1.2）。
+            // 用服务器自己拼的 sip:ext@serverIp 时，光猫判定 ACK 不属于本 dialog，
+            // 摘机后立即本地拆线并发 BYE —— 即"一接听就被挂掉"。
+            String contactB = SipMessage.uriOf(resp.header("Contact"));
+            String ackUriB = contactB;
+            if (ackUriB == null || ackUriB.isBlank()) {
+                // 200 OK 没带 Contact 时退回注册地址，绝不能指向服务器自己
+                InetSocketAddress b = entry.bAddr;
+                ackUriB = "sip:" + entry.session.getCalleeExt() + "@"
+                        + (b != null ? b.getAddress().getHostAddress() + ":" + b.getPort() : server.publicIp());
+            }
+            SipMessage ack = SipMessage.request("ACK", ackUriB);
+            ack.addHeader("Via", entry.bVia != null ? entry.bVia : requestVia());
+            // From 与 INVITE 逐字节一致（含显示名），否则光猫判定 dialog 失败、摘机即 BYE
+            ack.addHeader("From", entry.bFromHeader != null ? entry.bFromHeader
+                    : "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
             ack.addHeader("To", resp.header("To"));
             ack.setHeader("Call-ID", resp.callId());
             ack.setHeader("CSeq", "101 ACK");
             ack.setHeader("Max-Forwards", "70");
+            // 信令 trace：摘机即挂时对照此行与被叫 BYE 的头，定位 dialog 校验失败点
+            Logs.info(Logs.Module.SIP, "被叫应答，回 ACK 确认", "Request-URI", ackUriB,
+                    "Via", ack.header("Via"), "From", ack.header("From"),
+                    "To", ack.header("To"), "Call-ID", ack.callId(), "CSeq", "101 ACK");
             server.send(ack, entry.bAddr);
             entry.session.answer();
             answerSipLeg(entry);
@@ -403,7 +456,7 @@ public class CallManager {
             return;
         }
         respondToA(entry.inviteA, entry.aAddr, entry.aServerTag, 200, "OK",
-                Sdp.build(server.publicIp(), entry.session.getAgentA().getLocalPort(),
+                Sdp.build(server.mediaIpFor(entry.aAddr.getAddress()), entry.session.getAgentA().getLocalPort(),
                         entry.session.isAlawA() ? 8 : 0, entry.session.isAlawA() ? "PCMA" : "PCMU"));
     }
 
@@ -439,7 +492,7 @@ public class CallManager {
             // MG 主叫远端指向本端 A 腿 RTP（停拨号音/回铃音）
             if (h != null && entry.mgTermCaller != null) {
                 h.modifyRemote(entry.mgTermCaller, entry.mgAddrCaller, entry.mgCtxCaller,
-                        server.publicIp(), entry.session.getAgentA().getLocalPort());
+                        server.mediaIpFor(entry.mgAddrCaller.getAddress()), entry.session.getAgentA().getLocalPort());
             }
             return;
         }
@@ -454,6 +507,28 @@ public class CallManager {
             }
             teardown(entry, "被叫返回 " + code);
         }
+    }
+
+    /**
+     * BYE 的 Call-ID 与建呼不一致时，按 From 里的分机号找该分机唯一的活跃会话。
+     * 光猫内置 SIP 栈常见：摘机 200 OK / 挂机 BYE 各用一套 Call-ID，
+     * 且 Contact 指向不可达地址时服务器压根收不到 BYE——此兜底保证会话能被清理。
+     */
+    private CallEntry findActiveByLeg(SipMessage bye) {
+        String ext = SipMessage.userOf(SipMessage.uriOf(bye.header("From")));
+        if (ext == null || ext.isBlank()) {
+            return null;
+        }
+        for (CallEntry e : byCallA.values()) {
+            CallSession s = e.session;
+            if (s.getState() == CallSession.State.ENDED) {
+                continue;
+            }
+            if (ext.equals(s.getCallerExt()) || ext.equals(s.getCalleeExt())) {
+                return e;
+            }
+        }
+        return null;
     }
 
     /** ACK 请求（A 确认接通，媒体已启动，仅记录） */
@@ -485,9 +560,26 @@ public class CallManager {
             entry = byCallB.get(bye.callId());
         }
         if (entry == null) {
+            // 光猫/部分嵌入式 SIP 栈挂机时 BYE 会用不同的 Call-ID（甚至新建 dialog），
+            // 按 From 分机号兜底拆线，否则服务器收不到拆线，前端永远"通话中"
+            entry = findActiveByLeg(bye);
+            if (entry != null) {
+                Logs.warn(Logs.Module.SIP, "BYE 的 Call-ID 不匹配，按分机号兜底拆线",
+                        "Call-ID", bye.callId(), "远端", remote,
+                        "主叫", entry.session.getCallerExt(), "被叫", entry.session.getCalleeExt());
+                respondToA(bye, remote, null, 200, "OK", null);
+                endActive(entry, h248c(), "对端挂断（BYE 兜底）");
+                return;
+            }
+            Logs.warn(Logs.Module.SIP, "收到无法匹配的 BYE", "Call-ID", bye.callId(), "远端", remote,
+                    "From", bye.header("From"));
             server.send(notFound(bye), remote);
             return;
         }
+        Logs.info(Logs.Module.SIP, "收到 BYE", "主叫", entry.session.getCallerExt(),
+                "被叫", entry.session.getCalleeExt(), "来自", fromA ? "主叫腿" : "被叫腿", "远端", remote,
+                "Call-ID", bye.callId(), "From", bye.header("From"), "To", bye.header("To"),
+                "CSeq", bye.header("CSeq"));
         final CallEntry ce = entry;   // entry 被重新赋值过，lambda 里须用 final 快照
         if (fromA) {
             respondToA(bye, remote, entry.aServerTag, 200, "OK", null);
@@ -549,7 +641,7 @@ public class CallManager {
         respondToA(cancel, remote, entry.aServerTag, 200, "OK", null);
         respondToA(entry.inviteA, entry.aAddr, entry.aServerTag, 487, "Request Terminated", null);
         SipMessage cancelB = SipMessage.request("CANCEL", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-        cancelB.addHeader("Via", requestVia());
+        cancelB.addHeader("Via", entry.bVia != null ? entry.bVia : requestVia());
         cancelB.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
         cancelB.addHeader("To", "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
         cancelB.setHeader("Call-ID", entry.session.getCallIdB());
@@ -714,7 +806,7 @@ public class CallManager {
         invite.setHeader("Contact", "<sip:acs@" + server.publicIp() + ":" + server.port() + ">");
         invite.setHeader("Max-Forwards", "70");
         invite.setHeader("User-Agent", "PilotACS-SIP");
-        invite.setBody(Sdp.build(server.publicIp(), agentB.getLocalPort(), 8, "PCMA"));
+        invite.setBody(Sdp.build(server.mediaIpFor(entry.uaAddr.getAddress()), agentB.getLocalPort(), 8, "PCMA"));
         server.send(invite, entry.uaAddr);
         h.sendRingbackSignal(dial.termId, dial.mgAddr, dial.contextId);
         Logs.info(Logs.Module.SIP, "新呼叫（H.248→SIP）", "主叫", callerNumber, "被叫", number,
@@ -819,6 +911,16 @@ public class CallManager {
     }
 
     private void housekeep() {
+        // scheduleAtFixedRate 的任务一旦抛异常会被 FutureTask 静默吞掉并永久取消后续调度，
+        // 必须整体兜住：否则一次 DB/空指针异常后所有会话再也不会拆线，前端永远"通话中"
+        try {
+            doHousekeep();
+        } catch (Exception e) {
+            Logs.error(Logs.Module.SIP, "会话巡检异常（已兜住，下轮继续）", "错误", e.toString());
+        }
+    }
+
+    private void doHousekeep() {
         registry.sweepExpired();
         H248Controller h = h248c();
         long now = System.currentTimeMillis();
@@ -886,7 +988,9 @@ public class CallManager {
     private void sendByeToB(CallEntry entry) {
         SipMessage bye = SipMessage.request("BYE", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
         bye.addHeader("Via", requestVia());
-        bye.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
+        // From 与 INVITE B 逐字节一致（含显示名），严格 IAD 才认
+        bye.addHeader("From", entry.bFromHeader != null ? entry.bFromHeader
+                : "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
         // RFC 3261：dialog 内 BYE 的 To 必须带被叫在 200 OK 里返回的 tag，否则对端视为未知对话不释放
         bye.addHeader("To", entry.bToHeader != null ? entry.bToHeader
                 : "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
@@ -900,6 +1004,10 @@ public class CallManager {
         bye.addHeader("Via", requestVia());
         if (fromHeader != null) {
             bye.addHeader("From", fromHeader);
+        } else if (entry.aToHeader != null) {
+            // 服务器在 A dialog 的身份：INVITE 的 To + aServerTag（RFC 3261 §12.2.1.1 逐字节一致）
+            String to = entry.aToHeader;
+            bye.addHeader("From", SipMessage.tagOf(to) == null ? to + ";tag=" + entry.aServerTag : to);
         } else {
             bye.addHeader("From", "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">;tag=" + entry.aServerTag);
         }
@@ -917,9 +1025,14 @@ public class CallManager {
     }
 
     private void sendCancelToB(CallEntry entry) {
-        SipMessage cancel = SipMessage.request("CANCEL", "sip:" + entry.session.getCalleeExt() + "@" + server.publicIp());
-        cancel.addHeader("Via", requestVia());
-        cancel.addHeader("From", "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
+        // CANCEL 的 Request-URI 必须与 INVITE 一致（RFC 3261 §9.1）：被叫注册地址
+        InetSocketAddress b = entry.bAddr;
+        SipMessage cancel = SipMessage.request("CANCEL", "sip:" + entry.session.getCalleeExt() + "@"
+                + (b != null ? b.getAddress().getHostAddress() + ":" + b.getPort() : server.publicIp()));
+        cancel.addHeader("Via", entry.bVia != null ? entry.bVia : requestVia());
+        // RFC 3261 §9.1：CANCEL 的 Request-URI/Via/From/To/Call-ID 必须与原 INVITE 完全一致
+        cancel.addHeader("From", entry.bFromHeader != null ? entry.bFromHeader
+                : "<sip:" + entry.session.getCallerExt() + "@" + server.publicIp() + ">;tag=" + entry.bServerTag);
         cancel.addHeader("To", "<sip:" + entry.session.getCalleeExt() + "@" + server.publicIp() + ">");
         cancel.setHeader("Call-ID", entry.session.getCallIdB());
         cancel.setHeader("CSeq", "101 CANCEL");
@@ -1059,6 +1172,12 @@ public class CallManager {
         String aTag;
         String aServerTag;
         String bServerTag;
+        /** B 腿 INVITE 的 Via（含 branch）：2xx 的 ACK 与 CANCEL 必须复用 */
+        String bVia;
+        /** B 腿 INVITE 的 From 原文（含显示名/tag）：ACK/BYE 必须逐字节一致 */
+        String bFromHeader;
+        /** A 腿 INVITE 的 To 原文：服务器在 A dialog 的身份（BYE 的 From 必须与其一致） */
+        String aToHeader;
         /** A 腿 INVITE 的 From（含主叫 tag）：服务器发 BYE 的 To 必须带它主叫才认 */
         String aFromHeader;
         /** B 腿 200 OK 的 To（含被叫 tag）：服务器发 BYE 的 To 必须带它被叫才认 */

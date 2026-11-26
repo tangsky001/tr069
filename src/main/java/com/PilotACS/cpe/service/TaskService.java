@@ -11,6 +11,7 @@ import com.PilotACS.cpe.model.TaskRun;
 import com.PilotACS.cpe.redis.RedisTaskQueue;
 import com.PilotACS.cpe.rpc.TaskPlanner;
 import com.PilotACS.cpe.server.CwmpService;
+import com.PilotACS.cpe.server.DeliveryWaiter;
 import com.PilotACS.cpe.session.CwmpSession;
 import com.PilotACS.cpe.store.CpeStore;
 import com.PilotACS.common.log.Logs;
@@ -26,8 +27,8 @@ import java.util.concurrent.Semaphore;
 @RequiredArgsConstructor
 public class TaskService {
 
-    /** 同步等待名额上限 */
-    private static final int MAX_WAITERS = 16;
+    /** 同步等待名额上限（下发线程池并行后每个线程都占一个名额） */
+    private static final int MAX_WAITERS = 128;
 
     private final CpeStore store;
     private final CwmpService cwmpService;
@@ -35,6 +36,7 @@ public class TaskService {
     private final RedisTaskQueue redisTaskQueue;
     private final TaskDispatcher taskDispatcher;
     private final CpeProperties props;
+    private final DeliveryWaiter deliveryWaiter;
     private final Semaphore waitPermits = new Semaphore(MAX_WAITERS);
 
     /** 重发等于二次执行的类型 */
@@ -61,7 +63,38 @@ public class TaskService {
         }
     }
 
-    /** 会话活着则入队执行，否则入 Redis 派发队列反踢唤醒 */
+    /**
+     * master awaitSession 口径：下发整包前先确认设备有一跳在线（挂起跳或活会话）。
+     * 没有就先发 CR 唤醒并短等建链，再提交指令——避免"提交指令与发连接请求并行，
+     * 会话还没建立指令就进了队列，只能干等下一次周期上报（十几分钟）"。
+     * 等不到也按原样下发（指令落 cpe_task，设备下一跳空 POST 会无条件装载）。
+     */
+    public void awaitSession(String sn) {
+        if (deliveryWaiter.hasPendingHop(sn)) {
+            return;
+        }
+        CwmpSession session = cwmpService.findSessionBySn(sn);
+        if (session != null && !session.isEnded()) {
+            return;
+        }
+        taskDispatcher.wakeNow(sn, 0);
+        long deadline = System.currentTimeMillis() + 8_000L;
+        while (System.currentTimeMillis() < deadline) {
+            if (deliveryWaiter.hasPendingHop(sn)) {
+                return;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        Logs.warn(Logs.Module.CPE_PUSH, "下发前等设备建链超时，指令落库等设备下一跳装载",
+                "sn", sn, "等待ms", 8000);
+    }
+
+    /** 会话活着则入队执行并唤醒挂起跳，否则入 Redis 派发队列反踢唤醒 */
     private void enqueueOrWake(String sn, long id, String type) {
         CwmpSession session = cwmpService.findSessionBySn(sn);
         if (session != null && !session.isEnded()) {
@@ -75,6 +108,8 @@ public class TaskService {
                     TaskRun run = planner.build(row, session.getData(), root, session.getModelParams());
                     session.getQueue().add(run);
                     Logs.info(Logs.Module.CPE_PUSH, "任务入会话队列", "sn", sn, "任务", id, "类型", type);
+                    // master signal 口径：立刻唤醒设备挂起的那一跳空 POST，同跳下发（毫秒级）
+                    deliveryWaiter.signal(sn);
                     return;
                 }
             } finally {
@@ -86,7 +121,9 @@ public class TaskService {
         if (!queued) {
             taskDispatcher.wakeNow(sn, id);
         }
-        Logs.info(Logs.Module.CPE_PUSH, "任务排队等待设备上线", "sn", sn, "任务", id, "类型", type);
+        deliveryWaiter.signal(sn);
+        Logs.info(Logs.Module.CPE_PUSH, "任务排队等待设备上线", "sn", sn, "任务", id, "类型", type,
+                "挂起跳", deliveryWaiter.hasPendingHop(sn));
     }
 
     /** 轮询等任务完成 */
@@ -107,7 +144,8 @@ public class TaskService {
                     return task;
                 }
                 try {
-                    Thread.sleep(500);
+                    // 150ms 轮询：下发链路每步 createTask→awaitTask，轮询间隔直接计入每步延迟
+                    Thread.sleep(150);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
