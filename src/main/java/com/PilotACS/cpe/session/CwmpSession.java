@@ -49,6 +49,8 @@ public class CwmpSession {
     private String softwareVersion;
     private String connectionRequestUrl;
     private String cwmpVersion;
+    /** 设备使用的 CWMP 命名空间（响应按同版本回，默认 1-0） */
+    private String cwmpNamespace = "urn:dslforum-org:cwmp-1-0";
     private List<String> events = new ArrayList<>();
     private boolean bootstrap;
     /** 设备来源地址 */

@@ -130,10 +130,26 @@ public class BizTemplateExecutionService {
                 }
 
                 Map<String, Object> fields = new LinkedHashMap<>(templateResolver.fieldsOf(key));
+                // 工单变量覆盖：先应用 "*" 通配（应用到所有成员），再应用成员级覆盖；空值不覆盖
+                Map<String, String> wildcard = overrides.get("*");
+                if (wildcard != null) {
+                    wildcard.forEach((k, v) -> {
+                        if (v != null && !v.isBlank()) {
+                            fields.put(k, v);
+                        }
+                    });
+                }
                 Map<String, String> override = overrides.get(item.getTemplateKey());
                 if (override != null) {
-                    fields.putAll(override);
+                    override.forEach((k, v) -> {
+                        if (v != null && !v.isBlank()) {
+                            fields.put(k, v);
+                        }
+                    });
                 }
+                // 变量占位符解析（%room% 等），原先整包链路不解析、占位符原样下发
+                fields.replaceAll((k, v) -> v instanceof String s
+                        ? com.PilotACS.worklist.service.WorklistVariables.resolve(s, roomNo, null) : v);
                 boolean incremental = templateResolver.incrementalOf(key);
 
                 Map<String, Object> result = intentDeliveryService.deliver(sn, category, fields,

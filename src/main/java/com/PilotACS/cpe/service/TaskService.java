@@ -12,6 +12,7 @@ import com.PilotACS.cpe.redis.RedisTaskQueue;
 import com.PilotACS.cpe.rpc.TaskPlanner;
 import com.PilotACS.cpe.server.CwmpService;
 import com.PilotACS.cpe.server.DeliveryWaiter;
+import com.PilotACS.cpe.server.TaskWaitRegistry;
 import com.PilotACS.cpe.session.CwmpSession;
 import com.PilotACS.cpe.store.CpeStore;
 import com.PilotACS.common.log.Logs;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
 
 /** 任务编排入口：前端下发 → cpe_task 落库 → 设备在线即执行（离线经 Redis 派发队列唤醒） */
@@ -37,6 +39,7 @@ public class TaskService {
     private final TaskDispatcher taskDispatcher;
     private final CpeProperties props;
     private final DeliveryWaiter deliveryWaiter;
+    private final TaskWaitRegistry taskWaitRegistry;
     private final Semaphore waitPermits = new Semaphore(MAX_WAITERS);
 
     /** 重发等于二次执行的类型 */
@@ -56,7 +59,14 @@ public class TaskService {
                 }
             }
             long id = store.insertTask(sn, type, params == null ? Map.of() : params, createdBy);
-            enqueueOrWake(sn, id, type);
+            try {
+                enqueueOrWake(sn, id, type);
+            } catch (RuntimeException e) {
+                // 坏任务快速失败：组装/校验抛异常时立即标 fail 终结任务（原先任务永久卡 queued）
+                store.updateTask(id, "fail", "0", "任务组装校验失败: " + e.getMessage(), null);
+                taskWaitRegistry.signalDone(id);
+                throw e;
+            }
             return id;
         } finally {
             lock.unlock();
@@ -126,12 +136,13 @@ public class TaskService {
                 "挂起跳", deliveryWaiter.hasPendingHop(sn));
     }
 
-    /** 轮询等任务完成 */
+    /** 事件驱动等任务完成：终态瞬间唤醒（500ms 兜底轮询防漏信号） */
     public Map<String, Object> awaitTask(long taskId, int timeoutSeconds) {
         if (!waitPermits.tryAcquire()) {
             Logs.warn(Logs.Module.CPE_PUSH, "任务同步等待名额已满，直接返回当前状态", "任务", taskId);
             return store.getTask(taskId);
         }
+        CompletableFuture<Void> signal = taskWaitRegistry.register(taskId);
         try {
             long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
             while (System.currentTimeMillis() < deadline) {
@@ -143,16 +154,12 @@ public class TaskService {
                 if ("success".equals(status) || "fail".equals(status)) {
                     return task;
                 }
-                try {
-                    // 150ms 轮询：下发链路每步 createTask→awaitTask，轮询间隔直接计入每步延迟
-                    Thread.sleep(150);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
+                // 任务终态瞬间 signalDone 唤醒；超时兜底轮询防漏信号
+                taskWaitRegistry.awaitSignal(signal, 500);
             }
             return store.getTask(taskId);
         } finally {
+            taskWaitRegistry.unregister(taskId, signal);
             waitPermits.release();
         }
     }

@@ -110,6 +110,10 @@ public class WorklistDeliveryService {
         if (bizOrder) {
             filled.put("bizTemplateId", String.valueOf(ext.bizTemplateId()));
         }
+        // 显式指定的配置模板 id 存进工单参数（原先此参数被丢弃，永远走默认第一条模板）
+        if (templateId != null) {
+            filled.put("__templateId", String.valueOf(templateId));
+        }
 
         LocalDateTime now = LocalDateTime.now();
         boolean online = device != null && "online".equals(device.get("status"));
@@ -228,15 +232,27 @@ public class WorklistDeliveryService {
         if (reserved.plusSeconds(10).isAfter(now)) {
             return;
         }
-        // 抢占改成 sending，防止重复执行
-        Worklist claim = new Worklist();
-        claim.setId(w.getId());
-        claim.setStatus("sending");
-        claim.setTimeExecStart(now);
-        claim.setUpdatedAt(now);
-        if (worklistMapper.updateById(claim) == 0) {
-            return;
+        // CAS 抢占改成 sending：带 status/active 条件原子更新，防止定时扫描与并发触发重复执行同一工单
+        String actualSn = device.get("sn") != null ? String.valueOf(device.get("sn")) : w.getSn();
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Worklist> cas =
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Worklist>()
+                        .eq(Worklist::getId, w.getId())
+                        .in(Worklist::getStatus, "standby", "reserve")
+                        .eq(Worklist::getActive, 1)
+                        .set(Worklist::getSn, actualSn)
+                        .set(Worklist::getStatus, "sending")
+                        .set(Worklist::getTimeExecStart, now)
+                        .set(Worklist::getUpdatedAt, now);
+        if (device.get("isp") != null) {
+            cas.set(Worklist::getIsp, String.valueOf(device.get("isp")));
         }
+        if (device.get("device_type") != null) {
+            cas.set(Worklist::getDomain, String.valueOf(device.get("device_type")));
+        }
+        if (worklistMapper.update(null, cas) == 0) {
+            return;   // 已被其它线程/扫描抢占
+        }
+        w.setSn(actualSn);
         w.setStatus("sending");
         Long bizTemplateId = bizTemplateIdOf(w);
         // 全部走工作池异步执行：整包/重启工单同步执行会阻塞调度线程数分钟，拖死整轮扫描
@@ -276,7 +292,12 @@ public class WorklistDeliveryService {
     private void runTemplateDelivery(Worklist w, Map<String, Object> device) {
         Map<String, String> values = readValues(w);
         values.remove("bizTemplateId");
-        Long tpl = defaultTemplateId(w.getWorklistName());
+        // 建单时显式指定的模板优先，否则按业务类型取默认第一条
+        String explicitTpl = values.remove("__templateId");
+        Long tpl = parseLongQuietly(explicitTpl);
+        if (tpl == null) {
+            tpl = defaultTemplateId(w.getWorklistName());
+        }
         if (tpl == null) {
             fail(w, "没有可用的配置模板: " + w.getWorklistName());
             return;
@@ -327,9 +348,17 @@ public class WorklistDeliveryService {
         WorklistStepRecord step = addStep(w.getId(),
                 "整包下发 · 业务模板", "BizTemplate", Map.of("templateId", bizTemplateId));
         try {
+            // 工单里填写的变量随 "*" 通配传给所有整包成员（原先传空 Map，工单变量全部丢弃）
+            Map<String, String> rawVals = readValues(w);
+            rawVals.remove("bizTemplateId");
+            rawVals.remove("__templateId");
+            Map<String, Map<String, String>> itemOverrides = new HashMap<>();
+            if (!rawVals.isEmpty()) {
+                itemOverrides.put("*", rawVals);
+            }
             // 手动工单：执行独立下发器，本工单的终态由下方 succeed/failOrRetry 回写
             Long execId = bizExecutionService.execute(bizTemplateId, w.getSn(),
-                    new HashMap<>(), w.getRoomNo(), w.getUsername());
+                    itemOverrides, w.getRoomNo(), w.getUsername());
             long deadline = System.currentTimeMillis() + BIZ_EXEC_TIMEOUT_MS;
             Map<String, Object> exec = null;
             while (System.currentTimeMillis() < deadline) {
@@ -396,11 +425,16 @@ public class WorklistDeliveryService {
     /** 工单参数里的业务模板 id，普通工单没有 */
     private Long bizTemplateIdOf(Worklist w) {
         String id = readValues(w).get("bizTemplateId");
-        if (id == null || id.isBlank()) {
+        return parseLongQuietly(id);
+    }
+
+    /** 宽松转 Long：空/非法返回 null */
+    private static Long parseLongQuietly(String s) {
+        if (s == null || s.isBlank()) {
             return null;
         }
         try {
-            return Long.valueOf(id.trim());
+            return Long.valueOf(s.trim());
         } catch (NumberFormatException e) {
             return null;
         }
@@ -569,7 +603,8 @@ public class WorklistDeliveryService {
     }
 
     private void fail(Worklist w, String reason) {
-        w.setStatus("failed");
+        // 统一写 STATUSES 里的规范码 "fail"（原先写 "failed"，前端按全集筛"失败"漏单）
+        w.setStatus("fail");
         w.setResult(reason);
         w.setTimeExecFinish(LocalDateTime.now());
         w.setUpdatedAt(LocalDateTime.now());
@@ -593,12 +628,27 @@ public class WorklistDeliveryService {
     }
 
     /** 按台账找设备，找不到返回 null */
+    /** 设备定位：SN 直查失败后按参数值反查（MAC/LOID 等标识建单也能找到设备） */
     private Map<String, Object> findDevice(String sn) {
-        try {
-            return store.findDevice(sn);
-        } catch (Exception e) {
+        if (sn == null || sn.isBlank()) {
             return null;
         }
+        String key = sn.trim();
+        try {
+            Map<String, Object> direct = store.findDevice(key);
+            if (direct != null) {
+                return direct;
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            List<String> sns = store.findSnsByParamValue(key);
+            if (!sns.isEmpty()) {
+                return store.findDevice(sns.get(0));
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     private String toJson(Object value) {

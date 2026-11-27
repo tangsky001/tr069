@@ -20,6 +20,11 @@ public class SoapMessage {
     /** 方法名 */
     private String name;
 
+    /** 报文使用的 CWMP 命名空间（如 urn:dslforum-org:cwmp-1-2），设备自适应 */
+    private String cwmpNamespace;
+    /** 由命名空间推出的 CWMP 协议版本（1.0/1.1/1.2…） */
+    private String cwmpVersion;
+
     private String manufacturer;
     private String oui;
     private String productClass;

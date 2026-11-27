@@ -8,6 +8,7 @@ package com.PilotACS.cpe.controller;
 
 import com.PilotACS.acl.DeviceAclService;
 import com.PilotACS.cpe.server.CwmpService;
+import com.PilotACS.cpe.server.TaskWaitRegistry;
 import com.PilotACS.cpe.session.CwmpSession;
 import com.PilotACS.cpe.store.CpeStore;
 import com.PilotACS.common.exception.BusinessException;
@@ -31,6 +32,7 @@ public class RpcTaskController {
 
     private final CpeStore store;
     private final CwmpService cwmpService;
+    private final TaskWaitRegistry taskWaitRegistry;
     private final DeviceAclService aclService;
 
     /** 任务归属权限校验 */
@@ -100,6 +102,7 @@ public class RpcTaskController {
                 s.getQueue().removeIf(r -> r.getTaskId() == taskId);
             }
             store.updateTask(taskId, "fail", "cancel", "人工取消", null);
+            taskWaitRegistry.signalDone(taskId);
         } finally {
             lock.unlock();
         }

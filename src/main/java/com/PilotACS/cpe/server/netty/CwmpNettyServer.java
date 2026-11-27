@@ -18,6 +18,7 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
+import io.netty.handler.codec.http.HttpServerExpectContinueHandler;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -62,6 +63,8 @@ public class CwmpNettyServer implements SmartLifecycle {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline()
                                 .addLast("codec", new HttpServerCodec())
+                                // 设备发 Expect: 100-continue 时先回 100 再收 body（部分设备不发 body 会挂死）
+                                .addLast("expectContinue", new HttpServerExpectContinueHandler())
                                 .addLast("aggregator", new HttpObjectAggregator(props.getMaxBodyBytes() + 8192))
                                 .addLast("cwmp", handler);
                     }

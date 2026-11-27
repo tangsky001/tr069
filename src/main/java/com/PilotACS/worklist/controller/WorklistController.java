@@ -199,14 +199,25 @@ public class WorklistController {
         if (end != null) {
             query.le(Worklist::getTimeExecStart, end);
         }
-        // 状态：逗号分隔多值，单值退化为 eq
+        // 状态：逗号分隔多值，单值退化为 eq；fail/failed 互为同义词（历史数据两种写法都存在）
         if (status != null && !status.isBlank()) {
-            List<String> statuses = Arrays.stream(status.split(","))
-                    .map(String::trim).filter(s -> !s.isEmpty()).toList();
-            if (statuses.size() == 1) {
-                query.eq(Worklist::getStatus, statuses.get(0));
-            } else if (!statuses.isEmpty()) {
-                query.in(Worklist::getStatus, statuses);
+            java.util.LinkedHashSet<String> expanded = new java.util.LinkedHashSet<>();
+            for (String part : status.split(",")) {
+                String s = part.trim();
+                if (s.isEmpty()) {
+                    continue;
+                }
+                expanded.add(s);
+                if ("fail".equals(s)) {
+                    expanded.add("failed");
+                } else if ("failed".equals(s)) {
+                    expanded.add("fail");
+                }
+            }
+            if (expanded.size() == 1) {
+                query.eq(Worklist::getStatus, expanded.iterator().next());
+            } else if (!expanded.isEmpty()) {
+                query.in(Worklist::getStatus, expanded);
             }
         }
         query.orderByDesc(Worklist::getId);

@@ -22,6 +22,7 @@ import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
+import java.util.List;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
@@ -163,14 +164,27 @@ public class CwmpNettyHandler extends SimpleChannelInboundHandler<FullHttpReques
     }
 
     private String cookieSession(FullHttpRequest request) {
-        String cookie = request.headers().get(HttpHeaderNames.COOKIE);
-        if (cookie == null) {
+        // 多个 Cookie header 都要看（get 只取第一个）；分隔符兼容逗号；值带引号时剥掉
+        List<String> cookies = request.headers().getAll(HttpHeaderNames.COOKIE);
+        if (cookies == null || cookies.isEmpty()) {
             return null;
         }
-        for (String part : cookie.split(";")) {
-            String p = part.trim();
-            if (p.startsWith("session=")) {
-                return p.substring(8);
+        for (String cookie : cookies) {
+            if (cookie == null) {
+                continue;
+            }
+            for (String part : cookie.split("[;,]")) {
+                String p = part.trim();
+                if (!p.startsWith("session=")) {
+                    continue;
+                }
+                String v = p.substring(8).trim();
+                if (v.length() >= 2 && v.startsWith("\"") && v.endsWith("\"")) {
+                    v = v.substring(1, v.length() - 1);
+                }
+                if (!v.isEmpty()) {
+                    return v;
+                }
             }
         }
         return null;

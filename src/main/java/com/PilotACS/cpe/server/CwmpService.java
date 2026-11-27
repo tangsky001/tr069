@@ -54,6 +54,7 @@ public class CwmpService {
     private final SnRateLimiter rateLimiter;
     private final RedisSessionLifecycle lifecycle;
     private final DeviceInfoCache infoCache;
+    private final TaskWaitRegistry taskWaitRegistry;
 
     /** 一次 HTTP 交互的输出 */
     public record Reply(int httpStatus, String body, String newSessionId, int cookieMaxAgeSeconds) {
@@ -131,10 +132,11 @@ public class CwmpService {
                         "地址", remoteAddr, "报文", msg.getName());
                 return lockedKnown(fallback, msg, remoteAddr);
             }
-            return new Reply(400, SoapBuilder.acsFault(8000, "No session, Inform required"), null);
+            return new Reply(400, SoapBuilder.acsFault(8000, "No session, Inform required",
+                    msg.getCwmpNamespace()), null);
         }
         if (msg.getSerialNumber() == null || msg.getSerialNumber().isBlank()) {
-            return new Reply(400, SoapBuilder.acsFault(8000, "Invalid device id"), null);
+            return new Reply(400, SoapBuilder.acsFault(8000, "Invalid device id", msg.getCwmpNamespace()), null);
         }
         return locked(msg.getSerialNumber(), () -> handleNewInform(msg.getSerialNumber(), msg, remoteAddr));
     }
@@ -188,7 +190,7 @@ public class CwmpService {
                         return null;
                     }
                     s.setState(CwmpSession.STATE_RPC_RUNNING);
-                    return reply(s, 200, SoapBuilder.request(next));
+                    return reply(s, 200, SoapBuilder.request(next, s.getCwmpNamespace()));
                 });
                 if (r != null) {
                     return r;
@@ -228,7 +230,7 @@ public class CwmpService {
             if (isTransferComplete(msg)) {
                 handleTransferComplete(s, msg);
                 return new Reply(200, tcResponse(msg,
-                        msg.getId() == null || msg.getId().isBlank() ? "acs-tc" : msg.getId()), null);
+                        msg.getId() == null || msg.getId().isBlank() ? "acs-tc" : msg.getId(), s), null);
             }
             if ("Inform".equals(msg.getName()) && msg.getSerialNumber() != null
                     && !msg.getSerialNumber().isBlank()) {
@@ -238,7 +240,8 @@ public class CwmpService {
                 Logs.debug(Logs.Module.CPE_ONLINE, "空 POST 命中已收尾会话，回 204 空响应结束", "sn", s.getSn());
                 return Reply.empty(204);
             }
-            return new Reply(400, SoapBuilder.acsFault(8000, "Session no longer valid"), null);
+            return new Reply(400, SoapBuilder.acsFault(8000, "Session no longer valid",
+                    msg.getCwmpNamespace()), null);
         }
         if ("Inform".equals(msg.getName()) && msg.getSerialNumber() != null
                 && !msg.getSerialNumber().isBlank()) {
@@ -308,7 +311,8 @@ public class CwmpService {
             Thread.currentThread().interrupt();
         }
         Logs.warn(Logs.Module.CPE_ONLINE, "跨 SN Inform 锁竞争，回 400 让设备重发", "持锁SN", currentSn, "报文SN", newSn);
-        return new Reply(400, SoapBuilder.acsFault(8000, "Session conflict, resend Inform"), null);
+        return new Reply(400, SoapBuilder.acsFault(8000, "Session conflict, resend Inform",
+                msg.getCwmpNamespace()), null);
     }
 
     /** 新 Inform 建会话（顶替旧会话） */
@@ -332,7 +336,7 @@ public class CwmpService {
 
     private Reply onCreated(CwmpSession s, SoapMessage msg) {
         if (!"Inform".equals(msg.getName())) {
-            return new Reply(400, SoapBuilder.acsFault(8000, "Inform required"), null);
+            return new Reply(400, SoapBuilder.acsFault(8000, "Inform required", msg.getCwmpNamespace()), null);
         }
         try {
             handleInform(s, msg);
@@ -343,7 +347,7 @@ public class CwmpService {
         }
         s.setState(CwmpSession.STATE_INFORMED);
         return reply(s, 200, SoapBuilder.informResponse(
-                msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()));
+                msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId(), s.getCwmpNamespace()));
     }
 
     private void handleInform(CwmpSession s, SoapMessage msg) {
@@ -353,6 +357,13 @@ public class CwmpService {
         s.setOui(msg.getOui());
         s.setProductClass(msg.getProductClass());
         s.setEvents(msg.getEvents());
+        // 记录设备命名空间，后续响应用同版本（cwmp-1-1/1-2 设备不认 1-0 的响应）
+        if (msg.getCwmpNamespace() != null) {
+            s.setCwmpNamespace(msg.getCwmpNamespace());
+        }
+        if (msg.getCwmpVersion() != null) {
+            s.setCwmpVersion(msg.getCwmpVersion());
+        }
 
         s.getData().loadAll(store.loadParams(s.getSn()));
         for (CpeParam p : msg.getParams()) {
@@ -460,26 +471,27 @@ public class CwmpService {
                 return PIGGYBACK_WAIT;
             }
             s.setState(CwmpSession.STATE_RPC_RUNNING);
-            return reply(s, 200, SoapBuilder.request(next));
+            return reply(s, 200, SoapBuilder.request(next, s.getCwmpNamespace()));
         }
         if (isTransferComplete(msg)) {
             handleTransferComplete(s, msg);
             return reply(s, 200, tcResponse(msg,
-                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()));
+                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId(), s));
         }
         if ("GetRPCMethods".equals(msg.getName())) {
             return reply(s, 200, SoapBuilder.getRpcMethodsResponse(
                     msg.getId() == null ? sessionRpcId(s) : msg.getId(),
-                    List.of("Inform", "GetRPCMethods", "TransferComplete")));
+                    List.of("Inform", "GetRPCMethods", "TransferComplete"), s.getCwmpNamespace()));
         }
-        return reply(s, 200, SoapBuilder.acsFault(8000, "Method not supported: " + msg.getName()));
+        return reply(s, 200, SoapBuilder.acsFault(8000,
+                "Method not supported: " + msg.getName(), s.getCwmpNamespace()));
     }
 
     private Reply onRpcRunning(CwmpSession s, SoapMessage msg) {
         if (isTransferComplete(msg)) {
             handleTransferComplete(s, msg);
             return reply(s, 200, tcResponse(msg,
-                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId()));
+                    msg.getId() == null || msg.getId().isBlank() ? sessionRpcId(s) : msg.getId(), s));
         }
         applyResponse(s, msg);
         if (s.isEnded()) {
@@ -494,7 +506,7 @@ public class CwmpService {
             // 不立即收尾：同一会话内等下一步任务入队，避免每步 RPC 重建会话（8 分钟/台的主因）
             return PIGGYBACK_WAIT;
         }
-        return reply(s, 200, SoapBuilder.request(next));
+        return reply(s, 200, SoapBuilder.request(next, s.getCwmpNamespace()));
     }
 
     /** 应用 CPE 对在飞 RPC 的响应或 Fault */
@@ -513,6 +525,10 @@ public class CwmpService {
         String root = BusinessPaths.detectRoot(s.getData(), props.getDefaultRootNode());
         switch (req.getKind()) {
             case GPN -> {
+                // 累积采集结果到任务（completeTask 时写进 result，调用方能拿到清单）
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> gpnItems = (List<Map<String, Object>>) cur.getCollected()
+                        .computeIfAbsent("items", k -> new ArrayList<Map<String, Object>>());
                 for (CpeParam p : msg.getResults()) {
                     CpeParam known = s.getData().get(p.path());
                     if (known == null) {
@@ -521,6 +537,11 @@ public class CwmpService {
                         s.getData().put(new CpeParam(p.path(), known.value(), known.type(),
                                 p.object(), p.writable(), known.ts()));
                     }
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("name", p.path());
+                    item.put("object", p.object());
+                    item.put("writable", p.writable());
+                    gpnItems.add(item);
                 }
                 if (!req.isNextLevel() && req.getPath() != null && req.getPath().equals(root)) {
                     s.getData().markFullSync();
@@ -535,12 +556,17 @@ public class CwmpService {
                 }
             }
             case GPV -> {
+                // 累积采集值到任务（completeTask 时写进 result）
+                @SuppressWarnings("unchecked")
+                Map<String, Object> gpvVals = (Map<String, Object>) cur.getCollected()
+                        .computeIfAbsent("values", k -> new LinkedHashMap<String, Object>());
                 for (CpeParam p : msg.getResults()) {
                     if (s.getData().has(p.path())) {
                         s.getData().putValue(p.path(), p.value(), p.type(), p.ts());
                     } else {
                         s.getData().put(new CpeParam(p.path(), p.value(), p.type(), false, true, p.ts()));
                     }
+                    gpvVals.put(p.path(), p.value());
                 }
                 if (req.getNames() != null) {
                     List<String> missing = new ArrayList<>();
@@ -574,7 +600,7 @@ public class CwmpService {
                         if (leaf.toLowerCase(java.util.Locale.ROOT).contains("password")) {
                             continue;
                         }
-                        if (!exp.equals(p.value())) {
+                        if (!sameParamValue(exp, p.value())) {
                             deviations.put(p.path(), "下发值[" + exp + "] 设备值[" + p.value() + "]");
                         }
                     }
@@ -701,6 +727,7 @@ public class CwmpService {
             result.put("note", "实例已不存在(9005)，视为删除成功");
             store.updateTask(cur.getTaskId(), "success", null, null, toJson(result));
             lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+            taskWaitRegistry.signalDone(cur.getTaskId());
             cur.markCompleted();
             s.setCurrent(null);
             Logs.info(Logs.Module.CPE_PUSH, "DeleteObject 实例已不存在，按成功收口", "sn", s.getSn(),
@@ -708,6 +735,7 @@ public class CwmpService {
             return;
         }
         store.updateTask(cur.getTaskId(), "fail", String.valueOf(msg.getFaultCode()), detail.toString(), null);
+        taskWaitRegistry.signalDone(cur.getTaskId());
         lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
         cur.markCompleted();
         s.setCurrent(null);
@@ -736,11 +764,11 @@ public class CwmpService {
                 || "AutonomousTransferComplete".equals(msg.getName());
     }
 
-    /** 按 TC 类型回对应响应 */
-    private static String tcResponse(SoapMessage msg, String id) {
+    /** 按 TC 类型回对应响应（带会话命名空间） */
+    private String tcResponse(SoapMessage msg, String id, CwmpSession s) {
         return "AutonomousTransferComplete".equals(msg.getName())
-                ? SoapBuilder.autonomousTransferCompleteResponse(id)
-                : SoapBuilder.transferCompleteResponse(id);
+                ? SoapBuilder.autonomousTransferCompleteResponse(id, s.getCwmpNamespace())
+                : SoapBuilder.transferCompleteResponse(id, s.getCwmpNamespace());
     }
 
     private void handleTransferComplete(CwmpSession s, SoapMessage msg) {
@@ -900,6 +928,7 @@ public class CwmpService {
                     store.updateTask(cur.getTaskId(), "fail", "deleteVerify",
                             "删后确认失败，仍有实例残留: " + leftover, null);
                     lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+                    taskWaitRegistry.signalDone(cur.getTaskId());
                     Logs.warn(Logs.Module.CPE_PUSH, "删后确认失败：条目未归零", "sn", s.getSn(),
                             "任务", cur.getTaskId(), "残留", leftover);
                     return;
@@ -907,6 +936,19 @@ public class CwmpService {
                 result.put("deleteVerified", true);
             }
             result.put("collectStatus", s.getData().all().isEmpty() ? "empty" : "success");
+            // 回读的参数值写进任务结果（原先只写 collectStatus，采集值全部丢失）
+            Object vals = cur.getCollected().get("values");
+            if (vals instanceof Map<?, ?> m && !m.isEmpty()) {
+                result.put("values", m);
+                result.put("count", m.size());
+            }
+        } else if (TaskPlanner.TYPE_GPN.equals(cur.getType())) {
+            result.put("collectStatus", s.getData().all().isEmpty() ? "empty" : "success");
+            Object items = cur.getCollected().get("items");
+            if (items instanceof List<?> l && !l.isEmpty()) {
+                result.put("items", l);
+                result.put("count", l.size());
+            }
         } else if (TaskPlanner.TYPE_SPV.equals(cur.getType())) {
             Map<String, Object> collected = new LinkedHashMap<>(cur.getCollected());
             collected.remove("verifyExpected");
@@ -916,6 +958,20 @@ public class CwmpService {
         }
         store.updateTask(cur.getTaskId(), "success", null, null, toJson(result));
         lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+        taskWaitRegistry.signalDone(cur.getTaskId());
+    }
+
+    /** 参数值等价比较：trim + 忽略大小写 + boolean/数字形态互通（true↔1、false↔0） */
+    private static boolean sameParamValue(String expected, String actual) {
+        if (expected.equals(actual) || expected.trim().equalsIgnoreCase(actual.trim())) {
+            return true;
+        }
+        String e = expected.trim().toLowerCase();
+        String a = actual.trim().toLowerCase();
+        if (("1".equals(e) || "true".equals(e)) && ("1".equals(a) || "true".equals(a))) {
+            return true;
+        }
+        return ("0".equals(e) || "false".equals(e)) && ("0".equals(a) || "false".equals(a));
     }
 
     /** 删后确认：统计仍非 0 的 NumberOfEntries（设备没回报的不算残留），全归零返回 null */
@@ -953,6 +1009,7 @@ public class CwmpService {
                             "会话中断(" + reason + ")。写操作类不自动重发——设备可能已实际执行，请确认设备状态后重新下发",
                             null);
                     lifecycle.rpcIdle(s.getSn(), cur.getTaskId());
+                    taskWaitRegistry.signalDone(cur.getTaskId());
                     if (cur.getParams().get(InitProvisionService.PARAM_FLAG) != null) {
                         initProvisionService.retryLater(s.getSn());
                     }

@@ -65,8 +65,12 @@ public class CpeStore {
                                         created_at, updated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,'online',?,?,?)
                 ON DUPLICATE KEY UPDATE
-                    oui = ?, manufacturer = ?, product_class = ?, hardware_version = ?, software_version = ?,
-                    connection_request_url = ?, cwmp_version = ?,
+                    -- COALESCE 防清空：Inform 报文缺字段时不把台账已有值抹成 NULL
+                    oui = COALESCE(?, oui), manufacturer = COALESCE(?, manufacturer),
+                    product_class = COALESCE(?, product_class), hardware_version = COALESCE(?, hardware_version),
+                    software_version = COALESCE(?, software_version),
+                    connection_request_url = COALESCE(?, connection_request_url),
+                    cwmp_version = COALESCE(?, cwmp_version),
                     root_node = COALESCE(?, root_node),
                     status = 'online', last_inform_ms = ?, updated_at = ?
                 """,

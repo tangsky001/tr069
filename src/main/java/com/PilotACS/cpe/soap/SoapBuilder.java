@@ -14,21 +14,31 @@ import java.util.Map;
 /** ACS → CPE 的 SOAP 报文生成 */
 public final class SoapBuilder {
 
-    private static final String ENVELOPE_OPEN =
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            + "<soap-env:Envelope"
-            + " xmlns:soap-env=\"http://schemas.xmlsoap.org/soap/envelope/\""
-            + " xmlns:soap-enc=\"http://schemas.xmlsoap.org/soap/encoding/\""
-            + " xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\""
-            + " xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\""
-            + " xmlns:cwmp=\"urn:dslforum-org:cwmp-1-0\">";
+    private static final String DEFAULT_CWMP_NS = "urn:dslforum-org:cwmp-1-0";
+
+    /** Envelope 开头按会话命名空间生成（cwmp-1-1/1-2 设备要收到同版本响应才认） */
+    private static String envelopeOpen(String cwmpNs) {
+        String ns = cwmpNs != null && cwmpNs.startsWith("urn:dslforum-org:cwmp-1-")
+                ? cwmpNs.trim() : DEFAULT_CWMP_NS;
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<soap-env:Envelope"
+                + " xmlns:soap-env=\"http://schemas.xmlsoap.org/soap/envelope/\""
+                + " xmlns:soap-enc=\"http://schemas.xmlsoap.org/soap/encoding/\""
+                + " xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\""
+                + " xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\""
+                + " xmlns:cwmp=\"" + esc(ns) + "\">";
+    }
 
     private SoapBuilder() {
     }
 
     /** InformResponse，MaxEnvelopes 固定 1 */
     public static String informResponse(String id) {
-        return ENVELOPE_OPEN
+        return informResponse(id, null);
+    }
+
+    public static String informResponse(String id, String cwmpNs) {
+        return envelopeOpen(cwmpNs)
                 + header(id)
                 + "<soap-env:Body><cwmp:InformResponse><MaxEnvelopes>1</MaxEnvelopes></cwmp:InformResponse></soap-env:Body>"
                 + "</soap-env:Envelope>";
@@ -36,7 +46,7 @@ public final class SoapBuilder {
 
     /** ACS 侧 Inform 请求（空 POST 启会话用） */
     public static String informRequest(String id) {
-        return ENVELOPE_OPEN
+        return envelopeOpen(DEFAULT_CWMP_NS)
                 + header(id)
                 + "<soap-env:Body><cwmp:Inform>"
                 + "<DeviceId><Manufacturer/><OUI/><ProductClass/><SerialNumber/></DeviceId>"
@@ -50,8 +60,12 @@ public final class SoapBuilder {
 
     /** ACS 发起的 RPC 请求 */
     public static String request(RpcRequest r) {
+        return request(r, null);
+    }
+
+    public static String request(RpcRequest r, String cwmpNs) {
         StringBuilder sb = new StringBuilder();
-        sb.append(ENVELOPE_OPEN).append(header(r.getId())).append("<soap-env:Body>");
+        sb.append(envelopeOpen(cwmpNs)).append(header(r.getId())).append("<soap-env:Body>");
         switch (r.getKind()) {            case GPN -> sb.append(gpn(r));
             case GPV -> sb.append(gpv(r));
             case SPV -> sb.append(spv(r));
@@ -75,8 +89,12 @@ public final class SoapBuilder {
 
     /** GetRPCMethodsResponse：固定暴露 Inform/GetRPCMethods/TransferComplete */
     public static String getRpcMethodsResponse(String id, List<String> methods) {
+        return getRpcMethodsResponse(id, methods, null);
+    }
+
+    public static String getRpcMethodsResponse(String id, List<String> methods, String cwmpNs) {
         StringBuilder sb = new StringBuilder();
-        sb.append(ENVELOPE_OPEN).append(header(id))
+        sb.append(envelopeOpen(cwmpNs)).append(header(id))
                 .append("<soap-env:Body><cwmp:GetRPCMethodsResponse>")
                 .append("<MethodList soap-enc:arrayType=\"xsd:string[").append(methods.size()).append("]\">");
         for (String m : methods) {
@@ -88,21 +106,33 @@ public final class SoapBuilder {
 
     /** TransferCompleteResponse */
     public static String transferCompleteResponse(String id) {
-        return ENVELOPE_OPEN
+        return transferCompleteResponse(id, null);
+    }
+
+    public static String transferCompleteResponse(String id, String cwmpNs) {
+        return envelopeOpen(cwmpNs)
                 + header(id)
                 + "<soap-env:Body><cwmp:TransferCompleteResponse/>" + "</soap-env:Body></soap-env:Envelope>";
     }
 
     /** AutonomousTransferCompleteResponse */
     public static String autonomousTransferCompleteResponse(String id) {
-        return ENVELOPE_OPEN
+        return autonomousTransferCompleteResponse(id, null);
+    }
+
+    public static String autonomousTransferCompleteResponse(String id, String cwmpNs) {
+        return envelopeOpen(cwmpNs)
                 + header(id)
                 + "<soap-env:Body><cwmp:AutonomousTransferCompleteResponse/></soap-env:Body></soap-env:Envelope>";
     }
 
     /** ACS 侧 Fault 响应（如设备在错误状态下发了不允许的 RPC） */
     public static String acsFault(int code, String message) {
-        return ENVELOPE_OPEN
+        return acsFault(code, message, null);
+    }
+
+    public static String acsFault(int code, String message, String cwmpNs) {
+        return envelopeOpen(cwmpNs)
                 + "<soap-env:Header/><soap-env:Body><soap-env:Fault>"
                 + "<faultcode>Client</faultcode>"
                 + "<faultstring>CWMP fault</faultstring>"

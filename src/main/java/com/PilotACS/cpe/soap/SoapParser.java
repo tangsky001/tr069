@@ -37,12 +37,22 @@ public final class SoapParser {
         }
         Document doc = readDoc(xml);
         Element envelope = doc.getDocumentElement();
-        Element header = firstChild(envelope, "Header");
-        Element body = firstChild(envelope, "Body");
+        // 命名空间自适应：cwmp-1-0/1-1/1-2… 都能解析（原先只认硬编码 1-0 的设备才正常）
+        String cwmpNs = detectCwmpNamespace(envelope);
+        if (cwmpNs != null) {
+            msg.setCwmpNamespace(cwmpNs);
+            msg.setCwmpVersion(versionOfNamespace(cwmpNs));
+        }
+        Element header = firstChildIgnoreCase(envelope, "Header");
+        Element body = firstChildIgnoreCase(envelope, "Body");
         if (header != null) {
             Element idEl = firstChild(header, "ID");
             if (idEl != null) {
                 msg.setId(idEl.getTextContent().trim());
+                if (msg.getCwmpNamespace() == null && isCwmpNs(idEl.getNamespaceURI())) {
+                    msg.setCwmpNamespace(idEl.getNamespaceURI().trim());
+                    msg.setCwmpVersion(versionOfNamespace(msg.getCwmpNamespace()));
+                }
             }
             Element nmr = firstChild(header, "NoMoreRequests");
             if (nmr != null) {
@@ -68,6 +78,10 @@ public final class SoapParser {
         Element root = firstElementChild(body);
         if (root == null) {
             return msg;
+        }
+        if (msg.getCwmpNamespace() == null && isCwmpNs(root.getNamespaceURI())) {
+            msg.setCwmpNamespace(root.getNamespaceURI().trim());
+            msg.setCwmpVersion(versionOfNamespace(msg.getCwmpNamespace()));
         }
         String method = localName(root);
         msg.setName(method);
@@ -177,26 +191,30 @@ public final class SoapParser {
 
     private static void parseFault(Element root, SoapMessage msg) {
         msg.setFault(true);
-        String code = text(root, "faultcode");
-        String str = text(root, "faultstring");
+        // faultcode/faultstring/detail 大小写不敏感（SOAP 1.1 规范小写，部分设备发 <FaultCode> 大写形态）
+        String code = textIgnoreCase(root, "faultcode");
+        String str = textIgnoreCase(root, "faultstring");
         msg.setFaultString(str == null ? code : str);
-        Element detail = firstChild(root, "detail");
-        Element cwmpFault = detail == null ? null : firstChild(detail, "Fault");
+        Element detail = firstChildIgnoreCase(root, "detail");
+        Element cwmpFault = detail == null ? null : firstChildIgnoreCase(detail, "Fault");
         if (cwmpFault != null) {
             msg.setFaultCode(intOf(text(cwmpFault, "FaultCode"), 0));
             String s = text(cwmpFault, "FaultString");
             if (s != null) {
                 msg.setFaultString(s);
             }
-            Element spvFaults = firstChild(cwmpFault, "SetParameterValuesFault");
-            if (spvFaults != null) {
-                if (firstChild(spvFaults, "ParameterName") != null) {
+            // 遍历所有 SetParameterValuesFault（部分失败可能不止一条，原先只取第一条）
+            for (Element child : elementChildren(cwmpFault)) {
+                if (!"SetParameterValuesFault".equals(localName(child))) {
+                    continue;
+                }
+                if (firstChild(child, "ParameterName") != null) {
                     msg.getSetFaults().add(new SoapMessage.SetFault(
-                            text(spvFaults, "ParameterName"),
-                            intOf(text(spvFaults, "FaultCode"), 0),
-                            text(spvFaults, "FaultString")));
+                            text(child, "ParameterName"),
+                            intOf(text(child, "FaultCode"), 0),
+                            text(child, "FaultString")));
                 } else {
-                    for (Element st : elementChildren(spvFaults)) {
+                    for (Element st : elementChildren(child)) {
                         if ("ParameterErrorResponse".equals(localName(st))) {
                             msg.getSetFaults().add(new SoapMessage.SetFault(
                                     text(st, "ParameterName"),
@@ -332,6 +350,60 @@ public final class SoapParser {
             }
         }
         return null;
+    }
+
+    /** 按本地名找第一个子元素（不区分命名空间、大小写不敏感） */
+    private static Element firstChildIgnoreCase(Element parent, String localName) {
+        NodeList nodes = parent.getChildNodes();
+        for (int i = 0; i < nodes.getLength(); i++) {
+            Node n = nodes.item(i);
+            if (n instanceof Element e && localName(n).equalsIgnoreCase(localName)) {
+                return e;
+            }
+        }
+        return null;
+    }
+
+    private static String textIgnoreCase(Element parent, String childLocalName) {
+        Element c = firstChildIgnoreCase(parent, childLocalName);
+        return c == null ? null : c.getTextContent().trim();
+    }
+
+    /** CWMP 命名空间判定：urn:dslforum-org:cwmp-1-N */
+    private static boolean isCwmpNs(String uri) {
+        return uri != null && uri.trim().startsWith("urn:dslforum-org:cwmp-1-");
+    }
+
+    /** 从 Envelope 元素检测 CWMP 命名空间：先看元素自身，再扫属性值（部分设备把命名空间写在非标准位置） */
+    private static String detectCwmpNamespace(Element envelope) {
+        if (envelope == null) {
+            return null;
+        }
+        if (isCwmpNs(envelope.getNamespaceURI())) {
+            return envelope.getNamespaceURI().trim();
+        }
+        org.w3c.dom.NamedNodeMap attrs = envelope.getAttributes();
+        if (attrs != null) {
+            for (int i = 0; i < attrs.getLength(); i++) {
+                String val = attrs.item(i).getNodeValue();
+                if (isCwmpNs(val)) {
+                    return val.trim();
+                }
+            }
+        }
+        return null;
+    }
+
+    /** cwmp-1-N → 1.N */
+    private static String versionOfNamespace(String ns) {
+        if (ns == null) {
+            return null;
+        }
+        int idx = ns.lastIndexOf("cwmp-1-");
+        if (idx < 0) {
+            return null;
+        }
+        return "1." + ns.substring(idx + "cwmp-1-".length()).trim();
     }
 
     private static Element firstElementChild(Element parent) {

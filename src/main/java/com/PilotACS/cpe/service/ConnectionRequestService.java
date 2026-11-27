@@ -68,13 +68,20 @@ public class ConnectionRequestService {
         if (url == null || url.isBlank()) {
             return false;
         }
+        // 设备侧凭据优先（设备 CR 账密被外部平台改过时，默认账号先试反而多绕一轮）；
+        // 密码允许空串：部分设备 CR 密码就是空，原先要求非空导致空密码设备只能走默认账号
         List<String[]> pairs = new ArrayList<>();
-        pairs.add(new String[]{props.getCrUsername(), props.getCrPassword()});
-        boolean foreignCred = username != null && !username.isBlank()
-                && !username.equals(props.getCrUsername());
-        if (foreignCred && password != null && !password.isBlank()) {
-            pairs.add(new String[]{username, password});
+        boolean hasDeviceCred = username != null && !username.isBlank();
+        if (hasDeviceCred) {
+            pairs.add(new String[]{username, password == null ? "" : password});
         }
+        String defaultUser = props.getCrUsername() == null ? "" : props.getCrUsername();
+        String defaultPass = props.getCrPassword() == null ? "" : props.getCrPassword();
+        if (!(hasDeviceCred && defaultUser.equals(username)
+                && defaultPass.equals(password == null ? "" : password))) {
+            pairs.add(new String[]{defaultUser, defaultPass});
+        }
+        boolean foreignCred = hasDeviceCred && !username.equals(defaultUser);
 
         String lastAuth = null;
         int lastCode = 0;
@@ -218,14 +225,28 @@ public class ConnectionRequestService {
     }
 
     private String digest(String challenge, String url, String username, String password) {
+        // 键名统一小写（设备发 Realm=/Nonce= 大写形态也要能解析）
         Map<String, String> p = new java.util.HashMap<>();
-        Matcher m = Pattern.compile("(\\w+)=(?:\"([^\"]*)\"|([^,\\s]+))").matcher(challenge);
+        Matcher m = Pattern.compile("([A-Za-z0-9_-]+)\\s*=\\s*(?:\"([^\"]*)\"|([^,\\s]+))").matcher(challenge);
         while (m.find()) {
-            p.put(m.group(1), m.group(2) != null ? m.group(2) : m.group(3));
+            p.put(m.group(1).toLowerCase(), m.group(2) != null ? m.group(2) : m.group(3));
         }
         String realm = p.getOrDefault("realm", "");
         String nonce = p.getOrDefault("nonce", "");
-        String qop = p.getOrDefault("qop", "");
+        // qop 可能是多 token（qop="auth,auth-int"），逐个比对是否含 auth
+        String rawQop = p.getOrDefault("qop", "");
+        boolean useAuthQop = false;
+        if (rawQop != null && !rawQop.isBlank()) {
+            for (String tok : rawQop.split(",")) {
+                if ("auth".equalsIgnoreCase(tok.trim())) {
+                    useAuthQop = true;
+                    break;
+                }
+            }
+            if (!useAuthQop && rawQop.toLowerCase().contains("auth")) {
+                useAuthQop = true;
+            }
+        }
         String cnonce = HexFormat.of().formatHex(randBytes());
         String nc = "00000001";
         URI u = URI.create(url);
@@ -237,7 +258,8 @@ public class ConnectionRequestService {
         String algo = p.getOrDefault("algorithm", "MD5").toUpperCase();
         boolean sha256 = algo.startsWith("SHA-256");
         boolean sess = algo.endsWith("-SESS");
-        if (!algo.equals("MD5") && !sha256) {
+        // MD5-SESS 显式放行（部分设备 challenge 指定 MD5-SESS，原先被误拒）
+        if (!algo.equals("MD5") && !algo.equals("MD5-SESS") && !sha256) {
             throw new IllegalArgumentException("不支持的 Digest 算法: " + p.get("algorithm"));
         }
         String hashAlg = sha256 ? "SHA-256" : "MD5";
@@ -249,7 +271,7 @@ public class ConnectionRequestService {
         String response;
         String sbAuth = "Digest username=\"" + username + "\", realm=\"" + realm
                 + "\", nonce=\"" + nonce + "\", uri=\"" + uri + "\", algorithm=" + algo + ", response=\"";
-        if (qop != null && !qop.isBlank()) {
+        if (useAuthQop) {
             response = hash(hashAlg, ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":auth:" + ha2);
             sbAuth += response + "\", qop=auth, nc=" + nc + ", cnonce=\"" + cnonce + "\"";
         } else {

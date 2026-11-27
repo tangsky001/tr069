@@ -59,9 +59,10 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
             Logs.debug(Logs.Module.CPE_PUSH, "无反向连接地址，等设备下次 Inform 装载任务", "sn", sn, "任务", taskId);
             return;
         }
+        // 密码允许空串：部分设备 CR 密码就是空，原先要求非空导致空密码设备拿 null 凭据认证失败
         connectionRequestService.wakeWithRetry(sn, crUrl,
                 paramEndingWith(sn, "ManagementServer.ConnectionRequestUsername"),
-                paramEndingWith(sn, "ManagementServer.ConnectionRequestPassword"));
+                paramEndingWithAllowEmpty(sn, "ManagementServer.ConnectionRequestPassword"));
         Logs.info(Logs.Module.CPE_PUSH, "离线任务已派发反向唤醒", "sn", sn, "任务", taskId);
     }
 
@@ -76,6 +77,20 @@ public class TaskDispatcher implements RedisTaskQueue.DispatchHandler {
                 if (v != null && !v.isBlank()) {
                     return v;
                 }
+            }
+        } catch (Exception ignore) {
+        }
+        return null;
+    }
+
+    /** 按后缀取值，允许空串（用于 CR 密码） */
+    private String paramEndingWithAllowEmpty(String sn, String suffix) {
+        try {
+            for (Map.Entry<String, com.PilotACS.cpe.model.CpeParam> e : store.loadParams(sn).entrySet()) {
+                if (!e.getKey().endsWith(suffix) || e.getValue() == null || e.getValue().value() == null) {
+                    continue;
+                }
+                return e.getValue().value();
             }
         } catch (Exception ignore) {
         }

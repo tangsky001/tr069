@@ -268,7 +268,8 @@ public class DeviceSipService {
             Matcher m = DECLARED_SIP.matcher(String.valueOf(text));
             int max = 0;
             while (m.find()) {
-                max = Math.max(max, Integer.parseInt(m.group()));
+                // group(1) 取数字部分；group() 含"路SIP"后缀 parseInt 必抛异常被吞
+                max = Math.max(max, Integer.parseInt(m.group(1)));
             }
             return max;
         } catch (Exception e) {

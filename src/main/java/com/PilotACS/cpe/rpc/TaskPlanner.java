@@ -92,8 +92,8 @@ public class TaskPlanner {
                 run.getSteps().add(new TaskRun.RpcStep(RpcRequest.gpn(path, nextLevel, key), "collect"));
             }
             case TYPE_SPV -> {
-                List<RpcRequest.NameValue> values = nameValues(params);
-                validateSpv(values, data);
+                List<RpcRequest.NameValue> values = nameValues(params, data, modelParams);
+                validateSpv(values, data, modelParams);
                 run.getSteps().add(new TaskRun.RpcStep(RpcRequest.spv(values, key), "apply"));
                 if (props.isSpvReadback() && !values.isEmpty()) {
                     appendGpv(run, values.stream().map(RpcRequest.NameValue::name).toList(), "verify");
@@ -223,12 +223,16 @@ public class TaskPlanner {
     }
 
     /** SPV 下发前置校验 */
-    private void validateSpv(List<RpcRequest.NameValue> values, DeviceData data) {
+    private void validateSpv(List<RpcRequest.NameValue> values, DeviceData data,
+                             Map<String, CpeParam> modelParams) {
         for (RpcRequest.NameValue nv : values) {
             if (nv.name() == null || nv.name().isBlank()) {
                 throw new IllegalArgumentException("参数名不能为空");
             }
             CpeParam known = data.get(nv.name());
+            if (known == null && modelParams != null) {
+                known = modelParams.get(nv.name());
+            }
             if (known == null) {
                 continue;
             }
@@ -236,7 +240,8 @@ public class TaskPlanner {
                 throw new IllegalArgumentException("参数路径是对象节点，不可直接赋值: " + nv.name());
             }
             if (!known.writable()) {
-                throw new IllegalArgumentException("只读参数不可下发: " + nv.name());
+                // 只读标记降级为告警仍下发：不少机型参数库把可写参数误标只读，交由设备裁决
+                Logs.debug(Logs.Module.CPE_PUSH, "参数库标记为只读，仍尝试下发交由设备裁决", "参数", nv.name());
             }
             checkValueType(nv, known.type());
         }
@@ -272,23 +277,81 @@ public class TaskPlanner {
         }
     }
 
+    /** SPV 参数构建：支持 Map/List 两种形态；类型三路解析（会话参数树→机型参数库→显式声明），boolean 值归一化为 1/0 */
     @SuppressWarnings("unchecked")
-    private List<RpcRequest.NameValue> nameValues(Map<String, Object> params) {
-        List<RpcRequest.NameValue> out = new ArrayList<>();
-        List<Map<String, Object>> items = (List<Map<String, Object>>) (List<?>) params.getOrDefault("values",
-                params.getOrDefault("items", List.of()));
+    private List<RpcRequest.NameValue> nameValues(Map<String, Object> params, DeviceData data,
+                                                  Map<String, CpeParam> modelParams) {
+        boolean strictType = Boolean.TRUE.equals(params.get("strictType"));
         Map<String, RpcRequest.NameValue> dedup = new LinkedHashMap<>();
-        for (Map<String, Object> it : items) {
+        Object rawValues = params.getOrDefault("values", params.getOrDefault("items", List.of()));
+        if (rawValues instanceof Map<?, ?> rawMap) {
+            rawMap.forEach((k, v) -> {
+                String name = str(k);
+                if (name != null && !name.isBlank()) {
+                    String val = v == null ? "" : String.valueOf(v);
+                    String resolvedType = resolveParamType(name, null, val, data, modelParams);
+                    dedup.put(name, new RpcRequest.NameValue(
+                            name, normalizeValueForType(val, resolvedType), resolvedType));
+                }
+            });
+            return new ArrayList<>(dedup.values());
+        }
+        if (!(rawValues instanceof List<?> rawList)) {
+            return List.of();
+        }
+        for (Object o : rawList) {
+            if (!(o instanceof Map<?, ?> it)) {
+                continue;
+            }
             String name = str(it.get("name"));
             if (name == null || name.isBlank()) {
                 continue;
             }
+            String val = it.get("value") == null ? "" : String.valueOf(it.get("value"));
+            String explicitType = str(it.get("type"));
+            if (strictType && explicitType != null && !explicitType.isBlank()) {
+                dedup.put(name, new RpcRequest.NameValue(name, val, explicitType));
+                continue;
+            }
+            String resolvedType = resolveParamType(name, explicitType, val, data, modelParams);
             dedup.put(name, new RpcRequest.NameValue(
-                    name,
-                    it.get("value") == null ? "" : String.valueOf(it.get("value")),
-                    str(it.get("type"))));
+                    name, normalizeValueForType(val, resolvedType), resolvedType));
         }
         return new ArrayList<>(dedup.values());
+    }
+
+    /** 类型三路解析：会话参数树 → 机型参数库 → 显式声明（缺省 string） */
+    private String resolveParamType(String path, String explicitType, String value,
+                                    DeviceData data, Map<String, CpeParam> modelParams) {
+        CpeParam known = data == null ? null : data.get(path);
+        if ((known == null || known.type() == null || known.type().isBlank()) && modelParams != null) {
+            known = modelParams.get(path);
+        }
+        if (known != null && known.type() != null && !known.type().isBlank()) {
+            return known.type();
+        }
+        if (explicitType != null && !explicitType.isBlank()
+                && !"string".equalsIgnoreCase(explicitType) && !"xsd:string".equalsIgnoreCase(explicitType)) {
+            return explicitType;
+        }
+        return explicitType == null || explicitType.isBlank() ? "string" : explicitType;
+    }
+
+    /** boolean 类型值归一化 true/false → 1/0（部分设备只认数字形态） */
+    private String normalizeValueForType(String val, String type) {
+        if (val == null || type == null) {
+            return val == null ? "" : val;
+        }
+        if (type.toLowerCase().endsWith("boolean")) {
+            String v = val.trim();
+            if ("true".equalsIgnoreCase(v) || "1".equals(v)) {
+                return "1";
+            }
+            if ("false".equalsIgnoreCase(v) || "0".equals(v)) {
+                return "0";
+            }
+        }
+        return val;
     }
 
     @SuppressWarnings("unchecked")
