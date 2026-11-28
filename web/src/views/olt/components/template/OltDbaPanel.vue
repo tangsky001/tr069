@@ -3,7 +3,6 @@
     <div v-if="!dbaProfiles.length && !lineProfiles.length" class="olt-empty">{{ emptyText }}</div>
 
     <template v-else>
-      <!-- 1. DBA 模板：控制每个 ONU 上行带宽的档位表 -->
       <div class="dba-title">
         DBA（动态带宽分配）模板，用于控制每个ONU 上行时的带宽。
         <el-tooltip content="display dba-profile all 采集；固定/保证/最大带宽单位 kbps" placement="top">
@@ -48,7 +47,6 @@
         </span>
       </div>
 
-      <!-- 2. ONT 线路模板：映射关系直接铺在单元格里，一行一个 GEM port -->
       <div class="dba-title dba-title-line">
         ONT 线路模板
         <el-tooltip content="display ont-lineprofile gpon all 采集；T-CONT 引用 DBA 模板，GEM port 挂在 T-CONT 上按 VLAN 承载业务" placement="top">
@@ -72,7 +70,7 @@
           </template>
         </el-table-column>
         <el-table-column label="PON 类型" width="100" align="center">
-          <template>gpon</template>
+          <template slot-scope="{ row }">{{ row.ponType || 'gpon' }}</template>
         </el-table-column>
         <el-table-column label="映射关系" min-width="460">
           <template slot-scope="{ row: line }">
@@ -122,9 +120,10 @@
         </el-table-column>
       </el-table>
       <div v-else class="vlan-empty-row">没有线路模板</div>
-      <div v-if="lineProfiles.length" class="dba-footer">
-        <span />
-        <span class="dba-footer-right">
+      <!-- 按钮常显：没有模板时也要有入口 -->
+      <div class="dba-footer">
+        <el-button type="text" icon="el-icon-plus" class="dba-link" @click="lineDialogVisible = true">添加线路模板</el-button>
+        <span v-if="lineProfiles.length" class="dba-footer-right">
           <el-button type="text" class="dba-link" @click="toggleAllLine(true)">全选</el-button>
           <el-button type="text" class="dba-link" @click="toggleAllLine(false)">全不选</el-button>
           <el-button
@@ -132,12 +131,12 @@
             icon="el-icon-delete"
             class="dba-danger"
             :disabled="!lineSelected.length"
-            @click="notSupported('删除线路模板')"
+            @click="removeLineSelected"
           />
         </span>
       </div>
 
-      <!-- 新增 DBA 模板：下发 dba-profile add，表单对齐网管 -->
+      <!-- 下发 dba-profile add -->
       <el-dialog
         title="新增DBA模板"
         :visible.sync="dialogVisible"
@@ -163,7 +162,7 @@
               <el-option v-for="type in meta.types" :key="type.code" :label="type.label" :value="type.code" />
             </el-select>
           </el-form-item>
-          <!-- 哪几个带宽框该出现由后端按类型决定，页面不认识 type1~type5 的区别 -->
+          <!-- 带宽框按类型由后端决定 -->
           <el-form-item v-if="needs('fix')" label="固定带宽大小">
             <el-input v-model="form.fixKbps" :placeholder="bandwidthPlaceholder" />
           </el-form-item>
@@ -188,7 +187,14 @@
         </div>
       </el-dialog>
 
-      <!-- 线路模板 · 增加 T-CONT：tcont <索引> dba-profile-id <DBA 模板> -->
+      <olt-line-profile-create-dialog
+        :visible.sync="lineDialogVisible"
+        :olt-id="oltId"
+        :dba-profiles="dbaProfiles"
+        :create-handler="createLineHandler"
+      />
+
+      <!-- 下发 tcont <索引> dba-profile-id <DBA 模板> -->
       <el-dialog
         title="增加 T-CONT"
         :visible.sync="tcontDialog.visible"
@@ -223,7 +229,7 @@
         </div>
       </el-dialog>
 
-      <!-- 线路模板 · 新增 GEM Port：gem add <GEM 索引> eth tcont <T-CONT> encrypt on -->
+      <!-- 下发 gem add <GEM 索引> eth tcont <T-CONT> encrypt on -->
       <el-dialog
         title="新增 GEM Port"
         :visible.sync="gemportDialog.visible"
@@ -251,7 +257,7 @@
         </div>
       </el-dialog>
 
-      <!-- 线路模板 · 增加 GEM 映射：gem mapping <GEM> <映射序号> vlan <VLAN> -->
+      <!-- 下发 gem mapping <GEM> <映射序号> vlan <VLAN> -->
       <el-dialog
         title="增加 GEM 映射"
         :visible.sync="gemMappingDialog.visible"
@@ -287,24 +293,14 @@
 </template>
 
 <script>
-/**
- * DBA 模板与线路模板面板（对齐网管的展示）。
- *
- * DBA 表：模板ID / 名称 / 类型 / 固定·保证·最大带宽（kbps 原样数字）。
- * 线路模板表：映射关系内嵌在单元格里——每行一个 GEM port，顺带把承载它的
- * T-CONT 与那条 T-CONT 引用的 DBA 模板（ID + 名称）对上；没有 GEM 的模板
- * 退回只列 T-CONT 行。
- * 下发都是真实的：DBA 模板走 dba-profile add / delete；线路模板里的
- * T-CONT（tcont &lt;索引&gt; dba-profile-id &lt;DBA&gt;）、GEM Port（gem add … tcont …）、
- * GEM 映射（gem mapping &lt;GEM&gt; &lt;序号&gt; vlan &lt;VLAN&gt;）各有一个弹窗。
- * 全部通过 handler 由页面（mixin）执行，成功后后端只重读这条线路模板，页面换上新快照。
- */
+/** DBA 模板与线路模板面板，下发经 handler 由页面（mixin）执行 */
 import { fetchDbaForm, previewDbaProfile, fetchLineProfileForm, previewLineProfile } from '@/api/olt'
+import OltLineProfileCreateDialog from './OltLineProfileCreateDialog'
 
 /** 表单改动后隔多久重新算命令 */
 const PREVIEW_DELAY_MS = 300
 
-/** 「3」→ 3；空、非整数、负数 → null（弹窗里的索引都是文本框，取值前先过一遍） */
+/** 「3」→ 3；空/非整数/负数 → null */
 function toIndex(text) {
   if (text == null || String(text).trim() === '') {
     return null
@@ -315,8 +311,11 @@ function toIndex(text) {
 
 export default {
   name: 'OltDbaPanel',
+  components: {
+    OltLineProfileCreateDialog
+  },
   props: {
-    /** 设备 ID，取表单约束和命令预览要用 */
+    /** 设备 ID */
     oltId: {
       type: [Number, String],
       default: null
@@ -354,6 +353,16 @@ export default {
       type: Function,
       default: null
     },
+    /** 新增 ONT 线路模板（建模板+绑 DBA+VLAN 映射+TR069 管理） */
+    createLineHandler: {
+      type: Function,
+      default: null
+    },
+    /** 删除勾选的线路模板（ID 数组），返回 Promise */
+    deleteLineHandler: {
+      type: Function,
+      default: null
+    },
     emptyText: {
       type: String,
       default: '尚未采集到 DBA / 线路模板。点上面的「同步」，采集时会跑 display dba-profile all 与 display ont-lineprofile gpon all。'
@@ -365,20 +374,18 @@ export default {
       lineSelected: [],
       dialogVisible: false,
       saving: false,
+      lineDialogVisible: false,
       /** 五类模板的字段矩阵与取值约束，来自后端 */
       meta: null,
       preview: { commands: [], warnings: [] },
       previewError: '',
       form: {},
-      /** 线路模板三个弹窗：下发中统一转圈，防连点 */
+      /** 线路模板弹窗下发中，防连点 */
       submitting: false,
       tcontDialog: { visible: false, line: null, tcontId: '', dbaProfileId: null },
       gemportDialog: { visible: false, line: null, tcontId: '', gemportId: '' },
       gemMappingDialog: { visible: false, line: null, gemportId: null, mappingIds: '', vlans: '' },
-      /**
-       * 线路模板弹窗的约束与预览都在后端：页面只拿结果来渲染——
-       * 默认值、已用索引、提示文字来自 lineForm，命令来自 linePreview。
-       */
+      /** 线路模板弹窗的约束与预览都来自后端 */
       lineForm: null,
       linePreview: { commands: [], warnings: [] },
       linePreviewError: '',
@@ -386,7 +393,7 @@ export default {
     }
   },
   computed: {
-    /** 当前类型要填哪几个带宽字段：矩阵由后端给，页面不认识 type1~type5 */
+    /** 当前类型要填的带宽字段，由后端矩阵给 */
     currentFields() {
       const hit = this.meta && this.meta.types
         ? this.meta.types.find(type => type.code === this.form.type)
@@ -407,10 +414,7 @@ export default {
       }
       return this.preview.commands.join('\n')
     },
-    /**
-     * 弹窗里那三个索引框的取值范围，由后端给（页面上不写死 0-127 这类数字）。
-     * 后端还没返回前先用空串，标签上就不显示范围。
-     */
+    /** 索引框取值范围，由后端给 */
     tcontRange() {
       return this.rangeOf('tcont')
     },
@@ -475,7 +479,6 @@ export default {
         this.schedulePreview()
       }
     },
-    /** 弹窗里改动就重新预演：命令和提醒都由后端算 */
     linePreviewPayload() {
       this.scheduleLinePreview()
     }
@@ -492,7 +495,7 @@ export default {
     needs(field) {
       return this.currentFields.includes(field)
     },
-    /** 打开弹窗：默认类型由后端给 */
+    /** 打开新增 DBA 模板弹窗 */
     async openCreate() {
       await this.loadMeta()
       this.form = {
@@ -517,10 +520,7 @@ export default {
           this.$message.error('读取 DBA 模板参数失败')
         })
     },
-    /**
-     * 打开弹窗前先把后端算好的约束取回来：默认值、已占用的索引、灰字提示。
-     * 页面不再自己数「哪些号用过了」——那份逻辑在 OltService.lineProfileForm 里。
-     */
+    /** 打开弹窗前取后端算好的约束：默认值、已占用索引、提示 */
     loadLineForm(profileId, gemportId) {
       this.lineForm = null
       this.linePreview = { commands: [], warnings: [] }
@@ -554,6 +554,12 @@ export default {
       previewLineProfile(this.oltId, payload)
         .then(res => {
           const data = res.data || {}
+          if (data.error) {
+            // 参数没填全：预演不提示，提交时后端再拦
+            this.linePreview = { commands: [], warnings: [] }
+            this.linePreviewError = ''
+            return
+          }
           this.linePreview = { commands: data.commands || [], warnings: data.warnings || [] }
           this.linePreviewError = ''
         })
@@ -586,7 +592,6 @@ export default {
       }
       try {
         const result = await previewDbaProfile(this.oltId, this.payload())
-        // 命令在 { code, data } 的 data 里
         const data = result.data || {}
         this.preview = { commands: data.commands || [], warnings: data.warnings || [] }
         this.previewError = ''
@@ -601,7 +606,7 @@ export default {
         profileId: this.form.profileId,
         name: this.form.name,
         type: this.form.type,
-        // 不属于当前类型的字段不提交，免得 type4 还带着个固定带宽
+        // 非当前类型的字段不提交
         fixKbps: fields.includes('fix') ? Number(this.form.fixKbps) : null,
         assureKbps: fields.includes('assure') ? Number(this.form.assureKbps) : null,
         maxKbps: fields.includes('max') ? Number(this.form.maxKbps) : null
@@ -640,7 +645,20 @@ export default {
         return this.deleteHandler(ids)
       }).catch(() => {})
     },
-    /** kbps 原样数字，跟网管上的写法一致（列头已写明单位） */
+    /** 删除勾选的线路模板：先清模板内配置再删模板 */
+    removeLineSelected() {
+      const ids = this.lineSelected.map(row => row.profileId)
+      this.$confirm('确定删除选中的 ' + ids.length + ' 条线路模板？会先清掉模板里的 GEM/T-CONT 配置再删，绑定中的 ONT 会受影响。', '删除确认', {
+        type: 'warning'
+      }).then(() => {
+        if (!this.deleteLineHandler) {
+          this.$message.info('下发能力未接入')
+          return
+        }
+        return this.deleteLineHandler(ids)
+      }).catch(() => {})
+    },
+    /** kbps 原样数字 */
     rawKbps(kbps) {
       return kbps == null ? '-' : kbps
     },
@@ -662,7 +680,7 @@ export default {
         table.clearSelection()
       }
     },
-    /** 加 T-CONT：默认值（第一个空号、DBA 下拉）都由后端表单给 */
+    /** 加 T-CONT：默认值由后端表单给 */
     openTcont(line) {
       this.tcontDialog = { visible: true, line, tcontId: '', dbaProfileId: null }
       this.loadLineForm(line.profileId, null).then(() => {
@@ -680,7 +698,7 @@ export default {
         this.$message.info('下发能力未接入')
         return
       }
-      // 页面只做「文本 → 数字」的转换，缺不缺、超没超范围全由后端判
+      // 文本转数字，校验由后端做
       this.submitting = true
       Promise.resolve(this.tcontHandler({
         profileId: this.tcontDialog.line.profileId,
@@ -695,10 +713,7 @@ export default {
           this.submitting = false
         })
     },
-    /**
-     * 新增 GEM Port：T-CONT 索引默认填「已配的 GEM Port 挂着的那条」（后端算），
-     * GEM Port 索引留空，框里的可用区间提示也是后端给的。
-     */
+    /** 新增 GEM Port：T-CONT 默认值由后端给 */
     openGemport(line) {
       this.gemportDialog = { visible: true, line, tcontId: '', gemportId: '' }
       this.loadLineForm(line.profileId, null).then(() => {
@@ -729,7 +744,7 @@ export default {
           this.submitting = false
         })
     },
-    /** 加映射：得先有 GEM Port；默认序号由后端按这个 GEM 已占用的算 */
+    /** 加映射：得先有 GEM Port，默认序号由后端算 */
     openGemMapping(line, mapping) {
       if (!mapping || mapping.gemportId == null) {
         this.$message.warning('先给这条模板加 GEM Port，映射才有地方挂')
@@ -828,7 +843,6 @@ export default {
 .dba-id-input {
   width: 100%;
 }
-/* 线路模板弹窗：跟网管一样「标签一行、输入框一行」，标签里带取值范围 */
 .dba-form-row {
   margin-bottom: 14px;
 }
@@ -838,7 +852,6 @@ export default {
   color: #606266;
   font-size: 13px;
 }
-/* 只读那一行的值：灰底，看着就不像能改的（模板是哪条由后端定，页面不给改） */
 .dba-form-value {
   padding: 0 12px;
   height: 32px;
@@ -873,7 +886,6 @@ export default {
     white-space: pre-wrap;
     word-break: break-all;
 
-    /* 校验没过时这里显示的是后端给的原因 */
     &.is-error {
       color: #c0392b;
     }

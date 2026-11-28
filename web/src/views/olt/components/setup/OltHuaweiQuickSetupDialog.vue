@@ -105,7 +105,6 @@
         />
       </el-form-item>
 
-      <!-- 模板 ID：以前拿带宽顶，1000M 撞上设备 10~512 的限制被压成 512，页面填的和下发下去的不是一个数 -->
       <el-form-item>
         <olt-help-label
           slot="label"
@@ -246,27 +245,13 @@
 </template>
 
 <script>
-import OltHelpLabel from './OltHelpLabel'
+import OltHelpLabel from '../common/OltHelpLabel'
 import { previewQuickSetup, fetchQuickSetupConfig, saveQuickSetupConfig } from '@/api/olt'
 
-/** 表单改动后隔多久重新算命令：输入 IP 时别每敲一个字符就打一次接口 */
+/** 表单改动后重新预览命令的防抖间隔 */
 const PREVIEW_DELAY_MS = 300
 
-/**
- * 华为 MA56XXT 一键开局。
- *
- * <p><b>这个组件不写任何设备命令。</b>四套模板的创建顺序、ID 与命名规则、
- * T-CONT 与 GEM 的绑定关系全由后端 {@code HuaweiQuickSetupPlanner} 编：
- * 打开后每次改动都调一遍预览，看到的必然就是即将下发的那条序列。</p>
- *
- * <p><b>参数不存本机、也不自带默认值。</b>打开时向后端要（没存过就是后端那份默认值），
- * 「保存设置」写库，「默认设置」再去后端要一份默认值——前端抄一份默认值，
- * 就会出现「页面让填到 1000、设备其实能到 1024」这种两处对不上的情况。</p>
- */
-
-/**
- * 后端给的参数翻成表单：后端是 Integer/Boolean，输入框里是字符串/开关。
- */
+/** 华为 MA56XXT 一键开局弹窗 */
 function toForm(request) {
   const req = request || {}
   return {
@@ -278,11 +263,11 @@ function toForm(request) {
     iptvMulticastVlan: req.iptvMulticastVlan == null ? '' : String(req.iptvMulticastVlan),
     ponType: req.ponType || 'GPON',
     acsUrl: req.acsUrl || '',
-    // ACS 账号密码后端给默认值，页面上不写死
+    // ACS 账号密码默认值由后端给
     acsUsername: req.acsUsername || '',
     acsPassword: req.acsPassword || '',
     dbaBandwidth: req.dbaBandwidthMbps == null ? null : Number(req.dbaBandwidthMbps),
-    // 模板 ID 由后端给默认值和区间，页面上不写死
+    // 模板 ID 默认值与区间由后端给
     dbaProfileId: req.dbaProfileId,
     lineProfileId: req.lineProfileId,
     srvProfileId: req.srvProfileId,
@@ -316,12 +301,11 @@ export default {
       type: Boolean,
       default: false
     },
-    /** 设备 ID，取参数与预览都要用 */
     oltId: {
       type: [Number, String],
       default: null
     },
-    /** 下发回调，返回 Promise；没给就只保存参数不下发 */
+    /** 下发回调；没给就只保存参数不下发 */
     submitHandler: {
       type: Function,
       default: null
@@ -335,7 +319,7 @@ export default {
       preview: { commands: [], warnings: [] },
       previewError: '',
       form: toForm({}),
-      /** 上下限：设备只认到多少由后端说了算，页面不自带 */
+      /** 各字段上下限，由后端给出 */
       minBandwidthMbps: 1,
       maxBandwidthMbps: 0,
       minProfileId: 0,
@@ -364,7 +348,7 @@ export default {
     }
   },
   watch: {
-    // 表单一变就让后端重新算一遍，页面不自己拼命令
+    // 表单一变就让后端重新算一遍
     form: {
       deep: true,
       handler() {
@@ -378,12 +362,12 @@ export default {
     }
   },
   methods: {
-    /** 打开时向后端要参数：存过的给存过的，没存过给后端那份默认值 */
+    /** 打开时加载参数：优先已保存值，没存过用后端默认值 */
     async onOpen() {
       await this.loadConfig(false)
       this.runPreview()
     },
-    /** 默认设置：再去后端要一份默认值，前端不自带 */
+    /** 恢复后端默认值 */
     async resetDefaults() {
       await this.loadConfig(true)
       this.$message.info('已恢复默认设置')
@@ -409,7 +393,7 @@ export default {
     close() {
       this.dialogVisible = false
     },
-    /** 命令序列由后端拿这套 huawei 参数编出来，ID 与命名规则都在后端 */
+    /** 组装 huawei 参数，命令序列与 ID 命名规则都在后端 */
     payload() {
       const form = this.form
       return {
@@ -422,7 +406,6 @@ export default {
           iptvMulticastVlan: toInt(form.iptvMulticastVlan),
           ponType: form.ponType,
           acsUrl: toText(form.acsUrl),
-          // ACS 账号密码也来自后端给的默认值，页面上改不了就照传
           acsUsername: toText(form.acsUsername),
           acsPassword: toText(form.acsPassword),
           dbaBandwidthMbps: toInt(form.dbaBandwidth),
@@ -444,7 +427,7 @@ export default {
       }
       this.previewTimer = setTimeout(() => this.runPreview(), PREVIEW_DELAY_MS)
     },
-    /** 让后端把这次要下发的命令算出来；参数不合法也由后端指出 */
+    /** 由后端算出本次要下发的命令，参数不合法也由后端指出 */
     async runPreview() {
       if (!this.oltId) {
         return
@@ -459,7 +442,7 @@ export default {
         }
         this.previewError = ''
       } catch (e) {
-        // 参数填了一半：预览区直接显示原因，命令清空，保存也就点不动
+        // 参数不合法：预览区显示原因并清空命令，保存也就点不动
         this.preview = { commands: [], warnings: [] }
         this.previewError = e && e.message ? e.message : '命令预演失败'
       } finally {
@@ -467,7 +450,7 @@ export default {
       }
     },
     async save() {
-      // 命令和校验都在后端：预览算不出来（参数有误）就不保存也不下发
+      // 预览算不出来（参数有误）就不保存也不下发
       if (this.previewError) {
         this.$message.warning(this.previewError)
         return
@@ -484,7 +467,7 @@ export default {
         return
       }
 
-      // 父组件没给下发回调就只保存参数，别点了没反应
+      // 没有下发回调时只保存参数
       if (!this.submitHandler) {
         this.$message.success('开局参数已保存')
         return
@@ -525,7 +508,7 @@ export default {
   border-left: 3px solid #c0d4ea;
 }
 
-/* 截图那套紧凑表单：label 右对齐，值只留一条下划线 */
+/* 紧凑表单：label 右对齐，输入框只留下划线 */
 .hq-form {
   max-width: 660px;
 
@@ -539,7 +522,7 @@ export default {
     color: #909399;
     font-weight: 400;
     line-height: 28px;
-    /* 字段名一律单行：折成两行会把这一行撑高，下面几条虚线就对不齐了 */
+    /* 字段名保持单行，折行会撑高行破坏虚线对齐 */
     white-space: nowrap;
   }
 
@@ -585,7 +568,7 @@ export default {
   max-width: 380px;
 }
 
-/* 命令预览：和鸿升光那套一键开局共用样式 */
+/* 命令预览样式（与鸿升光一键开局共用） */
 .quick-preview {
   margin-top: 12px;
   border: 1px solid #dfe6ee;

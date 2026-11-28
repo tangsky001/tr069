@@ -129,16 +129,7 @@
 <script>
 import { saveOlt, testOlt, fetchOltWebAccounts, fetchOltOptions } from '@/api/olt'
 
-/**
- * 添加 / 编辑 OLT 弹窗。
- *
- * 保存前后端都会校验；「测试连接」直接用当前表单里的参数连一次设备，
- * 未保存也能验证账号密码是否正确。
- *
- * 「测试连接」顺带把厂商识别出来（`display version` / `show version` 的回显），
- * 结果写进 form.vendor 随保存一起落库——添加完就知道该进哪个厂商页面，
- * 不用等第一次同步。
- */
+/** 添加 / 编辑 OLT 弹窗：「测试连接」用当前表单参数连设备并顺带识别厂商，保存前后端都会校验 */
 export default {
   name: 'OltFormDialog',
   props: {
@@ -146,12 +137,12 @@ export default {
       type: Boolean,
       default: false
     },
-    // 编辑时传入列表里的 OLT 对象，新增传 null
+    // 编辑时传列表里的 OLT 对象，新增传 null
     olt: {
       type: Object,
       default: null
     },
-    // 分组页添加时传入：设备保存即归属该分组（nodeRef）；编辑时忽略
+    // 新增时设备归属该分组（nodeRef），编辑时忽略
     groupRef: {
       type: String,
       default: null
@@ -236,13 +227,13 @@ export default {
         protocol: 'TELNET',
         username: '',
         password: '',
-        // 端口由后端给的默认值补上（handleOpen 里用 defaultPort），不在这里写死 23
+        // 端口默认值由后端补，不写死
         port: null,
         charset: 'AUTO',
         bindLocalIp: '',
         webAccounts: [],
         remark: '',
-        // 厂商/型号：测试连接时由回显自动识别，保存时一并落库，决定进哪个厂商页面
+        // 厂商/型号：测试连接时自动识别，保存时一并落库
         vendor: '',
         model: ''
       }
@@ -250,7 +241,6 @@ export default {
     async handleOpen() {
       this.testResult = null
       this.form = this.emptyForm()
-      // 端口的默认值来自后端，先拿到再填表单
       if (!this.options) {
         await Promise.resolve(this.loadOptions())
       }
@@ -285,7 +275,7 @@ export default {
         })
     },
     onProtocolChange() {
-      // 协议切换时只在端口仍是默认值的情况下跟随，避免覆盖用户手填的端口
+      // 端口仍是默认值时才跟随切换，避免覆盖用户手填的端口
       const defaults = this.options ? [this.options.sshPort, this.options.telnetPort] : []
       if (!this.form.port || defaults.includes(this.form.port)) {
         this.form.port = this.defaultPort
@@ -314,7 +304,7 @@ export default {
         testOlt(this.form)
           .then(res => {
             const data = res.data || {}
-            // 认出厂商就回填，后面即使改了地址也跟随这次的识别结果
+            // 认出厂商就回填，之后即使改了地址也沿用这次的识别结果
             if (data.success && data.vendor) {
               this.form.vendor = data.vendor
               this.form.model = data.model || this.form.model
@@ -339,7 +329,7 @@ export default {
     },
     buildTestDescription(data) {
       if (!data.success) return data.message || '未知原因'
-      // 摘要由后端拼（message + 提示符 + 耗时），页面不再自己组句子
+      // 摘要由后端拼好，页面直接用
       return data.summary || data.message || ''
     },
     handleSave() {

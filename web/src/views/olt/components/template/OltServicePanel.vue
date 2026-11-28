@@ -1,11 +1,10 @@
 <template>
   <div>
-    <div v-if="!srvProfiles.length && !trafficTables.length" class="olt-empty">
+    <div v-if="!srvProfiles.length && !trafficTables.length && !tr069Rows.length" class="olt-empty">
       {{ emptyText }}
     </div>
 
     <template v-else>
-      <!-- 1. ONT 业务模板（服务模板） -->
       <div class="svc-title">
         ONT 业务模板（服务模板）
         <el-tooltip content="display ont-srvprofile gpon all 采集；网口/电话口数量是 ONT 能力自动协商的，页面给的是模板里声明的上限" placement="top">
@@ -51,7 +50,6 @@
         </span>
       </div>
 
-      <!-- 2. TR069 管理模板：OLT 上是独立的一类模板（ont tr069-server-profile） -->
       <div class="svc-title svc-title-line">
         TR069 管理模板
         <el-tooltip content="display ont tr069-server-profile all 采集；ACS 地址与登录账号决定 ONT 上哪台 ACS 注册" placement="top">
@@ -76,13 +74,17 @@
         <el-table-column label="ACS 登录账号" min-width="160">
           <template slot-scope="{ row }">{{ row.user || '-' }}</template>
         </el-table-column>
+        <el-table-column label="绑定详情" width="110" align="center">
+          <template slot-scope="{ row }">{{ row.bindTimes == null ? '-' : row.bindTimes }}</template>
+        </el-table-column>
       </el-table>
       <div v-else class="vlan-empty-row">
         没有 TR069 服务器模板（display ont tr069-server-profile all 无回显或版本不支持）
       </div>
-      <div v-if="tr069Profiles.length" class="svc-footer">
-        <el-button type="text" icon="el-icon-plus" class="svc-link" @click="notSupported('新增TR069模板')">新增TR069模板</el-button>
-        <span class="svc-footer-right">
+      <!-- 新增按钮常显：没有模板时也要有入口 -->
+      <div class="svc-footer">
+        <el-button type="text" icon="el-icon-plus" class="svc-link" @click="$emit('create-tr069')">新增TR069模板</el-button>
+        <span v-if="tr069Rows.length" class="svc-footer-right">
           <el-button type="text" class="svc-link" @click="toggleAll('tr069Table', true)">全选</el-button>
           <el-button type="text" class="svc-link" @click="toggleAll('tr069Table', false)">全不选</el-button>
           <el-button
@@ -95,7 +97,6 @@
         </span>
       </div>
 
-      <!-- 3. 流量限速模板 -->
       <div class="svc-title svc-title-line">
         流量限速模板
         <el-tooltip content="display traffic table ip all 采集；CIR 承诺速率 / PIR 峰值速率，业务流引用它限速" placement="top">
@@ -139,15 +140,7 @@
 </template>
 
 <script>
-/**
- * 业务 / TR069 / 流量模板面板（对齐网管的表）。
- *
- * ONT 业务模板来自 display ont-srvprofile gpon all（模板 ID、名称、网口/电话口上限）；
- * TR069 管理模板是里面带 TR069/ACS 参数的那几条，ACS 地址与账号从参数里挑出来；
- * 流量限速模板来自 display traffic table ip all（CIR 承诺 / PIR 峰值）。
- * 业务流明细不在这里展示（映射关系在 DBA / 线路模板面板里）。
- * 「新增 / 删除」是下发动作的占位，下发能力稍后接入。
- */
+/** 业务 / TR069 / 流量模板面板 */
 export default {
   name: 'OltServicePanel',
   props: {
@@ -179,10 +172,7 @@ export default {
     }
   },
   computed: {
-    /**
-     * TR069 管理模板以 ont tr069-server-profile 为准；
-     * 老版本没有这条命令时，退回能力模板里带 TR069/ACS 参数的那几条（字段尽力填）。
-     */
+    /** 无 tr069-server-profile 数据时退回能力模板里带 TR069 参数的那几条 */
     tr069Rows() {
       if (this.tr069Profiles.length) {
         return this.tr069Profiles
@@ -198,10 +188,7 @@ export default {
     }
   },
   methods: {
-    /**
-     * 网口 / 电话口数量：模板里 ont-port pots/eth adaptive N 给的就是上限，
-     * 直接显示「自适应,最大 N」；没解析到（能力协商、回显没给）显示「自适应」。
-     */
+    /** 网口/电话口数量：模板里给的是上限，没解析到就只显示「自适应」 */
     portCount(profile, keyword) {
       if (keyword === 'pots' && profile.potsPorts != null) {
         return '自适应,最大 ' + profile.potsPorts

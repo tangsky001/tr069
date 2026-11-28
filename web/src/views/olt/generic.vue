@@ -1,6 +1,6 @@
 <template>
   <div :class="{ 'app-container': !embedded }">
-    <!-- 嵌在台账页里时上面已经有下拉和按钮了，这里只出内容区 -->
+    <!-- 内嵌台账页时上面已有设备条，这里只出内容区 -->
     <olt-device-bar
       v-if="!embedded"
       :device="device"
@@ -23,7 +23,6 @@
     />
 
     <el-card v-if="hasDevice" shadow="never" class="olt-main-card">
-      <!-- 还没认出来先说清楚：不是没采集，是回显里没有厂商关键字 -->
       <div v-if="!device.vendorLabel" class="olt-tip">
         这台设备还没识别出厂商（<code>display version</code> / <code>show version</code> 的回显里没有厂商关键字），
         先按通用视图展示已采到的数据。点上面的「诊断测试」重新认一次，认出来后会自动跳到对应厂商的页面。
@@ -38,7 +37,7 @@
             </div>
             <div>最近连接：{{ device.lastConnectAtText }}；最近同步：{{ device.lastSyncAtText }}</div>
             <div>{{ device.syncSummary || '尚未同步，点击「同步」采集板卡信息' }}</div>
-            <!-- 数据以 OLT 为准：打开页面直连采一次，采不到才退回库里的快照 -->
+            <!-- 打开页面直连采集一次，采不到才退回库里的快照 -->
             <div class="olt-live" :class="{ 'olt-live-error': liveError }">{{ liveText }}</div>
           </div>
 
@@ -83,7 +82,7 @@
         </el-tab-pane>
 
         <el-tab-pane label="VLAN" name="vlan">
-          <!-- 鸿升光：没有 vlanif / 静态路由那一套，用它能真正增删的 VLAN 面板 -->
+          <!-- 鸿升光没有 vlanif / 静态路由，用可真正增删的 VLAN 面板 -->
           <template v-if="isHsgq">
             <div class="olt-summary">
               <div>
@@ -122,7 +121,7 @@
           </template>
         </el-tab-pane>
 
-        <!-- TR-069（ACS）模板只有鸿升光接过命令，别的厂商不显示这个页签 -->
+        <!-- TR-069 模板仅鸿升光接入命令，其它厂商不显示 -->
         <el-tab-pane v-if="isHsgq" label="TR069模板" name="tr069" lazy>
           <olt-hsgq-tr069-panel :olt-id="detailId" />
         </el-tab-pane>
@@ -135,7 +134,7 @@
             </div>
           </div>
 
-          <!-- 鸿升光：ONU 数量本来就少（一台几十条），平铺成一张表比按 PON 口折叠好查 -->
+          <!-- 鸿升光 ONU 少，平铺成一张表比按 PON 口折叠好查 -->
           <olt-ont-list
             v-if="isHsgq"
             :ont-rows="ontRows"
@@ -149,7 +148,7 @@
           />
         </el-tab-pane>
 
-        <!-- 命令动作目录只有接入了手册的厂商才有（鸿升光），其它厂商不显示这个页签 -->
+        <!-- 命令动作目录仅接入手册的厂商显示 -->
         <el-tab-pane v-if="commandActions.length" label="设备配置" name="commands">
           <olt-command-center
             :olt-id="detailId"
@@ -175,29 +174,23 @@
 </template>
 
 <script>
-import OltDeviceBar from './components/OltDeviceBar'
-import OltDeviceInfo from './components/OltDeviceInfo'
-import OltBoardCards from './components/OltBoardCards'
-import OltHsgqFaceplate from './components/OltHsgqFaceplate'
-import OltOntBoard from './components/OltOntBoard'
-import OltOntList from './components/OltOntList'
-import OltVlanPanel from './components/OltVlanPanel'
-import OltHsgqVlanPanel from './components/OltHsgqVlanPanel'
-import OltHsgqTr069Panel from './components/OltHsgqTr069Panel'
-import OltCommandCenter from './components/OltCommandCenter'
-import OltRecords from './components/OltRecords'
-import OltFormDialog from './components/OltFormDialog'
+import OltDeviceBar from './components/common/OltDeviceBar'
+import OltDeviceInfo from './components/common/OltDeviceInfo'
+import OltBoardCards from './components/device/OltBoardCards'
+import OltHsgqFaceplate from './components/device/OltHsgqFaceplate'
+import OltOntBoard from './components/device/OltOntBoard'
+import OltOntList from './components/ont/OltOntList'
+import OltVlanPanel from './components/vlan/OltVlanPanel'
+import OltHsgqVlanPanel from './components/vlan/OltHsgqVlanPanel'
+import OltHsgqTr069Panel from './components/template/OltHsgqTr069Panel'
+import OltCommandCenter from './components/common/OltCommandCenter'
+import OltRecords from './components/common/OltRecords'
+import OltFormDialog from './components/common/OltFormDialog'
 import { oltDetailMixin } from './mixins/oltDetail'
 import { detailRoute } from './vendors'
 import { deleteOlt } from '@/api/olt'
 
-/**
- * 通用详情页：没认出来的设备、以及中兴、烽火、鸿升光这些厂商都走这里。
- *
- * 只摆命令普遍通用的东西：板卡、端口 ONT、VLAN、配置信息、采集记录。
- * 华为那套 DBA、线路模板、主备、保护之类的面板不在这儿——那些标签页换个厂商就是错的。
- * 鸿升光是整机，板卡区换成按真机正面画的横向面板（OltHsgqFaceplate）。
- */
+/** 通用详情页：未识别厂商及中兴、烽火、鸿升光等厂商共用 */
 export default {
   name: 'OltGeneric',
   components: {
@@ -216,7 +209,7 @@ export default {
   },
   mixins: [oltDetailMixin],
   props: {
-    /** 嵌在台账页里时由外面给（下拉选中的那台）；不传就取路由上的 id */
+    /** 嵌在台账页里时由外面给；不传就取路由上的 id */
     deviceId: {
       type: [String, Number],
       default: null
@@ -256,7 +249,7 @@ export default {
       this.editing = this.device
       this.formVisible = true
     },
-    /** 认出厂商后就没必要留在通用页了，跳到对应厂商的页面 */
+    /** 认出厂商后跳到对应厂商的页面 */
     handleSaved(saved) {
       this.formVisible = false
       if (saved && String(saved.id) === String(this.detailId)) {

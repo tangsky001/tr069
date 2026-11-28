@@ -1,6 +1,5 @@
 <template>
   <div class="ont-reg">
-    <!-- 一、自动注册参数：光猫上线怎么被发现、怎么被自动授权 -->
     <div class="reg-block-title">自动注册</div>
     <el-form :model="autoConfig" label-width="240px" size="small" class="reg-auto-form">
       <el-form-item>
@@ -18,7 +17,7 @@
           text="自动发现扫描时间间隔"
           tip="多久扫一次待注册光猫（display ont autofind all）。太小会频繁登录设备，建议 30 秒以上。"
         />
-        <!-- 上下限不写在前端：范围由后端定，填小了后端会夹回并在保存后回显实际值 -->
+        <!-- 范围由后端定，越界值保存后回显实际值 -->
         <el-input-number v-model="autoConfig.scanSeconds" :step="5" controls-position="right" size="small" />
         <span class="reg-unit">秒</span>
       </el-form-item>
@@ -62,7 +61,7 @@
       </el-form-item>
 
       <el-form-item>
-        <!-- 后台任务是静默跑的：不显示这几个时间，没法区分「没在跑」和「跑了没注册上」 -->
+        <!-- 后台任务是静默跑的，显示时间才能看出任务活着没有 -->
         <div class="reg-auto-footer">
           <div class="reg-auto-status">
             <span>上次扫描 <b>{{ autoConfig.lastScanText || '—' }}</b></span>
@@ -77,7 +76,6 @@
       </el-form-item>
     </el-form>
 
-    <!-- 二、注册模板：光猫上线时按优先级匹配，命中哪条就套哪套模板 -->
     <div class="reg-block-title">
       ONT 注册模板
       <el-checkbox v-model="onlyCurrentOlt" class="reg-block-extra">只显示当前 OLT 模板</el-checkbox>
@@ -149,7 +147,6 @@
       </div>
     </div>
 
-    <!-- 三、自动发现：设备上等着授权的光猫 -->
     <div class="reg-block-title">
       ONT 自动发现
       <span class="reg-block-extra">当前 {{ discovered.length }} 条待注册</span>
@@ -211,7 +208,6 @@
       </div>
     </div>
 
-    <!-- 四、注册记录：后台自动注册跑了什么，只能在这儿看出来 -->
     <div class="reg-block-title">
       ONT 注册记录
       <span class="reg-block-extra">最近 {{ records.length }} 条</span>
@@ -249,7 +245,7 @@
       </el-table-column>
     </el-table>
 
-    <!-- 一键注册确认：命令由后端编，这里先把要做什么摊开确认 -->
+    <!-- 下发前把命令序列摊开确认 -->
     <el-dialog :visible.sync="registerVisible" title="一键注册" width="620px" append-to-body>
       <div class="reg-preview-tip">
         命令序列由后端按模板编排，确认后真下发到设备；一台失败不影响其它台。
@@ -284,7 +280,6 @@
       </div>
     </el-dialog>
 
-    <!-- 新建/编辑模板 -->
     <olt-ont-reg-template-dialog
       :visible.sync="templateDialogVisible"
       :template="editingTemplate"
@@ -296,7 +291,7 @@
 </template>
 
 <script>
-import OltHelpLabel from './OltHelpLabel'
+import OltHelpLabel from '../common/OltHelpLabel'
 import OltOntRegTemplateDialog from './OltOntRegTemplateDialog'
 import {
   fetchOntAutofind,
@@ -312,25 +307,9 @@ import {
   fetchOltOptions
 } from '@/api/olt'
 
-/**
- * ONT 注册 / 自动注册。
- *
- * <p>三块：自动注册参数、注册模板（按优先级匹配）、自动发现（设备上待授权的光猫）。
- * 模板和参数都存库，换台电脑打开、后台定时任务跑的都是同一份。</p>
- *
- * <p>注册记录单独一块：自动注册是后台跑的，页面上只能从记录里看出
- * 哪台注册了、套了哪条模板、没成的因为什么。</p>
- */
+/** ONT 注册面板：自动注册参数、注册模板、自动发现与注册记录 */
 
-/**
- * 接口返回的参数翻成页面上的：后端存的是 0/1，页面上是开关。
- *
- * <p>这里不准备任何默认值——扫描间隔、存盘时间、并发这些默认值只有后端一份
- * （见后端的 {@code config(oltId)} 与建表脚本的 DEFAULT）。前端再抄一份，
- * 后端改了默认值页面还是老样子，看不出来。</p>
- *
- * @return 后端没给数据（接口异常）时返回 null，调用方保留原值、不自己编数字
- */
+/** 接口参数翻成页面开关（0/1 → 布尔），默认值只有后端一份；接口没给数据时返回 null */
 function toViewConfig(config) {
   if (!config) {
     return null
@@ -342,7 +321,6 @@ function toViewConfig(config) {
     concurrency: config.concurrency,
     autoMove: config.autoMove === 1,
     autoDeleteOffline: config.autoDeleteOffline === 1,
-    // 后台任务的痕迹：页面上显示出来，一眼看出任务活着没有
     lastScanAt: config.lastScanAt || null,
     lastRegisterAt: config.lastRegisterAt || null,
     lastSaveAt: config.lastSaveAt || null
@@ -377,7 +355,7 @@ export default {
   },
   data() {
     return {
-      // 打开后由后端填；接口还没回来时是空壳，不在这里放任何默认值
+      // 默认值由后端定，接口回来前是空壳
       autoConfig: toViewConfig({}),
       scanning: false,
       templates: [],
@@ -445,7 +423,7 @@ export default {
         this.reload()
       }
     },
-    // 勾上「只显示当前 OLT 模板」重新拉一次：让库来挑，不在前端比对
+    // 过滤交给后端
     onlyCurrentOlt() {
       this.reload()
     }
@@ -464,26 +442,19 @@ export default {
       const labels = this.codeTables.authModeLabels || {}
       return labels[mode] || '-'
     },
-    /**
-     * 从库里读模板、自动注册参数、注册记录。
-     *
-     * <p>模板原来存在浏览器本地，换台电脑打开就空了，后台定时任务也看不到——
-     * 现在都走接口，页面和定时任务用的是同一份。</p>
-     */
+    /** 从后端读模板、自动注册参数与注册记录 */
     async reload() {
       if (!this.oltId) {
         return
       }
-      // 自动发现结果不落草稿：那是设备上实时的东西，缓存下来反而会显示已经注册掉的光猫
+      // 自动发现是设备实时状态，不缓存
       this.discovered = []
       this.registerTemplateId = ''
       const [configResult, templateResult, recordResult] = await Promise.all([
         fetchOntRegConfig(this.oltId).catch(() => ({ data: null })),
-        // 过滤交给后端：库里就有 olt_id，后端按「不限设备 + 这台设备」挑比前端比对 IP 准
         fetchOntRegTemplates(this.oltId, this.onlyCurrentOlt).catch(() => ({ data: [] })),
         fetchOntRegRecords(this.oltId, 50).catch(() => ({ data: [] }))
       ])
-      // 后端没给数据时保留原值，不自己编一份默认值出来
       const view = toViewConfig(configResult.data)
       if (view) {
         this.autoConfig = view
@@ -497,8 +468,7 @@ export default {
       this.records = recordResult.data || []
       this.seq = this.templates.length + 1
     },
-    // 「上次扫描 / 注册 / 存盘」的时间文本由后端随参数给（lastScanText 等），页面不再判今天
-    /** 不等下一轮扫描，立刻按当前参数跑一轮（和后台任务同一条路径） */
+    /** 不等下一轮扫描，立刻按当前参数跑一轮 */
     async runScanOnce() {
       if (!this.oltId || this.scanning) {
         return
@@ -521,7 +491,7 @@ export default {
       }
       try {
         const result = await saveOntRegConfig(this.oltId, toServerConfig(this.autoConfig))
-        // 用后端存下的那份回填：填了越界的值后端会夹回，页面要显示真正生效的那个
+        // 用后端存下的那份回填（越界值已被夹回）
         const saved = toViewConfig(result.data)
         if (saved) {
           this.autoConfig = saved
@@ -539,11 +509,7 @@ export default {
       this.editingTemplate = row
       this.templateDialogVisible = true
     },
-    /**
-     * 保存一条模板：交给后端入库，成功后按后端返回的列表重排。
-     *
-     * <p>不在本地拼 id：模板要被后台定时任务拿去匹配，本地造的 id 出了这个页面就没意义。</p>
-     */
+    /** 保存模板入库，成功后用后端返回回填并按优先级排序 */
     async submitTemplate(form) {
       if (!this.oltId) {
         return
@@ -557,7 +523,6 @@ export default {
           enabled: form.enabled === false ? 0 : 1
         })
         this.$message.success('注册模板已保存')
-        // 用后端返回的这条回填，id 是真的库里 id，后面编辑/删除才找得着
         const saved = result.data
         if (saved && saved.id) {
           const index = this.templates.findIndex(item => item.id === saved.id)
@@ -570,16 +535,13 @@ export default {
         } else {
           await this.reload()
         }
-        // 优先级小的排前面，和匹配顺序一致
         this.templates.sort((a, b) => Number(a.priority) - Number(b.priority))
       } catch (e) {
         this.$message.error(e && e.message ? e.message : '保存模板失败')
       }
     },
-    /** 启用/停用：这条模板还留在库里，只是不再参与匹配 */
+    /** 启用/停用模板，失败时把开关拨回去 */
     async onToggleEnabled(row) {
-      // 先在 await 前把目标值定下来：await 之后 row.enabled 可能已经被别的改动覆盖，
-      // 回滚时不能用「取反」这种依赖当前值的写法
       const target = row.enabled
       try {
         await saveOntRegTemplate(this.oltId, {
@@ -589,8 +551,7 @@ export default {
         })
         this.$message.info(row.name + (target ? ' 已启用' : ' 已停用'))
       } catch (e) {
-        // 保存失败就把开关拨回去：整行换掉而不是改 row.enabled，
-        // 免得 await 期间这一行已经被别处改动过
+        // 保存失败把开关拨回去
         const index = this.templates.findIndex(item => item.id === row.id)
         if (index >= 0) {
           this.$set(this.templates, index, { ...row, enabled: !target })
@@ -629,12 +590,7 @@ export default {
         })
         .catch(() => {})
     },
-    /**
-     * 采设备上的待注册光猫：实时登 OLT 跑 display ont autofind all。
-     *
-     * <p>这是设备上这一瞬间的状态，一次次查的结果可能不一样（光猫注册完就从表里消失），
-     * 所以不做缓存、也不写草稿，每次点都真去采。</p>
-     */
+    /** 采设备上的待注册光猫（display ont autofind all），实时状态不缓存 */
     async discover() {
       if (!this.oltId) {
         return
@@ -665,21 +621,12 @@ export default {
           this.$message.success('采到 ' + this.discovered.length + ' 个待注册光猫')
         }
       } catch (e) {
-        // 报错多半是设备不认命令或者解析失败，把原因直接摆出来比空列表好排查
         this.$message.error(e && e.message ? e.message : '采集失败')
       } finally {
         this.discovering = false
       }
     },
-    /**
-     * 一键注册：先让后端把命令编出来给人看，确认了才真下发。
-     *
-     * <p>命令由后端按模板编排（{@code ont confirm}），页面不自己拼命令——
-     * 命令写法是设备知识，写在前端迟早跟设备版本对不上。</p>
-     *
-     * <p>下发逐台独立：一台失败（SN 重复、模板套不上）不影响其它台，
-     * 结果按台摊开显示。</p>
-     */
+    /** 一键注册：先向后端要命令预览，确认后才逐台下发 */
     async registerChecked() {
       const template = this.templates.find(item => item.id === this.registerTemplateId)
       if (!template) {
@@ -733,7 +680,6 @@ export default {
         if (failed === 0) {
           this.$message.success('已注册 ' + ok + ' 台')
         } else {
-          // 逐台结果摊开：哪台没成、因为什么，比一句「部分失败」有用
           const reasons = list.filter(item => !item.success)
             .map(item => (item.sn || item.fsp) + '：' + (item.message || '失败'))
           this.$message({
@@ -777,7 +723,6 @@ export default {
   font-weight: 400;
 }
 
-/* 注册确认：把「还没接下发」和「这次要做什么」都说清楚 */
 .reg-preview-tip {
   padding: 6px 10px;
   margin-bottom: 8px;
@@ -795,7 +740,6 @@ export default {
   line-height: 1.8;
 }
 
-/* 参数区沿用截图那种紧凑下划线表单 */
 .reg-auto-status {
   display: flex;
   flex-wrap: wrap;
@@ -840,7 +784,6 @@ export default {
   }
 }
 
-/* 底部一行：左边任务时间，右边操作按钮 */
 .reg-auto-footer {
   display: flex;
   align-items: center;
@@ -862,7 +805,6 @@ export default {
   font-size: 12px;
 }
 
-/* 下发前把命令原样摆出来：命令是后端按模板编的，现场要能一眼核对 */
 .reg-preview-title {
   margin-bottom: 4px;
   color: #4a5b6c;

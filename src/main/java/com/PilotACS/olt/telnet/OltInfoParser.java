@@ -1110,9 +1110,9 @@ public final class OltInfoParser {
 
     private static final Pattern LINE_GEM_MODE = Pattern.compile("(?i)mapping\\s+mode\\s+(\\S+)");
 
-    /** 配置脚本模板概要行 */
+    /** 配置脚本模板概要行（gpon/epon 都认） */
     private static final Pattern LINE_PROFILE_CONFIG = Pattern.compile(
-            "(?i)ont-lineprofile\\s+gpon\\s+profile-id\\s+(\\d{1,4})\\s+profile-name\\s+\"?([^\"\\s]+)\"?");
+            "(?i)ont-lineprofile\\s+(gpon|epon)\\s+profile-id\\s+(\\d{1,4})\\s+profile-name\\s+\"?([^\"\\s]+)\"?");
 
     /** 明细回显的 T-CONT 块头 */
     private static final Pattern LINE_TCONT_BLOCK = Pattern.compile(
@@ -1371,9 +1371,9 @@ public final class OltInfoParser {
             Matcher headConfig = LINE_PROFILE_CONFIG.matcher(line);
             if (headConfig.find()) {
                 OltLineProfile profile = new OltLineProfile();
-                profile.setProfileId(Integer.parseInt(headConfig.group(1)));
-                profile.setName(headConfig.group(2));
-                profile.setType("gpon");
+                profile.setPonType(headConfig.group(1).toLowerCase(Locale.ROOT));
+                profile.setProfileId(Integer.parseInt(headConfig.group(2)));
+                profile.setName(headConfig.group(3));
                 profiles.add(profile);
                 current = profile;
                 continue;
@@ -1383,7 +1383,6 @@ public final class OltInfoParser {
                 OltLineProfile profile = new OltLineProfile();
                 profile.setProfileId(Integer.parseInt(head.group(1)));
                 profile.setName(head.group(2));
-                profile.setType(head.group(3));
                 profiles.add(profile);
                 current = profile;
             }
@@ -1434,9 +1433,21 @@ public final class OltInfoParser {
         return ports;
     }
 
-    /** TR069 模板概要行 */
+    /** TR069 模板概要行（带 ACS 地址列的表格） */
     private static final Pattern TR069_ROW = Pattern.compile(
             "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(https?://\\S+)(?:\\s+(\\S+))?");
+
+    /** TR069 模板概要行（只有 ID/名称/绑定数三列，如华为 display ont tr069-server-profile all） */
+    private static final Pattern TR069_SUMMARY_ROW = Pattern.compile(
+            "(?im)^\\s*(\\d{1,4})\\s+(\\S+)\\s+(\\d{1,6})\\s*$");
+
+    /** 完整 ACS 地址：scheme 后面必须有内容，防终端折行截出来的 "http://" 冒充地址 */
+    private static final Pattern TR069_FULL_URL =
+            Pattern.compile("^(https?|tr069)://\\S+$", Pattern.CASE_INSENSITIVE);
+
+    /** 模板详情的 key : value 行（key 以字母开头，排除 URL 折行出来的 "//10.x.x.x:9090/" 之类） */
+    private static final Pattern TR069_DETAIL_KV = Pattern.compile(
+            "^([A-Za-z][A-Za-z0-9 /-]*)\\s*:\\s*(.*)$");
 
     /** 配置脚本 TR069 模板行 */
     private static final Pattern TR069_CONFIG = Pattern.compile(
@@ -1473,24 +1484,39 @@ public final class OltInfoParser {
         if (!profiles.isEmpty()) {
             return profiles;
         }
+        Matcher summary = TR069_SUMMARY_ROW.matcher(text);
+        while (summary.find()) {
+            OltTr069Profile profile = new OltTr069Profile();
+            profile.setProfileId(Integer.parseInt(summary.group(1)));
+            profile.setName(summary.group(2));
+            profile.setBindTimes(Integer.parseInt(summary.group(3)));
+            profiles.add(profile);
+        }
+        if (!profiles.isEmpty()) {
+            return profiles;
+        }
         for (LinkedHashMap<String, String> block : parseOntKeyValueBlocks(text)) {
             OltTr069Profile profile = new OltTr069Profile();
             boolean hasId = false;
             for (Map.Entry<String, String> entry : block.entrySet()) {
                 String key = entry.getKey();
                 String value = entry.getValue();
-                if (key.contains("Profile-ID")) {
+                if (key.toLowerCase(Locale.ROOT).contains("profile-id")) {
                     Integer id = toInt(value);
                     if (id != null) {
                         profile.setProfileId(id);
                         hasId = true;
                     }
-                } else if (key.contains("Profile-name")) {
+                } else if (key.toLowerCase(Locale.ROOT).contains("profile-name")) {
                     profile.setName(value);
                 } else if (key.toLowerCase(Locale.ROOT).contains("url")) {
-                    profile.setUrl(value);
+                    if (value != null && TR069_FULL_URL.matcher(value).matches()) {
+                        profile.setUrl(value);
+                    }
                 } else if (key.toLowerCase(Locale.ROOT).contains("user")) {
-                    profile.setUser(value);
+                    if (value != null && !value.isBlank() && !"-".equals(value)) {
+                        profile.setUser(value);
+                    }
                 }
             }
             if (hasId) {
@@ -1498,6 +1524,80 @@ public final class OltInfoParser {
             }
         }
         return profiles;
+    }
+
+    /**
+     * 解析单条 TR069 模板详情（{@code display ont tr069-server-profile profile-id X}）
+     * 并按模板 ID 合进列表，补 ACS 地址与登录账号。
+     *
+     * <p>终端按宽度折行会把 URL 截成 "http://" 加下一行，这里逐行接回来直到地址完整；
+     * 接不全的地址宁可不填，也不能把半截 URL 当数据显示。</p>
+     */
+    public static void mergeTr069ProfileDetail(String text, List<OltTr069Profile> profiles) {
+        if (text == null || text.isBlank() || profiles == null || profiles.isEmpty()) {
+            return;
+        }
+        String[] lines = text.split("\\R");
+        Integer id = null;
+        String url = null;
+        String user = null;
+        Integer boundTimes = null;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            Matcher kv = TR069_DETAIL_KV.matcher(line);
+            if (!kv.matches()) {
+                continue;
+            }
+            String key = kv.group(1).trim();
+            String value = kv.group(2).trim();
+            String lower = key.toLowerCase(Locale.ROOT);
+            if (lower.contains("profile-id") && id == null) {
+                id = toInt(value);
+            } else if (lower.contains("url")) {
+                StringBuilder builder = new StringBuilder(value);
+                while (!TR069_FULL_URL.matcher(builder).matches() && i + 1 < lines.length) {
+                    String next = lines[i + 1].trim();
+                    if (next.isEmpty() || TR069_DETAIL_KV.matcher(next).matches()
+                            || next.matches("-{8,}.*") || next.matches("(?i)(display|total).*")
+                            || next.matches("(?i).*\\(config\\).*")) {
+                        break;
+                    }
+                    builder.append(next);
+                    i++;
+                }
+                if (TR069_FULL_URL.matcher(builder).matches()) {
+                    url = builder.toString();
+                }
+            } else if (lower.contains("user") && !value.isBlank() && !"-".equals(value)) {
+                user = value;
+            } else if (lower.contains("binding")) {
+                Integer bound = toInt(value);
+                if (bound != null) {
+                    boundTimes = bound;
+                }
+            }
+        }
+        if (id == null || (url == null && user == null && boundTimes == null)) {
+            return;
+        }
+        Integer foundId = id;
+        String foundUrl = url;
+        String foundUser = user;
+        Integer foundBound = boundTimes;
+        profiles.stream()
+                .filter(profile -> foundId.equals(profile.getProfileId()))
+                .findFirst()
+                .ifPresent(profile -> {
+                    if (foundUrl != null) {
+                        profile.setUrl(foundUrl);
+                    }
+                    if (foundUser != null) {
+                        profile.setUser(foundUser);
+                    }
+                    if (foundBound != null && profile.getBindTimes() == null) {
+                        profile.setBindTimes(foundBound);
+                    }
+                });
     }
 
     private static final Pattern GEM_INDEX = Pattern.compile("<Gem\\s+Index\\s+(\\d+)\\s*>");

@@ -370,6 +370,13 @@ public class OltTelnetService {
                 session -> session.collectLineProfile(profileId, ponType));
     }
 
+    /** 重读线路模板总表（display ont-lineprofile gpon all / epon all 两张） */
+    public List<OltLineProfile> collectLineProfileList(OltDevice device) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.collectLineProfileList());
+    }
+
     /** 清空业务板上的全部 ONT */
     public List<OltOntDeleteResult> deleteBoardOnts(OltDevice device, List<Integer> slots) throws IOException {
         Charset charset = OltCharset.resolve(device.getCharset());
@@ -639,6 +646,23 @@ public class OltTelnetService {
                                       boolean tolerateExisting) throws IOException {
         return sessionPool.execute(device, charset, charsetStrict(device, charset),
                 session -> session.sendConfigCommands(commands, tolerateExisting));
+    }
+
+    /** 宽松下发：被拒命令不中断后续（保证 commit/quit 执行），全部发完再抛首个拒绝 */
+    public List<String> sendConfigRelaxed(OltDevice device, List<String> commands) throws IOException {
+        Charset charset = OltCharset.resolve(device.getCharset());
+        List<String> outputs = doSendConfigRelaxed(device, charset, commands);
+        if (OltCharset.isAuto(device.getCharset())
+                && outputs.stream().anyMatch(out -> out != null && out.indexOf('\uFFFD') >= 0)) {
+            return doSendConfigRelaxed(device, OltCharset.fallback(), commands);
+        }
+        return outputs;
+    }
+
+    private List<String> doSendConfigRelaxed(OltDevice device, Charset charset, List<String> commands)
+            throws IOException {
+        return sessionPool.execute(device, charset, charsetStrict(device, charset),
+                session -> session.sendConfigCommandsRelaxed(commands));
     }
 
     /** 判断会话字符集是否需严格匹配 */

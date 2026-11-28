@@ -27,6 +27,7 @@ import com.PilotACS.olt.model.OltLinkAggregationRequest;
 import com.PilotACS.olt.model.OltOntDeleteRequest;
 import com.PilotACS.olt.model.OltOntResetRequest;
 import com.PilotACS.olt.model.OltOntQueryRequest;
+import com.PilotACS.olt.model.OltLineProfileCreateRequest;
 import com.PilotACS.olt.model.OltLineProfileForm;
 import com.PilotACS.olt.model.OltLineProfilePreviewRequest;
 import com.PilotACS.olt.model.OltTcontRequest;
@@ -445,6 +446,36 @@ public class OltController {
         } catch (Exception e) {
             Logs.error(Logs.Module.OLT, "线路模板命令预演异常 id={}", id, e);
             return Result.fail("命令预演失败：" + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "新增 ONT 线路模板：建模板+绑 DBA+VLAN 映射+TR069 管理，成功后自动重采返回最新数据")
+    @PostMapping("/{id}/line-profile/create")
+    public Result<OltDetail> createLineProfile(@PathVariable Long id,
+                                               @RequestBody OltLineProfileCreateRequest request,
+                                               HttpServletRequest httpRequest) {
+        try {
+            return Result.ok(oltService.createLineProfile(id, request, operator(httpRequest)));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.OLT, "新增线路模板异常 id={}", id, e);
+            return Result.fail("新增线路模板失败：" + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "删除勾选的线路模板：先清模板内配置再删模板，成功后自动重采返回最新数据")
+    @PostMapping("/{id}/line-profile/delete")
+    public Result<OltDetail> deleteLineProfiles(@PathVariable Long id,
+                                                @RequestBody List<Integer> profileIds,
+                                                HttpServletRequest httpRequest) {
+        try {
+            return Result.ok(oltService.deleteLineProfiles(id, profileIds, operator(httpRequest)));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return Result.fail(e.getMessage());
+        } catch (Exception e) {
+            Logs.error(Logs.Module.OLT, "删除线路模板异常 id={}", id, e);
+            return Result.fail("删除线路模板失败：" + e.getMessage());
         }
     }
 

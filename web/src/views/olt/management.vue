@@ -1,11 +1,10 @@
 <template>
   <div class="app-container olt-layout">
-    <!-- 左：分组树筛选（只读复用设备根域的树，选中后右侧只出组内 OLT） -->
+    <!-- 左：分组树筛选 -->
     <olt-group-tree @node-select="onGroupSelect" @device-select="onDeviceSelect" />
 
     <!-- 右：OLT 资源信息 + 厂商面板 -->
     <div class="olt-main-col">
-      <!-- 顶部：OLT 资源信息，下拉切换哪一台 -->
       <el-card shadow="never" class="olt-top-card">
         <div slot="header" class="olt-top-head">
           <span class="olt-title">OLT/ONU 管理</span>
@@ -37,7 +36,7 @@
             <el-select
               v-model="selectedId"
               size="small"
-              style="width:260px"
+              style="width:140px"
               filterable
               placeholder="请选择 OLT"
             >
@@ -136,7 +135,7 @@
         </template>
       </el-card>
 
-      <!-- 主体：按下拉选中的厂商渲染对应视图，切设备当场换面板，不用来回跳页面 -->
+      <!-- 按厂商渲染对应视图，切设备当场换面板 -->
       <china-map v-if="mapVisible" member-type="OLT" title="OLT 省份分布" @province-select="mapVisible = false" />
 
       <component
@@ -152,15 +151,13 @@
 </template>
 
 <script>
-import OltGroupTree from './components/OltGroupTree'
+import OltGroupTree from './components/common/OltGroupTree'
 import ChinaMap from '@/components/ChinaMap'
 import { fetchOltList, testOltById, quickSyncOlt, fetchOltSessionPool, setOltKeepalive, saveOltConfig, rebootOlt } from '@/api/olt'
 import { fetchGroupMembers } from '@/api/group'
 import { componentOfVendor } from './vendors'
 
-/**
- * OLT 管理页：上面下拉选哪一台，下面就按厂商出哪一套面板。
- */
+/** OLT 管理页：下拉选设备，按厂商渲染对应面板 */
 export default {
   name: 'OltManagement',
   components: { OltGroupTree, ChinaMap },
@@ -177,25 +174,24 @@ export default {
       mapVisible: false,
       resources: [],
       selectedId: null,
-      // 台账列表的自动刷新（30 秒起），默认关；面板数据由视图自己按 10 秒拉
+      // 台账列表的自动刷新，默认关；面板数据由视图自己拉
       autoRefresh: false,
       pollSeconds: 30,
       pollTimer: null,
-      // Telnet 会话保活开关（后端长连接管理）：开 = 每台 OLT 一条长连接 + 定期 display client 探活；
-      // 关 = 连接 1 分钟没人用就 quit 退出登录。状态从后端取，取到前不允许切换
+      // Telnet 会话保活开关（后端长连接管理），状态从后端取，取到前不允许切换
       keepalive: false,
       keepaliveMinutes: 2,
-      // 可选的探活档位由后端给（后端只认这几档，页面不写死）
+      // 可选的探活档位由后端给，页面不写死
       keepaliveMinuteOptions: [],
       keepaliveReady: false,
-      // 分组筛选：null = 全部；选中节点后只显示组内成员 OLT
+      // 分组筛选：null = 全部
       groupFilterRef: null,
       groupFilterName: '',
       groupOltIds: null
     }
   },
   computed: {
-    /** 下拉选中的那台；列表刷新后可能不在里面了（被删），退回空对象 */
+    /** 下拉选中的那台；列表刷新后可能已被删，退回空对象 */
     selected() {
       return this.filteredResources.find(item => String(item.id) === String(this.selectedId)) || {}
     },
@@ -206,11 +202,11 @@ export default {
       }
       return this.resources.filter(item => this.groupOltIds.includes(String(item.id)))
     },
-    /** 按厂商挑视图组件：华为出华为面板，其它厂商（鸿升光/中兴/烽火…）都出第三方面板 */
+    /** 按厂商挑视图组件 */
     vendorView() {
       return componentOfVendor(this.selected.vendor)
     },
-    /** 固件版本串与状态中文/配色都由后端随台账视图给，台账页与详情页共用同一份口径 */
+    /** 固件版本与状态文案由后端统一下发 */
     firmwareText() {
       return this.selected.firmwareText || '-'
     },
@@ -301,7 +297,7 @@ export default {
             this.preselectId = null
             return
           }
-          // 还没选、或者选的那台已经没了（被删），就默认选第一台
+          // 还没选、或选中的那台已被删，就默认选第一台
           if (!this.selectedId || !this.resources.some(item => String(item.id) === String(this.selectedId))) {
             this.selectedId = this.resources.length ? this.resources[0].id : null
           }
@@ -317,14 +313,14 @@ export default {
         .then(res => {
           const data = res.data || {}
           this.keepalive = !!data.keepaliveEnabled
-          // 分钟档位与可选清单都由后端算好（后端会把非整档就近落档），页面不再换算
+          // 分钟档位由后端算好，页面不再换算
           this.keepaliveMinutes = data.keepaliveMinutes || 2
           this.keepaliveMinuteOptions = data.keepaliveMinuteOptions || []
           this.keepaliveReady = true
         })
         .catch(() => {})
     },
-    /** 切换保活开关/周期：成不了功就把开关回退，并提示后端的拒绝原因 */
+    /** 切换保活开关/周期：失败就把开关回退 */
     handleKeepaliveChange() {
       if (!this.keepaliveReady) return
       const target = this.keepalive
@@ -332,7 +328,7 @@ export default {
         .then(res => {
           const data = res.data || {}
           this.keepalive = !!data.keepaliveEnabled
-          // 长连接模式与空闲退出时长都是后端常量，文案按返回的数字说，不写死「1 分钟」
+          // 文案按后端返回的数字生成，不写死
           this.$message.success(target
             ? '会话保活已开启：每台 OLT 保持 1 条长连接常驻登录，' +
               this.keepaliveMinutes + ' 分钟探活一次'
@@ -399,17 +395,11 @@ export default {
           this.savingConfig = false
         })
     },
-    /**
-     * 设备重启：三段防误触——
-     * 1) 确认「会导致所有 ONT 业务中断」；
-     * 2) 输入 web 超级管理员密码（后端与登录同口径核验，错了直接拒）；
-     * 3) 再次点击「设备重启」→ 再确认一次 → 点「是」才真正下发 reboot。
-     * 业务失败提示由 request 拦截器统一弹，这里只兜确认框的取消。
-     */
+    /** 设备重启三段防误触：确认业务中断 → 核验超管密码 → 再次点击最终确认 */
     handleReboot() {
       if (!this.selectedId) return
       if (this.rebootPassword) {
-        // 第二次点击：密码已核对过，这里是最终确认
+        // 密码已核对，这里是最终确认
         this.$confirm(
           '超级管理员密码已核对。最后确认：重启将导致所有 ONT 业务中断，确定立即下发重启命令？',
           '设备重启',
@@ -427,7 +417,7 @@ export default {
           })
           .catch(e => {
             if (e === 'cancel' || e === 'close') return
-            // 业务错误 request 拦截器已弹过（密码错/下发失败），这里不再重复提示
+            // 业务错误已由 request 拦截器统一提示
           })
           .finally(() => {
             this.rebooting = false
@@ -460,7 +450,6 @@ export default {
 <style lang="scss" scoped>
 @import '~@/styles/olt.scss';
 
-/* 左树右面板布局：分组树固定宽并与右侧面板等高（flex 默认 stretch） */
 .olt-layout {
   display: flex;
   gap: 16px;

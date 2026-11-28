@@ -57,10 +57,7 @@
 <script>
 import OltChassis from './OltChassis'
 
-/**
- * 板卡卡片区：按机框插槽竖着并排的板卡面板 + 展开后的 ONT 明细。
-
- */
+/** 板卡卡片区：机框视图 + 展开后的 ONT 明细。 */
 export default {
   name: 'OltBoardCards',
   components: { OltChassis },
@@ -69,7 +66,7 @@ export default {
       type: Array,
       default: () => []
     },
-    /** 展开状态与 hover 状态由父持有（mixin 里的数据），这里只负责判定 */
+    /** 展开状态由父组件持有 */
     expandedOnts: {
       type: Object,
       default: () => ({})

@@ -221,6 +221,133 @@ public class HuaweiOltProfile extends AbstractOltVendorProfile {
         return "ont modify " + port + ' ' + ontId + " desc \"" + text + "\"";
     }
 
+    /** 是否支持页面读写下发 TR-069 模板 */
+    @Override
+    public boolean supportsTr069Profile() {
+        return true;
+    }
+
+    @Override
+    public List<String> tr069ProfileQueryCommands() {
+        return List.of("display ont tr069-server-profile all");
+    }
+
+    /** 拼接 TR-069 模板新增命令：ont tr069-server-profile add profile-id 10 profile-name acs url http://x user acs acs123 */
+    @Override
+    public List<String> createTr069ProfileCommands(com.PilotACS.olt.model.OltTr069ProfileRequest request) {
+        if (request == null || request.getProfileId() == null) {
+            return List.of();
+        }
+        StringBuilder command = new StringBuilder("ont tr069-server-profile add profile-id ")
+                .append(request.getProfileId());
+        appendTr069Arg(command, "profile-name", request.getProfileName());
+        appendTr069Arg(command, "url", request.getUrl());
+        String user = trimToNull(request.getAcsUsername());
+        String password = trimToNull(request.getAcsPassword());
+        if (user != null) {
+            command.append(" user ").append(user);
+            if (password != null) {
+                command.append(' ').append(password);
+            }
+        }
+        return List.of(command.toString());
+    }
+
+    /** 解析 TR-069 模板列表（display 表格 / 配置脚本两种回显都认） */
+    @Override
+    public List<com.PilotACS.olt.model.OltTr069Profile> parseTr069Profiles(String text) {
+        return OltInfoParser.parseTr069Profiles(text);
+    }
+
+    /** display all 只有 ID/名称/绑定数，ACS 地址与账号要逐条查详情 */
+    @Override
+    public String tr069ProfileDetailCommand(int profileId) {
+        return "display ont tr069-server-profile profile-id " + profileId;
+    }
+
+    /**
+     * 新建 ONT 线路模板命令序列。
+     *
+     * <p>GPON：进模板视图 → tcont 1 绑 DBA → 每个 VLAN 一个 GEM Port + 映射 →
+     * 可选 tr069-management enable → commit；EPON：进模板视图 → llid 绑 DBA → commit。
+     * 与一键开局里 {@code HuaweiQuickSetupPlanner} 那套命令同款。</p>
+     */
+    @Override
+    public List<String> createLineProfileCommands(com.PilotACS.olt.model.OltLineProfileCreateRequest request) {
+        if (request == null || request.getProfileId() == null || request.getDbaProfileId() == null) {
+            return List.of();
+        }
+        boolean epon = "EPON".equalsIgnoreCase(request.getPonType());
+        String pon = epon ? "epon" : "gpon";
+        List<String> commands = new ArrayList<>();
+        commands.add("ont-lineprofile " + pon + " profile-id " + request.getProfileId()
+                + " profile-name \"" + request.getName().trim() + "\"");
+        if (epon) {
+            commands.add("llid dba-profile-id " + request.getDbaProfileId());
+        } else {
+            commands.add("tcont 1 dba-profile-id " + request.getDbaProfileId());
+            int gem = 0;
+            for (Integer vlan : request.vlanIds()) {
+                commands.add("gem add " + gem + " eth tcont 1 encrypt on");
+                commands.add("gem mapping " + gem + " 0 vlan " + vlan);
+                gem++;
+            }
+            if (Boolean.TRUE.equals(request.getTr069Enable())) {
+                commands.add("tr069-management enable");
+                commands.add("tr069-management ip-index 0");
+            }
+        }
+        commands.add("commit");
+        commands.add("quit");
+        return commands;
+    }
+
+    /**
+     * 删除 ONT 线路模板命令序列（MA5680T 实测）。GPON：进模板视图 → 逐个 undo GEM 映射 →
+     * commit（视图里的 undo 不 commit 不生效）→ quit → 删模板本身，残留的 GEM/T-CONT
+     * 随模板一起删掉，不用逐个 undo；EPON 没有 GEM/T-CONT，不用进视图清理，直接删模板。
+     */
+    @Override
+    public List<String> deleteLineProfileCommands(String ponType, int profileId,
+                                                  com.PilotACS.olt.model.OltLineProfile line) {
+        if ("epon".equalsIgnoreCase(ponType)) {
+            return List.of("undo ont-lineprofile epon profile-id " + profileId);
+        }
+        List<String> commands = new ArrayList<>();
+        commands.add("ont-lineprofile gpon profile-id " + profileId);
+        if (line != null && line.getGemports() != null) {
+            for (com.PilotACS.olt.model.OltGemport gem : line.getGemports()) {
+                if (gem.getGemportId() == null || gem.getMappings() == null) {
+                    continue;
+                }
+                for (com.PilotACS.olt.model.OltGemMapping mapping : gem.getMappings()) {
+                    if (mapping.getIndex() != null) {
+                        commands.add("undo gem mapping " + gem.getGemportId()
+                                + " " + mapping.getIndex());
+                    }
+                }
+            }
+        }
+        commands.add("commit");
+        commands.add("quit");
+        commands.add("undo ont-lineprofile gpon profile-id " + profileId);
+        return commands;
+    }
+
+    private static void appendTr069Arg(StringBuilder command, String key, String value) {
+        String text = trimToNull(value);
+        if (text != null) {
+            command.append(' ').append(key).append(' ').append(text);
+        }
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
     /** 是否支持 ONT 绑定 TR-069 服务器模板 */
     @Override
     public boolean supportsTr069ServerConfig() {

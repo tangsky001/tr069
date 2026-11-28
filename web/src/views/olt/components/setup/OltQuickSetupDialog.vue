@@ -152,21 +152,10 @@
 <script>
 import { previewQuickSetup, fetchQuickSetupForm, fetchTr069Form, fetchOltOptions } from '@/api/olt'
 
-/** 表单改动后隔多久重新算命令：输入 VLAN 时别每敲一个字符就打一次接口 */
+/** 表单改动后重新预览命令的防抖间隔 */
 const PREVIEW_DELAY_MS = 300
 
-/**
- * 一键开局弹窗。
- *
- * <p><b>这个组件不写任何设备命令。</b>命令怎么排（先建 VLAN 还是先改端口）、
- * 三种模式各用什么写法、VLAN 表达式怎么解析、哪些组合不合理，全由后端算：
- * 打开时取 {@code GET /api/olt/{id}/quick-setup/form} 拿可选模式和默认值，
- * 每次改动调 {@code POST /api/olt/{id}/quick-setup/preview} 拿这次会下发的命令。</p>
- *
- * <p>预览和实际下发走后端同一个 {@code quickSetupCommands}，所以页面上看到的
- * 必然就是即将下发的那条序列。以前前端自己拼一份，命令顺序一改两边就对不上，
- * 出现过「预览看着对、下发被设备拒绝」。</p>
- */
+/** 一键开局弹窗：命令编排与校验全在后端，这里取表单约束、预览并提交 */
 export default {
   name: 'OltQuickSetupDialog',
   props: {
@@ -174,19 +163,16 @@ export default {
       type: Boolean,
       default: false
     },
-    /** 设备 ID，取表单约束和命令预览要用 */
     oltId: {
       type: [Number, String],
       default: null
     },
-    /**
-     * 可选端口，来自已经采到的成员端口清单：{ type: 'epon'|'ge'|'xge', no: 1, label: 'PON01' }
-     */
+    /** 可选端口 { type, no, label }，来自已采集的端口清单 */
     ports: {
       type: Array,
       default: () => []
     },
-    /** 下发回调，返回 Promise；没给就只提示「后端还没接入」 */
+    /** 下发回调；为空时只提示后端未接入 */
     submitHandler: {
       type: Function,
       default: null
@@ -210,8 +196,7 @@ export default {
         portKeys: [],
         mode: 'trunk',
         vlanList: '',
-        // 一个 VLAN 输入框、一个「顺带创建」开关：放通和创建说的是同一批 VLAN，
-        // 分成两个输入框会出现「填了允许的 VLAN 却忘了建」这种开局事故
+        // 放通与创建说的是同一批 VLAN，用一个开关控制
         createVlans: true,
         tr069Enabled: false,
         tr069: {}
@@ -227,7 +212,7 @@ export default {
         this.$emit('update:visible', value)
       }
     },
-    /** 同名端口按类型分组，页面按组展示 + 给个「全选」 */
+    /** 端口按类型分组展示，每组给一个「全选」 */
     portGroups() {
       const groups = []
       const index = {}
@@ -283,7 +268,7 @@ export default {
     }
   },
   watch: {
-    // 表单一变就让后端重新算一遍命令，页面不再自己拼
+    // 表单一变就让后端重新算一遍命令
     form: {
       deep: true,
       handler() {
@@ -302,7 +287,7 @@ export default {
       await this.loadMeta()
       this.reset()
     },
-    /** 端口类型中文名等码表：后端一次给全，失败也不影响开局（标题退化成类型码） */
+    /** 端口类型中文名等码表；失败不影响开局，标题退化成类型码 */
     loadTables() {
       if (this.optionTables) {
         return Promise.resolve()
@@ -325,8 +310,6 @@ export default {
           fetchQuickSetupForm(this.oltId),
           fetchTr069Form(this.oltId)
         ])
-        // 接口回的是 { code, data }，这里取里面的 data——取错一层会让
-        // modes 变成 undefined，页面上「VLAN 模式」就只剩个标题、一个可选项都没有
         this.meta = setup.data || null
         this.tr069Meta = tr069.data || null
       } catch (e) {
@@ -373,7 +356,7 @@ export default {
       }
       this.previewTimer = setTimeout(() => this.runPreview(), PREVIEW_DELAY_MS)
     },
-    /** 让后端把这次要下发的命令算出来；填错的地方也由后端指出 */
+    /** 由后端算出本次要下发的命令，填错之处也由后端指出 */
     async runPreview() {
       if (!this.oltId) {
         return
@@ -381,8 +364,6 @@ export default {
       this.previewing = true
       try {
         const result = await previewQuickSetup(this.oltId, this.payload())
-        // 接口回的是 { code, data }：取错一层会变成「什么都算不出来」，
-        // 页面上明明勾了端口填了 VLAN，点下发却提示「没有可下发的命令」
         const data = result.data || {}
         this.preview = {
           commands: data.commands || [],
@@ -390,21 +371,21 @@ export default {
         }
         this.previewError = ''
       } catch (e) {
-        // 后端校验没过：预览区直接显示原因，命令清空，下发按钮也就点不动
+        // 校验没过：预览区显示原因并清空命令，下发也就点不动
         this.preview = { commands: [], warnings: [] }
         this.previewError = e && e.message ? e.message : '命令预演失败'
       } finally {
         this.previewing = false
       }
     },
-    /** 提交给后端的就是页面上的选择，命令怎么编由后端决定 */
+    /** 提交页面上的选择，命令编排由后端决定 */
     payload() {
       const vlanText = this.form.portModeEnabled ? String(this.form.vlanList || '').trim() : ''
       return {
         portModeEnabled: this.form.portModeEnabled,
         ports: this.selectedPorts,
         mode: this.form.mode,
-        // 放通和创建用的是同一份 VLAN 清单，勾了「顺带创建」就把它们也建出来
+        // 放通与创建共用同一份 VLAN 清单
         vlanList: vlanText,
         createVlanIds: this.form.createVlans ? vlanText : '',
         addCreatedToPorts: this.form.createVlans,
@@ -425,7 +406,7 @@ export default {
       }
     },
     submit() {
-      // 命令和校验都在后端：预览算不出来（填错了）就不下发
+      // 预览算不出来（填错了）就不下发
       if (this.previewError) {
         this.$message.warning(this.previewError)
         return
@@ -523,7 +504,7 @@ export default {
   color: #9aa7b4;
 }
 
-/* 后端给的提醒：不是错误，但不说清楚容易以为是漏配 */
+/* 后端给的提醒（非错误，但容易误当成漏配） */
 .quick-preview-warn {
   padding: 6px 10px;
   color: #8a6d3b;
@@ -533,14 +514,13 @@ export default {
   border-bottom: 1px solid #f5e6c0;
 }
 
-/* 输入框右侧的 range / ex 提示，和参考图一样灰字靠右 */
+/* 输入框右侧的 range / ex 提示 */
 .quick-range {
   margin-left: 8px;
   color: #9aa7b4;
   font-size: 12px;
 }
 
-/* 输入框下方的说明，一行灰字 */
 .quick-field-tip {
   color: #9aa7b4;
   font-size: 12px;
@@ -559,7 +539,6 @@ export default {
   white-space: pre-wrap;
   word-break: break-all;
 
-  /* 校验没过时预览区显示的是后端给的原因 */
   &.is-error {
     color: #c0392b;
   }

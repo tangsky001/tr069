@@ -79,11 +79,7 @@
 </template>
 
 <script>
-/**
- * 链路聚合（OLA）面板：display link-aggregation all 实时展示聚合组；
- * 创建/删除按现场口径下发（华为 link-aggregation 0/17 0-1 ingress workmode lacp-static /
- * undo link-aggregation 0/17），查询与下发都由宿主页面经 mixin 完成，本组件只渲染。
- */
+/** 链路聚合面板：展示/创建/删除聚合组，查询与下发由父页面经 mixin 完成，本组件只渲染。 */
 export default {
   name: 'OltLinkAggregationPanel',
   props: {

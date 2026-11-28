@@ -965,7 +965,7 @@ import { fetchBizTemplates, executeBizTemplate } from '@/api/bizTemplate'
 import DeviceBusinessPanel from '@/components/DeviceBusinessPanel'
 import DeviceIdentityCell from '@/components/DeviceIdentityCell.vue'
 import DeviceRuntimeCell from '@/components/DeviceRuntimeCell.vue'
-import OltGroupTree from '@/views/olt/components/OltGroupTree'
+import OltGroupTree from '@/views/olt/components/common/OltGroupTree'
 
 // 轮询节奏不在页面写死：created 时从后端 /device/poll-config 取（见 loadPollConfig），
 // 现场要调快调慢只改后端配置。

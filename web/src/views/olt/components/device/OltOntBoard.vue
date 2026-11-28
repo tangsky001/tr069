@@ -54,11 +54,7 @@
 </template>
 
 <script>
-/**
- * ONT 配置 / 状态：按板卡分表，展开端口看该口下每条 ONT。
- *
- * GPON 设备上报 SN、EPON 设备上报 MAC，表头由外面给（snLabel）。
- */
+/** ONT 列表：按板卡分表，展开端口看该口下每条 ONT；表头由父组件给（snLabel）。 */
 export default {
   name: 'OltOntBoard',
   props: {

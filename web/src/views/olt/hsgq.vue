@@ -1,6 +1,6 @@
 <template>
   <div :class="{ 'app-container': !embedded }">
-    <!-- 嵌在台账页里时上面已经有下拉和按钮了，这里只出内容区 -->
+    <!-- 内嵌台账页时上面已有设备条，这里只出内容区 -->
     <olt-device-bar
       v-if="!embedded"
       :device="device"
@@ -41,7 +41,7 @@
             </div>
             <div>最近连接：{{ device.lastConnectAtText }}；最近同步：{{ device.lastSyncAtText }}</div>
             <div>{{ device.syncSummary || '尚未同步，点击「同步」采集' }}</div>
-            <!-- 数据以 OLT 为准：打开页面直连采一次，采不到才退回库里的快照 -->
+            <!-- 打开页面直连采集一次，采不到才退回库里的快照 -->
             <div class="olt-live" :class="{ 'olt-live-error': liveError }">{{ liveText }}</div>
           </div>
 
@@ -50,7 +50,7 @@
             <span v-if="boardSummary" class="board-summary">{{ boardSummary }}</span>
           </div>
 
-          <!-- 整机不是板卡：一台设备画一块前面板，PON 口 + 上联 GE/XGE + NMS/CONSOLE -->
+          <!-- 整机画一块前面板：PON 口 + 上联口 + NMS/CONSOLE -->
           <olt-hsgq-faceplate
             v-if="slots.length"
             :board="slots[0]"
@@ -94,7 +94,7 @@
         </el-tab-pane>
 
         <el-tab-pane label="ONU 列表" name="onu">
-          <!-- show onu-info all 采回来的 ONU：一条一行全平铺出来，按 PON 口排序 -->
+          <!-- ONU 一条一行平铺，按 PON 口排序 -->
           <olt-ont-list
             :ont-rows="ontRows"
             sn-label="MAC 地址"
@@ -122,7 +122,7 @@
         </el-tab-pane>
 
         <el-tab-pane label="TR069模板" name="tr069" lazy>
-          <!-- 不落库：进页签就实时读设备，增加是当场下发 onu-tr069-profile add -->
+          <!-- 不落库：实时读设备，增加当场下发 -->
           <olt-hsgq-tr069-panel :olt-id="detailId" />
         </el-tab-pane>
 
@@ -151,25 +151,20 @@
 </template>
 
 <script>
-import OltDeviceBar from './components/OltDeviceBar'
-import OltDeviceInfo from './components/OltDeviceInfo'
-import OltHsgqFaceplate from './components/OltHsgqFaceplate'
-import OltOntList from './components/OltOntList'
-import OltHsgqVlanPanel from './components/OltHsgqVlanPanel'
-import OltHsgqTr069Panel from './components/OltHsgqTr069Panel'
-import OltCommandCenter from './components/OltCommandCenter'
-import OltRecords from './components/OltRecords'
-import OltFormDialog from './components/OltFormDialog'
+import OltDeviceBar from './components/common/OltDeviceBar'
+import OltDeviceInfo from './components/common/OltDeviceInfo'
+import OltHsgqFaceplate from './components/device/OltHsgqFaceplate'
+import OltOntList from './components/ont/OltOntList'
+import OltHsgqVlanPanel from './components/vlan/OltHsgqVlanPanel'
+import OltHsgqTr069Panel from './components/template/OltHsgqTr069Panel'
+import OltCommandCenter from './components/common/OltCommandCenter'
+import OltRecords from './components/common/OltRecords'
+import OltFormDialog from './components/common/OltFormDialog'
 import { oltDetailMixin } from './mixins/oltDetail'
 import { detailRoute } from './vendors'
 import { deleteOlt } from '@/api/olt'
 
-/**
- * 鸿升光 HSGQ-E04 等 EPON 一体化 OLT 详情页。
- *
- * 命令风格是 show 那一套（show version / show pon-info），提示符是 OLT> / OLT(config)#，
- * 进配置视图的命令是 configure，和华为完全不是一路，所以单独一个页面。
- */
+/** 鸿升光 EPON 一体化 OLT 详情页 */
 export default {
   name: 'OltHsgq',
   components: {
@@ -185,7 +180,7 @@ export default {
   },
   mixins: [oltDetailMixin],
   props: {
-    /** 嵌在台账页里时由外面给（下拉选中的那台）；不传就取路由上的 id */
+    /** 嵌在台账页里时由外面给；不传就取路由上的 id */
     deviceId: {
       type: [String, Number],
       default: null

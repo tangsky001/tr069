@@ -1,6 +1,5 @@
 <template>
   <div>
-    <!-- 顶部操作条：左边 ONT 汇总，右边写操作（先占位）+ 实时刷新 -->
     <div class="ont-toolbar">
       <div v-if="ontSummary" class="ont-stat">
         <span>总数：<b>{{ ontSummary.total }}</b></span>
@@ -13,7 +12,6 @@
       <el-button size="small" type="primary" icon="el-icon-refresh" @click="$emit('sync')">同步ONT状态</el-button>
     </div>
 
-    <!-- 筛选行 -->
     <div class="ont-toolbar ont-toolbar-filter">
       <el-select v-model="stateFilter" size="small" clearable placeholder="在线状态" style="width: 130px">
         <el-option label="在线" value="online" />
@@ -40,7 +38,7 @@
       </el-table-column>
       <el-table-column label="ONT ID" width="65" align="center">
         <template slot-scope="{ row }">
-          <!-- ONT ID 可点：点开查 display ont capability 0/<槽位> <端口> <ONT ID>，硬件能力/状态 -->
+          <!-- 点开查硬件能力/状态 -->
           <span class="ont-link" @click="openQuery('capability', row)">{{ row.ontId }}</span>
         </template>
       </el-table-column>
@@ -54,12 +52,11 @@
       </el-table-column>
       <el-table-column label="认证码 (SN)" width="150">
         <template slot-scope="{ row }">
-          <!-- SN 可点：点开查 display current-configuration ont，授权信息 + 业务流都在这一份里 -->
+          <!-- 点开查授权信息与业务流 -->
           <div class="ont-sn ont-link" @click="openOntConfig(row)">{{ row.sn }}</div>
           <div class="ont-sub">{{ row.desc }}</div>
         </template>
       </el-table-column>
-      <!-- 管理 IP / MAC / 线路 / 业务模板：同步采集时后端已随单台详情采回，直接显示 -->
       <el-table-column label="管理IP" width="140" align="center">
         <template slot-scope="{ row }">{{ ipOf(row) || '-' }}</template>
       </el-table-column>
@@ -113,7 +110,6 @@
       </el-table-column>
     </el-table>
 
-    <!-- 底部批量操作：勾选行后生效，写通道还没接，点了只提示；最后一个是整块业务板的清理 -->
     <div class="ont-table-foot">
       <span class="ont-selected-hint">
         {{ selected.length ? '已选 ' + selected.length + ' 条' : '勾选 ONT 后可批量操作' }}
@@ -164,7 +160,7 @@
       </div>
     </div>
 
-    <!-- 按需查询弹窗：每条记录一张「字段 / 值」竖排卡片（英文标签翻成中文）+ 原始回显 -->
+    <!-- 按需查询弹窗：字段/值卡片 + 原始回显 -->
     <el-dialog :title="queryTitle" :visible.sync="queryVisible" width="640px" append-to-body>
       <div v-loading="queryLoading" class="ont-query-body">
         <template v-if="queryCards.length">
@@ -189,7 +185,7 @@
       </div>
     </el-dialog>
 
-    <!-- ONT 详情弹窗：display ont info，IP / 线路模板 / 业务模板 / 掉线原因，只展示数据 -->
+    <!-- ONT 详情弹窗 -->
     <el-dialog :title="infoTitle" :visible.sync="infoVisible" width="640px" append-to-body>
       <div v-loading="infoLoading" class="ont-query-body">
         <el-table v-if="infoFields.length" :data="infoFields" size="small" border :show-header="false">
@@ -207,8 +203,7 @@
       </div>
     </el-dialog>
 
-    <!-- 配置弹窗：点 SN 或模板列时查 display current-configuration ont（授权信息），
-         业务流在单独的「ONT 业务流」弹窗里看 -->
+    <!-- 配置弹窗：授权信息与改授权表单 -->
     <el-dialog :title="cfgTitle" :visible.sync="cfgVisible" width="640px" append-to-body>
       <div v-loading="cfgLoading" class="ont-query-body">
         <template v-if="cfgFields.length">
@@ -223,7 +218,7 @@
         <div v-if="!cfgLoading && !cfgFields.length" class="olt-empty">
           命令没有解析出有效数据，请稍后重试
         </div>
-        <!-- 改授权：标签在上、通栏输入框，提交目前只读、写操作暂未开放 -->
+        <!-- 提交暂不下发，先只读 -->
         <div class="ont-cfg-caption">改授权</div>
         <el-form size="small" label-position="top" class="ont-auth-form">
           <el-form-item label="机框/板卡/端口/ONT:">
@@ -253,7 +248,7 @@
       </div>
     </el-dialog>
 
-    <!-- 业务流弹窗：点业务流列「查看」时单独查 display service-port port 0/x/x ont n，只放业务流表 -->
+    <!-- 业务流弹窗 -->
     <el-dialog :title="spTitle" :visible.sync="spVisible" width="980px" append-to-body>
       <div v-loading="spLoading" class="ont-query-body">
         <el-table
@@ -328,7 +323,7 @@ const ACTION_TITLES = {
   capability: '硬件能力/状态'
 }
 
-/** 在线时长英文格式翻中文：1 day(s), 10 hour(s) → 1天, 10小时（纯格式化） */
+/** 在线时长英文格式翻中文 */
 function formatDuration(text) {
   return String(text)
     .replace(/(\d+)\s*day\(s\)/g, '$1天')
@@ -337,10 +332,7 @@ function formatDuration(text) {
     .replace(/(\d+)\s*second\(s\)/g, '$1秒')
 }
 
-/**
- * 详情弹窗按字段翻译值：状态 / 掉线原因 / 在线时长。
- * 码表（哪种状态叫什么、掉线原因怎么解释）由后端 /olt/options 下发，这里只查表。
- */
+/** 详情弹窗值按字段翻译，码表由后端下发 */
 function infoValueText(label, value, tables) {
   const text = String(value == null ? '' : value).trim()
   if (!text) return ''
@@ -358,42 +350,26 @@ function infoValueText(label, value, tables) {
   return text
 }
 
-/**
- * ONT 配置/状态主表：每条 ONT 一行（板卡 × 端口 × ONT 摊平），带筛选与按需查询。
- *
- * 数据来自轮询采集（display ont info 0 <槽位> all）；光信息、版本、注册历史这三类
- * 是块状明细，几百条 ONT 逐个采不现实，点行上的图标时才登录设备查一次
- * （display ont optical-info / version / register-info），弹窗里铺成表格。
- *
- * 管理 IP、MAC、线路模板、业务模板这几列在同步采集时就由后端随每条 ONT 的
- * 单台详情（display ont info 0 <槽位> <端口> <ONT ID>）一起采回，打开列表就是全的，
- * 不用再点着查；老快照没有这些字段时显示 -，点一次「同步ONT状态」即补齐。
- *
- * 仍按需查的：点 SN / 模板列查 display current-configuration ont（授权行与业务流），
- * 「详情」图标查 display ont info（运行状态、掉线原因、在线时长），业务流列单独查
- * display service-port port 0/<槽位>/<端口> ont <ONT ID>。
- *
- * 下发 TR069 / 业务流那些写操作是占位，下发能力稍后接入。
- */
+/** ONT 配置/状态主表：每条 ONT 一行，带筛选、批量操作与按需查询弹窗 */
 export default {
   name: 'OltOntStatusPanel',
   props: {
-    /** 后端摊好的 ONT 行（板卡 × 端口 × ONT 一条一行），页签只渲染 */
+    /** 后端摊平并排好序的 ONT 行 */
     ontRows: {
       type: Array,
       default: () => []
     },
-    /** 后端给的「板卡端口」筛选下拉：value 是 槽位/端口，label 是「槽位 2 - 0/2/1」 */
+    /** 板卡端口筛选下拉，value 为 槽位/端口 */
     ontPortOptions: {
       type: Array,
       default: () => []
     },
-    /** 有 ONT 的业务板（后端算好的 slotNo / total），「删除业务板 ONU」用 */
+    /** 有 ONT 的业务板（slotNo/total），「删除业务板 ONU」用 */
     deletableBoards: {
       type: Array,
       default: () => []
     },
-    /** 这些业务板上的 ONT 总数，0 表示按钮置灰 */
+    /** 业务板 ONT 总数，0 表示按钮置灰 */
     deletableOntTotal: {
       type: Number,
       default: 0
@@ -402,7 +378,7 @@ export default {
       type: [Number, String],
       default: null
     },
-    /** ONT 汇总（总数/在线/离线）：由父页面算好传进来，和操作按钮排在同一行 */
+    /** ONT 汇总（总数/在线/离线），由父页面算好 */
     ontSummary: {
       type: Object,
       default: null
@@ -411,20 +387,17 @@ export default {
       type: String,
       default: '尚未采集到端口/ONT 数据。点右上角「同步ONT状态」立即采集。'
     },
-    /** 删除业务板全部 ONT：父页面传进来，槽位/端口由后端按库里板卡算 */
+    /** 删除业务板全部 ONT 的处理函数，由父页面提供 */
     deleteAllHandler: {
       type: Function,
       default: null
     },
-    /** 删除单个 ONT：父页面传进来（先拆业务虚口再 ont delete），入参 { slot, port, ontId } */
+    /** 删除单个 ONT 的处理函数，入参 { slot, port, ontId } */
     deleteOntHandler: {
       type: Function,
       default: null
     },
-    /**
-     * 重启 ONU（ont reset）：父页面传进来，y/n 由后端应答。
-     * 入参 { slot, port, ontId } 复位单个；{ slot, port } 复位整口；{ slot } 复位整板（口数后端按快照算）
-     */
+    /** 重启 ONU 的处理函数：{ slot, port, ontId } 复位单个，{ slot, port } 复位整口，{ slot } 复位整板 */
     resetOntHandler: {
       type: Function,
       default: null
@@ -435,9 +408,9 @@ export default {
       stateFilter: '',
       portFilter: '',
       selected: [],
-      /** 删除业务板 ONT 下发中：按钮转圈，防止连点重复下发 */
+      /** 删除下发中，防连点 */
       deleting: false,
-      /** 重启 ONU（ont reset）下发中：按钮转圈，防止连点重复下发 */
+      /** 重启下发中，防连点 */
       resetting: false,
       queryVisible: false,
       queryLoading: false,
@@ -451,17 +424,14 @@ export default {
       infoData: null,
       infoCommand: '',
       infoRaw: '',
-      // 配置弹窗：display current-configuration ont 的授权信息
       cfgVisible: false,
       cfgLoading: false,
       cfgRow: null,
       cfgData: null,
       cfgCommand: '',
       cfgRaw: '',
-      // 改授权表单：只读先行，提交暂不下发
       cfgAuthType: 'sn-auth',
       cfgAuthCode: '',
-      // 业务流弹窗：业务流列「查看」单独查 display service-port port 0/x/x ont n
       spVisible: false,
       spLoading: false,
       spRow: null,
@@ -474,18 +444,10 @@ export default {
     }
   },
   computed: {
-    /** 码表：ONT 回显键值、认证方式、VLAN 属性、掉线原因，全部由后端下发 */
+    /** 后端下发的翻译码表 */
     codeTables() {
       return (this.optionTables && this.optionTables.codeTables) || {}
     },
-    /**
-     * 只按页面上的两个筛选条件过滤。
-     *
-     * <p>摊平（板卡 → 端口 → ONT）、字段改名（{@code desc} / {@code stateText} /
-     * {@code configText}）和认证方式判定都在后端做——原来这里按 {@code ont.id}、
-     * {@code ont.stateText} 取值，而接口给的是 {@code ontId}、{@code runState}，
-     * 于是状态列一直是空的。</p>
-     */
     filteredRows() {
       return this.ontRows.filter(row => {
         if (this.stateFilter === 'online' && !row.online) return false
@@ -494,15 +456,7 @@ export default {
         return true
       })
     },
-    /**
-     * 有 ONT 的业务板：按钮是否可用、确认框里列哪几块板都按它来。
-     * 槽位取的是采到的实际值（这台是 2 号槽位就是 0/2），不写死。
-     */
-
-    /**
-     * 查询弹窗的卡片数据：每块回显转成「字段 / 值」行，英文标签翻成中文，
-     * 全是「-」的空块（比如注册历史末尾的占位段）直接丢掉。
-     */
+    /** 查询弹窗卡片数据：回显转「字段/值」行，空块丢弃 */
     queryCards() {
       return this.queryBlocks
         .map(block => this.blockRows(block))
@@ -517,7 +471,6 @@ export default {
     cfgTitle() {
       return this.cfgRow ? 'ONT 配置/业务流 - ' + this.cfgRow.iface + ' - ONT ' + this.cfgRow.ontId : 'ONT 配置/业务流'
     },
-    /** 改授权表单第一行的坐标，照现场工具的 0:1:0:1 格式 */
     cfgCoordinates() {
       if (!this.cfgRow) return ''
       return '0:' + this.cfgRow.slotNo + ':' + this.cfgRow.portNo + ':' + this.cfgRow.ontId
@@ -525,7 +478,7 @@ export default {
     spTitle() {
       return this.spRow ? 'ONT 业务流 - ' + this.spRow.iface + ' - ONT ' + this.spRow.ontId : 'ONT 业务流'
     },
-    /** 配置弹窗上半部分的授权信息字段：空的不摆出来 */
+    /** 授权信息字段，空的不显示 */
     cfgFields() {
       const data = this.cfgData
       if (!data) return []
@@ -545,7 +498,7 @@ export default {
       push('业务模板', profile(data.srvProfileId, data.srvProfileName))
       return fields
     },
-    /** 详情弹窗要显示的字段：空的不摆出来，值按字段翻成中文 */
+    /** 详情字段，空的不显示，值翻中文 */
     infoFields() {
       const data = this.infoData
       if (!data) return []
@@ -584,21 +537,17 @@ export default {
       })
   },
   methods: {
-    /** 英文键翻中文（后端码表小写键），没对上的原样返回；T-CONT 的 PQ 行是动态键 */
+    /** 键翻中文，后端码表没对上的原样返回 */
     keyLabel(key) {
       const trimmed = (key || '').trim()
       const pq = trimmed.match(/^Number of PQs in T-CONT\s+(\d+)$/i)
       if (pq) {
         return 'T-CONT ' + pq[1] + ' 的 PQ 数目'
       }
-      // 键→中文由后端下发（键统一小写），没对上的原样显示
       const labels = this.codeTables.ontKeyLabels || {}
       return labels[trimmed.toLowerCase()] || trimmed
     },
-    /**
-     * 一块回显转成卡片行：字段顺序按原回显、空键跳过、
-     * 全是「-」的块返回空数组（queryCards 会滤掉）。
-     */
+    /** 回显块转卡片行：字段按原顺序、空键跳过，空块返回空数组 */
     blockRows(block) {
       const rows = []
       Object.keys(block || {}).forEach(key => {
@@ -616,44 +565,33 @@ export default {
         }
         rows.push({ label, value: value || '-' })
       })
-      // 全是「-」的占位块（注册历史末尾常见）没有展示价值
       const meaningful = rows.filter(row => row.value !== '-')
       return meaningful.length ? meaningful : []
     },
-    /** 线路模板：同步时随单台详情采回，只显示编号（如 100）；老快照没有显示 - */
     lineText(row) {
       if (row.lineProfileId === null || row.lineProfileId === undefined) return ''
       return String(row.lineProfileId)
     },
-    /** 业务模板：同线路模板，只显示编号 */
     srvText(row) {
       if (row.srvProfileId === null || row.srvProfileId === undefined) return ''
       return String(row.srvProfileId)
     },
-    /** 管理 IP：同步时随单台详情采回；桥接模式设备没上报管理地址就显示 - */
     ipOf(row) {
       return row.mgmtIp || null
     },
-    /** MAC：后端从单台详情回显或 MAC 认证码还原，前端不再自己拼 */
     macOf(row) {
       return row.mac || null
     },
-    /** VLAN 属性翻中文，没对上的原样 */
     vlanAttrText(attr) {
       if (!attr) return '-'
       const text = String(attr).trim().toLowerCase()
       const attrs = this.codeTables.vlanAttrs || {}
       return attrs[text] || attr
     },
-    /** 业务流上的操作（查询 GMP / 删除 / 新增等）：能力还没接入，先提示 */
     notReady(name) {
       this.$message.info(name + '：暂未开放，后续版本接入')
     },
-    /**
-     * 重启 ONU（ont reset）：复位勾选的 ONU，设备会中断该 ONU 业务并重新注册
-     *（注册与业务配置不动）。勾选多条时串行逐条发（同一台 OLT 的 telnet 会话按序用），
-     * y/n 追问由后端统一答 y。复位不改快照，完成后稍后「同步ONT状态」确认在线。
-     */
+    /** 批量重启勾选 ONU：串行逐条下发，y/n 由后端应答 */
     batchReboot() {
       const rows = (this.selected || []).filter(
         row => row.slotNo != null && row.portNo != null && row.ontId != null
@@ -702,10 +640,7 @@ export default {
         })
         .catch(() => {})
     },
-    /**
-     * 重启业务板 ONU：按采到的业务板逐块复位，后端按板卡快照的口数
-     * 逐口发 {@code ont reset <port> all}（每口都追问 y/n，由会话层答 y）。
-     */
+    /** 重启业务板全部 ONU：逐板复位，口数由后端按快照算 */
     confirmResetBoardOnts() {
       const boards = this.deletableBoards
       if (!boards.length) {
@@ -737,11 +672,7 @@ export default {
         })
         .catch(() => {})
     },
-    /**
-     * 删除注册（ont delete）：删勾选的 ONU，后端先拆它的业务虚口再删注册。
-     * 勾选多条时串行逐条删（同一台 OLT 的 telnet 会话按序用，不并发抢）；
-     * 每删一条接口就重采一次，最后一条返回的即是最新快照。
-     */
+    /** 批量删除注册：串行逐条删，每条删完重采一次快照 */
     batchDelete() {
       const rows = (this.selected || []).filter(
         row => row.slotNo != null && row.portNo != null && row.ontId != null
@@ -790,10 +721,7 @@ export default {
         })
         .catch(() => {})
     },
-    /**
-     * 删除业务板上的全部 ONU：按采到的业务板逐块清（这台是 2 号槽位就发
-     * {@code interface gpon 0/2} 再逐口 {@code ont delete <端口> all}），后端下发成功后整机重采。
-     */
+    /** 删除业务板全部 ONU，完成后重采快照 */
     confirmDeleteAllOnts() {
       const boards = this.deletableBoards
       if (!boards.length) {
@@ -804,7 +732,6 @@ export default {
         this.$message.warning('当前页面没有接上删除业务板 ONU 的接口')
         return
       }
-      // 板卡表示法（0/2（12 个））与总数都由后端给，页面只拼这句确认语气
       const detail = boards.map(board => board.text || ('0/' + board.slotNo + '（' + board.total + ' 个）')).join('、')
       const hint = '将删除 ' + detail + ' 上的全部 ONT，共 ' + this.deletableOntTotal +
         ' 个；设备上的注册与业务配置随之消失，确定继续？'
@@ -823,10 +750,7 @@ export default {
         })
         .catch(() => {})
     },
-    /**
-     * 点 SN 打开详情：display ont info，运行状态 / 掉线原因 / 在线时长在这一份里
-     * （IP 与模板同步时已采进快照，这里再看的是补充字段）。
-     */
+    /** 点详情图标查 display ont info */
     openOntInfo(row) {
       if (this.oltId == null) return
       if (!this.checkRow(row)) return
@@ -859,10 +783,7 @@ export default {
           this.infoLoading = false
         })
     },
-    /**
-     * 点 SN / 模板列打开配置弹窗：display current-configuration ont 0/<槽位>/<端口> <ONT ID>，
-     * 授权行（SN / 线路模板 / 业务模板 / 描述）和业务流行一条命令全带回来。
-     */
+    /** 点 SN/模板列查 display current-configuration ont */
     openOntConfig(row) {
       if (this.oltId == null) return
       if (!this.checkRow(row)) return
@@ -870,10 +791,7 @@ export default {
       this.cfgVisible = true
       this.loadOntConfig(row)
     },
-    /**
-     * 模板列点击：同一行的模板编号再点一次就是收起弹窗（可点击取消）；
-     * 点别的行则切换到那条 ONT 的配置。
-     */
+    /** 同一行模板再点一次收起弹窗，点别的行切换 */
     toggleOntConfig(row) {
       if (this.cfgVisible && this.cfgRow && this.cfgRow.key === row.key) {
         this.cfgVisible = false
@@ -898,7 +816,6 @@ export default {
           this.cfgData = data.ontInfo || null
           this.cfgRaw = data.raw || ''
           this.cfgCommand = data.command || ''
-          // 改授权表单预填当前认证码（注册方式默认 SN）
           this.cfgAuthType = 'sn-auth'
           this.cfgAuthCode = (data.ontInfo && data.ontInfo.sn) || ''
         })
@@ -910,7 +827,6 @@ export default {
           this.cfgLoading = false
         })
     },
-    /** 槽位/端口/ONT ID 缺一不可，行是老快照时会缺 */
     checkRow(row) {
       if (row.slotNo == null || row.portNo == null || row.ontId == null) {
         this.$message.warning('该行缺少槽位/端口/ONT ID，请先「同步ONT状态」刷新数据后再查询')
@@ -918,10 +834,7 @@ export default {
       }
       return true
     },
-    /**
-     * 业务流列「查看」：单独查 display service-port port 0/<槽位>/<端口> ont <ONT ID>，
-     * 弹窗里只放业务流表，和点 SN 的配置弹窗分开。
-     */
+    /** 业务流列「查看」：单独查 display service-port port 0/x/x ont n */
     openServicePorts(row) {
       if (this.oltId == null) return
       if (!this.checkRow(row)) return
@@ -954,14 +867,12 @@ export default {
           this.spLoading = false
         })
     },
-    /** 改授权提交：写通道还没接，先提示只读 */
     submitAuth() {
       this.$message.info('目前仅支持读数据，写操作暂未开放')
     },
-    /** 点图标按需查一次：登录设备进 GPON 端口视图发命令，块状解析后铺表格 */
+    /** 按需查询：登录设备发命令，块状解析后铺表格 */
     openQuery(action, row) {
       if (this.oltId == null) return
-      // 槽位/端口/ONT ID 缺一不可（后端也会校验），行数据是老快照时会缺，提示先重新同步
       if (row.slotNo == null || row.portNo == null || row.ontId == null) {
         this.$message.warning('该行缺少槽位/端口/ONT ID，请先「同步ONT状态」刷新数据后再查询')
         return
@@ -1115,7 +1026,6 @@ export default {
   max-height: 320px;
   overflow: auto;
 }
-/* 操作条最左边的 ONT 汇总窗：总数 / 在线 / 离线，和按钮同一行 */
 .ont-stat {
   display: inline-flex;
   align-items: center;

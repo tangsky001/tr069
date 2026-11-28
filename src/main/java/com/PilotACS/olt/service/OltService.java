@@ -39,6 +39,7 @@ import com.PilotACS.olt.model.OltOntInfo;
 import com.PilotACS.olt.model.OltOntQueryResult;
 import com.PilotACS.olt.model.OltLineMappingRow;
 import com.PilotACS.olt.model.OltLineProfile;
+import com.PilotACS.olt.model.OltLineProfileCreateRequest;
 import com.PilotACS.olt.model.OltLineProfileForm;
 import com.PilotACS.olt.model.OltLineProfilePreviewRequest;
 import com.PilotACS.olt.model.OltGemport;
@@ -87,6 +88,7 @@ import com.PilotACS.olt.model.OltPortVlanRequest;
 import com.PilotACS.olt.model.VlanIdExpression;
 import com.PilotACS.olt.telnet.OltCliSession;
 import com.PilotACS.olt.telnet.OltInfoParser;
+import java.io.IOException;
 import com.PilotACS.olt.telnet.OltSnapshot;
 import com.PilotACS.olt.telnet.OltVendor;
 import com.PilotACS.olt.vendor.Hsgq.HsgqModelCatalog;
@@ -1688,6 +1690,141 @@ public class OltService {
 
     // ------------------------------------------------- 线路模板：T-CONT / GEM Port / GEM 映射
 
+    /** 线路模板 ID 范围（对齐网管的 1-8192） */
+    private static final int LINE_PROFILE_ID_MIN = 1;
+
+    private static final int LINE_PROFILE_ID_CREATE_MAX = 8192;
+
+    /** 线路模板名：数字、字母及下划线 */
+    private static final Pattern LINE_PROFILE_NAME = Pattern.compile("[A-Za-z0-9_]{1,32}");
+
+    /** 新增线路模板时一次最多映射的 VLAN 数（每个 VLAN 挂一个 GEM Port） */
+    private static final int MAX_LINE_PROFILE_VLANS = 16;
+
+    /** 新增 ONT 线路模板：建模板 + 绑 DBA + VLAN 映射 + TR069 管理 */
+    public OltDetail createLineProfile(Long id, OltLineProfileCreateRequest request, String operator) {
+        requireDevice(id);
+        checkLineProfileCreateRequest(request);
+        OltVendorProfile profile = profileOf(id);
+        List<String> commands = profile.createLineProfileCommands(request);
+        if (commands.isEmpty()) {
+            throw new IllegalArgumentException("这台设备还没接入创建线路模板的命令");
+        }
+        OltTemplateInfo template = readTemplate(requireDevice(id).getTemplateJson());
+        if (template != null && template.getLineProfiles() != null && template.getLineProfiles().stream()
+                .anyMatch(line -> request.getProfileId().equals(line.getProfileId()))) {
+            throw new IllegalArgumentException("线路模板 ID " + request.getProfileId()
+                    + " 已存在（如果刚在 OLT 上建过，先同步一次再操作）");
+        }
+        OltDevice device = requireDevice(id);
+        long start = System.currentTimeMillis();
+        try {
+            // 宽松下发：中间命令被拒不中断，保证 commit/quit 执行——
+            // 华为模板视图里没 commit 的配置全部不生效，严格模式会把整段配置丢掉
+            List<String> outputs = telnetService.sendConfigRelaxed(device, commands);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+                    "新增线路模板：" + String.join("；", commands),
+                    String.join("\n", outputs), System.currentTimeMillis() - start, operator);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    "新增线路模板失败：" + String.join("；", commands) + "：" + message,
+                    null, System.currentTimeMillis() - start, operator);
+            // commit 已执行，模板可能带部分配置，定向重采一次让页面看到实际生效的部分
+            try {
+                refreshLineProfileList(id, operator, "新增线路模板", start, request.getProfileId());
+            } catch (Exception re) {
+                Logs.warn(Logs.Module.OLT, "OLT {} 线路模板下发被拒后重采失败: {}", id, re.getMessage());
+            }
+            throw new IllegalStateException(message, e);
+        }
+        return refreshLineProfileList(id, operator, "新增线路模板", start, request.getProfileId());
+    }
+
+    /**
+     * 删除勾选的线路模板：按快照里的现有配置生成命令——进模板视图清 GEM 映射 / GEM Port /
+     * 非默认 T-CONT，退出后删模板；下发用宽松模式（单条 undo 被拒不中断，保证 quit 和删模板执行）。
+     */
+    public OltDetail deleteLineProfiles(Long id, List<Integer> profileIds, String operator) {
+        requireDevice(id);
+        List<Integer> ids = profileIds == null ? List.of()
+                : profileIds.stream().filter(Objects::nonNull).distinct().sorted().toList();
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("先勾选要删除的线路模板");
+        }
+        OltVendorProfile profile = profileOf(id);
+        List<String> commands = new ArrayList<>();
+        for (Integer profileId : ids) {
+            if (profileId < LINE_PROFILE_ID_MIN || profileId > LINE_PROFILE_ID_CREATE_MAX) {
+                throw new IllegalArgumentException("模板 ID 必须在 "
+                        + LINE_PROFILE_ID_MIN + "-" + LINE_PROFILE_ID_CREATE_MAX + " 之间：" + profileId);
+            }
+            OltLineProfile line = snapshotLineProfile(id, profileId);
+            String ponType = ponTypeOf(null, line);
+            List<String> part = profile.deleteLineProfileCommands(ponType, profileId, line);
+            if (part.isEmpty()) {
+                throw new IllegalArgumentException("这台设备还没接入删除线路模板的命令");
+            }
+            commands.addAll(part);
+        }
+        OltDevice device = requireDevice(id);
+        long start = System.currentTimeMillis();
+        try {
+            List<String> outputs = telnetService.sendConfigRelaxed(device, commands);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, true,
+                    "删除线路模板 " + ids + "：" + String.join("；", commands),
+                    String.join("\n", outputs), System.currentTimeMillis() - start, operator);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_CONFIG, false,
+                    "删除线路模板失败 " + ids + "：" + String.join("；", commands) + "：" + message,
+                    null, System.currentTimeMillis() - start, operator);
+            // 命令序列执行到一半被拒，设备上的配置可能已经变了，定向重采一次让页面看到实际状态
+            try {
+                refreshLineProfileList(id, operator, "删除线路模板", start, null);
+            } catch (Exception re) {
+                Logs.warn(Logs.Module.OLT, "OLT {} 删除线路模板被拒后重采失败: {}", id, re.getMessage());
+            }
+            throw new IllegalStateException(message, e);
+        }
+        return refreshLineProfileList(id, operator, "删除线路模板", start, null);
+    }
+
+    /** 新增线路模板的入参校验，返回规范化后的请求 */
+    private void checkLineProfileCreateRequest(OltLineProfileCreateRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("请填写线路模板参数");
+        }
+        Integer profileId = request.getProfileId();
+        if (profileId == null || profileId < LINE_PROFILE_ID_MIN || profileId > LINE_PROFILE_ID_CREATE_MAX) {
+            throw new IllegalArgumentException("模板 ID 必须在 "
+                    + LINE_PROFILE_ID_MIN + "-" + LINE_PROFILE_ID_CREATE_MAX + " 之间");
+        }
+        String name = trimToNull(request.getName());
+        if (name == null || !LINE_PROFILE_NAME.matcher(name).matches()) {
+            throw new IllegalArgumentException("模板名由数字、字母及下划线组成，最长 32 个字符");
+        }
+        request.setName(name);
+        if (request.getDbaProfileId() == null) {
+            throw new IllegalArgumentException("请选择要绑定的 DBA 模板");
+        }
+        String ponType = request.getPonType() == null ? "GPON"
+                : request.getPonType().trim().toUpperCase(Locale.ROOT);
+        if (!"GPON".equals(ponType) && !"EPON".equals(ponType)) {
+            throw new IllegalArgumentException("PON 类型只认 GPON / EPON");
+        }
+        request.setPonType(ponType);
+        List<Integer> vlans = request.vlanIds();
+        if (vlans.size() > MAX_LINE_PROFILE_VLANS) {
+            throw new IllegalArgumentException("VLAN 列表一次最多 " + MAX_LINE_PROFILE_VLANS + " 个");
+        }
+        for (Integer vlan : vlans) {
+            if (vlan == null || vlan < 1 || vlan > VlanIdExpression.MAX_VLAN_ID) {
+                throw new IllegalArgumentException("VLAN 要在 1-" + VlanIdExpression.MAX_VLAN_ID + " 之间：" + vlan);
+            }
+        }
+    }
+
     /** T-CONT 索引上限（华为 GPON 0-127） */
     private static final int MAX_TCONT_INDEX = 127;
 
@@ -1927,8 +2064,19 @@ public class OltService {
                 supported, tcont, gemport, mapping, dbaOptions, defaultDbaId);
     }
 
-    /** 线路模板弹窗的命令预演 */
+    /**
+     * 线路模板弹窗的命令预演。参数没填全（如还没填业务 VLAN）不算错误：预演结果只带 error 文案，
+     * 页面照常展示不弹提示，真正提交时后端再校验拦截。
+     */
     public OltQuickSetupPreview previewLineProfile(Long id, OltLineProfilePreviewRequest request) {
+        try {
+            return doPreviewLineProfile(id, request);
+        } catch (IllegalArgumentException e) {
+            return new OltQuickSetupPreview(List.of(), List.of(), e.getMessage());
+        }
+    }
+
+    private OltQuickSetupPreview doPreviewLineProfile(Long id, OltLineProfilePreviewRequest request) {
         if (request == null || request.getKind() == null || request.getKind().isBlank()) {
             throw new IllegalArgumentException("先选操作类型");
         }
@@ -2074,8 +2222,8 @@ public class OltService {
     private static String ponTypeOf(String requested, OltLineProfile line) {
         String value = requested != null && !requested.isBlank()
                 ? requested.trim().toLowerCase(Locale.ROOT) : "";
-        if (value.isEmpty() && line != null && line.getType() != null) {
-            value = line.getType().trim().toLowerCase(Locale.ROOT);
+        if (value.isEmpty() && line != null && line.getPonType() != null) {
+            value = line.getPonType().trim().toLowerCase(Locale.ROOT);
         }
         return "epon".equals(value) ? "epon" : "gpon";
     }
@@ -2147,8 +2295,8 @@ public class OltService {
                     if (fresh.getName() == null || fresh.getName().isBlank()) {
                         fresh.setName(old.getName());
                     }
-                    if (fresh.getType() == null || fresh.getType().isBlank()) {
-                        fresh.setType(old.getType());
+                    if (fresh.getPonType() == null || fresh.getPonType().isBlank()) {
+                        fresh.setPonType(old.getPonType());
                     }
                 }
                 template.getLineProfiles().removeIf(profile ->
@@ -2163,6 +2311,90 @@ public class OltService {
             }
         }
         saveRecord(id, OltSyncRecord.ACTION_SYNC, true, label + "后重读线路模板 " + profileId, null,
+                System.currentTimeMillis() - start, operator);
+        return detail(id);
+    }
+
+    /**
+     * 定向重采线路模板列表：只跑 display ont-lineprofile gpon all / epon all 两张总表并合并回快照——
+     * 已有模板的 T-CONT / GEM 明细沿用库里数据，新建的那条再单独查一次明细，删掉的自然消失。
+     * 新建 / 删除线路模板后用它刷新列表，不再全量重采整台设备。
+     */
+    private OltDetail refreshLineProfileList(Long id, String operator, String label, long start,
+                                             Integer changedProfileId) {
+        OltDevice device = requireDevice(id);
+        List<OltLineProfile> freshList;
+        try {
+            freshList = telnetService.collectLineProfileList(device);
+        } catch (Exception e) {
+            String message = rootMessage(e);
+            saveRecord(id, OltSyncRecord.ACTION_SYNC, false,
+                    label + "已下发，但重读线路模板列表失败：" + message, null,
+                    System.currentTimeMillis() - start, operator);
+            throw new IllegalStateException("配置已下发，但重新读取线路模板列表失败：" + message
+                    + "，请点上面的「同步」再试一次", e);
+        }
+        OltTemplateInfo template = readTemplate(device.getTemplateJson());
+        if (template == null) {
+            template = new OltTemplateInfo();
+        }
+        List<OltLineProfile> oldList = template.getLineProfiles() == null
+                ? new ArrayList<>() : template.getLineProfiles();
+        List<OltLineProfile> merged = new ArrayList<>();
+        for (OltLineProfile fresh : freshList) {
+            OltLineProfile old = oldList.stream()
+                    .filter(profile -> fresh.getProfileId() != null
+                            && fresh.getProfileId().equals(profile.getProfileId())
+                            && Objects.equals(fresh.getPonType(), profile.getPonType()))
+                    .findFirst().orElse(null);
+            if (old != null) {
+                if (fresh.getTconts() == null || fresh.getTconts().isEmpty()) {
+                    fresh.setTconts(old.getTconts());
+                }
+                if (fresh.getGemports() == null || fresh.getGemports().isEmpty()) {
+                    fresh.setGemports(old.getGemports());
+                }
+                if (fresh.getMappingRows() == null || fresh.getMappingRows().isEmpty()) {
+                    fresh.setMappingRows(old.getMappingRows());
+                }
+                if (fresh.getTcontCount() == null) {
+                    fresh.setTcontCount(old.getTcontCount());
+                }
+                if (fresh.getGemportCount() == null) {
+                    fresh.setGemportCount(old.getGemportCount());
+                }
+                if (fresh.getTr069Bound() == null) {
+                    fresh.setTr069Bound(old.getTr069Bound());
+                }
+            } else if (changedProfileId != null && changedProfileId.equals(fresh.getProfileId())) {
+                // 新建的模板库里还没有明细，单独查一次
+                try {
+                    OltLineProfile detail = telnetService.collectLineProfile(
+                            device, fresh.getProfileId(), fresh.getPonType());
+                    if (detail != null) {
+                        if (detail.getTconts() != null && !detail.getTconts().isEmpty()) {
+                            fresh.setTconts(detail.getTconts());
+                        }
+                        if (detail.getGemports() != null && !detail.getGemports().isEmpty()) {
+                            fresh.setGemports(detail.getGemports());
+                        }
+                    }
+                } catch (Exception e) {
+                    Logs.warn(Logs.Module.OLT, "OLT {} 重读新建线路模板 {} 明细失败: {}",
+                            id, fresh.getProfileId(), rootMessage(e));
+                }
+            }
+            merged.add(fresh);
+        }
+        merged.sort(Comparator.comparing(OltLineProfile::getProfileId,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+        template.setLineProfiles(merged);
+        template.stamp();
+        deviceMapper.update(null, new LambdaUpdateWrapper<OltDevice>()
+                .eq(OltDevice::getId, id)
+                .set(OltDevice::getTemplateJson, writeTemplate(template)));
+        saveRecord(id, OltSyncRecord.ACTION_SYNC, true,
+                label + "后重采线路模板列表（display ont-lineprofile gpon all / epon all）", null,
                 System.currentTimeMillis() - start, operator);
         return detail(id);
     }
@@ -2315,11 +2547,40 @@ public class OltService {
         }
         try {
             List<String> outputs = telnetService.queryCommands(device, profile.tr069ProfileQueryCommands());
-            return profile.parseTr069Profiles(outputs.isEmpty() ? null : outputs.get(0));
+            List<OltTr069Profile> profiles =
+                    profile.parseTr069Profiles(outputs.isEmpty() ? null : outputs.get(0));
+            fillTr069ProfileDetails(profile, device, profiles);
+            return profiles;
         } catch (Exception e) {
             String message = rootMessage(e);
             Logs.warn(Logs.Module.OLT, "查询 TR-069 模板失败 id={}: {}", id, message);
             throw new IllegalStateException("查询 TR-069 模板失败：" + message, e);
+        }
+    }
+
+    /** display all 只有 ID/名称时（华为），逐条查详情补 ACS 地址与登录账号 */
+    private void fillTr069ProfileDetails(OltVendorProfile profile, OltDevice device,
+                                         List<OltTr069Profile> profiles) throws IOException {
+        if (profiles.isEmpty()) {
+            return;
+        }
+        List<String> commands = new ArrayList<>();
+        for (OltTr069Profile item : profiles) {
+            if (item.getProfileId() == null
+                    || (item.getUrl() != null && !item.getUrl().isBlank())) {
+                continue;
+            }
+            String command = profile.tr069ProfileDetailCommand(item.getProfileId());
+            if (command != null) {
+                commands.add(command);
+            }
+        }
+        if (commands.isEmpty()) {
+            return;
+        }
+        List<String> outputs = telnetService.queryCommands(device, commands);
+        for (String output : outputs) {
+            OltInfoParser.mergeTr069ProfileDetail(output, profiles);
         }
     }
 
@@ -3075,8 +3336,9 @@ public class OltService {
         checkOption(request.getAcsPassword(), TR069_FIELD_MAX, "ACS 服务器密码");
         checkOption(request.getUsername(), TR069_FIELD_MAX, "连接用户名");
         checkOption(request.getPassword(), TR069_FIELD_MAX, "连接密码");
+        // 连接端口可空：华为的 ont tr069-server-profile add 没有端口参数，只有 HSGQ 那路命令才带
         Integer port = request.getPort();
-        if (port == null || port < TR069_PORT_MIN || port > TR069_PORT_MAX) {
+        if (port != null && (port < TR069_PORT_MIN || port > TR069_PORT_MAX)) {
             throw new IllegalArgumentException("连接端口必须在 "
                     + TR069_PORT_MIN + "-" + TR069_PORT_MAX + " 之间");
         }

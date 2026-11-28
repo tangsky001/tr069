@@ -33,7 +33,6 @@
       @node-click="onNodeClick"
     >
       <span slot-scope="{ data }" class="gt-node">
-        <!-- 设备叶子：SVG 图标 + 设备名，无子级指示 -->
         <template v-if="data.kind === 'device'">
           <svg class="gt-svg" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
             <rect x="1" y="4" width="14" height="8" rx="1.5" fill="#e8eef7" stroke="#7a8ba6" />
@@ -43,7 +42,6 @@
           </svg>
           <span class="gt-name" :title="data.name">{{ data.name }}</span>
         </template>
-        <!-- 分组节点：文件夹图标 + 计数角标 -->
         <template v-else>
           <i :class="nodeIcon(data)" />
           <span class="gt-name" :title="data.name">{{ data.name }}</span>
@@ -61,18 +59,11 @@
 <script>
 import { fetchGroupTree } from '@/api/group'
 
-/**
- * 管理页左侧的分组树筛选栏（只读复用分组管理的树接口，OLT 页与光猫设备页共用）：
- * 分组节点下面直接列出该组的设备（后端 members 字段，SVG 图标标识）；
- * 点分组节点 → 向外抛 node-select（含 nodeRef），管理页拉组内成员过滤列表；
- * 点设备叶子 → 抛 device-select（含 deviceId / memberRef），管理页直接定位该设备。
- * memberType：OLT（默认，OLT 管理页）/ ONU（设备管理-光猫页），树计数按类型单独统计。
- * 只做展示与选择，不改任何分组数据，也不侵入厂商面板。
- */
+/** 管理页左侧分组树筛选栏（只读）：分组节点下列出设备叶子，点节点抛 node-select、点设备抛 device-select，不改分组数据 */
 export default {
   name: 'OltGroupTree',
   props: {
-    // 成员类型：OLT / ONU；树计数与设备叶子都按这个类型取
+    // 成员类型：OLT / ONU，树计数与设备叶子都按此类型取
     memberType: {
       type: String,
       default: 'OLT'
@@ -133,7 +124,7 @@ export default {
         this.$emit('device-select', data)
         return
       }
-      // 再点一次已选中的节点 = 取消筛选，恢复全部
+      // 再点一次已选中的节点 = 取消筛选
       if (this.selectedRef === data.nodeRef) {
         this.clearSelect()
         return
@@ -211,7 +202,7 @@ export default {
 .group-tree-card ::v-deep .el-tree-node__children {
   padding-left: 0;
 }
-/* Element 的缩进是行内样式，必须清零，缩进统一由节点自身的 padding-left 逐级提供 */
+/* Element 的缩进是行内样式，清零后由节点自身的 padding-left 逐级提供 */
 .group-tree-card ::v-deep .el-tree-node__content {
   padding-left: 0 !important;
 }

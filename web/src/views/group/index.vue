@@ -226,7 +226,7 @@ import {
   fetchGroupMembers,
   moveGroupMember
 } from '@/api/group'
-import OltFormDialog from '@/views/olt/components/OltFormDialog'
+import OltFormDialog from '@/views/olt/components/common/OltFormDialog'
 import AclDialog from './components/AclDialog'
 import { deleteOlt, fetchOltDetail } from '@/api/olt'
 

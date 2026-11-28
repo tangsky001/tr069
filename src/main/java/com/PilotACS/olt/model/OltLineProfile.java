@@ -6,6 +6,7 @@
 
 package com.PilotACS.olt.model;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import lombok.Data;
@@ -23,8 +24,9 @@ public class OltLineProfile {
     @Schema(description = "模板名")
     private String name;
 
-    @Schema(description = "模板类型（ONT 等）")
-    private String type;
+    @Schema(description = "PON 类型（gpon / epon）")
+    @JsonAlias("type")
+    private String ponType;
 
     @Schema(description = "回显里的 T-CONT 个数（Number of T-CONT）")
     private Integer tcontCount;

@@ -125,6 +125,29 @@ public interface OltVendorProfile {
         return List.of();
     }
 
+    /**
+     * 查询单个 TR-069 模板详情的命令（display all 只给 ID/名称时逐条补 ACS 地址与账号）。
+     * 返回 null 表示设备没有这条命令。
+     */
+    default String tr069ProfileDetailCommand(int profileId) {
+        return null;
+    }
+
+    /** 新建 ONT 线路模板的命令序列（建模板 + 绑 DBA + VLAN 映射 + TR069 管理） */
+    default List<String> createLineProfileCommands(com.PilotACS.olt.model.OltLineProfileCreateRequest request) {
+        return List.of();
+    }
+
+    /**
+     * 删除 ONT 线路模板的命令序列：GPON 进模板视图清掉 GEM 映射，commit 后退出视图再删模板；
+     * EPON 没有 GEM/T-CONT，直接删模板。
+     * ponType / 模板内的现有配置由快照给出，返回 List.of() 表示设备还没接入。
+     */
+    default List<String> deleteLineProfileCommands(String ponType, int profileId,
+                                                   com.PilotACS.olt.model.OltLineProfile line) {
+        return List.of();
+    }
+
     /** 是否支持采集待注册 ONT */
     default boolean supportsOntAutofind() {
         return false;

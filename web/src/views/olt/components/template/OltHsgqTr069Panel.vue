@@ -151,16 +151,7 @@ function emptyForm() {
   }
 }
 
-/**
- * 鸿升光 TR-069（ACS）模板面板。
- *
- * <p>模板不落库：打开页签 / 点「刷新」就是登设备跑一次
- * {@code show onu-tr069-profile all}，「增加」是当场下发
- * {@code onu-tr069-profile add ...}，下发完自动重查。</p>
- *
- * <p>设备的查询命令只有「全部」一种，所以「查询方式」是本地过滤——
- * 不做成三条不同的命令，免得固件差异导致某一种查法报错。</p>
- */
+/** 鸿升光 TR069（ACS）模板面板：模板不落库，实时读设备，查询方式为本地过滤 */
 export default {
   name: 'OltHsgqTr069Panel',
   props: {
@@ -179,7 +170,7 @@ export default {
       createVisible: false,
       detailVisible: false,
       detail: null,
-      /** 模板参数的默认值与取值约束，来自后端，和「一键开局」里那份是同一个接口 */
+      /** 模板参数的默认值与取值约束，来自后端 */
       meta: null,
       form: emptyForm()
     }
@@ -240,7 +231,7 @@ export default {
     this.loadMeta()
   },
   methods: {
-    /** 模板参数的默认值和取值约束由后端给，页面上不再写死 */
+    /** 模板参数由后端下发 */
     loadMeta() {
       if (!this.oltId) {
         return
@@ -273,7 +264,7 @@ export default {
       this.keyword = ''
     },
     openCreate() {
-      // 默认值用后端的（模板 10 + 现场 ACS 地址），改地址时直接覆盖
+      // 默认值用后端的
       this.form = this.meta && this.meta.defaults ? { ...this.meta.defaults } : emptyForm()
       this.createVisible = true
       this.$nextTick(() => {

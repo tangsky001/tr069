@@ -167,22 +167,7 @@
 </template>
 
 <script>
-/**
- * VLAN 面板：三层接口、上行透传、二层互通、静态路由四张表。
- *
- * 数据全是登录后采集到的快照（不是页面下发的结果），这四张表对各厂商页面都适用。
- *
- * 上行透传是真实下发：表头「新增 VLAN 透传」和每行「添加」都走对话框，
- * 确认后由父页面调 {@code POST /api/olt/{id}/vlan/port-vlan} 下发
- * {@code port vlan <VLAN> <框/槽> <端口>}，后端下发成功后立刻只重读 VLAN，
- * 页面换上新快照；每行「删除」同理，下发 {@code no port vlan ...}。
- *
- * 三层接口的编辑还是预留的：确认后只把修改暂存在页面本地（savedEdits），
- * 并没有写回设备——下发链路以后接，到时候把 confirmDialog 里的暂存逻辑换成调
- * 后端接口即可。
- *
- * 静态路由只读：路由是人手一条条配上去的，页面上不提供增删改。
- */
+/** VLAN 面板：三层接口（本地暂存）、上行透传（真实下发）、二层互通与静态路由（只读）。 */
 export default {
   name: 'OltVlanPanel',
   props: {
@@ -382,12 +367,7 @@ export default {
       this.$message.info('修改已暂存在页面本地，尚未下发设备')
       this.$emit('save', this.savedEdits)
     },
-    /**
-     * 上行口 VLAN 的真实下发：add → port vlan ...，delete → no port vlan ...。
-     *
-     * <p>后端下发成功后立刻只重读 VLAN，返回的就是最新快照，父页面换上后
-     * 这张表当场变成设备上的真实数据（不用再点「同步」）。</p>
-     */
+    /** 上行口 VLAN 真实下发：add → port vlan，delete → no port vlan，成功后父页面换上新快照 */
     submitPortVlan(mode, form) {
       const iface = String(form.iface || '').trim()
       const vlanIds = String(form.vlanText || '').trim()

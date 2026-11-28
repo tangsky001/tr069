@@ -79,7 +79,7 @@
       <pre class="cmd-output-body">{{ output.text }}</pre>
     </div>
 
-    <!-- 一键开局：批量下发开局要做的那几条命令，默认把所有 PON 和 GE 口设成 trunk -->
+    <!-- 一键开局弹窗：把开局常用几步合成一次下发 -->
     <olt-quick-setup-dialog
       :visible.sync="quickVisible"
       :olt-id="oltId"
@@ -90,25 +90,14 @@
 </template>
 
 <script>
-import OltQuickSetupDialog from './OltQuickSetupDialog'
+import OltQuickSetupDialog from '../setup/OltQuickSetupDialog'
 import { fetchOltOptions, previewOltActions } from '@/api/olt'
 
-/**
- * 设备配置（命令动作中心）。
- *
- * 手册 13 章几百条命令，不可能一条一个页面，所以后端把它们登记成「动作目录」：
- * 每条动作带章节、命令模板、参数定义、在哪个视图执行、是不是查询类。
- * 这个组件只做三件事：按章节分组、按参数定义生成表单项、把渲染出来的命令和回显贴出来。
- *
- * 新增命令只改后端（HsgqActionCatalog），这里不用动。
- *
- * 右上角「一键开局」是把开局常用的几步合成一次下发，见 {@link OltQuickSetupDialog}。
- */
+/** 设备配置（命令动作中心）：按后端动作目录分组渲染参数表单，预览并下发命令；新增命令只改后端目录 */
 export default {
   name: 'OltCommandCenter',
   components: { OltQuickSetupDialog },
   props: {
-    /** 设备 ID，「一键开局」取表单约束和命令预览要用 */
     oltId: {
       type: [Number, String],
       default: null
@@ -124,12 +113,12 @@ export default {
       type: Function,
       default: null
     },
-    /** 可选端口清单，「一键开局」的端口勾选框用它：{ type, no, label } */
+    /** 端口清单 { type, no, label }，一键开局的端口勾选用 */
     ports: {
       type: Array,
       default: () => []
     },
-    /** 一键开局的下发回调，返回 Promise；后端还没接时留空，弹窗只做命令预览 */
+    /** 一键开局下发回调；为空时弹窗只做命令预览 */
     setupHandler: {
       type: Function,
       default: null
@@ -146,9 +135,9 @@ export default {
       viewLabels: null,
       /** 命令文本：后端按执行侧同一套规则渲染，键是动作编号 */
       previews: {},
-      /** 参数改动后的合并窗口：一边打字一边别打库 */
+      /** 参数改动后的防抖定时器 */
       previewTimer: null,
-      /** 请求序号：只认最后一次返回，免得慢响应把新预览盖回去 */
+      /** 请求序号，只认最后一次返回 */
       previewSeq: 0
     }
   },
@@ -173,7 +162,7 @@ export default {
         this.schedulePreviews()
       }
     },
-    // 参数一动就重算预览（合并 400ms），页面不做任何字符串替换
+    // 参数一动就重算预览（防抖 400ms）
     values: {
       deep: true,
       handler() {
@@ -216,20 +205,14 @@ export default {
     viewText(view) {
       return (this.viewLabels && this.viewLabels[view]) || view
     },
-    /** 参数改动后 400ms 再算预览，避免每敲一个字符打一次接口 */
+    /** 参数改动后防抖 400ms 再算预览 */
     schedulePreviews() {
       if (this.previewTimer) {
         clearTimeout(this.previewTimer)
       }
       this.previewTimer = setTimeout(() => this.requestPreviews(), 400)
     },
-    /**
-     * 整页表单一次送后端，拿回每条动作的命令文本。
-     *
-     * <p>以前这里是 {@code template.replace(/\{(\w+)\}/g, ...)}：可选段 {@code [ ... ]}、
-     * 缺参怎么提示、视图怎么进出，页面都得跟着执行侧再实现一遍，改一处容易漏一处。
-     * 现在渲染只在后端做，预览与实际下发同源。</p>
-     */
+    /** 整页表单一次送后端，拿回每条动作的命令文本 */
     requestPreviews() {
       if (!this.oltId || !this.actions.length) {
         return
@@ -241,14 +224,14 @@ export default {
       const seq = ++this.previewSeq
       previewOltActions(this.oltId, items)
         .then(res => {
-          // 慢响应回来时已经有更新的一次，丢掉
+          // 已有更新的一次响应，丢掉过期结果
           if (seq === this.previewSeq) {
             this.previews = (res && res.data) || {}
           }
         })
         .catch(() => {})
     },
-    /** 命令预览文本：全部由后端渲染，这里只取 */
+    /** 命令预览文本，全部由后端渲染 */
     preview(action) {
       return this.previews[action.code] || ''
     },

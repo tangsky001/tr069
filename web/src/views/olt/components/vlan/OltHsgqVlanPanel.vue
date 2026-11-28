@@ -54,10 +54,7 @@
       </span>
     </div>
 
-    <!--
-      新建 VLAN：填 VLAN ID + 勾 tagged / untagged 端口。
-      下发顺序是 vlan standard 100 → port epon 1,2 tagged → exit，一个 VLAN 一轮。
-    -->
+    <!-- 新建 VLAN：填 VLAN ID + 勾 tagged / untagged 端口，按 vlan standard → port epon/ge 顺序下发 -->
     <el-dialog
       title="创建"
       :visible.sync="dialogVisible"
@@ -140,17 +137,7 @@
 <script>
 import { fetchVlanForm, previewVlan } from '@/api/olt'
 
-/**
- * 鸿升光 VLAN 面板：VLAN 列表（含成员端口）+ 新增 / 删除。
- *
- * <p>这台的 VLAN 概念和华为完全不是一路：一条 {@code vlan standard 100} 建好 VLAN，
- * 再进 vlan 视图 {@code port epon 2 untagged} 把端口加进去，删除是 {@code no vlan 100}。
- * 没有 vlanif 三层接口、静态路由那一套，所以不复用通用的四表面板。</p>
- *
- * <p>创建弹窗按「VLAN ID + 勾 tagged / untagged 端口」填，勾选项来自设备采集的端口清单
- * （{@code show port state all}），勾不到的口不会发出去。GPON 那台 PON 口不做二层成员，
- * 清单里只有上联口。</p>
- */
+/** 鸿升光 VLAN 面板：VLAN 列表 + 新增/删除，命令生成与校验都在后端。 */
 export default {
   name: 'OltHsgqVlanPanel',
   props: {
@@ -304,7 +291,7 @@ export default {
     },
     /** tagged 和 untagged 互斥：同一个口不能两种都占，勾一边就把另一边摘掉 */
     exclusive(mode) {
-      // 有不有这条限制由后端说（这台设备只认一种带标签方式）
+      // 是否互斥由后端配置（meta.exclusiveTagMode）决定
       if (this.meta && !this.meta.exclusiveTagMode) {
         return
       }
@@ -312,10 +299,7 @@ export default {
       const picked = new Set(this.form[mode])
       this.form[other] = this.form[other].filter(key => !picked.has(key))
     },
-    /**
-     * 下发：命令和校验都在后端，这里先让后端算一遍——
-     * 表达式写法、VLAN ID 范围、一次最多几个都不在页面判断，写错了后端会给原因。
-     */
+    /** 下发前先让后端预演校验，写法 / 范围等错误由后端给出原因 */
     async save() {
       const text = (this.form.vlanIds || '').trim()
       if (!text) {

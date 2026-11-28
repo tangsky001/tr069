@@ -73,22 +73,16 @@
 <script>
 import { fetchOltOptions } from '@/api/olt'
 
-/**
- * ONU 平铺列表：一条 ONU 一行，不再按 PON 口折叠。
- *
- * <p>列按现场参考界面排：ONU ID、名称、MAC、状态、认证状态、注册时间、掉线信息、
- * 型号类字段、光功率、配置菜单。这台设备回显里没有的列照样占位，显示「-」——
- * 位置固定住，换一台设备就不用重新认表头。</p>
- */
+/** ONU 平铺列表：一条 ONU 一行，缺省列显示「-」占位 */
 export default {
   name: 'OltOntList',
   props: {
-    /** 后端摊好的 ONU 行（板卡 × 端口 × ONU，已按槽位/端口/ID 排好），页面只渲染 */
+    /** 后端摊平并排好序的 ONU 行 */
     ontRows: {
       type: Array,
       default: () => []
     },
-    /** 标识列的表头：EPON 写「MAC 地址」，GPON 写「SN」 */
+    /** 标识列表头：EPON 用 MAC，GPON 用 SN */
     snLabel: {
       type: String,
       default: 'SN / MAC'
@@ -100,15 +94,11 @@ export default {
   },
   data() {
     return {
-      /** 「配置」下拉里的动作由后端给（顺序也在那边排好） */
+      /** 「配置」下拉动作，由后端下发 */
       actions: []
     }
   },
   computed: {
-    /**
-     * 摊平与排序都在后端（detail.ontRows：按槽位 → 端口 → ONU ID 排好），
-     * 这里只把 props 交出去渲染，不再从板卡树里自己遍历。
-     */
     rows() {
       return this.ontRows || []
     }
@@ -124,7 +114,6 @@ export default {
   },
   methods: {
     onCommand(row, code) {
-      // 交给外面接：命令要下到设备上，组件不掺和，先只把选中的 ONU 和动作抛上去
       this.$emit('command', { onu: row, code })
       const action = this.actions.find(item => item.code === code)
       const label = action ? action.label : code

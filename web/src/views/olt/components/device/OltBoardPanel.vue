@@ -38,7 +38,7 @@
 
       <!-- 机框导轨：板卡竖着插在槽位里，左右两条导轨露在外面 -->
       <rect class="bp-rail" x="0" y="0" :width="width" :height="height" rx="5" />
-      <!-- 两侧导轨：插进机框时槽位自己有隔板，就只画板卡本体 -->
+      <!-- 两侧导轨：compact 模式下只画板卡本体 -->
       <rect v-if="!compact" x="1" y="1" width="5" :height="height - 2" :fill="'url(#' + ids.rail + ')'" />
       <rect v-if="!compact" :x="plateRight" y="1" width="5" :height="height - 2" :fill="'url(#' + ids.rail + ')'" />
 
@@ -64,7 +64,7 @@
       <rect class="bp-plate-edge" x="6" y="6" :width="plateW" height="1.2" rx="0.6" />
       <rect class="bp-plate-shadow" x="6" :y="height - 9" :width="plateW" height="1.2" rx="0.6" />
 
-      <!-- 顶部助拔器（上下一掰就能把板卡抽出来） -->
+      <!-- 顶部助拔器 -->
       <g class="bp-handle">
         <rect x="23" y="10" width="21" height="12" rx="4" fill="#3b414a" stroke="#5b626d" stroke-width="0.8" />
         <rect x="28" y="13" width="11" height="6" rx="3" fill="#1d2127" stroke="#4a515b" stroke-width="0.7" />
@@ -79,7 +79,7 @@
         </g>
       </g>
 
-      <!-- 丝印：型号 / 槽位 / 端口类型（板卡窄，字号跟着收，别压到右边） -->
+      <!-- 丝印：型号 / 槽位 / 端口类型 -->
       <text class="bp-model" x="9" y="34">{{ modelText }}</text>
       <text class="bp-slot" x="59" y="34" text-anchor="end">SLOT {{ slotText }}</text>
       <text class="bp-subtitle" x="9" y="45">{{ subtitle }}</text>
@@ -96,7 +96,7 @@
         <circle class="bp-led" :class="'bp-led-' + envState" cx="47" cy="66.5" r="2" />
       </g>
 
-      <!-- 主控板的管理区：RESET 按钮 + CON 控制台 + ETH 管理网口 + ESC，真板卡就印在板子左侧 -->
+      <!-- 主控板管理区：RESET + CON + ETH + ESC -->
       <g v-if="mgmtRows.length" class="bp-mgmt">
         <g class="bp-reset">
           <circle class="bp-reset-ring" cx="11" :cy="mgmtTop - 10" r="3.4" />
@@ -110,7 +110,7 @@
         </template>
 
         <g v-for="(row, index) in mgmtRows" :key="'mgmt-' + row.name">
-          <!-- 管理口本体：RJ45 电口，和业务口同一列（左边缘 20），方角金属笼 -->
+          <!-- 管理口本体：RJ45 电口，和业务口同一列 -->
           <rect
             class="bp-socket-body"
             x="20"
@@ -121,7 +121,7 @@
             :fill="'url(#' + ids.socket + ')'"
           />
           <rect class="bp-socket-hole" x="22" :y="mgmtRowY(index) + 25" width="22" height="26" rx="0.6" />
-          <!-- 8 根金手指只占口的上半截，拉满整口会像条形码，看着像口被压扁了 -->
+          <!-- 金手指只画在口的上半截 -->
           <line
             v-for="pin in 8"
             :key="'mpin-' + index + '-' + pin"
@@ -132,7 +132,7 @@
             :y2="mgmtRowY(index) + 36"
             :transform="'translate(' + (pin - 1) * 2.8 + ' 0)'"
           />
-          <!-- ETH 的两个链路灯（绿=Link、黄=Act）：像真 RJ45 一样嵌在口内下沿，不占板面空间 -->
+          <!-- ETH 口内嵌链路灯（绿=Link、黄=Act） -->
           <template v-if="row.leds">
             <circle class="bp-mgmt-link" cx="27" :cy="mgmtRowY(index) + 45" r="1.8" />
             <circle class="bp-mgmt-act" cx="39" :cy="mgmtRowY(index) + 45" r="1.8" />
@@ -146,7 +146,7 @@
             text-anchor="middle"
           >{{ row.name }}</text>
 
-          <!-- 标注列：管理口没有 ONT，只写清楚是什么口（插进机框时不画，槽位放不下） -->
+          <!-- 标注列：管理口没有 ONT，只写口名与说明 -->
           <template v-if="!compact">
             <line class="bp-lead" x1="67" :y1="mgmtRowY(index) + 38" x2="75" :y2="mgmtRowY(index) + 38" />
             <line class="bp-lead" x1="75" :y1="mgmtRowY(index) + 34" x2="75" :y2="mgmtRowY(index) + 42" />
@@ -156,7 +156,7 @@
         </g>
       </g>
 
-      <!-- 运行灯带：和端口本体分开渲染，单独排成两列（0/2/4/6 在左列、1/3/5/7 在右列），像真板卡的 PON 灯区 -->
+      <!-- 运行灯带：与端口分开渲染，两列排布（0/2/4/6 左列、1/3/5/7 右列） -->
       <g v-if="ports.length" class="bp-lamp-strip">
         <text class="bp-strip-title" x="20" :y="portTop + 8">{{ stripTitle }}</text>
         <g v-for="(port, index) in ports" :key="'lamp-' + port.no">
@@ -191,7 +191,7 @@
         </g>
       </g>
 
-      <!-- 端口：纵向一列排下来（和真板卡一样，8 口就是 0..7 一列），灯不在口上，在上面的灯带里 -->
+      <!-- 端口：纵向一列排布，灯不在口上，在上面的灯带里 -->
       <g v-if="ports.length" class="bp-ports">
         <g
           v-for="(port, index) in ports"
@@ -254,7 +254,7 @@
             <rect class="bp-socket-latch" x="28" :y="rowY(index) + 46" width="12" height="3" rx="0.8" />
           </g>
 
-          <!-- 口内链路/激活灯：和管理口 ETH 同一套画法——绿=链路（在线闪/告警红/离线灰），黄=激活 -->
+          <!-- 口内链路/激活灯：绿=链路，黄=激活 -->
           <g class="bp-port-leds">
             <circle class="bp-led" :class="'bp-led-' + stateOf(port)" cx="27" :cy="rowY(index) + 40.5" r="1.8" />
             <circle v-if="stateOf(port) === 'online'" class="bp-port-act" cx="39" :cy="rowY(index) + 40.5" r="1.8" />
@@ -262,14 +262,14 @@
         </g>
       </g>
 
-      <!-- 整板汇总：钉在板卡底部的金属面上（原来挂在标注列下面，像浮在外面） -->
+      <!-- 整板汇总：钉在板卡底部 -->
       <g v-if="onlineTotal > 0" class="bp-total">
         <rect x="10" :y="totalY" width="48" height="14" rx="7" />
         <circle class="bp-total-dot" cx="16" :cy="totalY + 7" r="2" />
         <text class="bp-total-text" x="36" :y="totalY + 10.4" text-anchor="middle">{{ onlineTotal }} ONT 在线</text>
       </g>
 
-      <!-- 底部丝印：机框型号 + 激光等级贴（窄板只放得下字，三角形省了） -->
+      <!-- 底部丝印：机框型号 + 激光等级 -->
       <text v-if="chassisModel" class="bp-frame" x="14" :y="height - 16">{{ chassisModel }}</text>
       <text class="bp-laser-text" x="58" :y="height - 16" text-anchor="end">CLASS 1</text>
     </svg>
@@ -277,44 +277,26 @@
 </template>
 
 <script>
-/**
- * 板卡面板（SVG，竖放 + 右侧标注）：复刻 MA5683T 机框业务板的外观，深色运维风格。
- *
- * 左边是竖着插在机框导轨里的窄条板卡：金属灰底板 + 拉丝 + 螺丝 + 助拔器 + 型号/槽位丝印 +
- * RUN/ALM/ACT/ENV 板卡灯；业务区**上下分两块**（和真板卡一样）：
- *   1) 上面是运行灯带：`PON` 丝印 + 8 颗灯分两列排（0/2/4/6 左列、1/3/5/7 右列），
- *      每颗灯有自己的灯座和灯芯（绿闪=在线、红常亮=告警、灰=离线）；
- *   2) 下面是端口列：一列竖排，每行一个 SFP 口笼 / RJ45，左边印口序号；
- * 灯单独渲染，不挂在端口上——点端口、看 tooltip 都在下面对应的口上；
- * 主控板（H802SCUN 这类）在灯下面还有管理区：RESET 复位孔 + CON 控制台 + ETH 管理网口 + ESC，
- * 口名用竖排丝印贴在口的右边，和真板卡一样。
- *
- * 口名、接口号、ONT 数、光功率这些文字放不进 55 宽的板卡，改成鼠标悬停的 `<title>`。
- * 板卡下方还有一枚「N ONT 在线」的整板汇总。
- *
- * 所有板卡等高（机框槽位高度），端口少的板下面就是空白金属面板。
- * 纯展示：端口数据由外面折算好传进来（board.ports），交互冒泡给页面处理。
- */
-import { boardLampState, portLampState } from '../utils'
+/** 板卡面板（SVG，竖放）：按真机外观画底板/丝印/灯带/端口/管理区，纯展示，数据由外部传入，交互冒泡。 */
+import { boardLampState, portLampState } from '../../utils'
 import { fetchOltOptions } from '@/api/olt'
 
-// 板卡宽度 55、机框（槽位）高度 700：板卡就是插进机框的一条窄板，比例按真机框来
+// 板卡宽 55，槽位高 700，比例按真机框来
 const PANEL_W = 237
 const PLATE_W = 55
-// 业务区从 76 开始：先是运行灯带（PON 灯区），灯带下面才是端口列
+// 业务区起点：先运行灯带，后端口列
 const PORT_TOP = 76
-// 灯带上方「PON」丝印那一截 / 灯带一行的高（灯两列，8 口就是 4 行）
+// 灯带标题高 / 灯行距
 const LED_HEAD = 18
 const LED_PITCH = 13
-// 端口一行的高（一列竖排，8 口 = 496）
+// 端口一行的高
 const PORT_ROW_H = 62
-// 主控板的管理区（RESET + CON + ETH + ESC）：从板卡灯下面开始，每行 76 高
+// 主控板管理区起点与行高
 const MGMT_TOP = 118
 const MGMT_H = 76
 const TOTAL_H = 24
 const BOTTOM_H = 24
-// 机框槽位高度：真机框里每块板都一样高（8 口业务板满口时的高度），
-// 2/4 口板和主控板画不满的那一截就是空白金属面板，不再各自拉长拉短
+// 槽位高度：所有板卡等高，画不满的部分就是空白面板
 const SLOT_H = 652
 
 export default {
@@ -341,10 +323,7 @@ export default {
       type: Object,
       default: () => ({})
     },
-    /**
-     * 机框模式：只画板卡本体（55 宽），省掉左侧导轨和右侧逐口标注列，
-     * 这样一块板正好塞进 60 宽的机框槽位里。
-     */
+    /** 机框模式：只画板卡本体，不带导轨和标注列 */
     compact: {
       type: Boolean,
       default: false
@@ -388,7 +367,7 @@ export default {
     portTop() {
       return this.mgmtRows.length ? MGMT_TOP + this.mgmtRows.length * MGMT_H : PORT_TOP
     },
-    /** 整板在线 ONT 合计：后端随板卡给（board.onuOnline），页面不再逐口累加 */
+    /** 整板在线 ONT 合计，后端随板卡给 */
     onlineTotal() {
       return this.board.onuOnline || 0
     },
@@ -408,12 +387,12 @@ export default {
     slotEnd() {
       return Math.max(this.portsTop + this.ports.length * PORT_ROW_H, SLOT_H)
     },
-    /** 竖放、等高：不管 2 口、4 口、8 口还是主控板，板卡都是同一个槽位高度 */
+    /** 所有板卡等高（同一槽位高度） */
     height() {
       return this.slotEnd + TOTAL_H + BOTTOM_H
     },
     viewBox() {
-      // 机框模式：视口裁到只放得下板卡本体（板卡 6..61 居中在 60 宽的视口里，两边各 3.5）
+      // 机框模式：视口裁到只放板卡本体
       return this.compact ? '3.5 0 60 ' + this.height : '0 0 ' + this.width + ' ' + this.height
     },
     /** 整板汇总徽标的位置：统一钉在槽位底下一行，各块板对齐 */
@@ -512,11 +491,7 @@ export default {
     portNo(port) {
       return port.no == null ? '-' : port.no
     },
-    /**
-     * 面板上的口名 / 标注 / 光模块数值 / 悬停提示：
-     * 文本全部由后端随端口算好（labelText / panelText / subText / opticText / tooltipText），
-     * 这里只做透传——「什么口型、算不算在线、缺数据怎么说」都不该在页面再判一遍。
-     */
+    /** 口名 / 标注 / 悬停提示文本由后端随端口算好，这里只透传 */
     portLabel(port) {
       return port.labelText || ('PORT ' + this.portNo(port))
     },
@@ -542,7 +517,7 @@ export default {
 .board-panel {
   margin-top: 6px;
 }
-/* 插进机框时不留边距：板卡要和槽位上下顶齐，不能出现缝隙 */
+/* 插进机框时不留边距，与槽位顶齐 */
 .board-panel-compact {
   margin-top: 0;
   line-height: 0;
@@ -594,7 +569,7 @@ export default {
 .bp-mgmt-name {
   font-family: Consolas, Monaco, 'Microsoft YaHei', sans-serif;
 }
-/* 板卡窄（55 宽），板上的丝印字号跟着收，不然型号会顶到槽位丝印上 */
+/* 板卡窄，丝印字号相应收小 */
 .bp-model {
   fill: #e8edf5;
   font-size: 6.6px;

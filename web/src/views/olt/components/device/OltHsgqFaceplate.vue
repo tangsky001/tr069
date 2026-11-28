@@ -43,8 +43,7 @@
           <rect :x="pon.x - pon.step / 2" y="46" :width="pon.step" height="70" fill="transparent" />
         </g>
 
-        <!-- 上联口：GE（RJ45 电口）+ XGE（SFP+ 光口），几个由型号规格决定；
-             一个都没有时连括号也不画，免得留个空框 -->
+        <!-- 上联口：GE（RJ45）+ XGE（SFP+），有无由型号规格决定 -->
         <g v-if="uplinkPorts.length" class="fp-uplink">
           <path :d="uplinkBracketPath" class="fp-bracket" />
           <text class="fp-group-label" :x="(uplinkX0 + uplinkLineEnd) / 2" y="32">UPLINK</text>
@@ -95,16 +94,7 @@
 /** 上联口每个占的宽度（含间隔） */
 const UPLINK_STEP = 56
 
-/**
- * 鸿升光整机面板（第三方界面的板卡区专用）。
- *
- * 鸿升光是一体机，没有"机框插板卡"的结构，硬套机框视图会很怪（一个槽位围一圈空槽）。
- * 这里按真机正面画一条横向面板：PON1-4 用采集到的真实数据（在线/总数、点口展开 ONT），
- * GE / CONSOLE / RST 是外观件，只画样子不带数据。
- *
- * 端口数据由 mixin 折算好（slots[0]，端口带 onuOnline/onuTotal/onts），交互（展开、悬停）
- * 冒泡给页面，和机框视图同一套状态，页面代码不用区分厂商。
- */
+/** 鸿升光整机面板：按真机正面画横向面板，PON 口用真实数据，GE/CONSOLE/RST 仅外观，交互冒泡给父组件。 */
 export default {
   name: 'OltHsgqFaceplate',
   props: {
@@ -208,7 +198,7 @@ export default {
       const count = (this.board.ports || []).length || 4
       return this.ponAreaWidth / count
     },
-    /** 口子多了字要缩小，16 口时 9.5px 会糊成一片 */
+    /** 口子多了字号缩小 */
     compact() {
       return this.ponStep < 32
     },

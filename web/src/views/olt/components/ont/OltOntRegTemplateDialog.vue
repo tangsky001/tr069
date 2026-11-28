@@ -171,20 +171,12 @@
 </template>
 
 <script>
-import OltHelpLabel from './OltHelpLabel'
+import OltHelpLabel from '../common/OltHelpLabel'
 import { fetchOntRegTemplateDefault, fetchOltOptions } from '@/api/olt'
 
-/**
- * 自动注册模板的编辑弹窗。
- * 默认值只在后端一处，页面不自带。</p>
- */
+/** 注册模板编辑弹窗 */
 
-/**
- * 后端给的模板翻成表单：数字和开关在输入框里用字符串，没值的给空串。
- *
- * <p>这里不写死任何默认值（认证方式、PON 类型、优先级、工作模式都是后端给的），
- * 前端抄一份就会出现「页面默认 SN、后端默认也是 SN，哪天改了一处」这种对不上。</p>
- */
+/** 后端模板翻成表单：数字和开关用字符串，没值的给空串；默认值只在后端一处 */
 function toForm(template) {
   const tpl = template || {}
   return {
@@ -232,9 +224,9 @@ export default {
   },
   data() {
     return {
-      // 打开时才由后端填默认值；这里是空壳，不放任何业务默认值
+      // 默认值由后端填，这里不放业务默认值
       form: toForm({ oltIp: this.oltIp }),
-      /** 注册方式 / PON 类型 / 工作模式的可选项，来自后端 /olt/options */
+      /** 注册方式 / PON 类型 / 工作模式可选项，来自后端 /olt/options */
       optionTables: null
     }
   },
@@ -274,7 +266,7 @@ export default {
   },
   methods: {
     async onOpen() {
-      // 先向后端要一份带默认值的空表单，再拿编辑的那条盖上去
+      // 先要一份带默认值的空表单，再拿编辑的那条盖上去
       let base = toForm({ oltIp: this.oltIp })
       if (this.oltId) {
         try {
@@ -291,7 +283,6 @@ export default {
         this.$message.warning('请填写模板名称')
         return
       }
-      // 优先级只让填 0-999，写别的设备那边对不上
       const priority = Number(this.form.priority)
       if (Number.isNaN(priority) || priority < 0 || priority > 999) {
         this.$message.warning('优先级要填 0-999 之间的数字')
@@ -307,7 +298,6 @@ export default {
 <style lang="scss" scoped>
 @import '~@/styles/olt.scss';
 
-/* 截图那套：label 灰、输入框只留下划线 */
 .reg-form {
   max-width: 620px;
 

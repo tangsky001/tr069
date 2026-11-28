@@ -1,6 +1,6 @@
 <template>
   <div :class="{ 'app-container': !embedded }">
-    <!-- 嵌在台账页里时上面已经有下拉和按钮了，这里只出内容区 -->
+    <!-- 内嵌台账页时上面已有设备条，这里只出内容区 -->
     <olt-device-bar
       v-if="!embedded"
       :device="device"
@@ -25,7 +25,6 @@
     <el-card v-if="hasDevice" shadow="never" class="olt-main-card">
       <el-tabs v-model="activeTab" @tab-click="handleTabClick">
         <el-tab-pane label="OLT 状态" name="spec">
-          <!-- 连接概要：先看设备概况，再看下面每块板卡 -->
           <div class="olt-summary">
             <div>
               厂商：<b>{{ device.vendorLabel || '未识别' }}</b>；型号：<b>{{ device.model || '-' }}</b>；
@@ -33,11 +32,10 @@
             </div>
             <div>最近连接：{{ device.lastConnectAtText }}；最近同步：{{ device.lastSyncAtText }}</div>
             <div>{{ device.syncSummary || '尚未同步，点击「同步」采集板卡信息' }}</div>
-            <!-- 数据以 OLT 为准：打开页面直连采一次，采不到才退回库里的快照 -->
+            <!-- 打开页面直连采集一次，采不到才退回库里的快照 -->
             <div class="olt-live" :class="{ 'olt-live-error': liveError }">{{ liveText }}</div>
 
-            <!-- ONT 自动发现：这个开关不开，光猫接上去设备也不会去发现，待注册列表永远是空的。
-                 状态只认设备的回执——下发完再查一遍，不靠前端自己断定 -->
+            <!-- 自动发现开关不开，设备不会去发现光猫；状态以设备回执为准 -->
             <div class="olt-autofind">
               <span class="olt-autofind-label">ONT 自动发现</span>
 
@@ -59,8 +57,7 @@
                 </span>
               </template>
 
-              <!-- 查不到状态也允许开：这条命令幂等，开错了不会把设备搞坏，
-                   反倒是不给开就彻底没辙了 -->
+              <!-- 状态查不到也允许开：这条命令幂等，不会把设备搞坏 -->
               <el-button
                 v-if="!autoFindLoading && !(autoFind && autoFind.allEnabled)"
                 type="text"
@@ -75,7 +72,7 @@
           <div class="olt-section-title">
             板卡信息
             <span v-if="boardSummary" class="board-summary">{{ boardSummary }}</span>
-            <!-- 板卡停在 auto-find（插上了没确认）时不加载业务，一键确认后按钮自动隐藏 -->
+            <!-- 板卡停在 auto-find（未确认）时不加载业务，需先一键确认 -->
             <el-button
               v-if="boardsNeedConfirm"
               class="board-confirm-btn"
@@ -102,7 +99,7 @@
         </el-tab-pane>
 
         <el-tab-pane label="配置信息" name="config">
-          <!-- 开局按钮压在台账明细上面：改配置前先把这套参数配好 -->
+          <!-- 改配置前先一键开局把参数配好 -->
           <div class="olt-config-actions">
             <el-button size="small" type="primary" icon="el-icon-setting" @click="quickSetupVisible = true">
               一键开局
@@ -162,6 +159,8 @@
             :tcont-handler="addTcont"
             :gemport-handler="addGemport"
             :gem-mapping-handler="addGemMapping"
+            :create-line-handler="createLineProfile"
+            :delete-line-handler="deleteLine"
             empty-text="尚未采集到 DBA / 线路模板。点上面的「同步」，采集时会跑 display dba-profile all 与 display ont-lineprofile gpon all。"
           />
         </el-tab-pane>
@@ -171,6 +170,7 @@
             :srv-profiles="srvProfiles"
             :tr069-profiles="tr069Profiles"
             :traffic-tables="trafficTables"
+            @create-tr069="tr069DialogVisible = true"
           />
         </el-tab-pane>
 
@@ -186,7 +186,6 @@
         </el-tab-pane>
 
         <el-tab-pane label="ONT 配置/状态" name="ont">
-          <!-- 汇总窗（总数 / 在线 / 离线）由面板渲染，和操作按钮排在同一行 -->
           <olt-ont-status-panel
             :ont-rows="ontRows"
             :ont-port-options="ontPortOptions"
@@ -228,22 +227,28 @@
       </el-tabs>
     </el-card>
 
-    <!-- 编辑台账：改了厂商要能重新分发，保存后回列表重新进 -->
+    <!-- 编辑台账：保存后按新厂商重新分发 -->
     <olt-form-dialog
       :visible.sync="formVisible"
       :olt="editing"
       @saved="handleSaved"
     />
 
-    <!-- 一键开局：命令序列由后端的模板编排器生成，页面只负责收参数和展示预览 -->
+    <!-- 一键开局：命令序列由后端生成，页面只收参数和展示预览 -->
     <olt-huawei-quick-setup-dialog
       :visible.sync="quickSetupVisible"
       :olt-id="detailId"
       :submit-handler="handleQuickSetup"
     />
 
-    <!-- 创建 OLT 用户：华为走 terminal user name 那条交互式命令，
-         设备会依次问用户名、密码、确认密码、模板、级别、可重入次数 -->
+    <!-- 新增 TR069 模板：保存即下发 ont tr069-server-profile add -->
+    <olt-huawei-tr069-dialog
+      :visible.sync="tr069DialogVisible"
+      :olt-id="detailId"
+      @saved="handleTr069Saved"
+    />
+
+    <!-- 创建 OLT 用户：华为走 terminal user name 交互式命令 -->
     <el-dialog :visible.sync="userVisible" title="创建 OLT 用户" width="460px" append-to-body>
       <el-form :model="userForm" label-width="92px" size="small">
         <el-form-item label="用户名">
@@ -280,30 +285,24 @@
 </template>
 
 <script>
-import OltDeviceBar from './components/OltDeviceBar'
-import OltDeviceInfo from './components/OltDeviceInfo'
-import OltBoardCards from './components/OltBoardCards'
-import OltOntStatusPanel from './components/OltOntStatusPanel'
-import OltVlanPanel from './components/OltVlanPanel'
-import OltDbaPanel from './components/OltDbaPanel'
-import OltServicePanel from './components/OltServicePanel'
-import OltRecords from './components/OltRecords'
-import OltFormDialog from './components/OltFormDialog'
-import OltHuaweiQuickSetupDialog from './components/OltHuaweiQuickSetupDialog'
-import OltOntRegPanel from './components/OltOntRegPanel'
-import OltLinkAggregationPanel from './components/OltLinkAggregationPanel'
+import OltDeviceBar from './components/common/OltDeviceBar'
+import OltDeviceInfo from './components/common/OltDeviceInfo'
+import OltBoardCards from './components/device/OltBoardCards'
+import OltOntStatusPanel from './components/ont/OltOntStatusPanel'
+import OltVlanPanel from './components/vlan/OltVlanPanel'
+import OltDbaPanel from './components/template/OltDbaPanel'
+import OltServicePanel from './components/template/OltServicePanel'
+import OltRecords from './components/common/OltRecords'
+import OltFormDialog from './components/common/OltFormDialog'
+import OltHuaweiQuickSetupDialog from './components/setup/OltHuaweiQuickSetupDialog'
+import OltHuaweiTr069Dialog from './components/template/OltHuaweiTr069Dialog'
+import OltOntRegPanel from './components/ont/OltOntRegPanel'
+import OltLinkAggregationPanel from './components/device/OltLinkAggregationPanel'
 import { oltDetailMixin } from './mixins/oltDetail'
 import { detailRoute } from './vendors'
 import { deleteOlt, fetchOntAutoFind, enableOntAutoFind, createOltTerminalUser } from '@/api/olt'
 
-/**
- * 华为 MA5600T / MA5800 / EA5800 详情页。
- *
- * 走的就是华为那一套 display 命令：板卡、温度、每口 ONT 明细、VLAN 与静态路由都是真的采上来的，
- * DBA 模板与线路模板也是（display dba-profile all / display ont-lineprofile gpon all，
- * 展开线路模板看它绑定的 T-CONT / GEM port 与 DBA 带宽档位）；
- * 剩下一标了「占位」的标签页是还没接采集的业务流、ONT 能力模板那一批。
- */
+/** 华为 MA5600T / MA5800 / EA5800 OLT 详情页 */
 export default {
   name: 'OltHuawei',
   components: {
@@ -317,14 +316,13 @@ export default {
     OltRecords,
     OltFormDialog,
     OltHuaweiQuickSetupDialog,
+    OltHuaweiTr069Dialog,
     OltOntRegPanel,
     OltLinkAggregationPanel
   },
   mixins: [oltDetailMixin],
   props: {
-    /**
-     * 嵌在台账页里时由外面给（下拉选中的那台）；不传就取路由上的 id。
-     */
+    /** 嵌在台账页里时由外面给；不传就取路由上的 id */
     deviceId: {
       type: [String, Number],
       default: null
@@ -341,13 +339,13 @@ export default {
       formVisible: false,
       editing: null,
       quickSetupVisible: false,
-      // PON 口自动发现：这个开关不开，光猫接上去设备也不会去发现
+      tr069DialogVisible: false,
+      // PON 口自动发现开关状态
       autoFind: null,
       autoFindLoading: false,
       autoFindBusy: false,
       autoFindError: '',
-      // 建 OLT 用户：级别默认 Operator——跟用来连设备的 oltadmin 一个级别，
-      // 华为不允许建比当前账号更高级别的账号，Administrator 那一档选不了
+      // 级别默认 Operator：华为不允许建比当前账号更高级别的账号
       userVisible: false,
       userBusy: false,
       userForm: { username: '', password: '', confirmPassword: '', level: 2 }
@@ -359,13 +357,12 @@ export default {
     }
   },
   watch: {
-    // 切换 OLT 时重新拉
     detailId: {
       immediate: true,
       handler(id) {
         this.expandedOnts = {}
         this.loadDetail(id)
-        // 自动发现状态独立取：要逐口问设备，慢，不挡主信息
+        // 自动发现逐口查询较慢，不阻塞主信息
         this.loadAutoFind(id)
       }
     }
@@ -378,10 +375,7 @@ export default {
       this.editing = this.device
       this.formVisible = true
     },
-    /**
-     * 保存后厂商可能变了（比如原本识别成通用，同步后认清是华为），
-     * 按新厂商重新分发一次，不符合就跳到对应页面。
-     */
+    /** 保存后厂商可能变了，按新厂商重新分发 */
     handleSaved(saved) {
       this.formVisible = false
       if (saved && String(saved.id) === String(this.detailId)) {
@@ -394,10 +388,7 @@ export default {
     onToggleOnts(payload) {
       this.toggleOnts(payload.slotNo, payload.portNo, payload.count)
     },
-    /**
-     * 查 PON 口自动发现开关。逐口问设备，8 口板要几秒，所以有个「检测中」状态；
-     * 查不到只在这一行提示，不影响页面其它部分。
-     */
+    /** 查 PON 口自动发现开关；失败只在本行提示，不影响页面其它部分 */
     loadAutoFind(id) {
       const target = id || this.detailId
       if (!target) {
@@ -430,14 +421,14 @@ export default {
           return enableOntAutoFind(this.detailId)
         })
         .then(res => {
-          // 下发接口顺带返回重采后的整机数据，直接用，不用再拉一次
+          // 下发接口顺带返回重采后的整机数据，直接用
           this.applyDetail(res.data)
           this.$message.success('已下发开启命令，共 ' + ports + ' 个 PON 口')
-          // 发完了不等于开好了：再问一次设备，这一行显示设备真实回复的结果
+          // 再查一次设备，显示真实回复的结果
           this.loadAutoFind()
         })
         .catch(e => {
-          // 点取消时 e 是字符串 'cancel'，别当失败弹出来
+          // 取消时 e 是 'cancel'，不算失败
           if (e !== 'cancel' && e !== 'close') {
             this.$message.error((e && e.message) || '开启失败')
           }
@@ -460,10 +451,14 @@ export default {
         })
         .catch(() => {})
     },
-    /**
-     * 建 OLT 本地用户：用户名、密码、级别交给后端，由它登设备走
-     * terminal user name 的一问一答。下发完后端会重采一次整机。
-     */
+    /** 保存成功后用返回的最新模板列表更新快照 */
+    handleTr069Saved(list) {
+      const template = this.detail && this.detail.template
+      if (template) {
+        this.$set(template, 'tr069Profiles', list || [])
+      }
+    },
+    /** 建本地用户：由后端登设备走交互式命令下发 */
     submitUser() {
       const form = this.userForm
       const username = (form.username || '').trim()
@@ -472,7 +467,7 @@ export default {
         this.$message.warning('用户名和密码都要填')
         return
       }
-      // 长度是设备定的，超限它只会回一串 Failure，在这里当场拦下更省事
+      // 长度限制是设备定的，本地先拦下
       if (username.length < 6 || username.length > 15) {
         this.$message.warning('用户名要 6~15 位')
         return
@@ -512,7 +507,6 @@ export default {
 <style lang="scss" scoped>
 @import '~@/styles/olt.scss';
 
-/* 配置信息页顶部的一键开局按钮行 */
 .olt-config-actions {
   display: flex;
   align-items: center;
@@ -525,7 +519,6 @@ export default {
   font-size: 12px;
 }
 
-/* 建用户弹窗：级别下拉占满；下面那段是设备限制说明，弱化处理 */
 .olt-user-level {
   width: 100%;
 }

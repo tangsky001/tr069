@@ -35,7 +35,7 @@
             @click="onSelect(slot)"
           >
             <template v-if="slot.board">
-              <!-- 槽位里就是这块板：60 宽槽位只放板卡本体（55 宽），型号/灯/端口都印在板上 -->
+              <!-- 槽位里放的就是这块板的完整面板 -->
               <olt-board-panel
                 compact
                 :board="slot.board"
@@ -49,7 +49,7 @@
               />
             </template>
             <div v-else class="chassis-bay-empty">
-              <!-- 真机空槽位插的是银色盲面板：上下黑色拉手 + 中间通风箭头，不是黑窟窿 -->
+              <!-- 空槽位：银色盲面板（黑色拉手 + 通风箭头） -->
               <span class="blank-tab blank-tab-top" />
               <span class="blank-arrow" />
               <span class="blank-tab blank-tab-bottom" />
@@ -74,50 +74,37 @@
 <script>
 import OltBoardPanel from './OltBoardPanel'
 
-/**
- * 机框视图：把板卡**插进**机框的槽位里，机框型号跟着设备型号走（MA5683T / HSGQ-E04…）。
- *
- * 机框外壳用 HTML/CSS 画，照真机来：深色金属边框、上导轨（风扇 + STATUS 灯 + 厂商标 +
- * 型号牌）、槽位仓是银色卡笼——空槽插银色盲面板（黑色拉手 + 通风箭头），下导轨是深色
- * 铭牌条上的槽位号。12 个槽位等宽排成一排，
- * 每个槽位放的是真正的板卡面板（`OltBoardPanel`——竖放板卡 + 右侧逐口标注），
- * 槽位号就是 `display board 0` 的 SlotID：板卡按 `slotNo` 落到对应槽位，没插板的槽位画成空槽位。
- *
- * 一排 12 个槽位比页面宽，机框横向滚动；初次渲染自动滚到选中的那块板上，不用自己找。
- */
+/** 机框视图：板卡按槽位号插进机框槽位（槽位号同 display board 0 的 SlotID），支持点选并自动滚动。 */
 export default {
   name: 'OltChassis',
   components: { OltBoardPanel },
   props: {
-    /** 已采集到的板卡（mixin 里的 slots） */
+    /** 已采集到的板卡 */
     slots: {
       type: Array,
       default: () => []
     },
-    /**
-     * 机框槽位数：来自 display board 0 的槽位表（最大 SlotID + 1，空槽位也算），
-     * 没采到就按 12 个业务槽位兜底；出现更大槽位号时再补齐。
-     */
+    /** 机框槽位数，没采到就按 12 兜底 */
     slotCount: {
       type: Number,
       default: 12
     },
-    /** 机框型号（设备型号），显示在框顶上 */
+    /** 机框型号，显示在框顶上 */
     model: {
       type: String,
       default: ''
     },
-    /** 导轨正中的厂商标（华为/中兴/烽火…），没识别出来就退回型号 */
+    /** 导轨正中的厂商标 */
     brand: {
       type: String,
       default: ''
     },
-    /** 当前选中的槽位号（外面持有，点槽位时 select 出去） */
+    /** 当前选中的槽位号，由父组件持有 */
     activeSlot: {
       type: [Number, String],
       default: null
     },
-    /** 下面两件原样传给板卡面板 */
+    /** 原样传给板卡面板 */
     hoverPort: {
       type: String,
       default: ''
@@ -131,17 +118,11 @@ export default {
     boards() {
       return this.slots || []
     },
-    /**
-     * 槽位数：后端已按「设备回的槽位表 → 板卡最大槽位 → 码表兜底」算好（detail.chassisSlotCount）。
-     * detail 没加载完或后端没带这个字段时按 12 个槽位画——机框不能因为缺一个数整个消失。
-     */
+    /** 槽位数：后端算好传入，缺省按 12 兜底 */
     count() {
       return this.slotCount || 12
     },
-    /**
-     * 槽位仓和槽位号用同一套栅格，保证号码对准槽位。
-     * 槽位宽 60（板卡 55 插进去，两边各留 2.5），12 个槽位 + 框一共约 760 宽，一屏放得下整台机器。
-     */
+    /** 槽位仓和槽位号用同一套栅格，保证号码对准槽位 */
     gridStyle() {
       return { gridTemplateColumns: 'repeat(' + this.count + ', 60px)' }
     },
@@ -314,11 +295,11 @@ export default {
 }
 .chassis-bay {
   box-sizing: border-box;
-  /* 槽位就是 60 × 700，和板卡面板 viewBox 一样大：板卡 55×700 插进去，上下顶齐不留缝 */
+  /* 槽位尺寸与板卡面板 viewBox 一致 */
   width: 60px;
   height: 700px;
   padding: 0;
-  /* 边框用 inset 阴影画：真边框会吃掉左右各 1px，SVG 按 58 宽等比缩放就矮一截，底下会空出一条缝 */
+  /* 边框用 inset 阴影画，不挤占内容宽度 */
   box-shadow: inset 0 0 0 1px #8f959b;
   border-radius: 3px;
   background: #b3b8bd;

@@ -722,6 +722,29 @@ public class OltCliSession implements Closeable {
         }
     }
 
+    /** 重读线路模板总表：GPON / EPON 两张都采（新建 / 删除模板后的定向刷新用，不整台重采） */
+    public List<OltLineProfile> collectLineProfileList() throws OltTelnetException {
+        prepareTerminal(vendorHint);
+        int timeout = commandTimeoutMs;
+        if (!enterConfigView(timeout)) {
+            throw new OltTelnetException("进不了配置视图（enable → config），线路模板列表未重读");
+        }
+        try {
+            List<OltLineProfile> profiles = new ArrayList<>();
+            for (String pon : List.of("gpon", "epon")) {
+                for (OltLineProfile profile : OltInfoParser.parseLineProfiles(
+                        runCommand("display ont-lineprofile " + pon + " all", timeout))) {
+                    profile.setPonType(pon);
+                    profiles.add(profile);
+                }
+            }
+            profiles.removeIf(profile -> Integer.valueOf(0).equals(profile.getProfileId()));
+            return profiles;
+        } finally {
+            runQuietly("quit", timeout);
+        }
+    }
+
     /** 清空业务板上的全部 ONT */
     public List<OltOntDeleteResult> deleteBoardOnts(List<Integer> wantedSlots) throws OltTelnetException {
         ensureRootView(Math.min(commandTimeoutMs, 5000));
@@ -859,27 +882,21 @@ public class OltCliSession implements Closeable {
         if (dbaProfiles.isEmpty() && !dbaDetails.isEmpty()) {
             dbaProfiles = dbaDetails;
         }
-        List<OltLineProfile> lineProfiles = OltInfoParser.parseLineProfiles(
-                runCommand("display ont-lineprofile gpon all", timeout));
-        String linePonType = "gpon";
-        if (lineProfiles.isEmpty()) {
-            linePonType = "epon";
-            lineProfiles = OltInfoParser.parseLineProfiles(
-                    runCommand("display ont-lineprofile epon all", timeout));
-        }
-        final String lineType = linePonType;
-        final List<OltLineProfile> finalLineProfiles = lineProfiles;
-        finalLineProfiles.forEach(profile -> {
-            if (profile.getType() == null || profile.getType().isBlank()) {
-                profile.setType(lineType);
+        // GPON / EPON 两种线路模板都采：设备可能两类板卡混插，只查一种会漏
+        List<OltLineProfile> lineProfiles = new ArrayList<>();
+        for (String pon : List.of("gpon", "epon")) {
+            for (OltLineProfile profile : OltInfoParser.parseLineProfiles(
+                    runCommand("display ont-lineprofile " + pon + " all", timeout))) {
+                profile.setPonType(pon);
+                lineProfiles.add(profile);
             }
-        });
+        }
         lineProfiles.removeIf(profile -> Integer.valueOf(0).equals(profile.getProfileId()));
         for (OltLineProfile profile : lineProfiles) {
             if (profile.getProfileId() == null) {
                 continue;
             }
-            String detail = runCommand("display ont-lineprofile " + linePonType
+            String detail = runCommand("display ont-lineprofile " + profile.getPonType()
                     + " profile-id " + profile.getProfileId(), timeout);
             OltInfoParser.parseLineProfiles(detail).stream()
                     .filter(d -> profile.getProfileId().equals(d.getProfileId()))
@@ -892,12 +909,18 @@ public class OltCliSession implements Closeable {
         }
         List<OltLineProfile> configLineProfiles = configScript.isBlank()
                 ? new ArrayList<>() : OltInfoParser.parseLineProfiles(configScript);
+        for (OltLineProfile fromConfig : configLineProfiles) {
+            if (fromConfig.getPonType() == null || fromConfig.getPonType().isBlank()) {
+                fromConfig.setPonType(linePonTypeOf(configScript, fromConfig.getProfileId()));
+            }
+        }
         for (OltLineProfile profile : lineProfiles) {
             if (profile.getProfileId() == null) {
                 continue;
             }
             configLineProfiles.stream()
-                    .filter(c -> profile.getProfileId().equals(c.getProfileId()))
+                    .filter(c -> profile.getProfileId().equals(c.getProfileId())
+                            && Objects.equals(profile.getPonType(), c.getPonType()))
                     .findFirst()
                     .ifPresent(c -> mergeLineProfileFromConfig(profile, c));
         }
@@ -906,9 +929,9 @@ public class OltCliSession implements Closeable {
             if (id == null || id == 0 || fromConfig.getName() == null) {
                 continue;
             }
-            boolean exists = lineProfiles.stream().anyMatch(p -> id.equals(p.getProfileId()));
+            boolean exists = lineProfiles.stream().anyMatch(p -> id.equals(p.getProfileId())
+                    && Objects.equals(fromConfig.getPonType(), p.getPonType()));
             if (!exists) {
-                fromConfig.setType(lineType);
                 lineProfiles.add(fromConfig);
             }
         }
@@ -918,21 +941,20 @@ public class OltCliSession implements Closeable {
             servicePorts = OltInfoParser.parseServicePorts(
                     runCommand("display service-port all", timeout));
         }
-        List<OltSrvProfile> srvProfiles = OltInfoParser.parseSrvProfiles(
-                runCommand("display ont-srvprofile gpon all", timeout));
-        String srvPonType = "gpon";
-        if (srvProfiles.isEmpty()) {
-            srvPonType = "epon";
-            srvProfiles = OltInfoParser.parseSrvProfiles(
-                    runCommand("display ont-srvprofile epon all", timeout));
+        // 业务模板同样 GPON / EPON 都采
+        List<OltSrvProfile> srvProfiles = new ArrayList<>();
+        for (String pon : List.of("gpon", "epon")) {
+            for (OltSrvProfile profile : OltInfoParser.parseSrvProfiles(
+                    runCommand("display ont-srvprofile " + pon + " all", timeout))) {
+                profile.setPonType(pon);
+                srvProfiles.add(profile);
+            }
         }
-        final String srvType = srvPonType;
-        srvProfiles.forEach(profile -> profile.setPonType(srvType));
         for (OltSrvProfile profile : srvProfiles) {
             if (profile.getProfileId() == null) {
                 continue;
             }
-            String detail = runCommand("display ont-srvprofile " + srvPonType
+            String detail = runCommand("display ont-srvprofile " + profile.getPonType()
                     + " profile-id " + profile.getProfileId(), timeout);
             OltInfoParser.parseSrvProfiles(detail).stream()
                     .filter(d -> profile.getProfileId().equals(d.getProfileId()))
@@ -944,9 +966,13 @@ public class OltCliSession implements Closeable {
             if (from.getProfileId() == null) {
                 continue;
             }
+            if (from.getPonType() == null || from.getPonType().isBlank()) {
+                from.setPonType(srvPonTypeOf(configScript, from.getProfileId()));
+            }
             OltSrvProfile target = null;
             for (OltSrvProfile p : srvProfiles) {
-                if (from.getProfileId().equals(p.getProfileId())) {
+                if (from.getProfileId().equals(p.getProfileId())
+                        && Objects.equals(from.getPonType(), p.getPonType())) {
                     target = p;
                     break;
                 }
@@ -955,7 +981,6 @@ public class OltCliSession implements Closeable {
                 target = from;
                 srvProfiles.add(from);
             }
-            target.setPonType(srvType);
             if (target.getPotsPorts() == null) {
                 target.setPotsPorts(from.getPotsPorts());
             }
@@ -972,6 +997,8 @@ public class OltCliSession implements Closeable {
             tr069Profiles = OltInfoParser.parseTr069Profiles(
                     runCommand("display ont tr069-server-profile", timeout));
         }
+        // display all 只有 ID/名称/绑定数（华为），ACS 地址与账号要逐条查详情补齐
+        fillTr069ProfileDetails(tr069Profiles, timeout);
         if (tr069Profiles.isEmpty() && !configScript.isBlank()) {
             tr069Profiles = OltInfoParser.parseTr069Profiles(configScript);
         }
@@ -995,6 +1022,55 @@ public class OltCliSession implements Closeable {
         info.setTrafficTables(trafficTables);
         info.stamp();
         snapshot.setTemplateInfo(info);
+    }
+
+    /** 从配置脚本认线路模板的 PON 类型（ont-lineprofile gpon/epon profile-id X），认不出按 gpon */
+    private static String linePonTypeOf(String configScript, Integer profileId) {
+        if (configScript != null && !configScript.isBlank() && profileId != null) {
+            Matcher matcher = Pattern.compile(
+                    "(?i)ont-lineprofile\\s+(gpon|epon)\\s+profile-id\\s+" + profileId + "\\b")
+                    .matcher(configScript);
+            if (matcher.find()) {
+                return matcher.group(1).toLowerCase(Locale.ROOT);
+            }
+        }
+        return "gpon";
+    }
+
+    /** 从配置脚本认业务模板的 PON 类型（ont-srvprofile gpon/epon profile-id X），认不出按 gpon */
+    private static String srvPonTypeOf(String configScript, Integer profileId) {
+        if (configScript != null && !configScript.isBlank() && profileId != null) {
+            Matcher matcher = Pattern.compile(
+                    "(?i)ont-srvprofile\\s+(gpon|epon)\\s+profile-id\\s+" + profileId + "\\b")
+                    .matcher(configScript);
+            if (matcher.find()) {
+                return matcher.group(1).toLowerCase(Locale.ROOT);
+            }
+        }
+        return "gpon";
+    }
+
+    /**
+     * TR-069 模板列表只给 ID/名称/绑定数时（display all 无 ACS 地址列），
+     * 逐条查 {@code display ont tr069-server-profile profile-id X} 补地址与账号。
+     * 详情命令设备不认时回显是报错，解析不出就维持原样，不影响列表。
+     */
+    private void fillTr069ProfileDetails(List<OltTr069Profile> profiles, int timeout) {
+        if (profiles == null || profiles.isEmpty()) {
+            return;
+        }
+        int limit = Math.min(profiles.size(), 32);
+        for (int i = 0; i < limit; i++) {
+            OltTr069Profile profile = profiles.get(i);
+            if (profile.getProfileId() == null
+                    || (profile.getUrl() != null && !profile.getUrl().isBlank())) {
+                continue;
+            }
+            OltInfoParser.mergeTr069ProfileDetail(
+                    runCommand("display ont tr069-server-profile profile-id "
+                            + profile.getProfileId(), timeout),
+                    profiles);
+        }
     }
 
     /** 合并线路模板明细 */
@@ -1380,6 +1456,47 @@ public class OltCliSession implements Closeable {
                 continue;
             }
             throw new IllegalStateException("OLT 拒绝命令「" + command + "」：" + reason);
+        }
+        return outputs;
+    }
+
+    /**
+     * 宽松批量下发：某条被设备拒绝不中断，剩下的（含 commit/quit 这类收尾）照发，
+     * 全部发完再把首个拒绝抛出来。
+     *
+     * <p>给「建模板视图 + tcont/gem + commit」这类前后依赖的命令组用——
+     * 严格模式中间一条被拒就抛异常，commit 执行不到，华为模板视图里
+     * 没 commit 的配置全部不生效，最后只剩一个模板壳。</p>
+     */
+    public List<String> sendConfigCommandsRelaxed(List<String> commands) {
+        prepareTerminal(vendorHint);
+        if (!enterConfigView(commandTimeoutMs)) {
+            throw new IllegalStateException("进不了 config 视图，无法下发配置");
+        }
+        List<String> outputs = new ArrayList<>();
+        String firstReason = null;
+        String firstRejected = null;
+        int rejected = 0;
+        for (List<String> group : groupWithAnswers(commands)) {
+            String command = group.get(0);
+            List<String> answers = group.subList(1, group.size());
+            String out = isSaveCommand(command) ? runSave()
+                    : answers.isEmpty() ? runCommand(command, commandTimeoutMs) : runInteractive(command, answers);
+            outputs.add(out);
+            String reason = commandRejected(out);
+            if (reason == null) {
+                continue;
+            }
+            rejected++;
+            Logs.info(Logs.Module.OLT_COLLECT, "设备拒绝命令「{}」：{}", command, reason);
+            if (firstReason == null) {
+                firstReason = reason;
+                firstRejected = command;
+            }
+        }
+        if (firstReason != null) {
+            throw new IllegalStateException("OLT 拒绝命令「" + firstRejected + "」：" + firstReason
+                    + "（共 " + rejected + " 条被拒，其余命令与 commit 已继续执行，请同步后核对模板数据）");
         }
         return outputs;
     }
